@@ -60,7 +60,7 @@ struct TabsTests {
     }
 
     @Test func aTabDiffsThePullRequestFromItsCheckoutAndOffersANewHeadAsAReload() async throws {
-        let repo = try FakeRepository()
+        let repo = try await FakeRepository()
         let app = try await App()
         let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
         let branchPoint = try #require(pullRequest.baseRefOid)
@@ -117,7 +117,7 @@ struct TabsTests {
     }
 
     @Test func aNotificationAboutAnOpenPullRequestOffersItsNewCommitsWithoutReplacingTheDiff() async throws {
-        let repo = try FakeRepository()
+        let repo = try await FakeRepository()
         let app = try await App()
         let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
         _ = await app.tabs.watchForChanges()
@@ -139,7 +139,7 @@ struct TabsTests {
     }
 
     @Test func otherActivityIsOfferedAsAnUpdateUntilDismissed() async throws {
-        let repo = try FakeRepository()
+        let repo = try await FakeRepository()
         let app = try await App()
         let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
 
@@ -160,7 +160,7 @@ struct TabsTests {
     }
 
     @Test func refusedNotificationsFallBackToCheckingOpenPullRequestsOnATimer() async throws {
-        let repo = try FakeRepository()
+        let repo = try await FakeRepository()
         let app = try await App()
         let (pullRequest, tab, _) = try await app.openDiffed(in: repo)
         await app.github.refuseNotifications(status: 403)
@@ -180,7 +180,7 @@ struct TabsTests {
     }
 
     @Test func aTabWithoutACheckoutSaysSoAndAGitFailureShowsGitsMessage() async throws {
-        let repo = try FakeRepository()
+        let repo = try await FakeRepository()
         let app = try await App()
         let pullRequest = app.toReview[0]
         app.tabs.open(pullRequest)
@@ -228,14 +228,14 @@ private struct App {
     func openDiffed(in repo: FakeRepository) async throws -> (PullRequestSummary, PullRequestTab, String) {
         let listed = toReview[0]
         try await store.updateLocalRepos(saving: [LocalRepo(nameWithOwner: listed.repository, path: repo.checkout, verifiedAt: .now)])
-        let branchPoint = try repo.git(["rev-parse", "HEAD"], in: repo.checkout)
-        try repo.switchTo("feature", creatingFrom: "main")
-        let first = try repo.commit([
+        let branchPoint = try await repo.git(["rev-parse", "HEAD"], in: repo.checkout)
+        try await repo.switchTo("feature", creatingFrom: "main")
+        let first = try await repo.commit([
             "app.go": "package app\n\nfunc Hello() string { return \"hi\" }\n",
             "vendor/example.com/lib/lib.go": "package lib // bumped\n",
             "yarn.lock": "# lockfile\n",
         ], message: "Say hi")
-        try repo.push(asPullRequest: listed.number)
+        try await repo.push(asPullRequest: listed.number)
         try await github.edit(listed.id) { $0.headRefOid = first; $0.baseRefOid = branchPoint }
         await tabs.lists.refresh()
         let pullRequest = try #require(tabs.lists.pullRequest(id: listed.id))
@@ -248,8 +248,8 @@ private struct App {
 
     /// Pushes a commit to the PR, on GitHub and in `repo`'s origin, and returns it.
     func pushCommit(_ files: [String: String], to pullRequest: PullRequestSummary, in repo: FakeRepository) async throws -> String {
-        let commit = try repo.commit(files, message: "Another commit")
-        try repo.push(asPullRequest: pullRequest.number)
+        let commit = try await repo.commit(files, message: "Another commit")
+        try await repo.push(asPullRequest: pullRequest.number)
         try await github.edit(pullRequest.id) { $0.headRefOid = commit; $0.commitCount.totalCount += 1 }
         return commit
     }

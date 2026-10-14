@@ -278,20 +278,27 @@ struct PullRequestListTests {
         #expect(await github.requestCount > requestsForOneRefresh)
     }
 
-    @Test func refreshesPeriodicallyUntilCancelled() async throws {
+    @Test func refreshesEachIntervalUntilCancelled() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
-        let model = try listModel(github, refreshInterval: .milliseconds(10))
+        let clock = ManualClock()
+        let model = try listModel(github, refreshInterval: .seconds(180), sleep: { try await clock.sleep(for: $0) })
 
         let refreshing = Task { await model.keepRefreshed() }
         defer { refreshing.cancel() }
-        // Generous, as other suites' git commands can hold up the main actor for seconds.
-        let deadline = ContinuousClock.now + .seconds(30)
-        while await github.requestCount < 6, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-
-        #expect(await github.requestCount >= 6)
+        try await clock.untilAsleep()
         #expect(model.hasStoredLists)
+        var requests = await github.requestCount
+        for _ in 1...3 {
+            try await clock.advance()
+            let after = await github.requestCount
+            #expect(after > requests, "each interval refreshes again")
+            requests = after
+        }
+        #expect(clock.sleeps == Array(repeating: .seconds(180), count: 4))
+
+        refreshing.cancel()
+        await refreshing.value
+        #expect(await github.requestCount == requests, "nothing refreshes once cancelled")
     }
 
     @Test func openingAPullRequestHandsItToTheSelectionHandler() async throws {
@@ -313,14 +320,55 @@ private func listModel(
     token: String = FakeGitHub.validToken,
     store: PullRequestStore? = nil,
     refreshInterval: Duration = .seconds(180),
-    staleAfter: Duration = .seconds(300)
+    staleAfter: Duration = .seconds(300),
+    sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
 ) throws -> PullRequestListModel {
     try PullRequestListModel(
         client: github.client(token: token),
         store: store ?? .inMemory(),
         refreshInterval: refreshInterval,
         staleAfter: staleAfter,
+        sleep: sleep,
         checkoutSearchRoots: [],
         onOpen: { _ in }
     )
+}
+
+/// Stands in for the clock the refresh loop sleeps on: a sleep lasts until the test advances
+/// time past it, or the sleeping task is cancelled.
+@MainActor
+private final class ManualClock {
+    /// How long each sleep asked for, in order.
+    private(set) var sleeps: [Duration] = []
+    private var sleeper: CheckedContinuation<Void, Error>?
+
+    func sleep(for duration: Duration) async throws {
+        sleeps.append(duration)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { sleeper = $0 }
+        } onCancel: {
+            Task { @MainActor in self.wake(throwing: CancellationError()) }
+        }
+    }
+
+    /// Ends the current sleep, as if its time had passed, and waits for the next one.
+    func advance() async throws {
+        wake(throwing: nil)
+        try await untilAsleep()
+    }
+
+    /// Waits for the loop to sleep. The deadline only guards against a hang.
+    func untilAsleep() async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while sleeper == nil {
+            try #require(ContinuousClock.now < deadline, "the refresh loop never went to sleep")
+            try await Task.sleep(for: .milliseconds(1))
+        }
+    }
+
+    private func wake(throwing error: (any Error)?) {
+        guard let sleeper else { return }
+        self.sleeper = nil
+        if let error { sleeper.resume(throwing: error) } else { sleeper.resume() }
+    }
 }

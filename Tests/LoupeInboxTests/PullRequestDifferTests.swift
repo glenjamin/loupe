@@ -4,23 +4,23 @@ import Testing
 
 struct PullRequestDifferTests {
     @Test func diffsAPullRequestAgainstWhereItBranchedOffLeavingOutHiddenPaths() async throws {
-        let repo = try FakeRepository()
-        let branchPoint = try repo.git(["rev-parse", "HEAD"], in: repo.checkout)
-        try repo.switchTo("feature", creatingFrom: "main")
-        try repo.commit([
+        let repo = try await FakeRepository()
+        let branchPoint = try await repo.git(["rev-parse", "HEAD"], in: repo.checkout)
+        try await repo.switchTo("feature", creatingFrom: "main")
+        try await repo.commit([
             "app.go": "package app\n\nfunc Hello() string { return \"hello, world\" }\n",
             "vendor/example.com/lib/new.go": "package lib\n\nfunc New() {}\n",
             "go.sum": "example.com/lib v1.1.0 h1:def\n",
             "gen/schema.go": "package gen // regenerated\n",
             "vendor/patched/fix.go": "package patched\n",
         ], message: "Greet the world")
-        let head = try repo.rename("README", to: "README.md", message: "Rename the readme")
-        try repo.push(asPullRequest: 7)
+        let head = try await repo.rename("README", to: "README.md", message: "Rename the readme")
+        try await repo.push(asPullRequest: 7)
         // The base moves on after the PR branched, and the checkout hasn't fetched it.
-        try repo.switchTo("main")
-        let base = try repo.commit(["other.go": "package app\n"], message: "Meanwhile on main")
-        try repo.push()
-        let before = try repo.checkoutState()
+        try await repo.switchTo("main")
+        let base = try await repo.commit(["other.go": "package app\n"], message: "Meanwhile on main")
+        try await repo.push()
+        let before = try await repo.checkoutState()
 
         let differ = PullRequestDiffer()
         let fetched = try await differ.fetch(number: 7, baseRefName: "main", baseRefOid: base, in: repo.checkout)
@@ -39,19 +39,19 @@ struct PullRequestDifferTests {
         }
         #expect(diff.hiddenPaths.sorted() == ["gen/schema.go", "go.sum", "vendor/example.com/lib/new.go"])
 
-        #expect(try repo.git(["rev-parse", "refs/loupe/pull/7/head"], in: repo.checkout) == head)
-        #expect(try repo.checkoutState() == before)
+        #expect(try await repo.git(["rev-parse", "refs/loupe/pull/7/head"], in: repo.checkout) == head)
+        #expect(try await repo.checkoutState() == before)
     }
 
     @Test func fetchesTheBaseBranchWhenItsCommitIsUnknown() async throws {
-        let repo = try FakeRepository()
-        try repo.switchTo("feature", creatingFrom: "main")
-        try repo.commit(["app.go": "package app\n"], message: "Simplify")
-        try repo.push(asPullRequest: 3)
-        try repo.switchTo("main")
-        try repo.commit(["app.go": "package app // moved on\n"], message: "Diverge")
-        try repo.push()
-        let branchPoint = try repo.git(["rev-parse", "HEAD"], in: repo.checkout)
+        let repo = try await FakeRepository()
+        try await repo.switchTo("feature", creatingFrom: "main")
+        try await repo.commit(["app.go": "package app\n"], message: "Simplify")
+        try await repo.push(asPullRequest: 3)
+        try await repo.switchTo("main")
+        try await repo.commit(["app.go": "package app // moved on\n"], message: "Diverge")
+        try await repo.push()
+        let branchPoint = try await repo.git(["rev-parse", "HEAD"], in: repo.checkout)
 
         let differ = PullRequestDiffer()
         let fetched = try await differ.fetch(number: 3, baseRefName: "main", baseRefOid: nil, in: repo.checkout)
@@ -63,7 +63,7 @@ struct PullRequestDifferTests {
     }
 
     @Test func aPullRequestTheRemoteDoesNotHaveFailsWithGitsMessage() async throws {
-        let repo = try FakeRepository()
+        let repo = try await FakeRepository()
 
         let error = try await #require(throws: GitError.self) {
             try await PullRequestDiffer().fetch(number: 99, baseRefName: "main", baseRefOid: nil, in: repo.checkout)

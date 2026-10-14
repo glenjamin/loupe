@@ -26,12 +26,15 @@ public final class PullRequestListModel {
     private let store: PullRequestStore
     private let refreshInterval: Duration
     private let staleAfter: Duration
+    /// Waits out the refresh interval; tests pass one they control.
+    private let sleep: @Sendable (Duration) async throws -> Void
 
     public init(
         client: GitHubClient = GitHubClient(),
         store: PullRequestStore,
         refreshInterval: Duration = .seconds(180),
         staleAfter: Duration = .seconds(300),
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         checkoutSearchRoots: [URL] = CheckoutResolver.defaultSearchRoots,
         onOpen: @escaping @MainActor (PullRequestSummary) -> Void
     ) {
@@ -40,6 +43,7 @@ public final class PullRequestListModel {
         checkoutResolver = CheckoutResolver(store: store, searchRoots: checkoutSearchRoots)
         self.refreshInterval = refreshInterval
         self.staleAfter = staleAfter
+        self.sleep = sleep
         self.onOpen = onOpen
         do {
             snapshot = try store.snapshot()
@@ -186,7 +190,7 @@ public final class PullRequestListModel {
     public func keepRefreshed() async {
         while !Task.isCancelled {
             await refresh()
-            try? await Task.sleep(for: refreshInterval)
+            try? await sleep(refreshInterval)
         }
     }
 
