@@ -117,8 +117,19 @@ The signal is GitHub's notifications API, polled with `If-Modified-Since`: a 304
 
 The lists are the app's home, so their window has no close button and refuses closing, including the tab bar's "Close Other Tabs", which asks the window's delegate rather than checking the button. With no SwiftUI window scene there is no File menu of SwiftUI's, so the app supplies "Close Tab" (⌘W) and "Close All" (⌥⌘W); both pass over the lists rather than beep at them. "Merge All Windows" run from a PR's window would put the lists last, so they are moved back to the first tab.
 
+### Linguist's vendor list is narrowed for review
+
+Linguist's `vendor.yml` serves language statistics, so it also names things a reviewer must see: `testdata/`, test fixtures, `.github/`, git and editor config, `Jenkinsfile`, `.d.ts` declarations. GitHub itself never hides vendored paths in a diff. Loupe hides dependency trees, minified bundles, lockfiles and generated files, and keeps the rest; the kept patterns are listed verbatim in `PathFilter` and a test checks each still exists in Linguist's list, so a Linguist update that renames one is noticed rather than silently hiding files.
+
+### Snapshots are how anyone sees the UI without a screen
+
+`Scripts/snapshot.sh` builds the app, launches it as an invisible accessory process with its windows off every screen, waits for lists and diffs to load, writes a PNG per window and quits. Agents can't launch a GUI from the sandbox, so this is the only sanctioned way to run the app other than `--bench`; launching it any other way opens real windows on the user's screens.
+
+### The conversation tab is a web view of GitHub's own HTML
+
+A PR view has GitHub-style segmented tabs, Conversation and Files changed, inside the window rather than a second tier of native tabs. The conversation is one web view built from the `bodyHTML` fields GraphQL returns for the description, comments and reviews, so mentions, code blocks, tables, task lists and emoji render exactly as on github.com with no markdown engine of our own. The diff stays native. The HTML and its styling are ours to change later. Known limit: images attached to private repos need a browser session and may not load.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
-- Markdown rendering: `POST /markdown` into a web view versus a native renderer.
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.
