@@ -102,6 +102,10 @@ public struct RenderedDiff {
             let full = NSRange(location: row.start, length: row.length)
             attributed.addAttribute(.diffRowKind, value: row.kind.rawValue, range: full)
             attributed.addAttributes(style.gutter, range: NSRange(location: row.start, length: row.gutter))
+            if row.kind == .addition || row.kind == .deletion {
+                // The marker, just before the gutter's closing tab, reads stronger than the numbers.
+                attributed.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: row.start + row.gutter - 2, length: 1))
+            }
             if row.kind == .hunkHeader {
                 // The line ranges are muted; the function context after them stays the text colour.
                 let header = (out.substring(with: NSRange(location: row.start + row.gutter, length: row.length - row.gutter)) as NSString)

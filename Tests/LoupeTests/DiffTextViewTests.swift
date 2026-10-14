@@ -87,7 +87,7 @@ struct DiffTextViewTests {
         var continuationGlyphs = NSRange()
         _ = layoutManager.lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: &continuationGlyphs)
         var gutter = NSRange()
-        _ = rendered.text.attribute(.diffGutter, at: row.location, effectiveRange: &gutter)
+        _ = rendered.text.attribute(.diffGutter, at: row.location, longestEffectiveRange: &gutter, in: row)
         let codeStart = layoutManager.location(forGlyphAt: layoutManager.glyphIndexForCharacter(at: NSMaxRange(gutter))).x
         #expect(layoutManager.location(forGlyphAt: continuationGlyphs.location).x == codeStart)
 
@@ -125,7 +125,7 @@ struct DiffTextViewTests {
         }
         func codeStart(ofRowContaining needle: String) -> CGFloat {
             var gutter = NSRange()
-            _ = rendered.text.attribute(.diffGutter, at: row(containing: needle).location, effectiveRange: &gutter)
+            _ = rendered.text.attribute(.diffGutter, at: row(containing: needle).location, longestEffectiveRange: &gutter, in: row(containing: needle))
             return x(at: NSMaxRange(gutter))
         }
 
