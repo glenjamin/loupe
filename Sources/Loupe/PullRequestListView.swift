@@ -137,7 +137,7 @@ struct PullRequestRow: View {
             // The repo and number lead, as that's how PRs get talked about; the owner is
             // secondary and is the first thing to truncate in a narrow column.
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("\(repositoryName(pullRequest)) #\(pullRequest.number)")
+                Text(verbatim: "\(repositoryName(pullRequest)) #\(pullRequest.number)")
                     .font(.headline.monospacedDigit())
                     .layoutPriority(1)
                 StateBadge(pullRequest: pullRequest, showsOpen: false)

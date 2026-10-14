@@ -40,7 +40,7 @@ struct PullRequestView: View {
                 }
             }
         case .fetching:
-            ProgressView("Fetching #\(pullRequest.number) from origin…")
+            ProgressView { Text(verbatim: "Fetching #\(pullRequest.number) from origin…") }
         case .diffing:
             ProgressView("Diffing…")
         case let .ready(diff):
@@ -66,7 +66,7 @@ struct PullRequestHeader: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(repositoryName(pullRequest)) #\(pullRequest.number)")
+                    Text(verbatim: "\(repositoryName(pullRequest)) #\(pullRequest.number)")
                         .font(.headline.monospacedDigit())
                     StateBadge(pullRequest: pullRequest, showsOpen: true)
                     Text(pullRequest.title)
