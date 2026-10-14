@@ -22,44 +22,57 @@ func snapshot(window: NSWindow) async -> NSImage {
 
 /// The Debug menu, for seeing the app as an agent would.
 struct DebugCommands: Commands {
+    let windows: WindowManager
+
     var body: some Commands {
         CommandMenu("Debug") {
             Button("Save Snapshot of Window…") { saveSnapshotOfKeyWindow() }
                 .keyboardShortcut("s", modifiers: [.command, .option])
-            Button("Snapshot All Windows to Desktop") {
-                Task { await snapshotAllWindowsToDesktop() }
+            Button("Snapshot All Tabs to Desktop") {
+                Task { await snapshotAllTabsToDesktop(windows) }
             }
         }
     }
 }
 
-/// With `LOUPE_SNAPSHOT_DIR` set, the app writes a PNG of each window there once the lists have
-/// refreshed and each PR's diff is ready or has failed (or a time limit passes), then quits.
+/// With `LOUPE_SNAPSHOT_DIR` set, the app writes a PNG of the window with each item of its tab
+/// strip shown once the lists have refreshed and each PR's diff is ready or has failed (or a time
+/// limit passes), then quits.
 @MainActor
 enum SnapshotRun {
     static let directory = ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_DIR"].map {
         URL(filePath: $0, directoryHint: .isDirectory)
     }
 
-    static func start(tabs: TabsModel) {
+    static func start(windows: WindowManager) {
         guard let directory else { return }
+        let environment = ProcessInfo.processInfo.environment
+        let tabs = windows.tabs
         let deadline = Date.now.addingTimeInterval(20)
         let started = Date.now
         Task {
             let lists = tabs.lists
             await wait(until: deadline) { !lists.isLoading && (lists.error != nil || (lists.lastRefreshed ?? .distantPast) >= started) }
-            // Hidden tabs' views don't load their diffs, so they're asked for here.
+            // A tab's content is made when it's first shown, so each is shown once, and its diff
+            // asked for in case hidden content doesn't load it.
+            let selected = tabs.selected
+            for tab in tabs.tabs { windows.select(tab.id) }
+            windows.select(selected)
             for tab in tabs.tabs { Task { await tab.load() } }
             await wait(until: deadline) { tabs.tabs.allSatisfy(\.phase.isSettled) }
-            // LOUPE_SNAPSHOT_TAB=conversation shows each PR's conversation, once loaded and drawn.
-            if ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_TAB"] == "conversation" {
-                for tab in tabs.tabs { tab.section = .conversation }
-                await wait(until: deadline) {
-                    tabs.tabs.allSatisfy { $0.isConversationSettled && ConversationPage.existingPage(for: $0)?.isLoaded == true }
-                }
+            // LOUPE_SNAPSHOT_TAB picks each PR's section; a commit or file to show needs the files.
+            if environment["LOUPE_SNAPSHOT_COMMIT"] != nil || environment["LOUPE_SNAPSHOT_FILE"] != nil {
+                for tab in tabs.tabs { tab.section = .files }
+            } else if let section = environment["LOUPE_SNAPSHOT_TAB"].flatMap(ReviewSection.init(named:)) {
+                for tab in tabs.tabs { tab.section = section }
+            }
+            // A conversation is shown once it's fetched and its web view has drawn it.
+            let conversations = tabs.tabs.filter { $0.section == .conversation }
+            await wait(until: deadline) {
+                conversations.allSatisfy { $0.isConversationSettled && ConversationPage.existingPage(for: $0)?.isLoaded == true }
             }
             // LOUPE_SNAPSHOT_COMMIT shows one commit's changes: its 1-based index, or an oid prefix.
-            if let wanted = ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_COMMIT"] {
+            if let wanted = environment["LOUPE_SNAPSHOT_COMMIT"] {
                 for tab in tabs.tabs {
                     guard case .ready(let review) = tab.phase, let commit = review.commits.picked(by: wanted) else { continue }
                     await tab.showCommit(commit.oid)
@@ -67,7 +80,7 @@ enum SnapshotRun {
             }
             // LOUPE_SNAPSHOT_FILE picks the first file whose path contains it, hidden ones after
             // the rest, to snapshot a given kind of file.
-            if let wanted = ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_FILE"] {
+            if let wanted = environment["LOUPE_SNAPSHOT_FILE"] {
                 for tab in tabs.tabs {
                     guard case .ready(let changes)? = tab.shownChanges else { continue }
                     if let file = changes.files.first(where: { $0.path.contains(wanted) }) {
@@ -81,7 +94,12 @@ enum SnapshotRun {
             // A moment for the final state to be drawn.
             try? await Task.sleep(for: .milliseconds(500))
             do {
-                for url in try await saveSnapshotsOfAllWindows(to: directory) { print(url.path(percentEncoded: false)) }
+                // LOUPE_SNAPSHOT_CLICK_TAB clicks a strip item (1-based, or "lists") first and
+                // snapshots the result, to show that the strip takes clicks.
+                if let wanted = environment["LOUPE_SNAPSHOT_CLICK_TAB"] {
+                    print(try await saveSnapshotAfterClicking(wanted, in: windows, to: directory).path(percentEncoded: false))
+                }
+                for url in try await saveSnapshotsOfAllTabs(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
             } catch {
                 FileHandle.standardError.write(Data("Couldn't write snapshots: \(error)\n".utf8))
             }
@@ -96,39 +114,64 @@ enum SnapshotRun {
     }
 }
 
-/// Writes each of the app's windows to `directory` as `<index>-<title>.png`, bringing each tab
-/// forward in turn so it's drawn, and returns the files written.
+/// Writes the window to `directory` as `<index>-<title>.png` with each item of the tab strip shown
+/// in turn, the lists first, and returns the files written.
 @MainActor
-func saveSnapshotsOfAllWindows(to directory: URL) async throws -> [URL] {
+func saveSnapshotsOfAllTabs(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let windows = appWindows()
-    let selected = NSApp.keyWindow
+    let selected = windows.tabs.selected
     var written: [URL] = []
-    for (index, window) in windows.enumerated() {
-        window.tabGroup?.selectedWindow = window
-        bringForward(window)
-        try? await Task.sleep(for: .milliseconds(300))
-        window.layoutIfNeeded()
-        window.displayIfNeeded()
-        let url = directory.appending(path: "\(index + 1)-\(sanitised(window.title)).png")
-        try pngData(await snapshot(window: window)).write(to: url)
+    for (index, id) in ([nil] + windows.tabs.tabs.map(\.id)).enumerated() {
+        windows.select(id)
+        let url = directory.appending(path: "\(index + 1)-\(sanitised(windows.title(of: id))).png")
+        try await saveSnapshot(of: window, to: url)
         written.append(url)
     }
-    if let selected {
-        selected.tabGroup?.selectedWindow = selected
-        bringForward(selected)
-    }
+    windows.select(selected)
     return written
 }
 
-/// Brings the window's tab forward, without taking focus during a snapshot run, where the app
-/// must stay behind whatever the user is doing.
+/// Brings the window forward, without taking focus during a snapshot run, where the app must stay
+/// behind whatever the user is doing.
 @MainActor
 func bringForward(_ window: NSWindow) {
     if SnapshotRun.directory != nil {
         window.orderBack(nil)
     } else {
         window.makeKeyAndOrderFront(nil)
+    }
+}
+
+/// Clicks the strip item `wanted` names (1-based, or "lists") and writes the window as
+/// `clicked-<title>.png`, titled by whatever the click showed.
+@MainActor
+private func saveSnapshotAfterClicking(_ wanted: String, in windows: WindowManager, to directory: URL) async throws -> URL {
+    guard let window = windows.mainWindow, let position = wanted == "lists" ? 0 : Int(wanted),
+          windows.clickStripItem(at: position)
+    else { throw SnapshotError.noSuchTab(wanted) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let url = directory.appending(path: "clicked-\(sanitised(windows.title(of: windows.tabs.selected))).png")
+    try await saveSnapshot(of: window, to: url)
+    return url
+}
+
+/// Lets the window settle and draw, then writes it to `url`.
+@MainActor
+private func saveSnapshot(of window: NSWindow, to url: URL) async throws {
+    try? await Task.sleep(for: .milliseconds(300))
+    window.layoutIfNeeded()
+    window.displayIfNeeded()
+    try pngData(await snapshot(window: window)).write(to: url)
+}
+
+private enum SnapshotError: Error, CustomStringConvertible {
+    case noSuchTab(String)
+
+    var description: String {
+        switch self {
+        case let .noSuchTab(wanted): "no tab strip item \(wanted) to click"
+        }
     }
 }
 
@@ -156,23 +199,15 @@ private func saveSnapshot(_ image: NSImage, of window: NSWindow) {
 }
 
 @MainActor
-private func snapshotAllWindowsToDesktop() async {
+private func snapshotAllTabsToDesktop(_ windows: WindowManager) async {
     let stamp = Date.now.formatted(.iso8601.dateSeparator(.dash).timeSeparator(.omitted).timeZoneSeparator(.omitted))
     let directory = URL.desktopDirectory.appending(path: "Loupe Snapshots \(stamp)", directoryHint: .isDirectory)
     do {
-        _ = try await saveSnapshotsOfAllWindows(to: directory)
+        _ = try await saveSnapshotsOfAllTabs(in: windows, to: directory)
         NSWorkspace.shared.activateFileViewerSelecting([directory])
     } catch {
         NSAlert(error: error).runModal()
     }
-}
-
-/// The app's windows in tab order, then any outside the tab group.
-@MainActor
-private func appWindows() -> [NSWindow] {
-    let windows = NSApp.windows.filter { $0.tabbingIdentifier == WindowManager.tabbingIdentifier }
-    let grouped = windows.first?.tabGroup?.windows ?? []
-    return grouped + windows.filter { window in !grouped.contains { $0 === window } }
 }
 
 /// Draws each visible web view under `root` onto `rep`, which holds `root` as drawn.
@@ -224,6 +259,17 @@ private extension [PullRequestCommit] {
             return indices.contains(index - 1) ? self[index - 1] : nil
         }
         return first { $0.oid.hasPrefix(wanted) }
+    }
+}
+
+private extension ReviewSection {
+    /// The section `LOUPE_SNAPSHOT_TAB` names.
+    init?(named name: String) {
+        switch name {
+        case "conversation": self = .conversation
+        case "files": self = .files
+        default: return nil
+        }
     }
 }
 

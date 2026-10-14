@@ -21,7 +21,7 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 - `LoupeStore`: SQLite via GRDB, with migrations.
 - `LoupeGit`: local checkout discovery and read-only git.
 - `LoupeInbox`: the PR list model that wires GitHub, store and UI.
-- `Loupe`: the app. `swift run Loupe` opens the PR list; `swift run Loupe <diff>` opens a diff file; `--bench` times the diff view.
+- `Loupe`: the app. `swift run Loupe` opens its one window, the PR lists with a tab strip of open PRs under the title bar; `swift run Loupe <diff>` opens a diff file; `--bench` times the diff view.
 
 ## Conventions
 

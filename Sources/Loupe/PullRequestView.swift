@@ -41,7 +41,6 @@ struct PullRequestView: View {
         // Showing the tab produces the diff if it isn't already in memory. Changes on GitHub
         // after that are offered by the banner rather than replacing what's being read.
         .task { await tab.load() }
-        .background(WindowReader { ReviewWindows.shared.register(tab, for: $0) })
     }
 
     @ViewBuilder

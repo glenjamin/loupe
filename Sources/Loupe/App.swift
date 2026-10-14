@@ -4,8 +4,8 @@ import LoupeInbox
 import LoupeStore
 import SwiftUI
 
-/// The PR lists in one window and each opened PR in its own, all grouped as native window tabs.
-/// The windows are AppKit's, made by `WindowManager`; SwiftUI provides only the menu bar.
+/// One window with the PR lists and a tab per opened PR. The window is AppKit's, made by
+/// `WindowManager`; SwiftUI provides only the menu bar.
 struct LoupeApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
     private let windows: WindowManager
@@ -25,7 +25,7 @@ struct LoupeApp: App {
                 CommandGroup(replacing: .appSettings) {}
                 TabCommands(windows: windows)
                 DiffCommands()
-                DebugCommands()
+                DebugCommands(windows: windows)
             }
     }
 }
@@ -47,9 +47,9 @@ struct DiffApp: App {
 /// Launched as a bare SwiftPM executable (no .app bundle), the process starts as a background
 /// app and its window never takes keyboard focus unless it's promoted to a regular app.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// The app's windows group as native tabs, which this would turn off.
+    /// The app's tabs are its own, so the Window menu offers no native window tabs.
     func applicationWillFinishLaunching(_ notification: Notification) {
-        NSWindow.allowsAutomaticWindowTabbing = true
+        NSWindow.allowsAutomaticWindowTabbing = false
         // Before any window shows, so a snapshot run is never activated by one.
         if SnapshotRun.directory != nil { NSApp.setActivationPolicy(.accessory) }
     }

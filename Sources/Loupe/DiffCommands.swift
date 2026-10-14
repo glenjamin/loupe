@@ -13,17 +13,17 @@ struct DiffCommands: Commands {
             Toggle("Wrap Lines", isOn: $wrapLines)
                 .keyboardShortcut("l", modifiers: [.command, .option])
             Divider()
-            // ⌃ rather than ⌘, which picks the window tab by number.
-            Button("Conversation") { windows.keyTab?.section = .conversation }
+            // ⌃ rather than ⌘, which picks the PR tab by number.
+            Button("Conversation") { windows.shownTab?.section = .conversation }
                 .keyboardShortcut("1", modifiers: .control)
-                .disabled(windows.keyTab == nil)
-            Button("Files Changed") { windows.keyTab?.section = .files }
+                .disabled(windows.shownTab == nil)
+            Button("Files Changed") { windows.shownTab?.section = .files }
                 .keyboardShortcut("2", modifiers: .control)
-                .disabled(windows.keyTab == nil)
+                .disabled(windows.shownTab == nil)
         }
         CommandMenu("Review") {
             // Only while the files are shown, where there's a file to act on.
-            let tab = windows.keyTab.flatMap { $0.section == .files ? $0 : nil }
+            let tab = windows.shownTab.flatMap { $0.section == .files ? $0 : nil }
             Button("Mark Reviewed and Show Next File") {
                 if let tab { Task { await tab.markViewedAndAdvance() } }
             }
@@ -44,24 +44,19 @@ enum DiffSettings {
     static let wrapLinesDefault = true
 }
 
-/// Which PR each window shows, and so which PR the review keys act on: the key window's.
-/// ⌘↓ and `]` mark the shown file viewed and show the next one, and ⇧V toggles it, unless the
-/// focus is somewhere text can be typed.
+/// Which PR the window shows, and so which PR the review keys act on. ⌘↓ and `]` mark the shown
+/// file viewed and show the next one, and ⇧V toggles it, unless the focus is somewhere text can
+/// be typed.
 @Observable
 @MainActor
 final class ReviewWindows {
     static let shared = ReviewWindows()
 
-    /// The PR in the key window, if that's a PR's window.
-    private(set) var keyTab: PullRequestTab?
-    @ObservationIgnored private let tabs = NSMapTable<NSWindow, PullRequestTab>.weakToStrongObjects()
+    /// The shown PR, nil while the lists are shown.
+    private(set) var shownTab: PullRequestTab?
+    @ObservationIgnored private weak var window: NSWindow?
 
     private init() {
-        let center = NotificationCenter.default
-        center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] note in
-            let window = note.object as? NSWindow
-            MainActor.assumeIsolated { self?.keyTab = window.flatMap { self?.tabs.object(forKey: $0) } }
-        }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             // Local monitors run on the main thread, where the event came from.
             nonisolated(unsafe) let event = event
@@ -70,14 +65,15 @@ final class ReviewWindows {
         }
     }
 
-    func register(_ tab: PullRequestTab, for window: NSWindow) {
-        tabs.setObject(tab, forKey: window)
-        if window.isKeyWindow { keyTab = tab }
+    /// Records that `window` now shows `tab`, or the lists for nil.
+    func show(_ tab: PullRequestTab?, in window: NSWindow?) {
+        if shownTab !== tab { shownTab = tab }
+        self.window = window
     }
 
     /// Whether `event` was a review key, now acted on.
     private func handle(_ event: NSEvent) -> Bool {
-        guard let window = event.window, window.isKeyWindow, let tab = tabs.object(forKey: window),
+        guard let window = event.window, window === self.window, window.isKeyWindow, let tab = shownTab,
               tab.section == .files, let path = tab.selectedFile, !isTyping(in: window)
         else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
@@ -91,28 +87,6 @@ final class ReviewWindows {
             return true
         }
         return false
-    }
-}
-
-/// Reports the window the view is in once it has one.
-struct WindowReader: NSViewRepresentable {
-    let found: @MainActor (NSWindow) -> Void
-
-    func makeNSView(context: Context) -> NSView {
-        let view = WindowReportingView()
-        view.found = found
-        return view
-    }
-
-    func updateNSView(_ view: NSView, context: Context) {}
-}
-
-private final class WindowReportingView: NSView {
-    var found: @MainActor (NSWindow) -> Void = { _ in }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if let window { found(window) }
     }
 }
 
