@@ -21,6 +21,13 @@ public final class PullRequestTab: Identifiable {
     public private(set) var viewedStates: [String: FileViewedState] = [:]
     /// Why the last change to a file's viewed state didn't reach GitHub, until one does.
     public private(set) var viewedStateError: String?
+    /// Which of the PR's tabs is shown, kept while the window lives.
+    public var section = ReviewSection.files
+    /// The PR's conversation: as stored when the tab opened, then as GitHub says once asked.
+    public private(set) var conversation: Conversation?
+    /// Why the conversation couldn't be fetched last time it was asked for.
+    public private(set) var conversationError: String?
+    public private(set) var isFetchingConversation = false
 
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
@@ -47,6 +54,11 @@ public final class PullRequestTab: Identifiable {
         } catch {
             log("Couldn't read the viewed files of \(opened.repository)#\(opened.number): \(error)")
         }
+        do {
+            conversation = try store.conversation(of: id)
+        } catch {
+            log("Couldn't read the conversation of \(opened.repository)#\(opened.number): \(error)")
+        }
     }
 
     /// As of the lists' last refresh.
@@ -70,8 +82,8 @@ public final class PullRequestTab: Identifiable {
         return now.hasSameActivity(as: seen) ? nil : .updated
     }
 
-    /// Produces the diff and asks GitHub which files are viewed, unless already asked. Returns
-    /// once the diff is ready or has failed.
+    /// Produces the diff and asks GitHub which files are viewed and for the conversation, unless
+    /// already asked. Returns once all three are done, one way or another.
     public func load() async {
         if let loading {
             await loading.value
@@ -82,8 +94,10 @@ public final class PullRequestTab: Identifiable {
         seen = pullRequest
         let task = Task {
             async let viewed: Void = refreshViewedStates()
+            async let conversation: Void = refreshConversation()
             await produce(pullRequest)
             await viewed
+            await conversation
             loading = nil
         }
         loading = task
@@ -96,8 +110,8 @@ public final class PullRequestTab: Identifiable {
         await load()
     }
 
-    /// Brings the PR up to date with GitHub and produces its diff again, keeping the shown file
-    /// if it's still there.
+    /// Brings the PR up to date with GitHub and produces its diff and fetches its conversation
+    /// again, keeping the shown file if it's still there.
     public func reload() async {
         do {
             try await lists.checkForChanges(to: [id])
@@ -179,6 +193,11 @@ public final class PullRequestTab: Identifiable {
         return (files[start...] + files[..<start]).first { $0 != id && !viewedState(of: $0).isViewed }
     }
 
+    /// Whether the conversation has been asked for and has arrived or failed.
+    public var isConversationSettled: Bool {
+        !isFetchingConversation && (conversation != nil || conversationError != nil)
+    }
+
     /// Takes the viewed states from GitHub, keeping any change of the viewer's still on its way.
     private func refreshViewedStates() async {
         let fetched: [String: FileViewedState]
@@ -197,6 +216,27 @@ public final class PullRequestTab: Identifiable {
             try await store.replaceViewedStates(of: id, with: states)
         } catch {
             log("Couldn't store the viewed files of \(title): \(error)")
+        }
+    }
+
+    /// Takes the conversation from GitHub and stores it, keeping what was shown if it fails.
+    private func refreshConversation() async {
+        isFetchingConversation = true
+        defer { isFetchingConversation = false }
+        let fetched: Conversation
+        do {
+            fetched = try await client.conversation(ofPullRequest: id)
+        } catch {
+            conversationError = error.localizedDescription
+            log("Couldn't get the conversation of \(title): \(error.localizedDescription)")
+            return
+        }
+        conversation = fetched
+        conversationError = nil
+        do {
+            try await store.replaceConversation(of: id, with: fetched, fetchedAt: .now)
+        } catch {
+            log("Couldn't store the conversation of \(title): \(error)")
         }
     }
 
@@ -233,6 +273,12 @@ public enum PendingChange: Sendable, Equatable {
     case newCommits
     /// Anything else, such as a comment, a review or a change of state.
     case updated
+}
+
+/// The PR view's two tabs, as on github.com.
+public enum ReviewSection: Sendable, Hashable {
+    case conversation
+    case files
 }
 
 /// Where a tab's diff has got to.

@@ -10,7 +10,12 @@ Raw responses, captured 2026-10-14 with `gh api graphql`:
 - `gh api '/notifications?participating=true' -i` → `notifications-headers.txt` (the 200's headers, then a 304's from repeating it with `If-Modified-Since`) and `notifications.json` (the first three of the page's 50 notifications, each `repository` cut down to a few fields). The tests' fake GitHub serves notifications in this shape.
 - `viewed-files-query.graphql` → `viewed-files.json`: a PR's files' `viewerViewedState`, paged by `node(id:)`. `viewed-mutations.graphql` → `viewed-mark.json`: `markFileAsViewed(input: {pullRequestId, path})`; `unmarkFileAsViewed` takes the same input. Captured on stagehand#1727 by marking then unmarking one file, so nothing was left changed. `viewed-mark-error.json` is GitHub's `UNPROCESSABLE` refusal of a path not in the PR. The tests' fake serves these shapes.
 
+- `conversation-query.graphql` → `conversation.json`: a PR's conversation as the app asks for it by `node(id:)`, captured on atrium#2928 (7 reviews, 5 threads of which 4 resolved and 2 outdated, replies, comments, force-pushes and commits). The tests' fake serves it, paging its timeline.
+
 ## Surprises and shapes
+
+**The timeline leaves out reply-only reviews.** Each reply in a review thread is its own `COMMENTED` review with an empty body, and `timelineItems(itemTypes: [PULL_REQUEST_REVIEW])` returned 2 of atrium#2928's 7 reviews: the one that started the threads and the viewer's `PENDING` one (whose `submittedAt` is null). The replies are only reachable through `reviewThreads { comments }`, so those carry the comment bodies and authors; a review's own `comments` give the path, lines and `diffHunk` of the threads it started. GitHub's timeline does the same, showing replies inside their threads.
+
 
 **`mergeable` is lazy.** It's `UNKNOWN` on merged PRs and can be `UNKNOWN` on an open PR until GitHub computes it in the background; atrium#2928 (open) returned `MERGEABLE` with `mergeStateStatus: BLOCKED` (awaiting review). The app should treat `UNKNOWN` as "checking" and re-poll, and use `mergeStateStatus` for the reason it can't merge.
 

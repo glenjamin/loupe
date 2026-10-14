@@ -170,7 +170,7 @@ private struct ViewedApp {
 
     private static func tabs(_ github: FakeGitHub, _ viewed: FakeViewedFiles, _ store: PullRequestStore) -> TabsModel {
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
-        return TabsModel(lists: lists, store: store, client: viewed.client(), notifications: github.notifications())
+        return TabsModel(lists: lists, store: store, client: FakePullRequestDetails(viewed: viewed).client(), notifications: github.notifications())
     }
 }
 

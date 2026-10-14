@@ -1,0 +1,37 @@
+query($id: ID!, $after: String) {
+  node(id: $id) {
+    ... on PullRequest {
+      bodyHTML
+      createdAt
+      author { login avatarUrl }
+      timelineItems(first: 100, after: $after, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, HEAD_REF_FORCE_PUSHED_EVENT, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, REVIEW_REQUESTED_EVENT, READY_FOR_REVIEW_EVENT]) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          __typename
+          ... on IssueComment { id bodyHTML createdAt isMinimized author { login avatarUrl } }
+          ... on PullRequestReview {
+            id state bodyHTML createdAt submittedAt author { login avatarUrl }
+            comments(first: 50) { nodes { id bodyHTML path line originalLine diffHunk outdated isMinimized replyTo { id } } }
+          }
+          ... on PullRequestCommit { id commit { oid messageHeadline committedDate author { name user { login avatarUrl } } } }
+          ... on HeadRefForcePushedEvent { id createdAt actor { login avatarUrl } beforeCommit { oid } afterCommit { oid } }
+          ... on MergedEvent { id createdAt actor { login avatarUrl } commit { oid } mergeRefName }
+          ... on ClosedEvent { id createdAt actor { login avatarUrl } }
+          ... on ReopenedEvent { id createdAt actor { login avatarUrl } }
+          ... on ReviewRequestedEvent { id createdAt actor { login avatarUrl } requestedReviewer { __typename ... on User { login } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } }
+          ... on ReadyForReviewEvent { id createdAt actor { login avatarUrl } }
+        }
+      }
+      reviewThreads(first: 100) {
+        nodes { id isResolved isOutdated path line comments(first: 100) { nodes { id bodyHTML createdAt isMinimized author { login avatarUrl } } } }
+      }
+      commits(last: 1) {
+        nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+          __typename
+          ... on CheckRun { name status conclusion detailsUrl }
+          ... on StatusContext { context state description targetUrl }
+        } } } } }
+      }
+    }
+  }
+}

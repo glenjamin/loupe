@@ -91,7 +91,7 @@ public struct GitHubClient: Sendable {
         let _: IgnoredResponse = try await query(mutation, variables: FileVariables(pullRequestId: pullRequestId, path: path))
     }
 
-    private func query<Response: Decodable>(
+    func query<Response: Decodable>(
         _ query: String,
         variables: some Encodable & Sendable,
         allowingMissingNodes: Bool = false

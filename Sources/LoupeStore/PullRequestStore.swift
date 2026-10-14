@@ -197,6 +197,80 @@ public struct PullRequestStore: Sendable {
                 t.primaryKey(["pullRequestId", "path"])
             }
         }
+        // Each PR's conversation as GitHub last returned it, so a tab shows it before asking.
+        migrator.registerMigration("Conversations") { db in
+            try db.create(table: "conversation") { t in
+                t.primaryKey("pullRequestId", .text).references("pullRequest", onDelete: .cascade)
+                t.column("authorLogin", .text)
+                t.column("authorAvatarUrl", .text)
+                t.column("createdAt", .datetime).notNull()
+                t.column("bodyHTML", .text).notNull()
+                t.column("fetchedAt", .datetime).notNull()
+            }
+            // One row per kind of event; the columns a kind doesn't use are null.
+            try db.create(table: "timelineItem") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequest", onDelete: .cascade)
+                t.column("id", .text).notNull()
+                t.column("position", .integer).notNull()
+                t.column("kind", .text).notNull()
+                t.column("date", .datetime).notNull()
+                t.column("actorLogin", .text)
+                t.column("actorAvatarUrl", .text)
+                t.column("bodyHTML", .text)
+                t.column("isMinimized", .boolean)
+                t.column("reviewState", .text)
+                t.column("commitOid", .text)
+                t.column("previousOid", .text)
+                t.column("detail", .text)
+                t.primaryKey(["pullRequestId", "id"])
+            }
+            try db.create(table: "reviewComment") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequest", onDelete: .cascade)
+                t.column("id", .text).notNull()
+                t.column("reviewId", .text).notNull()
+                t.column("position", .integer).notNull()
+                t.column("bodyHTML", .text).notNull()
+                t.column("path", .text).notNull()
+                t.column("line", .integer)
+                t.column("originalLine", .integer)
+                t.column("diffHunk", .text).notNull()
+                t.column("isOutdated", .boolean).notNull()
+                t.column("isMinimized", .boolean).notNull()
+                t.column("replyToId", .text)
+                t.primaryKey(["pullRequestId", "id"])
+            }
+            try db.create(table: "reviewThread") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequest", onDelete: .cascade)
+                t.column("id", .text).notNull()
+                t.column("position", .integer).notNull()
+                t.column("isResolved", .boolean).notNull()
+                t.column("isOutdated", .boolean).notNull()
+                t.column("path", .text).notNull()
+                t.column("line", .integer)
+                t.primaryKey(["pullRequestId", "id"])
+            }
+            try db.create(table: "threadComment") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequest", onDelete: .cascade)
+                t.column("id", .text).notNull()
+                t.column("threadId", .text).notNull()
+                t.column("position", .integer).notNull()
+                t.column("authorLogin", .text)
+                t.column("authorAvatarUrl", .text)
+                t.column("createdAt", .datetime).notNull()
+                t.column("bodyHTML", .text).notNull()
+                t.column("isMinimized", .boolean).notNull()
+                t.primaryKey(["pullRequestId", "id"])
+            }
+            try db.create(table: "checkContext") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequest", onDelete: .cascade)
+                t.column("position", .integer).notNull()
+                t.column("name", .text).notNull()
+                t.column("status", .text).notNull()
+                t.column("description", .text)
+                t.column("url", .text)
+                t.primaryKey(["pullRequestId", "position"])
+            }
+        }
         return migrator
     }
 

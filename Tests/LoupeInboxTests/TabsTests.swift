@@ -261,7 +261,7 @@ private struct App {
 
     private static func tabs(_ github: FakeGitHub, _ store: PullRequestStore) -> TabsModel {
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
-        return TabsModel(lists: lists, store: store, notifications: github.notifications(), fallbackInterval: fallbackInterval)
+        return TabsModel(lists: lists, store: store, client: FakePullRequestDetails().client(), notifications: github.notifications(), fallbackInterval: fallbackInterval)
     }
 
     /// Distinct from GitHub's poll intervals, to tell which one a round waits for.
