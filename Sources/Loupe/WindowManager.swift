@@ -50,10 +50,14 @@ final class WindowManager {
     func showLists() {
         if let listsWindow { return select(listsWindow) }
         let window = makeWindow(ListsContent(lists: tabs.lists), title: "Pull Requests")
+        // The lists are the app's home, so they have no close button and refuse every way of
+        // closing short of quitting.
+        window.styleMask.remove(.closable)
         window.onClose = { [weak self] in self?.listsWindow = nil }
         listsWindow = window
         if let host = windows.first(where: { $0 !== window }) {
             host.addTabbedWindow(window, ordered: .below)
+            keepOffScreenForSnapshot(window)
         } else {
             place(window)
         }
@@ -66,6 +70,11 @@ final class WindowManager {
     func showPullRequest(id: String) {
         guard let tab = tabs.tab(id: id) else { return }
         show(tab)
+    }
+
+    /// Closes every PR's window, leaving the lists.
+    func closePullRequests() {
+        for window in pullRequestWindows.values { window.performClose(nil) }
     }
 
     private func show(_ tab: PullRequestTab) {
@@ -81,6 +90,7 @@ final class WindowManager {
         }
         if let last = windows.last {
             last.addTabbedWindow(window, ordered: .above)
+            keepOffScreenForSnapshot(window)
         } else {
             place(window)
         }
@@ -100,7 +110,16 @@ final class WindowManager {
         window.tabbingIdentifier = Self.tabbingIdentifier
         window.isReleasedWhenClosed = false
         window.onBecomeKey = { [weak self] in self?.tabs.select(nil) }
+        window.onMerge = { [weak self] in self?.keepListsFirst() }
+        window.delegate = window
         addAppIcon(to: window)
+        if SnapshotRun.directory != nil {
+            // Invisible and off every screen before it's ever ordered in; snapshots draw the views
+            // directly, so neither shows in them.
+            window.alphaValue = 0
+            window.isExcludedFromWindowsMenu = true
+            keepOffScreenForSnapshot(window)
+        }
         return window
     }
 
@@ -110,9 +129,7 @@ final class WindowManager {
     private func place(_ window: NSWindow) {
         guard let screen = NSScreen.main else { return }
         if SnapshotRun.directory != nil {
-            let size = screen.visibleFrame.size
-            let offScreen = NSScreen.screens.reduce(NSRect.null) { $0.union($1.frame) }
-            window.setFrame(NSRect(origin: NSPoint(x: offScreen.minX - size.width - 10_000, y: offScreen.minY - size.height - 10_000), size: size), display: false)
+            keepOffScreenForSnapshot(window)
         } else if !window.setFrameUsingName(Self.frameName) {
             window.setFrame(screen.visibleFrame, display: false)
         }
@@ -121,6 +138,23 @@ final class WindowManager {
     private func select(_ window: NSWindow) {
         window.tabGroup?.selectedWindow = window
         bringForward(window)
+    }
+
+    /// In a snapshot run, puts the window screen-sized but off every screen; joining a tab group
+    /// can move a window to the group's frame, so this follows that too.
+    private func keepOffScreenForSnapshot(_ window: NSWindow) {
+        guard SnapshotRun.directory != nil, let screen = NSScreen.main else { return }
+        let size = screen.visibleFrame.size
+        let screens = NSScreen.screens.reduce(NSRect.null) { $0.union($1.frame) }
+        let frame = NSRect(origin: NSPoint(x: screens.minX - size.width - 10_000, y: screens.minY - size.height - 10_000), size: size)
+        if window.frame != frame { window.setFrame(frame, display: false) }
+    }
+
+    /// Merging windows from a PR's window appends the lists last; they belong in the first tab.
+    private func keepListsFirst() {
+        guard let listsWindow, let group = listsWindow.tabGroup, group.windows.first !== listsWindow else { return }
+        group.removeWindow(listsWindow)
+        group.insertWindow(listsWindow, at: 0)
     }
 
     /// Keeps the lists refreshed, and watches open PRs for changes unless this is a snapshot run,
@@ -137,9 +171,12 @@ final class WindowManager {
     }
 }
 
-/// A Loupe window, reporting when it comes to the front and when it closes.
-final class LoupeWindow: NSWindow {
+/// A Loupe window, reporting when it comes to the front, merges the app's windows, and closes.
+/// It is its own delegate, so one without a close button also refuses the tab bar's "Close Other
+/// Tabs" and closing its whole tab group, which ask the delegate rather than check the button.
+final class LoupeWindow: NSWindow, NSWindowDelegate {
     var onBecomeKey: @MainActor () -> Void = {}
+    var onMerge: @MainActor () -> Void = {}
     var onClose: @MainActor () -> Void = {}
 
     override func becomeKey() {
@@ -152,9 +189,18 @@ final class LoupeWindow: NSWindow {
         SnapshotRun.directory == nil ? super.constrainFrameRect(frameRect, to: screen) : frameRect
     }
 
+    override func mergeAllWindows(_ sender: Any?) {
+        super.mergeAllWindows(sender)
+        onMerge()
+    }
+
     override func close() {
         onClose()
         super.close()
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        styleMask.contains(.closable)
     }
 }
 
@@ -207,14 +253,19 @@ struct PullRequestContent: View {
     }
 }
 
-/// Tab keys beyond those AppKit's window tabs already give (⌘W, ⌃Tab, ⌃⇧Tab, and moving and
-/// merging tabs), in the Window menu.
+/// Tab keys beyond those AppKit's window tabs already give (⌃Tab, ⌃⇧Tab, and moving and merging
+/// tabs). ⌘W is the app's own, as with no SwiftUI window scene there's no File menu to provide it.
 struct TabCommands: Commands {
     let windows: WindowManager
 
     var body: some Commands {
-        // PR windows open only from the lists.
-        CommandGroup(replacing: .newItem) {}
+        // In place of SwiftUI's Close and Close All, which would beep at the lists.
+        CommandGroup(replacing: .saveItem) {
+            Button("Close Tab") { closeKeyTab() }
+                .keyboardShortcut("w")
+            Button("Close All") { windows.closePullRequests() }
+                .keyboardShortcut("w", modifiers: [.command, .option])
+        }
         CommandGroup(before: .windowArrangement) {
             Button("Show Pull Requests") { windows.showLists() }
                 .keyboardShortcut("t")
@@ -248,6 +299,14 @@ private func addAppIcon(to window: NSWindow) {
     accessory.view = container
     accessory.layoutAttribute = .leading
     window.addTitlebarAccessoryViewController(accessory)
+}
+
+/// Closes the key window's tab, if it can be closed; on the lists ⌘W quietly does nothing rather
+/// than beep.
+@MainActor
+private func closeKeyTab() {
+    guard let window = NSApp.keyWindow, window.styleMask.contains(.closable) else { return }
+    window.performClose(nil)
 }
 
 /// Selects the key window's tab `number`, as ⌘1–⌘9 do; 9 is always the last tab.

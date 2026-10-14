@@ -113,6 +113,10 @@ An open PR's window notices when the PR changes on GitHub and says so in a banne
 
 The signal is GitHub's notifications API, polled with `If-Modified-Since`: a 304 costs no rate limit, so an idle poll is free, and GitHub's `X-Poll-Interval` (60 seconds) sets the pace, which is latency enough for review. Webhooks would be immediate but need admin rights on each repo and a process reachable from GitHub to receive them. Notifications only say which PRs to look at; the open PRs they name are then fetched in one `nodes(ids:)` query and stored, so the window compares stored rows and doesn't care which route an update came by. That lookup also fetches commit, comment and review thread counts, which the list searches don't: on a full page of 100 results they took the search to GitHub's time limit and it returned 502s, so a search keeps the counts last looked up. A token that can't read notifications falls back to that query over every open PR each minute. Notifications only cover threads the user participates in, which is every PR they've authored or been asked to review, and so nearly every PR Loupe opens. Whether a push on its own updates a notification hasn't been confirmed; if not, the lists' refresh still brings a moved head to the banner within a few minutes.
 
+### The lists tab can't be closed and stays first
+
+The lists are the app's home, so their window has no close button and refuses closing, including the tab bar's "Close Other Tabs", which asks the window's delegate rather than checking the button. With no SwiftUI window scene there is no File menu of SwiftUI's, so the app supplies "Close Tab" (⌘W) and "Close All" (⌥⌘W); both pass over the lists rather than beep at them. "Merge All Windows" run from a PR's window would put the lists last, so they are moved back to the first tab.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
