@@ -78,7 +78,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let icon = Self.icon { NSApp.applicationIconImage = icon }
     }
 
-    @MainActor private static let icon = Bundle.module.url(forResource: "Loupe", withExtension: "icns").flatMap(NSImage.init(contentsOf:))
+    /// The .app has the icon in its own resources; `swift run` has it only in SwiftPM's bundle,
+    /// whose accessor would look for it at the .app's root, where it can't go and stay signed.
+    @MainActor private static let icon = (Bundle.main.url(forResource: "Loupe", withExtension: "icns")
+        ?? Bundle.module.url(forResource: "Loupe", withExtension: "icns")).flatMap(NSImage.init(contentsOf:))
 }
 
 @Observable

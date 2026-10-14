@@ -79,6 +79,12 @@ The app icon's source is `Icon/loupe.svg`, a hand-drawn loupe over a cat-octopus
 Icon/render.sh
 ```
 
+`swift run` gets a Dock icon but ⌘-Tab shows a generic one, as it reads the icon from an app bundle. To build a release `.app` (ad-hoc signed, under `.build/`) and open it:
+
+```sh
+sh Scripts/bundle.sh && open .build/Loupe.app
+```
+
 ## What the probe showed
 
 Details are in `probe/NOTES.md`. In short:
