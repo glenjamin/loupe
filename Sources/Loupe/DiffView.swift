@@ -361,7 +361,8 @@ struct PullHint: View {
     let state: ReviewFooterState
 
     var body: some View {
-        Text(state.isArmed ? (state.isViewed ? state.label : "Marked reviewed") : state.pullHint)
+        // Armed, the same hint says what letting go does, as pull-to-refresh's "Release to refresh".
+        Text(state.isArmed && state.pullHint.hasPrefix("Pull ") ? "Release " + state.pullHint.dropFirst("Pull ".count) : state.pullHint)
             .font(.callout)
             .foregroundStyle(.secondary)
             .lineLimit(1)
