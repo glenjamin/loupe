@@ -91,6 +91,19 @@ enum SnapshotRun {
                     }
                 }
             }
+            // LOUPE_SNAPSHOT_CLICK_FOOTER=1 clicks the footer's button at the end of each shown
+            // diff, to see that a real click on it marks the file reviewed and moves on.
+            if ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_CLICK_FOOTER"] == "1" {
+                try? await Task.sleep(for: .milliseconds(500))
+                printSelectedFiles(of: tabs, when: "before clicking")
+                for tab in tabs.tabs {
+                    windows.select(tab.id)
+                    if let window = windows.mainWindow { await clickReviewFooter(in: window) }
+                }
+                windows.select(tabs.selected)
+                try? await Task.sleep(for: .milliseconds(1500))
+                printSelectedFiles(of: tabs, when: "after clicking")
+            }
             // A moment for the final state to be drawn.
             try? await Task.sleep(for: .milliseconds(500))
             do {
@@ -111,6 +124,38 @@ enum SnapshotRun {
         while Date.now < deadline, !isDone() {
             try? await Task.sleep(for: .milliseconds(250))
         }
+    }
+
+    private static func printSelectedFiles(of tabs: TabsModel, when: String) {
+        for tab in tabs.tabs {
+            print("\(when): selected \(tab.selectedFile.map { "\($0)" } ?? "none")")
+        }
+    }
+
+    /// Scrolls the shown diff to its end, then clicks its footer's button through the window as
+    /// the mouse would. The mouse-up is queued first, so a button's tracking loop finds it.
+    private static func clickReviewFooter(in window: NSWindow) async {
+        try? await Task.sleep(for: .milliseconds(300))
+        guard let root = window.contentView,
+              let footer = descendants(of: root).first(where: { $0 is NSHostingView<ReviewFooter> && !$0.isHiddenOrHasHiddenAncestor }),
+              let document = footer.enclosingScrollView?.documentView
+        else { return }
+        document.scroll(NSPoint(x: 0, y: footer.frame.maxY))
+        footer.scrollToVisible(footer.bounds)
+        window.layoutIfNeeded()
+        window.displayIfNeeded()
+        try? await Task.sleep(for: .milliseconds(300))
+        let point = footer.convert(NSPoint(x: footer.bounds.midX, y: footer.bounds.midY), to: nil)
+        let frameView = root.superview ?? root
+        let hit = frameView.hitTest(frameView.convert(point, from: nil))
+        let chain = sequence(first: hit, next: { $0?.superview }).prefix(while: { $0 != nil }).compactMap { $0 }.prefix(8)
+        print("clicking the footer at \(point) in the window hits \(chain.map { String(describing: type(of: $0)) }.joined(separator: " < "))")
+        let events = [NSEvent.EventType.leftMouseUp, .leftMouseDown].compactMap { type in
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+        }
+        guard events.count == 2 else { return }
+        NSApp.postEvent(events[0], atStart: false)
+        window.sendEvent(events[1])
     }
 }
 

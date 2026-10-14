@@ -102,6 +102,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         // So a file shorter than the view can still be pulled past its end.
         scroll.verticalScrollElasticity = .allowed
         scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentView = FooterClipView()
         scroll.documentView = coordinator.textView
         // In the clip view, the footer is placed in the document's coordinates and so scrolls
         // with it, clipped like the text.
@@ -229,6 +230,19 @@ private final class OverscrollScrollView: NSScrollView {
         if event.phase.contains(.began) { onDrag(true) }
         super.scrollWheel(with: event)
         if !event.phase.isDisjoint(with: [.ended, .cancelled]) { onDrag(false) }
+    }
+}
+
+/// A clip view whose clicks also reach the views placed beside its document, such as the footer
+/// below the last row. A plain clip view hit-tests only within its document view's frame.
+private final class FooterClipView: NSClipView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        guard bounds.contains(local) else { return nil }
+        for view in subviews.reversed() where view !== documentView && !view.isHidden {
+            if let hit = view.hitTest(local) { return hit }
+        }
+        return super.hitTest(point)
     }
 }
 
