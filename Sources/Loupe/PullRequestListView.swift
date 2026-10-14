@@ -6,6 +6,7 @@ import SwiftUI
 /// The start screen: the user's own open PRs beside the ones waiting on their review.
 struct PullRequestListView: View {
     let model: PullRequestListModel
+    @AppStorage("showsClosedPullRequests") private var showsClosed = false
 
     var body: some View {
         Group {
@@ -13,9 +14,9 @@ struct PullRequestListView: View {
                 // Re-render each minute so the "N ago" labels don't go stale between refreshes.
                 TimelineView(.everyMinute) { _ in
                     HStack(spacing: 0) {
-                        PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, model: model)
+                        PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, showsClosed: showsClosed, model: model)
                         Divider()
-                        PullRequestColumn(title: "To review", list: .toReview, showsAuthor: true, model: model)
+                        PullRequestColumn(title: "To review", list: .toReview, showsAuthor: true, showsClosed: showsClosed, model: model)
                     }
                     .safeAreaInset(edge: .top, spacing: 0) {
                         if let error = model.error {
@@ -51,6 +52,8 @@ struct PullRequestListView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                Toggle("Show closed and merged", systemImage: "archivebox", isOn: $showsClosed)
+                    .help("Show closed and merged")
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
                     .keyboardShortcut("r")
                     .disabled(model.isLoading)
@@ -96,10 +99,11 @@ struct PullRequestColumn: View {
     let title: String
     let list: PullRequestList
     let showsAuthor: Bool
+    let showsClosed: Bool
     let model: PullRequestListModel
 
     var body: some View {
-        let pullRequests = model.pullRequests(in: list)
+        let pullRequests = model.pullRequests(in: list, includingClosed: showsClosed)
         VStack(alignment: .leading, spacing: 0) {
             Text("\(title) (\(pullRequests.count))")
                 .font(.headline)
@@ -170,12 +174,13 @@ struct PullRequestRow: View {
                 Text("\(repositoryName) #\(pullRequest.number)")
                     .font(.headline.monospacedDigit())
                     .layoutPriority(1)
-                if pullRequest.isDraft {
-                    Text("Draft")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(.quaternary, in: Capsule())
+                switch pullRequest.state {
+                case .merged: Badge(text: "Merged", tint: .purple)
+                case .closed: Badge(text: "Closed", tint: .red)
+                case .open, .unknown:
+                    if pullRequest.isDraft {
+                        Badge(text: "Draft", tint: .primary)
+                    }
                 }
                 Text(owner)
                     .font(.caption)
@@ -204,6 +209,7 @@ struct PullRequestRow: View {
             .lineLimit(1)
         }
         .padding(.vertical, 3)
+        .opacity(pullRequest.state == .open ? 1 : 0.55)
         .contentShape(Rectangle())
         .help("\(pullRequest.headRefName) → \(pullRequest.baseRefName)\n\(pullRequest.url.absoluteString)")
     }
@@ -214,6 +220,20 @@ struct PullRequestRow: View {
 
     private var repositoryName: String {
         pullRequest.repository.split(separator: "/").last.map(String.init) ?? pullRequest.repository
+    }
+}
+
+struct Badge: View {
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(.quaternary, in: Capsule())
     }
 }
 
