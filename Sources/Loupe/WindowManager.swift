@@ -57,7 +57,8 @@ final class WindowManager {
         } else {
             place(window)
         }
-        window.setFrameAutosaveName(Self.frameName)
+        // A snapshot run's off-screen frame isn't one to remember.
+        if SnapshotRun.directory == nil { window.setFrameAutosaveName(Self.frameName) }
         select(window)
     }
 
@@ -103,9 +104,16 @@ final class WindowManager {
         return window
     }
 
-    /// Where the lists were last left, or filling the screen the first time.
+    /// Where the lists were last left, or filling the screen the first time. A snapshot run's
+    /// windows are screen-sized but off every screen, so they never show behind the user's work;
+    /// tabs added to the group take the same frame.
     private func place(_ window: NSWindow) {
-        if !window.setFrameUsingName(Self.frameName), let screen = NSScreen.main {
+        guard let screen = NSScreen.main else { return }
+        if SnapshotRun.directory != nil {
+            let size = screen.visibleFrame.size
+            let offScreen = NSScreen.screens.reduce(NSRect.null) { $0.union($1.frame) }
+            window.setFrame(NSRect(origin: NSPoint(x: offScreen.minX - size.width - 10_000, y: offScreen.minY - size.height - 10_000), size: size), display: false)
+        } else if !window.setFrameUsingName(Self.frameName) {
             window.setFrame(screen.visibleFrame, display: false)
         }
     }
@@ -134,6 +142,11 @@ final class LoupeWindow: NSWindow {
     override func becomeKey() {
         super.becomeKey()
         onBecomeKey()
+    }
+
+    /// A snapshot run's windows stay off-screen, where AppKit would otherwise pull them back.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        SnapshotRun.directory == nil ? super.constrainFrameRect(frameRect, to: screen) : frameRect
     }
 
     override func close() {
