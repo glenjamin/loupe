@@ -114,6 +114,7 @@ final class WindowTabs {
         if !window.setFrameUsingName(frameName), let screen = window.screen ?? NSScreen.main {
             window.setFrame(screen.visibleFrame, display: true)
         }
+        addAppIcon(to: window)
         window.tabbingMode = .preferred
         window.tabbingIdentifier = Self.tabbingIdentifier
         // The store reopens windows at launch; SwiftUI restoring them as well would duplicate them.
@@ -122,6 +123,23 @@ final class WindowTabs {
         DispatchQueue.main.async {
             MainActor.assumeIsolated { self.joinGroup(window) }
         }
+    }
+
+    /// The app icon at the title bar's leading edge, as tall as the title bar and toolbar. Measured
+    /// before the window joins a tab group, whose tab bar would add to the height.
+    private func addAppIcon(to window: NSWindow) {
+        guard let appIcon else { return }
+        let height = window.frame.height - window.contentLayoutRect.maxY
+        let padding: CGFloat = 4
+        let imageView = NSImageView(image: appIcon)
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.frame = NSRect(x: padding, y: 0, width: height, height: height)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: height + padding, height: height))
+        container.addSubview(imageView)
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.view = container
+        accessory.layoutAttribute = .leading
+        window.addTitlebarAccessoryViewController(accessory)
     }
 
     private func joinGroup(_ window: NSWindow) {
@@ -173,7 +191,6 @@ struct ListsWindow: View {
         PullRequestListView(model: lists, showsClosed: showsClosed)
             .navigationTitle("Pull Requests")
             .toolbar {
-                AppIconToolbarItem()
                 ToolbarItemGroup {
                     if lists.isLoading {
                         ProgressView().controlSize(.small)
@@ -215,7 +232,6 @@ struct PullRequestWindow: View {
                 .navigationTitle(tab.title)
                 .navigationSubtitle(pullRequest.title)
                 .toolbar {
-                    AppIconToolbarItem()
                     ToolbarItem {
                         Button("Open on GitHub", systemImage: "safari") { NSWorkspace.shared.open(pullRequest.url) }
                             .help("Open on GitHub")
@@ -225,20 +241,6 @@ struct PullRequestWindow: View {
         } else {
             // A window for no open PR, as the tab bar's "+" makes, shows the lists instead.
             Color.clear.background(WindowAccessor { windowTabs.redirectToLists($0, openWindow: openWindow) })
-        }
-    }
-}
-
-/// The app icon at the toolbar's leading edge, so it shows whichever tab is in front.
-struct AppIconToolbarItem: ToolbarContent {
-    var body: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            if let titleBarIcon {
-                Image(nsImage: titleBarIcon)
-                    .resizable()
-                    .frame(width: 18, height: 18)
-                    .accessibilityHidden(true)
-            }
         }
     }
 }
@@ -313,10 +315,6 @@ private func selectTab(number: Int) {
     if windows.indices.contains(index) { windows[index].makeKeyAndOrderFront(nil) }
 }
 
-/// The app icon at toolbar size, separate from the Dock's copy so resizing it leaves that alone.
+/// The app icon at full size, scaled to fit where it's shown.
 @MainActor
-private let titleBarIcon: NSImage? = {
-    let image = AppDelegate.iconURL.flatMap(NSImage.init(contentsOf:))
-    image?.size = NSSize(width: 16, height: 16)
-    return image
-}()
+private let appIcon = AppDelegate.iconURL.flatMap(NSImage.init(contentsOf:))
