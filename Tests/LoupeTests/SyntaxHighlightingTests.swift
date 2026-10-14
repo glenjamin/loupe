@@ -35,6 +35,7 @@ struct SyntaxHighlightingTests {
         ("a.go", "// note"), ("a.js", "// note"), ("a.ts", "// note"), ("a.tsx", "// note"),
         ("Gemfile", "# note"), ("a.swift", "// note"), ("a.json", "\"note\""), ("a.yml", "# note"),
         ("a.sh", "# note"), ("a.css", "/* note */"), ("a.html", "<!-- note -->"),
+        ("Dockerfile", "# note"), ("a.sql", "-- note"), ("go.mod", "// note"), ("a.py", "# note"), ("a.md", "# Note"),
     ])
     func everySupportedLanguageHighlights(path: String, line: String) throws {
         #expect(SyntaxLanguage(path: path) != nil)
@@ -47,6 +48,23 @@ struct SyntaxHighlightingTests {
 
         """).files.first)
         #expect(colors(of: line, in: showing(file)) != [NSColor.textColor])
+    }
+
+    @Test(arguments: ["Dockerfile.prod", "deploy/Containerfile", "build.dockerfile"])
+    func recognisesDockerfilesByName(path: String) throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/\(path) b/\(path)
+        --- a/\(path)
+        +++ b/\(path)
+        @@ -0,0 +1 @@
+        +FROM golang
+
+        """).files.first)
+        #expect(colors(of: "FROM", in: showing(file)) == [DiffColors.syntaxKeyword])
+    }
+
+    @Test func leavesAMakefileUncolouredForWantOfAGrammar() {
+        #expect(SyntaxLanguage(path: "Makefile") == nil)
     }
 
     @Test func leavesAFileInAnUnknownLanguageUncoloured() throws {

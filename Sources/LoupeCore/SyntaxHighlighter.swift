@@ -1,31 +1,27 @@
 import AppKit
+import CodeEditLanguages
 import os
 import SwiftTreeSitter
-import TreeSitterBash
-import TreeSitterCSS
-import TreeSitterGo
-import TreeSitterHTML
-import TreeSitterJavaScript
-import TreeSitterJSON
-import TreeSitterRuby
-import TreeSitterSwift
-import TreeSitterTSX
-import TreeSitterTypeScript
-import TreeSitterYAML
 
-/// A grammar the diff view can highlight, chosen from a file's name.
-public enum SyntaxLanguage: String, Sendable, CaseIterable {
-    case go, javascript, typescript, tsx, ruby, swift, json, yaml, bash, css, html
+/// A grammar the diff view can highlight, chosen from a file's name: CodeEditLanguages'
+/// detection by extension, plus the special file names it doesn't know.
+public struct SyntaxLanguage: Sendable, Hashable {
+    public let rawValue: String
 
     public init?(path: String) {
         let name = path.split(separator: "/").last.map(String.init) ?? path
-        if let language = Self.byName[name] {
+        let ext = name.split(separator: ".").last.map { $0.lowercased() } ?? ""
+        if let language = Self.byName[name] ?? Self.dockerfile(name) ?? (name.contains(".") ? Self.byExtension[ext] : nil) {
             self = language
             return
         }
-        let ext = name.split(separator: ".").last.map { $0.lowercased() } ?? ""
-        guard name.contains("."), let language = Self.byExtension[ext] else { return nil }
-        self = language
+        let detected = CodeLanguage.detectLanguageFrom(url: URL(filePath: name)).id
+        guard detected != .plainText else { return nil }
+        self.init(detected)
+    }
+
+    init(_ id: TreeSitterLanguage) {
+        rawValue = id.rawValue
     }
 }
 
@@ -93,7 +89,7 @@ public struct SyntaxPlan: Sendable {
         var runs: [SyntaxRun] = []
         for side in sides where !side.lines.isEmpty {
             guard let tree = parser.parse(side.text) else { continue }
-            let captures = highlightCaptures(grammar.query, in: tree, text: side.text, laterPatternsWin: language.laterPatternsWin)
+            let captures = highlightCaptures(grammar.query, in: tree, text: side.text, laterPatternsWin: grammar.laterPatternsWin)
             for capture in captures {
                 map(capture.range, through: side.lines) { runs.append(SyntaxRun(range: $0, style: capture.style)) }
             }
@@ -103,24 +99,25 @@ public struct SyntaxPlan: Sendable {
 }
 
 extension SyntaxLanguage {
+    /// Extensions CodeEditLanguages doesn't map, or maps differently from GitHub.
     static let byExtension: [String: SyntaxLanguage] = [
-        "go": .go,
-        "js": .javascript, "mjs": .javascript, "cjs": .javascript, "jsx": .javascript,
-        "ts": .typescript, "mts": .typescript, "cts": .typescript,
-        "tsx": .tsx,
-        "rb": .ruby, "rake": .ruby, "gemspec": .ruby, "ru": .ruby,
-        "swift": .swift,
-        "json": .json,
-        "yml": .yaml, "yaml": .yaml,
-        "sh": .bash, "bash": .bash, "zsh": .bash,
-        "css": .css,
-        "html": .html, "htm": .html,
+        "rake": .init(.ruby), "gemspec": .init(.ruby), "ru": .init(.ruby), "podspec": .init(.ruby),
+        "zsh": .init(.bash),
+        "jsonc": .init(.json), "webmanifest": .init(.json),
+        "dockerfile": .init(.dockerfile), "containerfile": .init(.dockerfile),
     ]
 
     static let byName: [String: SyntaxLanguage] = [
-        "Gemfile": .ruby, "Rakefile": .ruby, "Podfile": .ruby, "Brewfile": .ruby, "Vagrantfile": .ruby, "Guardfile": .ruby,
-        ".bashrc": .bash, ".bash_profile": .bash, ".zshrc": .bash, ".profile": .bash, ".envrc": .bash,
+        "Gemfile": .init(.ruby), "Rakefile": .init(.ruby), "Podfile": .init(.ruby), "Brewfile": .init(.ruby), "Vagrantfile": .init(.ruby), "Guardfile": .init(.ruby),
+        ".bashrc": .init(.bash), ".bash_profile": .init(.bash), ".zshrc": .init(.bash), ".profile": .init(.bash), ".envrc": .init(.bash),
+        "Containerfile": .init(.dockerfile),
+        "go.mod": .init(.goMod), "go.work": .init(.goMod),
     ]
+
+    /// `Dockerfile.prod` and the like, which have an extension but are still Dockerfiles.
+    static func dockerfile(_ name: String) -> SyntaxLanguage? {
+        name.hasPrefix("Dockerfile.") || name.hasPrefix("Containerfile.") ? .init(.dockerfile) : nil
+    }
 }
 
 /// Maps a tree-sitter capture name onto a colour. Plain identifiers (`variable`) and punctuation
@@ -128,7 +125,8 @@ extension SyntaxLanguage {
 func syntaxStyle(forCapture name: String) -> SyntaxStyle? {
     let parts = name.split(separator: ".")
     switch parts.first {
-    case "keyword", "operator", "conditional", "repeat", "include", "exception":
+    case "keyword", "operator", "conditional", "repeat", "include", "exception", "storageclass",
+         "import", "charset", "media", "keyframes", "supports":
         return .keyword
     case "string", "character":
         if parts.dropFirst().first == "escape" { return nil }
@@ -139,8 +137,10 @@ func syntaxStyle(forCapture name: String) -> SyntaxStyle? {
         return .entity
     case "type":
         return parts.dropFirst().first == "builtin" ? .keyword : .entity
-    case "number", "float", "boolean", "constant", "property", "attribute":
+    case "number", "float", "boolean", "constant", "property", "field", "attribute":
         return .constant
+    case "parameter":
+        return .variable
     case "variable":
         switch parts.dropFirst().first {
         case "parameter": return .variable
@@ -149,6 +149,8 @@ func syntaxStyle(forCapture name: String) -> SyntaxStyle? {
         }
     case "tag":
         return .tag
+    case "text":
+        return parts.dropFirst().first == "title" ? .constant : nil
     default:
         return nil
     }
@@ -157,82 +159,51 @@ func syntaxStyle(forCapture name: String) -> SyntaxStyle? {
 private struct Grammar: Sendable {
     let language: Language
     let query: Query
+    /// Where several patterns capture one node, tree-sitter's highlighter takes the last, and the
+    /// queries list generic patterns first. Go's still lists them last, for the older first-wins rule.
+    let laterPatternsWin: Bool
 
     private static let cache = OSAllocatedUnfairLock<[SyntaxLanguage: Grammar]>(initialState: [:])
 
     /// The grammar and its compiled highlights query, compiled once per language.
     static func load(_ syntax: SyntaxLanguage) -> Grammar? {
         if let cached = cache.withLock({ $0[syntax] }) { return cached }
-        let language = Language(language: syntax.tsLanguage)
-        let source = syntax.highlightQueries.compactMap { bundle, file in
-            queryURL(bundle: bundle, file: file).flatMap { try? Data(contentsOf: $0) }
-        }
-        guard source.count == syntax.highlightQueries.count,
+        guard let id = TreeSitterLanguage(rawValue: syntax.rawValue),
+              let code = CodeLanguage.allLanguages.first(where: { $0.id == id }),
+              let language = code.language,
+              let urls = highlightQueries(code)
+        else { return nil }
+        let source = urls.compactMap { try? Data(contentsOf: $0) }
+        guard source.count == urls.count,
               let query = try? Query(language: language, data: source.reduce(Data()) { $0 + $1 + Data("\n".utf8) })
         else { return nil }
-        let grammar = Grammar(language: language, query: query)
+        let grammar = Grammar(language: language, query: query, laterPatternsWin: id != .go)
         cache.withLock { $0[syntax] = grammar }
         return grammar
     }
-}
 
-private extension SyntaxLanguage {
-    var tsLanguage: OpaquePointer {
-        switch self {
-        case .go: tree_sitter_go()
-        case .javascript: tree_sitter_javascript()
-        case .typescript: tree_sitter_typescript()
-        case .tsx: tree_sitter_tsx()
-        case .ruby: tree_sitter_ruby()
-        case .swift: tree_sitter_swift()
-        case .json: tree_sitter_json()
-        case .yaml: tree_sitter_yaml()
-        case .bash: tree_sitter_bash()
-        case .css: tree_sitter_css()
-        case .html: tree_sitter_html()
-        }
-    }
-
-    /// Where several patterns capture one node, tree-sitter's highlighter takes the last, and the
-    /// queries list generic patterns first. Go's still lists them last, for the older first-wins rule.
-    var laterPatternsWin: Bool { self != .go }
-
-    /// Query files, composed as each grammar's tree-sitter.json does: TypeScript builds on JavaScript's.
-    var highlightQueries: [(bundle: String, file: String)] {
-        let js = "TreeSitterJavaScript_TreeSitterJavaScript"
-        switch self {
-        case .javascript: return [(js, "highlights.scm"), (js, "highlights-jsx.scm"), (js, "highlights-params.scm")]
-        case .typescript: return [("TreeSitterTypeScript_TreeSitterTypeScript", "highlights.scm"), (js, "highlights.scm")]
-        case .tsx: return [("TreeSitterTypeScript_TreeSitterTSX", "highlights.scm"), (js, "highlights-jsx.scm"), (js, "highlights.scm")]
-        default:
-            let name = switch self {
-            case .go: "Go"
-            case .ruby: "Ruby"
-            case .swift: "Swift"
-            case .json: "JSON"
-            case .yaml: "YAML"
-            case .bash: "Bash"
-            case .css: "CSS"
-            default: "HTML"
-            }
-            return [("TreeSitter\(name)_TreeSitter\(name)", "highlights.scm")]
+    /// Query files, composed as each grammar's tree-sitter.json does: TypeScript builds on
+    /// JavaScript's, and JSX patterns come with JavaScript and TSX.
+    private static func highlightQueries(_ code: CodeLanguage) -> [URL]? {
+        guard let own = code.queryURL.flatMap(readable) else { return nil }
+        let js = CodeLanguage.javascript.queryURL.flatMap(readable)?.deletingLastPathComponent()
+        let jsQueries = { (names: [String]) in names.compactMap { js?.appending(path: "\($0).scm") } }
+        return switch code.id {
+        case .javascript, .jsx: jsQueries(["highlights", "highlights-jsx", "highlights-params"])
+        case .typescript: [own] + jsQueries(["highlights"])
+        case .tsx: [own] + jsQueries(["highlights-jsx", "highlights"])
+        default: [own]
         }
     }
 }
 
-private final class BundleToken {}
-
-/// SwiftPM puts each grammar's queries in a resource bundle: beside the executable for
-/// `swift run` and tests, in Contents/Resources inside the app.
-private func queryURL(bundle: String, file: String) -> URL? {
-    let containers = [Bundle.main.resourceURL, Bundle.main.bundleURL, Bundle(for: BundleToken.self).bundleURL.deletingLastPathComponent()]
-    for container in containers.compactMap({ $0 }) {
-        for queries in ["queries", "Contents/Resources/queries"] {
-            let url = container.appending(path: "\(bundle).bundle/\(queries)/\(file)")
-            if FileManager.default.isReadableFile(atPath: url.path) { return url }
-        }
-    }
-    return nil
+/// CodeEditLanguages builds its query paths for Xcode's bundle layout, which nests a second
+/// `Resources` folder; SwiftPM's flat bundle doesn't, so fall back to the path without it.
+private func readable(_ url: URL) -> URL? {
+    if FileManager.default.isReadableFile(atPath: url.path) { return url }
+    let bundleResources = url.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let flat = url.pathComponents.suffix(2).reduce(bundleResources) { $0.appending(path: $1) }
+    return FileManager.default.isReadableFile(atPath: flat.path) ? flat : nil
 }
 
 /// Captures to colour, outermost first so nested ones paint over them, with one pattern's

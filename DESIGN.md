@@ -91,6 +91,10 @@ Rows soft-wrap at the view's width by default, with a View menu toggle. Each row
 
 Each hunk's new side and old side are parsed with the file's tree-sitter grammar and coloured from the grammar's own `highlights.scm` with Primer's palette, which is how GitHub highlights diffs, partial snippets and all. Grammars come from their upstream SwiftPM packages through ChimeHQ's SwiftTreeSitter, and a file in an unknown language stays plain. Highlightr was ruled out because it runs highlight.js's regex grammars in JavaScriptCore, a cruder approach than GitHub's; Neon was ruled out because it manages incremental re-highlighting for an editor, and this is a static render. Colours go into the layout manager's temporary attributes, not the text storage, because adding tens of thousands of colour runs to a large storage costs several times as much; files over 5,000 rows paint plain first and take their colours from a background parse.
 
+### Grammars come from CodeEditLanguages, not one upstream package each
+
+Grammars and their highlight queries come from CodeEditLanguages, a single package that bundles about 40 prebuilt grammars. This replaces ten upstream grammar packages: each upstream manifest is maintained separately, several of their later releases fail to link under SwiftPM (so CSS, JavaScript and YAML were held at old tags and Swift at a special one), and every new language meant another dependency. One package gives SQL, Dockerfile, Markdown, Python, TOML, `go.mod` and more for free, with its own detection by extension and file name. The cost is a slightly slower prebuilt Go grammar, and a package that hasn't tagged a release since late 2024; Makefile and HCL still have no grammar there.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
