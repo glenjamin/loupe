@@ -6,7 +6,12 @@ set -eu
 
 config=${1:-debug}
 cd "$(dirname "$0")/.."
-swift build -c "$config"
+# CodeEditLanguages ships prebuilt grammars whose debug info points at the
+# maintainer's machine; the linker warns about each one. Nothing else is hidden.
+log=$(mktemp)
+if ! swift build -c "$config" >"$log" 2>&1; then cat "$log"; rm -f "$log"; exit 1; fi
+grep -v "unable to open object file: No such file or directory" "$log" || true
+rm -f "$log"
 bin=$(swift build -c "$config" --show-bin-path)
 app=.build/Loupe.app
 
