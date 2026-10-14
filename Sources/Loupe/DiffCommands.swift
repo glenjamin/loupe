@@ -15,14 +15,14 @@ struct DiffCommands: Commands {
         }
         CommandMenu("Review") {
             let tab = windows.keyTab
-            Button("Mark Viewed and Show Next File") {
+            Button("Mark Reviewed and Show Next File") {
                 if let tab { Task { await tab.markViewedAndAdvance() } }
             }
             .keyboardShortcut(.downArrow, modifiers: .command)
             .disabled(tab?.selectedFile == nil)
             // ⇧V and ] work too, but only through `ReviewWindows`' key monitor: as menu
             // shortcuts they would take those keys from every text field.
-            Button("Toggle Viewed (⇧V)") {
+            Button("Toggle Reviewed (⇧V)") {
                 if let tab, let path = tab.selectedFile { Task { await tab.toggleViewed(path: path) } }
             }
             .disabled(tab?.selectedFile == nil)

@@ -3,7 +3,7 @@ import LoupeCore
 import SwiftUI
 
 /// One file's diff under a header naming it, in a bordered box as on GitHub. Clicking a row
-/// reports its comment anchor. A PR's file also has a "Viewed" checkbox, and pulling past the
+/// reports its comment anchor. A PR's file also has a "Reviewed" checkbox, and pulling past the
 /// end of the diff marks it viewed and moves on.
 struct DiffView: View {
     let file: FileDiff
@@ -46,9 +46,9 @@ private struct FileHeader: View {
             }
             .monospacedDigit()
             if let review {
-                Toggle("Viewed", isOn: Binding(get: { review.isViewed }, set: { _ in review.toggleViewed() }))
+                Toggle("Reviewed", isOn: Binding(get: { review.isViewed }, set: { _ in review.toggleViewed() }))
                     .toggleStyle(.checkbox)
-                    .help("Mark this file viewed on GitHub (⇧V)")
+                    .help("Mark this file reviewed on GitHub (⇧V)")
             }
         }
         .font(.system(size: 12))
