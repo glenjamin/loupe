@@ -1,0 +1,86 @@
+[
+  {
+    "id": "26340955518",
+    "unread": true,
+    "reason": "review_requested",
+    "updated_at": "2026-10-14T15:01:49Z",
+    "last_read_at": "2026-10-14T14:59:41Z",
+    "subject": {
+      "title": "tamarinworks-admin-sso: show the Tamarinworks logo on sign-in",
+      "url": "https://api.github.com/repos/tamarinworks/tamarin-chef/pulls/3593",
+      "latest_comment_url": "https://api.github.com/repos/tamarinworks/tamarin-chef/pulls/3593",
+      "type": "PullRequest"
+    },
+    "repository": {
+      "id": 5493655,
+      "node_id": "MDEwOlJlcG9zaXRvcnk1NDkzNjU1",
+      "name": "tamarin-chef",
+      "full_name": "tamarinworks/tamarin-chef",
+      "private": true,
+      "html_url": "https://github.com/tamarinworks/tamarin-chef",
+      "url": "https://api.github.com/repos/tamarinworks/tamarin-chef",
+      "owner": {
+        "login": "tamarinworks",
+        "type": "Organization"
+      }
+    },
+    "url": "https://api.github.com/notifications/threads/26340955518",
+    "subscription_url": "https://api.github.com/notifications/threads/26340955518/subscription"
+  },
+  {
+    "id": "26143596865",
+    "unread": true,
+    "reason": "state_change",
+    "updated_at": "2026-10-13T16:02:46Z",
+    "last_read_at": "2026-10-13T16:02:21Z",
+    "subject": {
+      "title": "Add statement caching to the sqlx driver",
+      "url": "https://api.github.com/repos/tamarinworks/gotools/pulls/436",
+      "latest_comment_url": "https://api.github.com/repos/tamarinworks/gotools/pulls/436",
+      "type": "PullRequest"
+    },
+    "repository": {
+      "id": 31764594,
+      "node_id": "MDEwOlJlcG9zaXRvcnkzMTc2NDU5NA==",
+      "name": "gotools",
+      "full_name": "tamarinworks/gotools",
+      "private": true,
+      "html_url": "https://github.com/tamarinworks/gotools",
+      "url": "https://api.github.com/repos/tamarinworks/gotools",
+      "owner": {
+        "login": "tamarinworks",
+        "type": "Organization"
+      }
+    },
+    "url": "https://api.github.com/notifications/threads/26143596865",
+    "subscription_url": "https://api.github.com/notifications/threads/26143596865/subscription"
+  },
+  {
+    "id": "26140364942",
+    "unread": true,
+    "reason": "author",
+    "updated_at": "2026-10-13T15:46:34Z",
+    "last_read_at": "2026-10-13T15:31:35Z",
+    "subject": {
+      "title": "Prepare the account and member lookups",
+      "url": "https://api.github.com/repos/tamarinworks/quad/pulls/328",
+      "latest_comment_url": "https://api.github.com/repos/tamarinworks/quad/pulls/328",
+      "type": "PullRequest"
+    },
+    "repository": {
+      "id": 117538474,
+      "node_id": "MDEwOlJlcG9zaXRvcnkxMTc1Mzg0NzQ=",
+      "name": "quad",
+      "full_name": "tamarinworks/quad",
+      "private": true,
+      "html_url": "https://github.com/tamarinworks/quad",
+      "url": "https://api.github.com/repos/tamarinworks/quad",
+      "owner": {
+        "login": "tamarinworks",
+        "type": "Organization"
+      }
+    },
+    "url": "https://api.github.com/notifications/threads/26140364942",
+    "subscription_url": "https://api.github.com/notifications/threads/26140364942/subscription"
+  }
+]

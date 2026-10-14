@@ -7,6 +7,7 @@ Raw responses, captured 2026-10-14 with `gh api graphql`:
 - `threads-marmot-last60.json`: review threads across marmot's last 60 PRs, to find outdated and multi-line comments.
 - `mergeable.json`: `mergeable` on an open vs a merged PR.
 - `pr-list-query.graphql` → `pr-list.json`: the start screen's two searches (`author:@me` and `review-requested:@me`) in one request, with CI rollup and branch names. Each node's `id` was looked up afterwards (by repo and number) and added, as the app keys stored PRs on it. The tests' fake GitHub serves these nodes as the full search results, paging them itself. `graphql-error.json` is a real GraphQL error response (a bad field). Both are test fixtures.
+- `gh api '/notifications?participating=true' -i` → `notifications-headers.txt` (the 200's headers, then a 304's from repeating it with `If-Modified-Since`) and `notifications.json` (the first three of the page's 50 notifications, each `repository` cut down to a few fields). The tests' fake GitHub serves notifications in this shape.
 
 ## Surprises and shapes
 
@@ -29,6 +30,8 @@ Raw responses, captured 2026-10-14 with `gh api graphql`:
 **Inbox search.** 13 results, some old (atrium#2202). `review-requested:@me` and `user-review-requested:@me` both returned 13, so all were direct requests here; team requests would only show up in the former. `search` needs `... on PullRequest` fragments; `reviewDecision` and `isDraft` are available inline, so the inbox needs one query.
 
 **PR list search.** Search returns best-match order unless the query string includes `sort:updated-desc`; with it, truncation at `first: 50` drops the oldest PRs (the author search had 110 results). `reviewDecision` is `null` when the base branch doesn't require reviews, and `commits(last:1).commit.statusCheckRollup` is `null` when the head commit has no statuses or checks.
+
+**Notifications.** The response carries `Last-Modified` (the newest notification's `updated_at`) and `X-Poll-Interval: 60`, and a 304 carries the same poll interval. The 304 left `X-Ratelimit-Remaining` where the 200 before it had put it, so an unchanged poll is free. The token's scopes (`repo`, no `notifications`) were enough: `X-Accepted-Oauth-Scopes` is `notifications, repo`. With `participating=true` all 50 on the first page were `PullRequest` subjects, with reasons `review_requested`, `author`, `state_change` and `mention`; `subject.url` is the REST URL `https://api.github.com/repos/<owner>/<repo>/pulls/<number>`. The list pages at 50 (11 pages here), newest `updated_at` first, and only unread threads are listed by default.
 
 ## Diff fixture and vendor exclusion
 

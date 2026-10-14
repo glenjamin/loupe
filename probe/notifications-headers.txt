@@ -1,0 +1,52 @@
+# GET /notifications?participating=true (gh api -i), 2026-10-14; body trimmed into notifications.json
+HTTP/2.0 200 OK
+Access-Control-Allow-Origin: *
+Access-Control-Expose-Headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning
+Cache-Control: private, max-age=60, s-maxage=60
+Content-Security-Policy: default-src 'none'
+Content-Type: application/json; charset=utf-8
+Date: Wed, 14 Oct 2026 15:14:13 GMT
+Last-Modified: Wed, 14 Oct 2026 15:01:49 GMT
+Link: <https://api.github.com/notifications?participating=true&page=2>; rel="next", <https://api.github.com/notifications?participating=true&page=11>; rel="last"
+Referrer-Policy: origin-when-cross-origin, strict-origin-when-cross-origin
+Server: github.com
+Strict-Transport-Security: max-age=31536000; includeSubdomains; preload
+Vary: Accept, Authorization, Cookie, X-GitHub-OTP,Accept-Encoding, Accept, X-Requested-With
+X-Accepted-Oauth-Scopes: notifications, repo
+X-Content-Type-Options: nosniff
+X-Frame-Options: deny
+X-Github-Api-Version-Selected: 2022-11-28
+X-Github-Edge-Region: uksouth
+X-Github-Media-Type: github.v3; format=json
+X-Oauth-Scopes: admin:org, gist, repo, workflow
+X-Poll-Interval: 60
+X-Ratelimit-Limit: 5000
+X-Ratelimit-Remaining: 4873
+X-Ratelimit-Reset: 1791991644
+X-Ratelimit-Resource: core
+X-Ratelimit-Used: 127
+X-Xss-Protection: 0
+
+# The same with If-Modified-Since set to the Last-Modified above
+HTTP/2.0 304 Not Modified
+Access-Control-Allow-Origin: *
+Access-Control-Expose-Headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning
+Cache-Control: private, max-age=60, s-maxage=60
+Content-Security-Policy: default-src 'none'
+Date: Wed, 14 Oct 2026 15:14:15 GMT
+Last-Modified: Wed, 14 Oct 2026 15:01:49 GMT
+Referrer-Policy: origin-when-cross-origin, strict-origin-when-cross-origin
+Server: github.com
+Strict-Transport-Security: max-age=31536000; includeSubdomains; preload
+Vary: Accept, Authorization, Cookie, X-GitHub-OTP,Accept-Encoding, Accept, X-Requested-With
+X-Content-Type-Options: nosniff
+X-Frame-Options: deny
+X-Github-Api-Version-Selected: 2022-11-28
+X-Github-Edge-Region: uksouth
+X-Poll-Interval: 60
+X-Ratelimit-Limit: 5000
+X-Ratelimit-Remaining: 4873
+X-Ratelimit-Reset: 1791991644
+X-Ratelimit-Resource: core
+X-Ratelimit-Used: 127
+X-Xss-Protection: 0
