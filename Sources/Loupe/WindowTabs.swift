@@ -29,8 +29,20 @@ final class WindowTabs {
     /// open last run.
     func attachLists(_ window: NSWindow, openWindow: OpenWindowAction) {
         guard listsWindow !== window else { return }
+        if let listsWindow {
+            // The tab bar's "+" offers no way to hide it, and from the lists' tab it makes a second
+            // lists window; the first is brought forward instead.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    window.close()
+                    listsWindow.tabGroup?.selectedWindow = listsWindow
+                    listsWindow.makeKeyAndOrderFront(nil)
+                }
+            }
+            return
+        }
         listsWindow = window
-        configure(window, representing: Bundle.main.bundleURL, frameName: "Lists")
+        configure(window, frameName: "Lists")
         observe(window, pullRequest: nil, frameName: "Lists")
         tabs.show = { openWindow(value: $0) }
         guard !hasRestored else { return }
@@ -52,7 +64,7 @@ final class WindowTabs {
     func attach(_ window: NSWindow, pullRequest id: String, url: URL) {
         guard pullRequestWindows[id] !== window else { return }
         pullRequestWindows[id] = window
-        configure(window, representing: url, frameName: "Pull Request")
+        configure(window, frameName: "Pull Request")
         observe(window, pullRequest: id, frameName: "Pull Request")
         guard pendingRestore.remove(id) != nil, pendingRestore.isEmpty else { return }
         DispatchQueue.main.async {
@@ -82,7 +94,7 @@ final class WindowTabs {
         window.makeKeyAndOrderFront(nil)
     }
 
-    private func configure(_ window: NSWindow, representing url: URL, frameName: String) {
+    private func configure(_ window: NSWindow, frameName: String) {
         // Where the user last left it, or filling the screen the first time.
         if !window.setFrameUsingName(frameName), let screen = window.screen ?? NSScreen.main {
             window.setFrame(screen.visibleFrame, display: true)
@@ -91,9 +103,6 @@ final class WindowTabs {
         window.tabbingIdentifier = Self.tabbingIdentifier
         // The store reopens windows at launch; SwiftUI restoring them as well would duplicate them.
         window.isRestorable = false
-        // The app icon sits beside the title, where a document's icon would.
-        window.representedURL = url
-        window.standardWindowButton(.documentIconButton)?.image = titleBarIcon
         // AppKit tabs a window as it's first shown; one already showing joins the group here.
         DispatchQueue.main.async {
             MainActor.assumeIsolated { self.joinGroup(window) }
@@ -131,6 +140,7 @@ final class WindowTabs {
 
     private func closed(_ key: ObjectIdentifier, pullRequest id: String?) {
         observers.removeValue(forKey: key)?.forEach(NotificationCenter.default.removeObserver)
+        if id == nil, let listsWindow, ObjectIdentifier(listsWindow) == key { self.listsWindow = nil }
         guard let id, !Self.isTerminating else { return }
         pullRequestWindows[id] = nil
         tabs.close(id)
@@ -148,6 +158,7 @@ struct ListsWindow: View {
         PullRequestListView(model: lists, showsClosed: showsClosed)
             .navigationTitle("Pull Requests")
             .toolbar {
+                AppIconToolbarItem()
                 ToolbarItemGroup {
                     if lists.isLoading {
                         ProgressView().controlSize(.small)
@@ -190,6 +201,7 @@ struct PullRequestWindow: View {
                 .navigationTitle(tab.title)
                 .navigationSubtitle(pullRequest.title)
                 .toolbar {
+                    AppIconToolbarItem()
                     ToolbarItem {
                         Button("Open on GitHub", systemImage: "safari") { NSWorkspace.shared.open(pullRequest.url) }
                             .help("Open on GitHub")
@@ -197,11 +209,24 @@ struct PullRequestWindow: View {
                 }
                 .background(WindowAccessor { windowTabs.attach($0, pullRequest: tab.id, url: pullRequest.url) })
         } else {
-            // A window for no open PR, such as from the tab bar's new-tab button, shows the
-            // lists instead.
+            // A window for no open PR, such as from the tab bar's "+", shows the lists instead.
             Color.clear.onAppear {
                 openWindow(id: WindowTabs.listsID)
                 dismissWindow()
+            }
+        }
+    }
+}
+
+/// The app icon at the toolbar's leading edge, so it shows whichever tab is in front.
+struct AppIconToolbarItem: ToolbarContent {
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            if let titleBarIcon {
+                Image(nsImage: titleBarIcon)
+                    .resizable()
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
             }
         }
     }
@@ -277,7 +302,7 @@ private func selectTab(number: Int) {
     if windows.indices.contains(index) { windows[index].makeKeyAndOrderFront(nil) }
 }
 
-/// The app icon at title-bar size, separate from the Dock's copy so resizing it leaves that alone.
+/// The app icon at toolbar size, separate from the Dock's copy so resizing it leaves that alone.
 @MainActor
 private let titleBarIcon: NSImage? = {
     let image = AppDelegate.iconURL.flatMap(NSImage.init(contentsOf:))
