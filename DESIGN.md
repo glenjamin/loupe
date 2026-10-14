@@ -95,6 +95,10 @@ Each hunk's new side and old side are parsed with the file's tree-sitter grammar
 
 Grammars and their highlight queries come from CodeEditLanguages, a single package that bundles about 40 prebuilt grammars. This replaces ten upstream grammar packages: each upstream manifest is maintained separately, several of their later releases fail to link under SwiftPM (so CSS, JavaScript and YAML were held at old tags and Swift at a special one), and every new language meant another dependency. One package gives SQL, Dockerfile, Markdown, Python, TOML, `go.mod` and more for free, with its own detection by extension and file name. The cost is a slightly slower prebuilt Go grammar, and a package that hasn't tagged a release since late 2024; Makefile and HCL still have no grammar there.
 
+### Windows are AppKit's, not SwiftUI scenes
+
+The lists window and each PR's window are `NSWindow`s made and tracked by `WindowManager`, hosting the SwiftUI views in `NSHostingController`s that carry their titles and toolbars into the window. SwiftUI keeps only the menu bar, hung on a `Settings` scene that opens no window. As scenes, the windows fought the app at every turn: SwiftUI's window controller handles `newWindowForTab:`, so the tab bar always showed a "+" that made stray windows SwiftUI then reused; its restoration duplicated the windows the store reopens; and a shared frame autosave name could be held by only one of its windows. Owning the windows removes the "+" (nothing implements `newWindowForTab:`), lets the store be the only restoration, and lets the lists window keep a frame autosave name that PR windows outside a tab group start from. A PR window joins the lists' tab group explicitly, in the stored order. As the app quits SwiftUI still closes every window, so the manager stops forgetting PRs once termination begins.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

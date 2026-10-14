@@ -5,26 +5,28 @@ import LoupeStore
 import SwiftUI
 
 /// The PR lists in one window and each opened PR in its own, all grouped as native window tabs.
+/// The windows are AppKit's, made by `WindowManager`; SwiftUI provides only the menu bar.
 struct LoupeApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
-    @State private var windowTabs = WindowTabs(tabs: makeTabs())
+    private let windows: WindowManager
+
+    init() {
+        let windows = WindowManager(tabs: makeTabs())
+        self.windows = windows
+        NotificationCenter.default.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { windows.restore() }
+        }
+    }
 
     var body: some Scene {
-        Window("Pull Requests", id: WindowTabs.listsID) {
-            ListsWindow(windowTabs: windowTabs)
-                .frame(minWidth: 900, minHeight: 500)
-        }
-        .windowToolbarStyle(.unified)
-        .commands {
-            TabCommands()
-            DiffCommands()
-            DebugCommands()
-        }
-        WindowGroup("Pull Request", for: String.self) { $id in
-            PullRequestWindow(id: id, windowTabs: windowTabs)
-                .frame(minWidth: 900, minHeight: 500)
-        }
-        .windowToolbarStyle(.unified)
+        // A scene that opens no window, to hang the menus on.
+        Settings { EmptyView() }
+            .commands {
+                CommandGroup(replacing: .appSettings) {}
+                TabCommands(windows: windows)
+                DiffCommands()
+                DebugCommands()
+            }
     }
 }
 
@@ -50,12 +52,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWindow.allowsAutomaticWindowTabbing = true
         // Before any window shows, so a snapshot run is never activated by one.
         if SnapshotRun.directory != nil { NSApp.setActivationPolicy(.accessory) }
-    }
-
-    /// Windows closing as the app quits are still open as far as the next launch is concerned.
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        WindowTabs.isTerminating = true
-        return .terminateNow
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

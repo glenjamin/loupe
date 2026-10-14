@@ -139,7 +139,7 @@ private func snapshotAllWindowsToDesktop() async {
 /// The app's windows in tab order, then any outside the tab group.
 @MainActor
 private func appWindows() -> [NSWindow] {
-    let windows = NSApp.windows.filter { $0.tabbingIdentifier == WindowTabs.tabbingIdentifier }
+    let windows = NSApp.windows.filter { $0.tabbingIdentifier == WindowManager.tabbingIdentifier }
     let grouped = windows.first?.tabGroup?.windows ?? []
     return grouped + windows.filter { window in !grouped.contains { $0 === window } }
 }
