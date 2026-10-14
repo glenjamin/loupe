@@ -1,5 +1,6 @@
 import AppKit
 import CodeEditLanguages
+import CodeLanguages_Container
 import os
 import SwiftTreeSitter
 
@@ -153,48 +154,98 @@ private struct Grammar: Sendable {
     /// queries list generic patterns first. Go's still lists them last, for the older first-wins rule.
     let laterPatternsWin: Bool
 
-    private static let cache = OSAllocatedUnfairLock<[SyntaxLanguage: Grammar]>(initialState: [:])
+    /// Loaded grammars, and nil for those that couldn't be, so a failure is logged once.
+    private static let cache = OSAllocatedUnfairLock<[SyntaxLanguage: Grammar?]>(initialState: [:])
 
-    /// The grammar and its compiled highlights query, compiled once per language.
+    /// The grammar and its compiled highlights query, compiled once per language. CodeEditLanguages'
+    /// own `CodeLanguage` isn't used, as making one reaches its `Bundle.module`, which stops the
+    /// process when run from the app bundle.
     static func load(_ syntax: SyntaxLanguage) -> Grammar? {
         if let cached = cache.withLock({ $0[syntax] }) { return cached }
-        guard let id = TreeSitterLanguage(rawValue: syntax.rawValue),
-              let code = CodeLanguage.allLanguages.first(where: { $0.id == id }),
-              let language = code.language,
-              let urls = highlightQueries(code)
-        else { return nil }
-        let source = urls.compactMap { try? Data(contentsOf: $0) }
-        guard source.count == urls.count,
+        let grammar = compile(syntax)
+        if grammar == nil { logger.error("No grammar or highlights query for \(syntax.rawValue, privacy: .public)") }
+        cache.withLock { $0[syntax] = .some(grammar) }
+        return grammar
+    }
+
+    private static func compile(_ syntax: SyntaxLanguage) -> Grammar? {
+        guard let id = TreeSitterLanguage(rawValue: syntax.rawValue), let parser = id.tsLanguage else { return nil }
+        let language = Language(language: parser)
+        let urls = highlightQueries(id).map { bundledResource("Resources/tree-sitter-\($0.folder)/\($0.file).scm", in: "CodeEditLanguages_CodeEditLanguages") }
+        let source = urls.compactMap { $0.flatMap { try? Data(contentsOf: $0) } }
+        guard !source.isEmpty, source.count == urls.count,
               let query = try? Query(language: language, data: source.reduce(Data()) { $0 + $1 + Data("\n".utf8) })
         else { return nil }
-        let grammar = Grammar(language: language, query: query, laterPatternsWin: id != .go)
-        cache.withLock { $0[syntax] = grammar }
-        return grammar
+        return Grammar(language: language, query: query, laterPatternsWin: id != .go)
     }
 
     /// Query files, composed as each grammar's tree-sitter.json does: TypeScript builds on
     /// JavaScript's, and JSX patterns come with JavaScript and TSX.
-    private static func highlightQueries(_ code: CodeLanguage) -> [URL]? {
-        guard let own = code.queryURL.flatMap(readable) else { return nil }
-        let js = CodeLanguage.javascript.queryURL.flatMap(readable)?.deletingLastPathComponent()
-        let jsQueries = { (names: [String]) in names.compactMap { js?.appending(path: "\($0).scm") } }
-        return switch code.id {
-        case .javascript, .jsx: jsQueries(["highlights", "highlights-jsx", "highlights-params"])
-        case .typescript: [own] + jsQueries(["highlights"])
-        case .tsx: [own] + jsQueries(["highlights-jsx", "highlights"])
-        default: [own]
+    private static func highlightQueries(_ id: TreeSitterLanguage) -> [(folder: String, file: String)] {
+        let js = { (files: [String]) in files.map { (folder: "javascript", file: $0) } }
+        return switch id {
+        case .javascript, .jsx: js(["highlights", "highlights-jsx", "highlights-params"])
+        case .typescript: [("typescript", "highlights")] + js(["highlights"])
+        case .tsx: [("typescript", "highlights")] + js(["highlights-jsx", "highlights"])
+        case .goMod: [("go-mod", "highlights")]
+        case .cSharp: [("c-sharp", "highlights")]
+        case .markdownInline: [("markdown-inline", "highlights")]
+        case .ocamlInterface: [("ocaml", "highlights")]
+        default: [(id.rawValue, "highlights")]
         }
     }
 }
 
-/// CodeEditLanguages builds its query paths for Xcode's bundle layout, which nests a second
-/// `Resources` folder; SwiftPM's flat bundle doesn't, so fall back to the path without it.
-private func readable(_ url: URL) -> URL? {
-    if FileManager.default.isReadableFile(atPath: url.path) { return url }
-    let bundleResources = url.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    let flat = url.pathComponents.suffix(2).reduce(bundleResources) { $0.appending(path: $1) }
-    return FileManager.default.isReadableFile(atPath: flat.path) ? flat : nil
+private extension TreeSitterLanguage {
+    /// The parser from CodeEditLanguages' prebuilt framework.
+    var tsLanguage: OpaquePointer? {
+        switch self {
+        case .agda: tree_sitter_agda()
+        case .bash: tree_sitter_bash()
+        case .c: tree_sitter_c()
+        case .cpp: tree_sitter_cpp()
+        case .cSharp: tree_sitter_c_sharp()
+        case .css: tree_sitter_css()
+        case .dart: tree_sitter_dart()
+        case .dockerfile: tree_sitter_dockerfile()
+        case .elixir: tree_sitter_elixir()
+        case .go: tree_sitter_go()
+        case .goMod: tree_sitter_gomod()
+        case .haskell: tree_sitter_haskell()
+        case .html: tree_sitter_html()
+        case .java: tree_sitter_java()
+        case .javascript, .jsx: tree_sitter_javascript()
+        case .jsdoc: tree_sitter_jsdoc()
+        case .json: tree_sitter_json()
+        case .julia: tree_sitter_julia()
+        case .kotlin: tree_sitter_kotlin()
+        case .lua: tree_sitter_lua()
+        case .markdown: tree_sitter_markdown()
+        case .markdownInline: tree_sitter_markdown_inline()
+        case .objc: tree_sitter_objc()
+        case .ocaml: tree_sitter_ocaml()
+        case .ocamlInterface: tree_sitter_ocaml_interface()
+        case .perl: tree_sitter_perl()
+        case .php: tree_sitter_php()
+        case .python: tree_sitter_python()
+        case .regex: tree_sitter_regex()
+        case .ruby: tree_sitter_ruby()
+        case .rust: tree_sitter_rust()
+        case .scala: tree_sitter_scala()
+        case .sql: tree_sitter_sql()
+        case .swift: tree_sitter_swift()
+        case .toml: tree_sitter_toml()
+        case .tsx: tree_sitter_tsx()
+        case .typescript: tree_sitter_typescript()
+        case .verilog: tree_sitter_verilog()
+        case .yaml: tree_sitter_yaml()
+        case .zig: tree_sitter_zig()
+        case .plainText: nil
+        }
+    }
 }
+
+private let logger = Logger(subsystem: "com.glenmailer.Loupe", category: "syntax")
 
 /// Captures to colour, outermost first so nested ones paint over them, with one pattern's
 /// capture chosen per node.

@@ -134,24 +134,32 @@ private func alternation(_ patterns: [String]) -> NSRegularExpression? {
     patterns.isEmpty ? nil : try? NSRegularExpression(pattern: patterns.map { "(?:\($0))" }.joined(separator: "|"))
 }
 
+/// Reads one of the vendored JSON files from LoupeCore's resource bundle.
+private func load<T: Decodable>(_ name: String, as type: T.Type) -> T? {
+    guard let url = bundledResource("linguist/\(name).json", in: "Loupe_LoupeCore"), let data = try? Data(contentsOf: url) else {
+        logger.error("Linguist's \(name, privacy: .public) data is missing from the bundle")
+        return nil
+    }
+    do {
+        return try JSONDecoder().decode(type, from: data)
+    } catch {
+        logger.error("Couldn't read Linguist's \(name, privacy: .public): \(error, privacy: .public)")
+        return nil
+    }
+}
+
 private final class BundleToken {}
 
-/// Reads one of the vendored JSON files from LoupeCore's resource bundle: beside the executable
-/// for `swift run` and tests, in Contents/Resources inside the app.
-private func load<T: Decodable>(_ name: String, as type: T.Type) -> T? {
+/// A file in one of SwiftPM's resource bundles: beside the executable for `swift run` and tests,
+/// in Contents/Resources inside the app. Found without `Bundle.module`, which only looks beside
+/// the app and in the build directory, and stops the process if both miss.
+func bundledResource(_ path: String, in bundle: String) -> URL? {
     let containers = [Bundle.main.resourceURL, Bundle.main.bundleURL, Bundle(for: BundleToken.self).bundleURL.deletingLastPathComponent()]
     for container in containers.compactMap({ $0 }) {
         for resources in ["", "Contents/Resources/"] {
-            let url = container.appending(path: "Loupe_LoupeCore.bundle/\(resources)linguist/\(name).json")
-            guard let data = try? Data(contentsOf: url) else { continue }
-            do {
-                return try JSONDecoder().decode(type, from: data)
-            } catch {
-                logger.error("Couldn't read Linguist's \(name, privacy: .public): \(error, privacy: .public)")
-                return nil
-            }
+            let url = container.appending(path: "\(bundle).bundle/\(resources)\(path)")
+            if FileManager.default.isReadableFile(atPath: url.path) { return url }
         }
     }
-    logger.error("Linguist's \(name, privacy: .public) data is missing from the bundle")
     return nil
 }
