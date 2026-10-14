@@ -13,6 +13,7 @@ let package = Package(
         .target(
             name: "LoupeCore",
             dependencies: [
+                "LoupeModel",
                 "SwiftTreeSitter",
                 "CodeEditLanguages",
             ],
@@ -26,9 +27,13 @@ let package = Package(
         .executableTarget(
             name: "Loupe",
             dependencies: ["LoupeCore", "LoupeModel", "LoupeStore", "LoupeInbox"],
-            resources: [.copy("Resources/Loupe.icns")]
+            resources: [
+                .copy("Resources/Loupe.icns"),
+                .copy("Resources/conversation.html"),
+                .copy("Resources/conversation.css"),
+            ]
         ),
-        .testTarget(name: "LoupeTests", dependencies: ["LoupeCore"], exclude: ["Fixtures"]),
+        .testTarget(name: "LoupeTests", dependencies: ["LoupeCore", "LoupeModel"], exclude: ["Fixtures"]),
         .testTarget(name: "LoupeInboxTests", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit", "LoupeInbox"]),
     ]
 )

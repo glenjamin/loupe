@@ -139,6 +139,10 @@ Moving on is a gesture like pull-to-refresh at the bottom: pulling past the end 
 
 Every PR file's diff ends in a footer inside the scrolled content, a bar like the file's header with a button that marks the file reviewed and shows the next one not reviewed. This revises the gesture above as the only way: a mouse wheel never pulls past the end, and on a trackpad the stretch had to be held while 80pt filled, so the user found the control hard to reach at all. The footer is reached by ordinary scrolling and clicked like any button; a file shorter than the view has it straight after its last row. The pull stays as a shortcut, now over about 40pt, and fills the footer itself rather than a separate indicator that existed only mid-stretch. The footer lives in the scroll view's clip view, placed in the document's coordinates, with a bottom content inset to make room, so the text view stays the document view and its wrapping and lazy layout are untouched.
 
+### The conversation tab: replies come from threads, and the web view is kept
+
+An addendum to the conversation tab's decision. GitHub's timeline omits reviews that only reply in threads, so thread replies are fetched with `reviewThreads` (bodies and authors) and shown inside the thread under the review that started it, as github.com does; a review's own comments give each thread's path, lines and diff hunk. The conversation is stored in tables per kind of row (timeline items, review comments, threads, thread comments, checks), keyed by PR and item id, and fetched on opening a PR's tab and on Reload rather than when the tab is first chosen, so it's usually there by then. The web view is made the first time Conversation is chosen and kept hidden behind the files after that, as is the diff behind it, so neither loses its place. The page is assembled in Swift rather than by a script in the page, so it runs with no script at all under a Content-Security-Policy that loads only GitHub's images. ⌃1 and ⌃2 switch, since ⌘1–⌘9 pick window tabs.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

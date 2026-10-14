@@ -12,9 +12,18 @@ struct DiffCommands: Commands {
         CommandGroup(after: .toolbar) {
             Toggle("Wrap Lines", isOn: $wrapLines)
                 .keyboardShortcut("l", modifiers: [.command, .option])
+            Divider()
+            // ⌃ rather than ⌘, which picks the window tab by number.
+            Button("Conversation") { windows.keyTab?.section = .conversation }
+                .keyboardShortcut("1", modifiers: .control)
+                .disabled(windows.keyTab == nil)
+            Button("Files Changed") { windows.keyTab?.section = .files }
+                .keyboardShortcut("2", modifiers: .control)
+                .disabled(windows.keyTab == nil)
         }
         CommandMenu("Review") {
-            let tab = windows.keyTab
+            // Only while the files are shown, where there's a file to act on.
+            let tab = windows.keyTab.flatMap { $0.section == .files ? $0 : nil }
             Button("Mark Reviewed and Show Next File") {
                 if let tab { Task { await tab.markViewedAndAdvance() } }
             }
@@ -69,7 +78,7 @@ final class ReviewWindows {
     /// Whether `event` was a review key, now acted on.
     private func handle(_ event: NSEvent) -> Bool {
         guard let window = event.window, window.isKeyWindow, let tab = tabs.object(forKey: window),
-              let path = tab.selectedFile, !isTyping(in: window)
+              tab.section == .files, let path = tab.selectedFile, !isTyping(in: window)
         else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
         let key = event.charactersIgnoringModifiers ?? ""

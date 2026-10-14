@@ -2,14 +2,20 @@ import AppKit
 import LoupeInbox
 import SwiftUI
 import UniformTypeIdentifiers
+import WebKit
 
 /// Renders `window` as it looks on screen, title bar, toolbar and tab bar included. Drawn by the
-/// app itself, so it needs no screen-recording permission.
+/// app itself, so it needs no screen-recording permission. Web views draw in another process,
+/// so each is asked for its own snapshot and drawn in over its place.
 @MainActor
-func snapshot(window: NSWindow) -> NSImage {
-    let rep = [window.contentView?.superview, window.contentView].lazy.compactMap { $0.flatMap(render) }.first
+func snapshot(window: NSWindow) async -> NSImage {
     let image = NSImage(size: window.frame.size)
-    if let rep { image.addRepresentation(rep) }
+    for case let view? in [window.contentView?.superview, window.contentView] {
+        guard let rep = render(view) else { continue }
+        await drawWebViews(in: view, onto: rep)
+        image.addRepresentation(rep)
+        break
+    }
     return image
 }
 
@@ -44,6 +50,13 @@ enum SnapshotRun {
             // Hidden tabs' views don't load their diffs, so they're asked for here.
             for tab in tabs.tabs { Task { await tab.load() } }
             await wait(until: deadline) { tabs.tabs.allSatisfy(\.phase.isSettled) }
+            // LOUPE_SNAPSHOT_TAB=conversation shows each PR's conversation, once loaded and drawn.
+            if ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_TAB"] == "conversation" {
+                for tab in tabs.tabs { tab.section = .conversation }
+                await wait(until: deadline) {
+                    tabs.tabs.allSatisfy { $0.isConversationSettled && ConversationPage.existingPage(for: $0)?.isLoaded == true }
+                }
+            }
             // LOUPE_SNAPSHOT_FILE picks the first file whose path contains it, to snapshot a given kind of file.
             if let wanted = ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_FILE"] {
                 for tab in tabs.tabs {
@@ -84,7 +97,7 @@ func saveSnapshotsOfAllWindows(to directory: URL) async throws -> [URL] {
         window.layoutIfNeeded()
         window.displayIfNeeded()
         let url = directory.appending(path: "\(index + 1)-\(sanitised(window.title)).png")
-        try pngData(snapshot(window: window)).write(to: url)
+        try pngData(await snapshot(window: window)).write(to: url)
         written.append(url)
     }
     if let selected {
@@ -108,7 +121,11 @@ func bringForward(_ window: NSWindow) {
 @MainActor
 private func saveSnapshotOfKeyWindow() {
     guard let window = NSApp.keyWindow else { return }
-    let image = snapshot(window: window)
+    Task { saveSnapshot(await snapshot(window: window), of: window) }
+}
+
+@MainActor
+private func saveSnapshot(_ image: NSImage, of window: NSWindow) {
     let panel = NSSavePanel()
     panel.allowedContentTypes = [.png]
     panel.nameFieldStringValue = "\(sanitised(window.title)).png"
@@ -142,6 +159,25 @@ private func appWindows() -> [NSWindow] {
     let windows = NSApp.windows.filter { $0.tabbingIdentifier == WindowManager.tabbingIdentifier }
     let grouped = windows.first?.tabGroup?.windows ?? []
     return grouped + windows.filter { window in !grouped.contains { $0 === window } }
+}
+
+/// Draws each visible web view under `root` onto `rep`, which holds `root` as drawn.
+@MainActor
+private func drawWebViews(in root: NSView, onto rep: NSBitmapImageRep) async {
+    for webView in descendants(of: root).compactMap({ $0 as? WKWebView }) where !webView.isHiddenOrHasHiddenAncestor {
+        guard let image = try? await webView.takeSnapshot(configuration: nil) else { continue }
+        var rect = webView.convert(webView.bounds, to: root)
+        if root.isFlipped { rect.origin.y = root.bounds.height - rect.maxY }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: rect)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+}
+
+@MainActor
+private func descendants(of view: NSView) -> [NSView] {
+    view.subviews + view.subviews.flatMap(descendants)
 }
 
 /// The view drawn at the window's backing scale, or nil if it draws nothing.

@@ -4,7 +4,8 @@ import LoupeInbox
 import LoupeModel
 import SwiftUI
 
-/// One PR's tab: its header, then its diff once produced from the local checkout.
+/// One PR's tab: its header, then GitHub-style tabs for its conversation and for its diff, once
+/// produced from the local checkout.
 struct PullRequestView: View {
     @Bindable var tab: PullRequestTab
     let checkoutSearchRoots: [URL]
@@ -13,6 +14,7 @@ struct PullRequestView: View {
         let pullRequest = tab.pullRequest
         VStack(spacing: 0) {
             PullRequestHeader(pullRequest: pullRequest)
+            ReviewSectionPicker(tab: tab)
             Divider()
             if let change = tab.pendingChange {
                 PendingChangeBanner(change: change) {
@@ -22,8 +24,18 @@ struct PullRequestView: View {
                 }
                 Divider()
             }
-            content(pullRequest)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Both stay once made, so switching keeps each one's place.
+            ZStack {
+                let showsFiles = tab.section == .files
+                content(pullRequest)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .opacity(showsFiles ? 1 : 0)
+                    .allowsHitTesting(showsFiles)
+                    .accessibilityHidden(!showsFiles)
+                if let page = showsFiles ? ConversationPage.existingPage(for: tab) : ConversationPage.page(for: tab) {
+                    ConversationView(page: page, conversation: tab.conversation, error: tab.conversationError, isShown: !showsFiles)
+                }
+            }
         }
         // Showing the tab produces the diff if it isn't already in memory. Changes on GitHub
         // after that are offered by the banner rather than replacing what's being read.
@@ -65,6 +77,32 @@ struct PullRequestView: View {
                 Button("Try Again") { Task { await tab.retry() } }
             }
         }
+    }
+}
+
+/// Conversation and Files changed, as on github.com.
+struct ReviewSectionPicker: View {
+    @Bindable var tab: PullRequestTab
+
+    var body: some View {
+        HStack {
+            Picker("Show", selection: $tab.section) {
+                Text("Conversation").tag(ReviewSection.conversation)
+                Text(filesLabel).tag(ReviewSection.files)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("⌃1 Conversation, ⌃2 Files changed")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+
+    private var filesLabel: String {
+        guard case let .ready(review) = tab.phase else { return "Files changed" }
+        return "Files changed (\(review.files.count))"
     }
 }
 

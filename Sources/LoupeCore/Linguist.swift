@@ -154,7 +154,7 @@ private final class BundleToken {}
 /// A file in one of SwiftPM's resource bundles: beside the executable for `swift run` and tests,
 /// in Contents/Resources inside the app. Found without `Bundle.module`, which only looks beside
 /// the app and in the build directory, and stops the process if both miss.
-func bundledResource(_ path: String, in bundle: String) -> URL? {
+public func bundledResource(_ path: String, in bundle: String) -> URL? {
     let containers = [Bundle.main.resourceURL, Bundle.main.bundleURL, Bundle(for: BundleToken.self).bundleURL.deletingLastPathComponent()]
     for container in containers.compactMap({ $0 }) {
         for resources in ["", "Contents/Resources/"] {
