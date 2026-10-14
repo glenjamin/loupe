@@ -162,7 +162,7 @@ struct FileBrowser: View {
             .frame(minWidth: 400)
             .overlay(alignment: .bottom) {
                 if showsAllViewed {
-                    Label("All files viewed", systemImage: "checkmark.circle.fill")
+                    Label("All files reviewed", systemImage: "checkmark.circle.fill")
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(.regularMaterial, in: Capsule())
@@ -183,9 +183,9 @@ struct FileBrowser: View {
     private func review(of file: FileDiff) -> FileReview {
         let isViewed = tab.viewedState(of: file.path).isViewed
         let label = if tab.nextUnviewedFile(after: file.id) != nil {
-            isViewed ? "Next file not viewed" : "Mark viewed · next file"
+            isViewed ? "Next unreviewed file" : "Mark reviewed · next file"
         } else {
-            isViewed ? "All files viewed" : "Mark viewed · last file"
+            isViewed ? "All files reviewed" : "Mark reviewed · last file"
         }
         return FileReview(
             isViewed: isViewed,
@@ -217,7 +217,7 @@ struct ReviewFileList: View {
                         .lineLimit(2)
                         .help(error)
                 }
-                Text("\(viewedCount) of \(files.count) viewed · \(hiddenCount) vendored, lockfile or generated hidden")
+                Text("\(viewedCount) of \(files.count) reviewed · \(hiddenCount) vendored, lockfile or generated hidden")
                     .foregroundStyle(.secondary)
             }
             .font(.caption)
@@ -243,10 +243,10 @@ struct ReviewFileRow: View {
         HStack(spacing: 6) {
             Group {
                 if hovering {
-                    Toggle("Viewed", isOn: Binding(get: { state.isViewed }, set: { _ in toggle() }))
+                    Toggle("Reviewed", isOn: Binding(get: { state.isViewed }, set: { _ in toggle() }))
                         .toggleStyle(.checkbox)
                         .labelsHidden()
-                        .help(state.isViewed ? "Mark not viewed (⇧V)" : "Mark viewed (⇧V)")
+                        .help(state.isViewed ? "Mark not reviewed (⇧V)" : "Mark reviewed (⇧V)")
                 } else if state.isViewed {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .bold))
@@ -264,7 +264,7 @@ struct ReviewFileRow: View {
                     .padding(.vertical, 1)
                     .foregroundStyle(.secondary)
                     .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.5)))
-                    .help("Changed since you viewed it")
+                    .help("Changed since you reviewed it")
             }
         }
         .onHover { hovering = $0 }
