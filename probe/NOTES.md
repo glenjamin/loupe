@@ -8,6 +8,7 @@ Raw responses, captured 2026-10-14 with `gh api graphql`:
 - `mergeable.json`: `mergeable` on an open vs a merged PR.
 - `pr-list-query.graphql` → `pr-list.json`: the start screen's two searches (`author:@me` and `review-requested:@me`) in one request, with CI rollup and branch names. Each node's `id` was looked up afterwards (by repo and number) and added, as the app keys stored PRs on it. The tests' fake GitHub serves these nodes as the full search results, paging them itself. `graphql-error.json` is a real GraphQL error response (a bad field). Both are test fixtures.
 - `gh api '/notifications?participating=true' -i` → `notifications-headers.txt` (the 200's headers, then a 304's from repeating it with `If-Modified-Since`) and `notifications.json` (the first three of the page's 50 notifications, each `repository` cut down to a few fields). The tests' fake GitHub serves notifications in this shape.
+- `viewed-files-query.graphql` → `viewed-files.json`: a PR's files' `viewerViewedState`, paged by `node(id:)`. `viewed-mutations.graphql` → `viewed-mark.json`: `markFileAsViewed(input: {pullRequestId, path})`; `unmarkFileAsViewed` takes the same input. Captured on stagehand#1727 by marking then unmarking one file, so nothing was left changed. `viewed-mark-error.json` is GitHub's `UNPROCESSABLE` refusal of a path not in the PR. The tests' fake serves these shapes.
 
 ## Surprises and shapes
 

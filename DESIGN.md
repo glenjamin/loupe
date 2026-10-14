@@ -129,6 +129,12 @@ Linguist's `vendor.yml` serves language statistics, so it also names things a re
 
 A PR view has GitHub-style segmented tabs, Conversation and Files changed, inside the window rather than a second tier of native tabs. The conversation is one web view built from the `bodyHTML` fields GraphQL returns for the description, comments and reviews, so mentions, code blocks, tables, task lists and emoji render exactly as on github.com with no markdown engine of our own. The diff stays native. The HTML and its styling are ours to change later. Known limit: images attached to private repos need a browser session and may not load.
 
+### Viewed files sync with GitHub, and pulling past a file's end marks it viewed
+
+A file's "Viewed" state is GitHub's own `viewerViewedState`, read and written through GraphQL (`files { path viewerViewedState }` paged to the end, as vendored files swamp the list; `markFileAsViewed` and `unmarkFileAsViewed`), so a review started in Loupe carries on at github.com and back. It's stored per PR and path so a tab shows it at once, and fetched afresh when a tab opens and on Reload. A change shows immediately and is put back if GitHub refuses it. `DISMISSED`, a viewed file changed by a later push, is flagged in the sidebar and counts as not viewed when moving on.
+
+Moving on is a gesture like pull-to-refresh at the bottom: pulling past the end of a file's diff reveals an indicator that fills over about 80pt, gives a haptic tap when full, and letting go then marks the file viewed and shows the next file not viewed, wrapping to the top. Reaching the end is the moment a reviewer has finished a file, so the gesture costs nothing extra and needs no reach for a checkbox. Only a live drag counts, never momentum bouncing off the end, so a fling through a file can't mark it by accident; the threshold logic is a pure type, `OverscrollTrigger`, since scroll events can't be driven headlessly. ⌘↓ and `]` do the same from the keyboard and ⇧V toggles the shown file. The bare keys are handled by a key monitor that steps aside while text can be typed, rather than as menu shortcuts, which would take them from every text field.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
