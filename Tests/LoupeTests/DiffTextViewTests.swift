@@ -55,7 +55,8 @@ struct DiffTextViewTests {
             let layoutManager = try #require(view.layoutManager)
             let rect = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: index), effectiveRange: nil)
             let y = Int(rect.midY + view.textContainerOrigin.y)
-            return try #require(bitmap.colorAt(x: bitmap.pixelsWide - 4, y: y * bitmap.pixelsHigh / Int(view.bounds.height)))
+            // Map by the bitmap's own size: laying out to draw it can resize the view.
+            return try #require(bitmap.colorAt(x: bitmap.pixelsWide - 4, y: y * bitmap.pixelsHigh / Int(bitmap.size.height)))
         }
 
         let added = try colorAtRightEdge(ofRowContaining: "transfermanager")
@@ -85,8 +86,9 @@ struct DiffTextViewTests {
         // It starts under the code, past the gutter.
         var continuationGlyphs = NSRange()
         _ = layoutManager.lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: &continuationGlyphs)
-        let marker = text.range(of: "+", range: row).location
-        let codeStart = layoutManager.location(forGlyphAt: layoutManager.glyphIndexForCharacter(at: marker + 1)).x
+        var gutter = NSRange()
+        _ = rendered.text.attribute(.diffGutter, at: row.location, effectiveRange: &gutter)
+        let codeStart = layoutManager.location(forGlyphAt: layoutManager.glyphIndexForCharacter(at: NSMaxRange(gutter))).x
         #expect(layoutManager.location(forGlyphAt: continuationGlyphs.location).x == codeStart)
 
         // Clicking it gives the row's anchor, and its background spans the width.
@@ -99,6 +101,50 @@ struct DiffTextViewTests {
         view.cacheDisplay(in: line, to: bitmap)
         let color = try #require(bitmap.colorAt(x: bitmap.pixelsWide - 4, y: bitmap.pixelsHigh / 2))
         #expect(color.greenComponent > color.redComponent)
+    }
+
+    @Test func lineNumbersSitInRightAlignedColumnsBesideTheCode() throws {
+        let view = DiffTextView.make()
+        view.frame = NSRect(x: 0, y: 0, width: 1600, height: 400)
+        let rendered = try RenderedDiff(file: goMod())
+        view.show(rendered)
+        let layoutManager = try #require(view.layoutManager)
+        layoutManager.ensureLayout(for: try #require(view.textContainer))
+        let text = rendered.text.string as NSString
+
+        func row(containing needle: String) -> NSRange {
+            text.lineRange(for: NSRange(location: text.range(of: needle).location, length: 0))
+        }
+        func x(at index: Int) -> CGFloat {
+            layoutManager.location(forGlyphAt: layoutManager.glyphIndexForCharacter(at: index)).x
+        }
+        // The x of a number's last digit in the row's gutter; backwards finds the new side's.
+        func numberEnd(_ number: Int, inRowContaining needle: String, newSide: Bool = false) -> CGFloat {
+            let found = text.range(of: String(number), options: newSide ? .backwards : [], range: NSRange(location: row(containing: needle).location, length: 12))
+            return x(at: NSMaxRange(found) - 1)
+        }
+        func codeStart(ofRowContaining needle: String) -> CGFloat {
+            var gutter = NSRange()
+            _ = rendered.text.attribute(.diffGutter, at: row(containing: needle).location, effectiveRange: &gutter)
+            return x(at: NSMaxRange(gutter))
+        }
+
+        // One- and two-digit numbers end in the same place, on each side.
+        #expect(numberEnd(8, inRowContaining: "go-sqlmock") == numberEnd(10, inRowContaining: "aws-sdk-go v1.49.23"))
+        #expect(numberEnd(8, inRowContaining: "go-sqlmock", newSide: true) == numberEnd(10, inRowContaining: "transfermanager", newSide: true))
+        #expect(numberEnd(8, inRowContaining: "go-sqlmock") < numberEnd(8, inRowContaining: "go-sqlmock", newSide: true))
+
+        // Hunk headers and every kind of row start their text in the same column.
+        let code = codeStart(ofRowContaining: "require (")
+        #expect(codeStart(ofRowContaining: "@@ -7,7") == code)
+        #expect(codeStart(ofRowContaining: "aws-sdk-go v1.49.23") == code)
+        #expect(codeStart(ofRowContaining: "transfermanager") == code)
+
+        // Clicking a line number gives its row's anchor.
+        let deleted = row(containing: "aws-sdk-go v1.49.23")
+        let fragment = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: deleted.location), effectiveRange: nil)
+        let point = NSPoint(x: view.textContainerOrigin.x + numberEnd(10, inRowContaining: "aws-sdk-go v1.49.23"), y: view.textContainerOrigin.y + fragment.midY)
+        #expect(rendered.anchor(at: view.characterIndexForInsertion(at: point)) == DiffAnchor(path: "go.mod", side: .left, line: 10))
     }
 }
 

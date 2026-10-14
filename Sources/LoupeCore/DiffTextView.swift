@@ -19,6 +19,7 @@ public final class DiffTextView: NSTextView {
         layout.allowsNonContiguousLayout = true
         storage.addLayoutManager(layout)
         let container = NSTextContainer(size: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+        container.lineFragmentPadding = 10
         layout.addTextContainer(container)
 
         let view = DiffTextView(frame: .zero, textContainer: container)
@@ -120,22 +121,33 @@ public final class DiffTextView: NSTextView {
     }
 }
 
-/// Paints each row's background across the whole visible width. Done here rather than in the text
-/// view's drawBackground(in:) because this only sees glyphs already laid out for drawing; mapping a
-/// rect to glyphs from the view forces layout of the whole file above it.
+/// Paints each row's background across the whole visible width, with its gutter a shade darker.
+/// Done here rather than in the text view's drawBackground(in:) because this only sees glyphs
+/// already laid out for drawing; mapping a rect to glyphs from the view forces layout of the whole
+/// file above it. The selection is drawn after, so it shows over the tints.
 private final class RowBackgroundLayoutManager: NSLayoutManager {
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
-        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
-        guard let textStorage, let clip = NSGraphicsContext.current?.cgContext.boundingBoxOfClipPath else { return }
-        enumerateLineFragments(forGlyphRange: glyphsToShow) { fragment, _, _, glyphRange, _ in
-            let charIndex = self.characterIndexForGlyph(at: glyphRange.location)
-            guard charIndex < textStorage.length,
-                  let raw = textStorage.attribute(.diffRowKind, at: charIndex, effectiveRange: nil) as? Int,
-                  let color = RowKind(rawValue: raw)?.background
-            else { return }
-            color.setFill()
-            NSRect(x: clip.minX, y: fragment.minY + origin.y, width: clip.width, height: fragment.height).fill()
+        if let textStorage, let clip = NSGraphicsContext.current?.cgContext.boundingBoxOfClipPath {
+            enumerateLineFragments(forGlyphRange: glyphsToShow) { fragment, _, container, glyphRange, _ in
+                let charIndex = self.characterIndexForGlyph(at: glyphRange.location)
+                guard charIndex < textStorage.length,
+                      let raw = textStorage.attribute(.diffRowKind, at: charIndex, effectiveRange: nil) as? Int,
+                      let kind = RowKind(rawValue: raw)
+                else { return }
+                let row = NSRect(x: clip.minX, y: fragment.minY + origin.y, width: clip.width, height: fragment.height)
+                if let color = kind.background {
+                    color.setFill()
+                    row.fill()
+                }
+                if let color = kind.gutterBackground,
+                   let width = textStorage.attribute(.diffGutterWidth, at: charIndex, effectiveRange: nil) as? CGFloat {
+                    let end = origin.x + fragment.minX + container.lineFragmentPadding + width
+                    color.setFill()
+                    NSRect(x: min(clip.minX, origin.x), y: row.minY, width: end - min(clip.minX, origin.x), height: row.height).fill()
+                }
+            }
         }
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
     }
 }
 

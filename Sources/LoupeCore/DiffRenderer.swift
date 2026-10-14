@@ -26,6 +26,8 @@ public extension NSAttributedString.Key {
     static let diffRowKind = NSAttributedString.Key("Loupe.diffRowKind")
     /// Marks gutter text (line numbers and the +/- marker) so copying a selection yields plain code.
     static let diffGutter = NSAttributedString.Key("Loupe.diffGutter")
+    /// The width of the gutter's tinted columns, measured from the start of the line.
+    static let diffGutterWidth = NSAttributedString.Key("Loupe.diffGutterWidth")
 }
 
 /// One file's diff as a single attributed string, with a gutter of old/new line numbers.
@@ -39,9 +41,9 @@ public struct RenderedDiff {
     public let syntax: SyntaxPlan?
 
     public init(file: FileDiff, fontSize: CGFloat = 12) {
-        let width = max(4, String(file.maxLineNumber).count)
-        // Two numbers, a space between, two before the marker, and the marker itself.
-        let style = Style(fontSize: fontSize, gutterColumns: width * 2 + 4)
+        let width = max(3, String(file.maxLineNumber).count)
+        // Two right-aligned numbers and the marker, two spaces apart, then a tab out to the code.
+        let style = Style(fontSize: fontSize, gutterColumns: width * 2 + 5)
         let out = NSMutableString()
         var rows: [(start: Int, length: Int, gutter: Int, kind: RowKind)] = []
         var anchors: [DiffAnchor?] = []
@@ -59,19 +61,19 @@ public struct RenderedDiff {
         }
 
         for hunk in file.hunks {
-            addRow(gutter: "", body: hunk.header, kind: .hunkHeader, anchor: nil)
+            addRow(gutter: "\t", body: hunk.header, kind: .hunkHeader, anchor: nil)
             var newSide = SyntaxPlan.Side()
             var oldSide = SyntaxPlan.Side()
             for line in hunk.lines {
-                let numbers = pad(line.oldLine, width) + " " + pad(line.newLine, width) + "  "
+                let numbers = pad(line.oldLine, width) + "  " + pad(line.newLine, width) + "  "
                 let body = displayText(line)
                 switch line.kind {
                 case .context(_, let new):
-                    addRow(gutter: numbers + " ", body: body, kind: .context, anchor: DiffAnchor(path: file.path, side: .right, line: new))
+                    addRow(gutter: numbers + " \t", body: body, kind: .context, anchor: DiffAnchor(path: file.path, side: .right, line: new))
                 case .addition(let new):
-                    addRow(gutter: numbers + "+", body: body, kind: .addition, anchor: DiffAnchor(path: file.path, side: .right, line: new))
+                    addRow(gutter: numbers + "+\t", body: body, kind: .addition, anchor: DiffAnchor(path: file.path, side: .right, line: new))
                 case .deletion(let old):
-                    addRow(gutter: numbers + "-", body: body, kind: .deletion, anchor: DiffAnchor(path: file.path, side: .left, line: old))
+                    addRow(gutter: numbers + "-\t", body: body, kind: .deletion, anchor: DiffAnchor(path: file.path, side: .left, line: old))
                 }
                 if syntax != nil, let row = rows.last {
                     let code = (target: row.start + row.gutter, length: row.length - row.gutter - 1)
@@ -87,10 +89,9 @@ public struct RenderedDiff {
         for row in rows {
             let full = NSRange(location: row.start, length: row.length)
             attributed.addAttribute(.diffRowKind, value: row.kind.rawValue, range: full)
+            attributed.addAttributes(style.gutter, range: NSRange(location: row.start, length: row.gutter))
             if row.kind == .hunkHeader {
-                attributed.addAttributes(style.hunkHeader, range: full)
-            } else if row.gutter > 0 {
-                attributed.addAttributes(style.gutter, range: NSRange(location: row.start, length: row.gutter))
+                attributed.addAttributes(style.hunkHeader, range: NSRange(location: row.start + row.gutter, length: row.length - row.gutter))
             }
         }
         attributed.endEditing()
@@ -127,6 +128,16 @@ public extension RowKind {
         case .hunkHeader: DiffColors.hunkHeaderBackground
         }
     }
+
+    /// The gutter's tint, a shade darker than the row's so the numbers read as separate from the code.
+    var gutterBackground: NSColor? {
+        switch self {
+        case .context: nil
+        case .addition: DiffColors.additionGutterBackground
+        case .deletion: DiffColors.deletionGutterBackground
+        case .hunkHeader: DiffColors.hunkHeaderGutterBackground
+        }
+    }
 }
 
 private struct Style {
@@ -136,11 +147,24 @@ private struct Style {
 
     init(fontSize: CGFloat, gutterColumns: Int) {
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        // Wrapped continuation lines hang under the code rather than under the gutter.
+        let digit = ("0" as NSString).size(withAttributes: [.font: font]).width
+        // The tint runs a little past the marker; the code starts a little past the tint.
+        let gutterWidth = digit * CGFloat(gutterColumns) + (fontSize / 3).rounded()
+        let codeStart = gutterWidth + (fontSize * 2 / 3).rounded()
         let paragraph = NSMutableParagraphStyle()
+        // Rows are about 20pt at 12pt, as on GitHub, with the extra space split above and below the text.
+        let natural = ceil(font.ascender - font.descender + font.leading)
+        let extra = max(0, (fontSize * 5 / 3).rounded() - natural)
+        paragraph.minimumLineHeight = natural + (extra / 2).rounded(.down)
+        paragraph.maximumLineHeight = paragraph.minimumLineHeight
+        paragraph.lineSpacing = extra - (extra / 2).rounded(.down)
+        // The gutter's tab lands on the code column, where wrapped lines hang too; tabs in the code
+        // then step four columns from there.
         paragraph.firstLineHeadIndent = 0
-        paragraph.headIndent = (String(repeating: "0", count: gutterColumns) as NSString).size(withAttributes: [.font: font]).width
-        base = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph]
+        paragraph.headIndent = codeStart
+        paragraph.tabStops = (0..<32).map { NSTextTab(textAlignment: .left, location: codeStart + digit * 4 * CGFloat($0)) }
+        paragraph.defaultTabInterval = digit * 4
+        base = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph, .diffGutterWidth: gutterWidth]
         gutter = [.foregroundColor: NSColor.tertiaryLabelColor, .diffGutter: true]
         hunkHeader = [
             .foregroundColor: NSColor.secondaryLabelColor,

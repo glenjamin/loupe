@@ -17,6 +17,12 @@ public enum DiffColors {
     public static let syntaxConstant = dynamic(light: (0x05, 0x50, 0xAE, 1), dark: (0x79, 0xC0, 0xFF, 1))
     public static let syntaxVariable = dynamic(light: (0x95, 0x38, 0x00, 1), dark: (0xFF, 0xA6, 0x57, 1))
     public static let syntaxTag = dynamic(light: (0x11, 0x63, 0x29, 1), dark: (0x7E, 0xE7, 0x87, 1))
+
+    // The gutter beside a changed row or hunk header, a shade darker than the row; dark mode's
+    // are translucent and drawn over the row's tint.
+    public static let additionGutterBackground = dynamic(light: (0xC7, 0xF0, 0xD0, 1), dark: (0x3F, 0xB9, 0x50, 0.12))
+    public static let deletionGutterBackground = dynamic(light: (0xFF, 0xD7, 0xD5, 1), dark: (0xF8, 0x51, 0x49, 0.12))
+    public static let hunkHeaderGutterBackground = dynamic(light: (0xC2, 0xE6, 0xFF, 1), dark: (0x38, 0x8B, 0xFD, 0.15))
 }
 
 private typealias RGBA = (r: Int, g: Int, b: Int, a: CGFloat)
