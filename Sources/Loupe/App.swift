@@ -1,6 +1,7 @@
 import AppKit
 import LoupeCore
-import LoupeGitHub
+import LoupeInbox
+import LoupeStore
 import SwiftUI
 
 struct LoupeApp: App {
@@ -28,7 +29,7 @@ enum Screen {
 
     static var initial: Screen {
         guard let path = LaunchOptions.diffPath else {
-            return .pullRequests(PullRequestListModel { NSWorkspace.shared.open($0.url) })
+            return .pullRequests(PullRequestListModel(store: openStore()) { NSWorkspace.shared.open($0.url) })
         }
         return .diff(ReviewModel.load(path: path))
     }
@@ -130,5 +131,16 @@ struct FileRow: View {
             .font(.caption.monospacedDigit())
         }
         .help(file.path)
+    }
+}
+
+/// The on-disk store, or a throwaway one if it can't be opened, so the PR list still works.
+private func openStore() -> PullRequestStore {
+    let url = PullRequestStore.defaultURL
+    do {
+        return try PullRequestStore(url: url)
+    } catch {
+        FileHandle.standardError.write(Data("Couldn't open \(url.path(percentEncoded: false)), not keeping PRs between runs: \(error)\n".utf8))
+        return try! PullRequestStore.inMemory()
     }
 }

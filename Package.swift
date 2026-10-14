@@ -4,11 +4,17 @@ import PackageDescription
 let package = Package(
     name: "Loupe",
     platforms: [.macOS(.v14)],
+    dependencies: [
+        .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.11.1"),
+    ],
     targets: [
         .target(name: "LoupeCore"),
-        .target(name: "LoupeGitHub"),
-        .executableTarget(name: "Loupe", dependencies: ["LoupeCore", "LoupeGitHub"]),
+        .target(name: "LoupeModel"),
+        .target(name: "LoupeGitHub", dependencies: ["LoupeModel"]),
+        .target(name: "LoupeStore", dependencies: ["LoupeModel", .product(name: "GRDB", package: "GRDB.swift")]),
+        .target(name: "LoupeInbox", dependencies: ["LoupeModel", "LoupeGitHub", "LoupeStore"]),
+        .executableTarget(name: "Loupe", dependencies: ["LoupeCore", "LoupeModel", "LoupeStore", "LoupeInbox"]),
         .testTarget(name: "LoupeTests", dependencies: ["LoupeCore"], exclude: ["Fixtures"]),
-        .testTarget(name: "LoupeGitHubTests", dependencies: ["LoupeGitHub"]),
+        .testTarget(name: "LoupeInboxTests", dependencies: ["LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeInbox"]),
     ]
 )

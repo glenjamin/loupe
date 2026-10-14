@@ -1,4 +1,6 @@
-import LoupeGitHub
+import AppKit
+import LoupeInbox
+import LoupeModel
 import SwiftUI
 
 /// The start screen: the user's own open PRs beside the ones waiting on their review.
@@ -7,13 +9,20 @@ struct PullRequestListView: View {
 
     var body: some View {
         Group {
-            if let lists = model.lists {
-                // Re-render each minute so the "updated N ago" labels don't go stale between refreshes.
+            if model.hasStoredLists {
+                // Re-render each minute so the "N ago" labels don't go stale between refreshes.
                 TimelineView(.everyMinute) { _ in
                     HStack(spacing: 0) {
-                        PullRequestColumn(title: "Mine", page: lists.mine, showsAuthor: false, open: model.open)
+                        PullRequestColumn(title: "Mine", pullRequests: model.pullRequests(in: .mine), showsAuthor: false, open: model.open)
                         Divider()
-                        PullRequestColumn(title: "To review", page: lists.toReview, showsAuthor: true, open: model.open)
+                        PullRequestColumn(title: "To review", pullRequests: model.pullRequests(in: .toReview), showsAuthor: true, open: model.open)
+                    }
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        if let error = model.error {
+                            RefreshErrorBanner(error: error, lastRefreshed: model.lastRefreshed, isLoading: model.isLoading) {
+                                Task { await model.refresh() }
+                            }
+                        }
                     }
                 }
             } else if let error = model.error {
@@ -34,9 +43,10 @@ struct PullRequestListView: View {
             ToolbarItemGroup {
                 if model.isLoading {
                     ProgressView().controlSize(.small)
-                } else if let lastRefreshed = model.lastRefreshed {
+                }
+                if let lastRefreshed = model.lastRefreshed {
                     TimelineView(.everyMinute) { _ in
-                        Text("Updated \(lastRefreshed.formatted(.relative(presentation: .named)))")
+                        Text("Refreshed \(lastRefreshed.formatted(.relative(presentation: .named)))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -47,27 +57,59 @@ struct PullRequestListView: View {
             }
         }
         .task { await model.keepRefreshed() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.refreshIfStale() }
+        }
+    }
+}
+
+/// Shown above lists that couldn't be refreshed, so it's clear how old they are.
+struct RefreshErrorBanner: View {
+    let error: String
+    let lastRefreshed: Date?
+    let isLoading: Bool
+    let retry: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(headline).font(.callout.weight(.semibold))
+                Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            }
+            Spacer(minLength: 0)
+            Button("Retry", action: retry).disabled(isLoading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private var headline: String {
+        guard let lastRefreshed else { return "Couldn't refresh pull requests" }
+        return "Couldn't refresh. Showing pull requests from \(lastRefreshed.formatted(.relative(presentation: .named)))."
     }
 }
 
 struct PullRequestColumn: View {
     let title: String
-    let page: PullRequestPage
+    let pullRequests: [PullRequestSummary]
     let showsAuthor: Bool
     let open: (PullRequestSummary) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(heading)
+            Text("\(title) (\(pullRequests.count))")
                 .font(.headline)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-            if page.pullRequests.isEmpty {
+            if pullRequests.isEmpty {
                 Text("Nothing here")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(page.pullRequests) { pullRequest in
+                List(pullRequests) { pullRequest in
                     Button { open(pullRequest) } label: {
                         PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor)
                     }
@@ -76,11 +118,6 @@ struct PullRequestColumn: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var heading: String {
-        let shown = page.pullRequests.count
-        return shown < page.totalCount ? "\(title) (\(shown) of \(page.totalCount))" : "\(title) (\(shown))"
     }
 }
 

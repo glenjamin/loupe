@@ -8,14 +8,20 @@ Needs Swift 6 (Command Line Tools are enough; no Xcode). All commands run from t
 
 ```sh
 swift build                 # debug build
-swift test                  # diff tests, plus PR list tests against a fake GitHub (swift-testing)
+swift test                  # diff tests, plus PR list tests against a fake GitHub and SQLite (swift-testing)
 swift build -c release      # for meaningful bench numbers
 ```
 
-Open the start screen: your open PRs (drafts included) beside the open PRs awaiting your review, newest first. It authenticates with `gh auth token`, so `gh` must be signed in. It refreshes every few minutes and on ⌘R, and clicking a PR opens it on github.com:
+Open the start screen: your open PRs (drafts included) beside the open PRs awaiting your review, newest first. It authenticates with `gh auth token`, so `gh` must be signed in. Clicking a PR opens it on github.com:
 
 ```sh
 swift run Loupe
+```
+
+The PRs are kept in SQLite at `~/Library/Application Support/Loupe/loupe.sqlite`, so launch shows the last-known lists straight away, then refreshes in the background: on launch, every few minutes, on ⌘R, and when the app comes to the front with lists more than a few minutes old. Each refresh pages through both searches in full and makes the stored lists match them. If it fails, the stored lists stay up with a banner saying how old they are. To start afresh, quit the app and delete the database (and its `-wal`/`-shm` files):
+
+```sh
+rm ~/Library/Application\ Support/Loupe/loupe.sqlite*
 ```
 
 Or open a diff file directly. Make a diff to view from PR `<N>` in a local checkout of `<owner>/<repo>`, with vendored code left in (the app hides it itself):
@@ -41,7 +47,7 @@ Time the diff view headlessly. This uses the largest file whose path contains th
 swift run -c release Loupe --bench fixtures-local/<repo>-<N>-full.diff types/types.go
 ```
 
-I couldn't launch the GUI myself (the sandbox blocks window-server access), so it builds but its on-screen behaviour hasn't been seen: window activation, scrolling, click reporting, the sidebar, and the PR list's layout. The PR list's loading, sorting, refresh and error handling are covered by tests, and the GitHub client was run once against the live API. Rendering, layout, drawing, anchors and copying *are* exercised headlessly by the tests and the bench, using the same `DiffTextView`.
+I couldn't launch the GUI myself (the sandbox blocks window-server access), so it builds but its on-screen behaviour hasn't been seen: window activation, scrolling, click reporting, the sidebar, and the PR list's layout. The PR list's loading, storage, paging, refresh and error handling are covered by tests, and its paged search query was run against the live API. Rendering, layout, drawing, anchors and copying *are* exercised headlessly by the tests and the bench, using the same `DiffTextView`.
 
 ## What the probe showed
 
@@ -96,8 +102,11 @@ So a 5k-line file opens in about 33ms, comfortably fast. A 46k-line file takes a
 ## Layout
 
 - `Sources/LoupeCore/`: `DiffModel.swift`, `DiffParser.swift`, `DiffRenderer.swift` (attributed string and anchors), `DiffTextView.swift`
-- `Sources/LoupeGitHub/`: `GitHubClient.swift` (GraphQL over `URLSession`, pluggable transport), `GitHubCLI.swift` (`gh auth token`), `PullRequest.swift`, `PullRequestListModel.swift` (start-screen state; `onOpen` is where choosing a PR goes)
+- `Sources/LoupeModel/`: `PullRequest.swift` (the PR summary and list types shared by the targets below)
+- `Sources/LoupeGitHub/`: `GitHubClient.swift` (GraphQL over `URLSession`, pluggable transport; pages each search), `GitHubCLI.swift` (`gh auth token`), `PullRequest.swift` (response decoding)
+- `Sources/LoupeStore/`: `PullRequestStore.swift` (GRDB: one row per PR keyed by node id, list membership and per-list refresh times, set up by migrations)
+- `Sources/LoupeInbox/`: `PullRequestListModel.swift` (start-screen state wiring GitHub to the store; `onOpen` is where choosing a PR goes)
 - `Sources/Loupe/`: `Entry.swift` (PR list, diff file or `--bench`), `App.swift`, `PullRequestListView.swift`, `DiffView.swift`, `Bench.swift`
 - `Tests/LoupeTests/`: tests, with fixtures from atrium#2912 (the 4-file diff, and edge cases cut from the full diff)
-- `Tests/LoupeGitHubTests/`: PR list tests against an in-memory GitHub serving `probe/pr-list.json` and `probe/graphql-error.json`
+- `Tests/LoupeInboxTests/`: PR list tests against an in-memory GitHub that serves and pages the PRs in `probe/pr-list.json`, plus `probe/graphql-error.json`
 - `probe/`: GraphQL queries, raw responses and `NOTES.md`

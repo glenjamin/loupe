@@ -1,4 +1,5 @@
 import Foundation
+import LoupeModel
 
 /// Sends one HTTP request. `URLSession` is the real one; tests substitute an in-memory GitHub.
 public protocol HTTPTransport: Sendable {
@@ -19,18 +20,25 @@ public struct GitHubClient: Sendable {
         self.transport = transport
     }
 
-    /// The signed-in user's open PRs and the open PRs awaiting their review, each newest first.
-    public func pullRequestLists() async throws -> PullRequestLists {
-        let response: PullRequestListsResponse = try await query(Self.pullRequestListsQuery)
-        return PullRequestLists(mine: PullRequestPage(response.mine), toReview: PullRequestPage(response.toReview))
+    /// Every PR currently in `list`, following the search's pages until they run out.
+    public func pullRequests(in list: PullRequestList) async throws -> [PullRequestSummary] {
+        var pullRequests: [PullRequestSummary] = []
+        var cursor: String?
+        repeat {
+            let variables = SearchVariables(query: Self.searchQuery(list), first: Self.pageSize, after: cursor)
+            let response: SearchPageResponse = try await query(Self.searchPageQuery, variables: variables)
+            pullRequests += response.search.nodes.map(PullRequestSummary.init)
+            cursor = response.search.pageInfo.hasNextPage ? response.search.pageInfo.endCursor : nil
+        } while cursor != nil
+        return pullRequests
     }
 
-    private func query<Response: Decodable>(_ query: String) async throws -> Response {
+    private func query<Response: Decodable>(_ query: String, variables: some Encodable & Sendable) async throws -> Response {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("bearer \(try await token())", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["query": query])
+        request.httpBody = try JSONEncoder().encode(GraphQLRequest(query: query, variables: variables))
 
         let (body, response) = try await transport.send(request)
         guard response.statusCode == 200 else {
@@ -49,14 +57,26 @@ public struct GitHubClient: Sendable {
         return data
     }
 
-    // `sort:updated-desc` makes truncation at `first` drop the oldest PRs rather than arbitrary ones.
-    static let pullRequestListsQuery = """
-        query {
-          mine: search(query: "is:pr is:open author:@me sort:updated-desc", type: ISSUE, first: 50) { issueCount nodes { ...PullRequestRow } }
-          toReview: search(query: "is:pr is:open review-requested:@me sort:updated-desc", type: ISSUE, first: 50) { issueCount nodes { ...PullRequestRow } }
+    /// GitHub's maximum page size.
+    static let pageSize = 100
+
+    static func searchQuery(_ list: PullRequestList) -> String {
+        switch list {
+        case .mine: "is:pr is:open author:@me sort:updated-desc"
+        case .toReview: "is:pr is:open review-requested:@me sort:updated-desc"
+        }
+    }
+
+    static let searchPageQuery = """
+        query($query: String!, $first: Int!, $after: String) {
+          search(query: $query, type: ISSUE, first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes { ...PullRequestRow }
+          }
         }
 
         fragment PullRequestRow on PullRequest {
+          id
           number
           title
           url
@@ -95,6 +115,17 @@ extension URLSession: HTTPTransport {
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         return (data, http)
     }
+}
+
+private struct GraphQLRequest<Variables: Encodable>: Encodable {
+    let query: String
+    let variables: Variables
+}
+
+private struct SearchVariables: Encodable, Sendable {
+    let query: String
+    let first: Int
+    let after: String?
 }
 
 private struct GraphQLEnvelope<Payload: Decodable>: Decodable {
