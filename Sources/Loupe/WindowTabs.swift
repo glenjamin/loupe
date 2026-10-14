@@ -36,7 +36,7 @@ final class WindowTabs {
                 MainActor.assumeIsolated {
                     window.close()
                     listsWindow.tabGroup?.selectedWindow = listsWindow
-                    listsWindow.makeKeyAndOrderFront(nil)
+                    bringForward(listsWindow)
                 }
             }
             return
@@ -91,7 +91,7 @@ final class WindowTabs {
         }
         guard let window = restoreSelection.flatMap({ pullRequestWindows[$0] }) ?? listsWindow else { return }
         window.tabGroup?.selectedWindow = window
-        window.makeKeyAndOrderFront(nil)
+        bringForward(window)
     }
 
     private func configure(_ window: NSWindow, frameName: String) {
@@ -114,7 +114,7 @@ final class WindowTabs {
         let candidates = [NSApp.mainWindow].compactMap(\.self) + NSApp.windows
         guard let host = candidates.first(where: { $0 !== window && $0.isVisible && $0.tabbingIdentifier == Self.tabbingIdentifier }) else { return }
         (host.tabGroup?.windows.last ?? host).addTabbedWindow(window, ordered: .above)
-        window.makeKeyAndOrderFront(nil)
+        bringForward(window)
     }
 
     /// Records which window is frontmost and where it's placed, and forgets a PR when its window

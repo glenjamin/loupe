@@ -48,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The app's windows group as native tabs, which this would turn off.
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = true
+        // Before any window shows, so a snapshot run is never activated by one.
+        if SnapshotRun.directory != nil { NSApp.setActivationPolicy(.accessory) }
     }
 
     /// Windows closing as the app quits are still open as far as the next launch is concerned.
@@ -58,10 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // A snapshot run stays out of the way: no Dock tile, and never the active app.
-        guard SnapshotRun.directory == nil else {
-            NSApp.setActivationPolicy(.accessory)
-            return
-        }
+        guard SnapshotRun.directory == nil else { return }
         NSApp.setActivationPolicy(.regular)
         applyIcon()
         NSApp.activate(ignoringOtherApps: true)

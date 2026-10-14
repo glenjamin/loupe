@@ -87,10 +87,10 @@ func saveSnapshotsOfAllWindows(to directory: URL) async throws -> [URL] {
     return written
 }
 
-/// Shows the window's tab without taking focus during a snapshot run, where the app must stay
-/// behind whatever the user is doing.
+/// Brings the window's tab forward, without taking focus during a snapshot run, where the app
+/// must stay behind whatever the user is doing.
 @MainActor
-private func bringForward(_ window: NSWindow) {
+func bringForward(_ window: NSWindow) {
     if SnapshotRun.directory != nil {
         window.orderBack(nil)
     } else {
