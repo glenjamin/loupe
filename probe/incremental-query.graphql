@@ -1,0 +1,16 @@
+query($ids: [ID!]!) {
+  viewer { login }
+  mine: search(query: "is:pr author:@me updated:>=2026-10-07T00:00:00Z sort:updated-desc", type: ISSUE, first: 20) {
+    issueCount
+    nodes { ... on PullRequest { id number state mergedAt closedAt updatedAt repository { nameWithOwner } } }
+  }
+  reviewRequests: nodes(ids: $ids) {
+    ... on PullRequest {
+      id
+      state
+      reviewRequests(first: 50) {
+        nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
+      }
+    }
+  }
+}

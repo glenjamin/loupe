@@ -11,6 +11,9 @@ extension PullRequestSummary {
             url: node.url,
             author: node.author?.login,
             isDraft: node.isDraft,
+            state: node.state,
+            mergedAt: node.mergedAt,
+            closedAt: node.closedAt,
             reviewDecision: node.reviewDecision,
             checks: node.commits.nodes.first?.commit.statusCheckRollup?.state,
             updatedAt: node.updatedAt,
@@ -39,6 +42,9 @@ struct SearchPageResponse: Decodable {
         let title: String
         let url: URL
         let isDraft: Bool
+        let state: PullRequestState
+        let mergedAt: Date?
+        let closedAt: Date?
         let updatedAt: Date
         let reviewDecision: ReviewDecision?
         let headRefName: String
@@ -54,4 +60,49 @@ struct SearchPageResponse: Decodable {
     struct CommitNode: Decodable { let commit: Commit }
     struct Commit: Decodable { let statusCheckRollup: Rollup? }
     struct Rollup: Decodable { let state: CheckState }
+}
+
+extension ReviewRequests {
+    init(_ node: NodesResponse.PullRequestNode) {
+        self.init(state: node.state, reviewers: node.reviewRequests.nodes.map { $0.requestedReviewer?.reviewer ?? .other })
+    }
+}
+
+struct ViewerResponse: Decodable {
+    let viewer: SearchPageResponse.Login
+}
+
+struct NodesResponse: Decodable {
+    /// Null where an id couldn't be resolved.
+    let nodes: [PullRequestNode?]
+
+    struct PullRequestNode: Decodable {
+        let id: String
+        let state: PullRequestState
+        let reviewRequests: SearchPageResponse.Connection<ReviewRequest>
+    }
+
+    struct ReviewRequest: Decodable {
+        /// Null when the requested account has been deleted.
+        let requestedReviewer: Reviewer?
+    }
+
+    struct Reviewer: Decodable {
+        let reviewer: RequestedReviewer
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            reviewer = switch try container.decode(String.self, forKey: .typename) {
+            case "User": .user(login: try container.decode(String.self, forKey: .login))
+            case "Team": .team(slug: try container.decode(String.self, forKey: .slug))
+            default: .other
+            }
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case typename = "__typename"
+            case login
+            case slug
+        }
+    }
 }

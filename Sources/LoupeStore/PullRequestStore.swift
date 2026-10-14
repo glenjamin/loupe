@@ -38,23 +38,47 @@ public struct PullRequestStore: Sendable {
     @discardableResult
     public func replace(_ list: PullRequestList, with pullRequests: [PullRequestSummary], refreshedAt: Date) async throws -> PullRequestSnapshot {
         try await database.write { db in
-            for pullRequest in pullRequests {
-                // A row left from a repo that was deleted and recreated would hold the same
-                // repo and number under an old id.
-                try PullRequestRow
-                    .filter(Column("repository") == pullRequest.repository && Column("number") == pullRequest.number && Column("id") != pullRequest.id)
-                    .deleteAll(db)
-                try PullRequestRow(pullRequest).upsert(db)
-                try ListMembership(list: list.rawValue, pullRequestId: pullRequest.id, confirmedAt: refreshedAt).upsert(db)
-            }
+            try Self.upsert(pullRequests, into: list, at: refreshedAt, db)
             try ListMembership
                 .filter(Column("list") == list.rawValue && !pullRequests.map(\.id).contains(Column("pullRequestId")))
                 .deleteAll(db)
-            // PRs in neither list are no longer needed.
-            try db.execute(sql: "DELETE FROM pullRequest WHERE id NOT IN (SELECT pullRequestId FROM listMembership)")
+            try Self.deleteUnlisted(db)
             try ListRefresh(list: list.rawValue, refreshedAt: refreshedAt).upsert(db)
             return try Self.snapshot(db)
         }
+    }
+
+    /// Adds or updates `pullRequests` in `list`, as changes GitHub reported since its last
+    /// refresh, and records `refreshedAt` as the time to ask for changes since next. PRs not
+    /// reported are unchanged, so they stay.
+    @discardableResult
+    public func merge(_ list: PullRequestList, with pullRequests: [PullRequestSummary], refreshedAt: Date) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            try Self.upsert(pullRequests, into: list, at: refreshedAt, db)
+            try ListRefresh(list: list.rawValue, refreshedAt: refreshedAt).upsert(db)
+            return try Self.snapshot(db)
+        }
+    }
+
+    /// Takes the PRs with `ids` out of `list`, leaving its refresh time alone.
+    @discardableResult
+    public func remove(_ ids: [String], from list: PullRequestList) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            try ListMembership
+                .filter(Column("list") == list.rawValue && ids.contains(Column("pullRequestId")))
+                .deleteAll(db)
+            try Self.deleteUnlisted(db)
+            return try Self.snapshot(db)
+        }
+    }
+
+    /// The signed-in user's GitHub login, once it's been looked up.
+    public func viewerLogin() throws -> String? {
+        try database.read { db in try Setting.fetchOne(db, key: Setting.viewerLogin)?.value }
+    }
+
+    public func saveViewerLogin(_ login: String) async throws {
+        try await database.write { db in try Setting(key: Setting.viewerLogin, value: login).upsert(db) }
     }
 
     private static func snapshot(_ db: Database) throws -> PullRequestSnapshot {
@@ -111,7 +135,36 @@ public struct PullRequestStore: Sendable {
                 t.column("verifiedAt", .datetime).notNull()
             }
         }
+        // Earlier rows all came from `is:open` searches.
+        migrator.registerMigration("Pull request state") { db in
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "state", .text).notNull().defaults(to: PullRequestState.open.rawValue)
+                t.add(column: "mergedAt", .datetime)
+                t.add(column: "closedAt", .datetime)
+            }
+            try db.create(table: "setting") { t in
+                t.primaryKey("key", .text)
+                t.column("value", .text).notNull()
+            }
+        }
         return migrator
+    }
+
+    private static func upsert(_ pullRequests: [PullRequestSummary], into list: PullRequestList, at refreshedAt: Date, _ db: Database) throws {
+        for pullRequest in pullRequests {
+            // A row left from a repo that was deleted and recreated would hold the same
+            // repo and number under an old id.
+            try PullRequestRow
+                .filter(Column("repository") == pullRequest.repository && Column("number") == pullRequest.number && Column("id") != pullRequest.id)
+                .deleteAll(db)
+            try PullRequestRow(pullRequest).upsert(db)
+            try ListMembership(list: list.rawValue, pullRequestId: pullRequest.id, confirmedAt: refreshedAt).upsert(db)
+        }
+    }
+
+    /// PRs in neither list are no longer needed.
+    private static func deleteUnlisted(_ db: Database) throws {
+        try db.execute(sql: "DELETE FROM pullRequest WHERE id NOT IN (SELECT pullRequestId FROM listMembership)")
     }
 }
 
@@ -149,6 +202,9 @@ private struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let url: URL
     let author: String?
     let isDraft: Bool
+    let state: String
+    let mergedAt: Date?
+    let closedAt: Date?
     let reviewDecision: String?
     let checkState: String?
     let updatedAt: Date
@@ -163,6 +219,9 @@ private struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         url = pullRequest.url
         author = pullRequest.author
         isDraft = pullRequest.isDraft
+        state = pullRequest.state.rawValue
+        mergedAt = pullRequest.mergedAt
+        closedAt = pullRequest.closedAt
         reviewDecision = pullRequest.reviewDecision?.rawValue
         checkState = pullRequest.checks?.rawValue
         updatedAt = pullRequest.updatedAt
@@ -179,6 +238,9 @@ private struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             url: url,
             author: author,
             isDraft: isDraft,
+            state: PullRequestState(lenientRawValue: state),
+            mergedAt: mergedAt,
+            closedAt: closedAt,
             reviewDecision: reviewDecision.map(ReviewDecision.init(lenientRawValue:)),
             checks: checkState.map(CheckState.init(lenientRawValue:)),
             updatedAt: updatedAt,
@@ -201,4 +263,12 @@ private struct ListRefresh: Codable, FetchableRecord, PersistableRecord {
 
     let list: String
     let refreshedAt: Date
+}
+
+private struct Setting: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "setting"
+    static let viewerLogin = "viewerLogin"
+
+    let key: String
+    let value: String
 }

@@ -47,9 +47,9 @@ public final class PullRequestListModel {
         }
     }
 
-    /// Newest first.
-    public func pullRequests(in list: PullRequestList) -> [PullRequestSummary] {
-        snapshot[list]
+    /// Newest first. Closed and merged PRs stay stored, but are left out unless asked for.
+    public func pullRequests(in list: PullRequestList, includingClosed: Bool = false) -> [PullRequestSummary] {
+        includingClosed ? snapshot[list] : snapshot[list].filter { $0.state == .open }
     }
 
     /// Whether there's anything from GitHub to show yet, even if out of date.
@@ -74,8 +74,9 @@ public final class PullRequestListModel {
         checkoutResolver.searchRoots
     }
 
-    /// Fetches each list in full and reconciles the store with it, then finds the listed repos'
-    /// checkouts. A list that fails to load keeps its stored rows.
+    /// Brings each list up to date with GitHub, then finds the listed repos' checkouts. A list
+    /// never loaded before is fetched in full; after that only PRs changed since its last
+    /// refresh are fetched. A list that fails to load keeps its stored rows.
     public func refresh() async {
         guard !isLoading else { return }
         isLoading = true
@@ -93,15 +94,43 @@ public final class PullRequestListModel {
     private func refreshLists() async {
         var failures: [String] = []
         for list in PullRequestList.allCases {
+            // Anything updated while the request is in flight is caught by the next one.
+            let startedAt = Date.now
             do {
-                let pullRequests = try await client.pullRequests(in: list)
-                snapshot = try await store.replace(list, with: pullRequests, refreshedAt: .now)
+                if let lastRefreshed = snapshot.refreshedAt(list) {
+                    let since = lastRefreshed - Self.refreshOverlap.timeInterval
+                    let changed = try await client.pullRequests(in: list, updatedSince: since)
+                    snapshot = try await store.merge(list, with: changed, refreshedAt: startedAt)
+                    if list == .toReview { try await dropFulfilledReviewRequests() }
+                } else {
+                    let open = try await client.pullRequests(in: list)
+                    snapshot = try await store.replace(list, with: open, refreshedAt: startedAt)
+                }
             } catch {
                 let message = error.localizedDescription
                 if !failures.contains(message) { failures.append(message) }
             }
         }
         error = failures.isEmpty ? nil : failures.joined(separator: "\n")
+    }
+
+    /// A PR stops matching `review-requested:@me` once reviewed, so changes since the last
+    /// refresh never report it leaving; each to-review PR is checked directly instead.
+    private func dropFulfilledReviewRequests() async throws {
+        let ids = snapshot[.toReview].map(\.id)
+        guard !ids.isEmpty else { return }
+        let login = try await viewerLogin()
+        let requests = try await client.reviewRequests(for: ids)
+        let fulfilled = ids.filter { requests[$0]?.awaitReview(from: login) != true }
+        guard !fulfilled.isEmpty else { return }
+        snapshot = try await store.remove(fulfilled, from: .toReview)
+    }
+
+    private func viewerLogin() async throws -> String {
+        if let login = try store.viewerLogin() { return login }
+        let login = try await client.viewerLogin()
+        try await store.saveViewerLogin(login)
+        return login
     }
 
     /// Runs off the main actor, so the lists stay responsive while git is consulted.
@@ -133,6 +162,10 @@ public final class PullRequestListModel {
     public func open(_ pullRequest: PullRequestSummary) {
         onOpen(pullRequest)
     }
+
+    /// How far before the last refresh to ask for changes from, allowing for clock skew and
+    /// GitHub's search index lagging behind its updates.
+    static let refreshOverlap = Duration.seconds(120)
 }
 
 /// Whether a repo's local checkout is known.

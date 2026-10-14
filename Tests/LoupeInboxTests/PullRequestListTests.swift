@@ -80,28 +80,130 @@ struct PullRequestListTests {
         #expect(await github.requestCount == 0)
     }
 
-    @Test func aRefreshDropsPullRequestsThatLeftASearchAndUpdatesChangedOnes() async throws {
+    @Test func theFirstLoadAsksForOpenPullRequestsAndLaterOnesForChanges() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
-        await model.refresh()
-        let reviewed = try #require(model.pullRequests(in: .toReview).first)
-        let retitled = try #require(model.pullRequests(in: .mine).last)
 
-        await github.edit(.toReview) { $0.removeAll { $0.id == reviewed.id } }
-        try await github.edit(.mine) { pullRequests in
-            let index = try #require(pullRequests.firstIndex { $0.id == retitled.id })
-            pullRequests[index].title = "Retitled"
-            pullRequests[index].updatedAt = "2026-10-14T09:00:00Z"
-        }
+        await model.refresh()
+        let firstLoad = await github.searches
+        #expect(firstLoad.count == 2)
+        #expect(firstLoad.allSatisfy { $0.contains("is:open") && !$0.contains("updated:") })
+
+        await model.refresh()
+        let refresh = await github.searches.dropFirst(firstLoad.count)
+        #expect(refresh.count == 2)
+        #expect(refresh.allSatisfy { !$0.contains("is:open") && $0.contains("updated:>=") })
+    }
+
+    @Test func aMergedPullRequestLeavesTheDefaultViewButStaysStored() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let store = try PullRequestStore.inMemory()
+        let model = try listModel(github, store: store)
+        await model.refresh()
+        let merged = try #require(model.pullRequests(in: .mine).last)
+
+        try await github.merge(merged.id)
         await model.refresh()
 
         #expect(model.error == nil)
-        #expect(model.pullRequests(in: .toReview).count == 12)
-        #expect(!model.pullRequests(in: .toReview).contains { $0.id == reviewed.id })
+        #expect(model.pullRequests(in: .mine).count == 49)
+        #expect(!model.pullRequests(in: .mine).contains { $0.id == merged.id })
+        let shown = try #require(model.pullRequests(in: .mine, includingClosed: true).first)
+        #expect(shown.id == merged.id)
+        #expect(shown.state == .merged)
+        #expect(shown.mergedAt != nil)
+        #expect(try store.snapshot()[.mine].contains { $0.id == merged.id && $0.state == .merged })
+    }
+
+    @Test func aRefreshWithNoChangesKeepsEverything() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let mine = model.pullRequests(in: .mine)
+        let toReview = model.pullRequests(in: .toReview)
+
+        await model.refresh()
+
+        #expect(model.error == nil)
+        #expect(model.pullRequests(in: .mine) == mine)
+        #expect(model.pullRequests(in: .toReview) == toReview)
+        #expect(mine.count == 50)
+        #expect(toReview.count == 13)
+    }
+
+    @Test func aRefreshUpdatesChangedPullRequests() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let retitled = try #require(model.pullRequests(in: .mine).last)
+
+        try await github.edit(retitled.id) { $0.title = "Retitled" }
+        await model.refresh()
+
         let updated = try #require(model.pullRequests(in: .mine).first)
         #expect(updated.id == retitled.id)
         #expect(updated.title == "Retitled")
         #expect(model.pullRequests(in: .mine).count == 50)
+    }
+
+    @Test func aReviewedPullRequestLeavesToReviewButATeamRequestKeepsOneThere() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json", viewerTeams: ["backend"])
+        let model = try listModel(github)
+        await model.refresh()
+        let toReview = model.pullRequests(in: .toReview)
+        let reviewed = toReview[0]
+        let teamRequested = toReview[1]
+
+        try await github.edit(reviewed.id) { $0.requestedReviewers = [.user("someone-else")] }
+        try await github.edit(teamRequested.id) { $0.requestedReviewers = [.team("backend")] }
+        await model.refresh()
+
+        #expect(model.error == nil)
+        #expect(!model.pullRequests(in: .toReview, includingClosed: true).contains { $0.id == reviewed.id })
+        #expect(model.pullRequests(in: .toReview).contains { $0.id == teamRequested.id })
+        #expect(model.pullRequests(in: .toReview).count == 12)
+    }
+
+    @Test func aPullRequestThatCanNoLongerBeFoundLeavesToReview() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let deleted = try #require(model.pullRequests(in: .toReview).first)
+
+        await github.delete(deleted.id)
+        await model.refresh()
+
+        #expect(model.error == nil)
+        #expect(!model.pullRequests(in: .toReview).contains { $0.id == deleted.id })
+        #expect(model.pullRequests(in: .toReview).count == 12)
+    }
+
+    @Test func theRefreshTimeAdvancesOnlyWhenARefreshSucceeds() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let store = try PullRequestStore.inMemory()
+        let model = try listModel(github, store: store)
+        await model.refresh()
+        let loaded = try store.snapshot()
+        let lastRefreshed = try #require(model.lastRefreshed)
+
+        await github.fail(with: .status(502))
+        await model.refresh()
+        #expect(model.lastRefreshed == lastRefreshed)
+
+        await github.recover()
+        let searchesBefore = await github.searches.count
+        await model.refresh()
+
+        #expect(model.error == nil)
+        #expect(try #require(model.lastRefreshed) > lastRefreshed)
+        // Changes are still asked for from just before the last successful refresh.
+        for search in await github.searches.dropFirst(searchesBefore) {
+            let list: PullRequestList = search.contains("author:@me") ? .mine : .toReview
+            let refreshedAt = try #require(loaded.refreshedAt(list))
+            let since = try Date(String(try #require(search.firstMatch(of: /updated:>=(\S+)/)).1), strategy: .iso8601)
+            #expect(since <= refreshedAt.addingTimeInterval(-120))
+            #expect(since > refreshedAt.addingTimeInterval(-121))
+        }
     }
 
     @Test func aFailedRefreshKeepsTheStoredListsAndReportsTheError() async throws {
@@ -170,7 +272,7 @@ struct PullRequestListTests {
         #expect(await github.requestCount == requestsForOneRefresh)
 
         try await listModel(github, store: store, staleAfter: .zero).refreshIfStale()
-        #expect(await github.requestCount == 2 * requestsForOneRefresh)
+        #expect(await github.requestCount > requestsForOneRefresh)
     }
 
     @Test func refreshesPeriodicallyUntilCancelled() async throws {

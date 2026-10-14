@@ -20,12 +20,14 @@ public struct GitHubClient: Sendable {
         self.transport = transport
     }
 
-    /// Every PR currently in `list`, following the search's pages until they run out.
-    public func pullRequests(in list: PullRequestList) async throws -> [PullRequestSummary] {
+    /// Without `updatedSince`, every open PR in `list`. With it, every PR in `list` updated since
+    /// then, whatever its state, so merges and closes come through as changes. Either way it
+    /// follows the search's pages until they run out.
+    public func pullRequests(in list: PullRequestList, updatedSince: Date? = nil) async throws -> [PullRequestSummary] {
         var pullRequests: [PullRequestSummary] = []
         var cursor: String?
         repeat {
-            let variables = SearchVariables(query: Self.searchQuery(list), first: Self.pageSize, after: cursor)
+            let variables = SearchVariables(query: Self.searchQuery(list, updatedSince: updatedSince), first: Self.pageSize, after: cursor)
             let response: SearchPageResponse = try await query(Self.searchPageQuery, variables: variables)
             pullRequests += response.search.nodes.map(PullRequestSummary.init)
             cursor = response.search.pageInfo.hasNextPage ? response.search.pageInfo.endCursor : nil
@@ -33,7 +35,31 @@ public struct GitHubClient: Sendable {
         return pullRequests
     }
 
-    private func query<Response: Decodable>(_ query: String, variables: some Encodable & Sendable) async throws -> Response {
+    /// The signed-in user's login.
+    public func viewerLogin() async throws -> String {
+        let response: ViewerResponse = try await query(Self.viewerQuery, variables: NoVariables())
+        return response.viewer.login
+    }
+
+    /// The state and pending review requests of each PR in `ids`, keyed by id. PRs GitHub no
+    /// longer has (or no longer shows the user) are left out.
+    public func reviewRequests(for ids: [String]) async throws -> [String: ReviewRequests] {
+        var requests: [String: ReviewRequests] = [:]
+        for start in stride(from: 0, to: ids.count, by: Self.pageSize) {
+            let batch = Array(ids[start..<min(start + Self.pageSize, ids.count)])
+            let response: NodesResponse = try await query(Self.reviewRequestsQuery, variables: NodesVariables(ids: batch), allowingMissingNodes: true)
+            for case let node? in response.nodes {
+                requests[node.id] = ReviewRequests(node)
+            }
+        }
+        return requests
+    }
+
+    private func query<Response: Decodable>(
+        _ query: String,
+        variables: some Encodable & Sendable,
+        allowingMissingNodes: Bool = false
+    ) async throws -> Response {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("bearer \(try await token())", forHTTPHeaderField: "Authorization")
@@ -50,7 +76,8 @@ public struct GitHubClient: Sendable {
         decoder.dateDecodingStrategy = .iso8601
         let envelope = try decoder.decode(GraphQLEnvelope<Response>.self, from: body)
         // GitHub can return partial data alongside errors; a partial list would read as complete.
-        if let errors = envelope.errors, !errors.isEmpty {
+        // A `nodes` lookup reports each id it can't resolve as an error beside a null node.
+        if let errors = envelope.errors, !errors.isEmpty, !(allowingMissingNodes && errors.allSatisfy { $0.type == "NOT_FOUND" }) {
             throw GitHubError.graphQL(errors.map(\.message))
         }
         guard let data = envelope.data else { throw GitHubError.graphQL(["Response had no data"]) }
@@ -60,12 +87,32 @@ public struct GitHubClient: Sendable {
     /// GitHub's maximum page size.
     static let pageSize = 100
 
-    static func searchQuery(_ list: PullRequestList) -> String {
-        switch list {
-        case .mine: "is:pr is:open author:@me sort:updated-desc"
-        case .toReview: "is:pr is:open review-requested:@me sort:updated-desc"
+    static func searchQuery(_ list: PullRequestList, updatedSince: Date?) -> String {
+        let who = switch list {
+        case .mine: "author:@me"
+        case .toReview: "review-requested:@me"
         }
+        guard let updatedSince else { return "is:pr is:open \(who) sort:updated-desc" }
+        // Search takes whole seconds; rounding down keeps the boundary inclusive.
+        let since = Date(timeIntervalSince1970: updatedSince.timeIntervalSince1970.rounded(.down))
+        return "is:pr \(who) updated:>=\(since.formatted(.iso8601)) sort:updated-desc"
     }
+
+    static let viewerQuery = "query { viewer { login } }"
+
+    static let reviewRequestsQuery = """
+        query($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on PullRequest {
+              id
+              state
+              reviewRequests(first: 50) {
+                nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
+              }
+            }
+          }
+        }
+        """
 
     static let searchPageQuery = """
         query($query: String!, $first: Int!, $after: String) {
@@ -81,6 +128,9 @@ public struct GitHubClient: Sendable {
           title
           url
           isDraft
+          state
+          mergedAt
+          closedAt
           updatedAt
           reviewDecision
           headRefName
@@ -128,12 +178,19 @@ private struct SearchVariables: Encodable, Sendable {
     let after: String?
 }
 
+private struct NoVariables: Encodable, Sendable {}
+
+private struct NodesVariables: Encodable, Sendable {
+    let ids: [String]
+}
+
 private struct GraphQLEnvelope<Payload: Decodable>: Decodable {
     let data: Payload?
     let errors: [Message]?
 
     struct Message: Decodable {
         let message: String
+        let type: String?
     }
 }
 
