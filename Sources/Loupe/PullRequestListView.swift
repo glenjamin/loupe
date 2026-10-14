@@ -13,9 +13,9 @@ struct PullRequestListView: View {
                 // Re-render each minute so the "N ago" labels don't go stale between refreshes.
                 TimelineView(.everyMinute) { _ in
                     HStack(spacing: 0) {
-                        PullRequestColumn(title: "Mine", pullRequests: model.pullRequests(in: .mine), showsAuthor: false, open: model.open)
+                        PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, model: model)
                         Divider()
-                        PullRequestColumn(title: "To review", pullRequests: model.pullRequests(in: .toReview), showsAuthor: true, open: model.open)
+                        PullRequestColumn(title: "To review", list: .toReview, showsAuthor: true, model: model)
                     }
                     .safeAreaInset(edge: .top, spacing: 0) {
                         if let error = model.error {
@@ -94,11 +94,12 @@ struct RefreshErrorBanner: View {
 
 struct PullRequestColumn: View {
     let title: String
-    let pullRequests: [PullRequestSummary]
+    let list: PullRequestList
     let showsAuthor: Bool
-    let open: (PullRequestSummary) -> Void
+    let model: PullRequestListModel
 
     var body: some View {
+        let pullRequests = model.pullRequests(in: list)
         VStack(alignment: .leading, spacing: 0) {
             Text("\(title) (\(pullRequests.count))")
                 .font(.headline)
@@ -110,20 +111,56 @@ struct PullRequestColumn: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(pullRequests) { pullRequest in
-                    Button { open(pullRequest) } label: {
-                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor)
+                    let checkout = model.checkout(for: pullRequest.repository)
+                    Button { model.open(pullRequest) } label: {
+                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, checkout: checkout)
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        switch checkout {
+                        case let .found(directory):
+                            Button("Reveal Checkout in Finder") {
+                                NSWorkspace.shared.activateFileViewerSelecting([directory])
+                            }
+                        case .notFound:
+                            Button("Locate Checkout…") { locateCheckout(for: pullRequest.repository) }
+                        case nil:
+                            EmptyView()
+                        }
+                    }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Asks for the repo's checkout directory and stores it if its origin is that repo.
+    private func locateCheckout(for repository: String) {
+        let panel = NSOpenPanel()
+        panel.message = "Choose the local checkout of \(repository)"
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = model.checkoutSearchRoots.first
+        guard panel.runModal() == .OK, let directory = panel.url else { return }
+        Task {
+            do {
+                try await model.locateCheckout(for: repository, at: directory)
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "That isn't a checkout of \(repository)"
+                alert.informativeText = error.localizedDescription
+                alert.runModal()
+            }
+        }
     }
 }
 
 struct PullRequestRow: View {
     let pullRequest: PullRequestSummary
     let showsAuthor: Bool
+    let checkout: CheckoutStatus?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -157,6 +194,9 @@ struct PullRequestRow: View {
                     ChecksIcon(state: checks)
                 }
                 Spacer(minLength: 0)
+                if let checkout {
+                    CheckoutIcon(status: checkout)
+                }
                 Text(pullRequest.updatedAt.formatted(.relative(presentation: .named)))
             }
             .font(.caption)
@@ -186,6 +226,20 @@ struct ReviewDecisionLabel: View {
         case .changesRequested: Text("Changes requested").foregroundStyle(.red)
         case .reviewRequired: Text("Review required")
         case .unknown: EmptyView()
+        }
+    }
+}
+
+/// Whether the repo is checked out locally; the context menu reveals or locates it.
+struct CheckoutIcon: View {
+    let status: CheckoutStatus
+
+    var body: some View {
+        switch status {
+        case let .found(directory):
+            Image(systemName: "folder").help("Checked out at \(directory.path(percentEncoded: false))")
+        case .notFound:
+            Image(systemName: "folder.badge.questionmark").foregroundStyle(.tertiary).help("No local checkout found")
         }
     }
 }

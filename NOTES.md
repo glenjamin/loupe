@@ -24,6 +24,12 @@ The PRs are kept in SQLite at `~/Library/Application Support/Loupe/loupe.sqlite`
 rm ~/Library/Application\ Support/Loupe/loupe.sqlite*
 ```
 
+After each refresh the app looks for each listed repo's local checkout, for diffing PRs locally later. A repo it has no checkout stored for is looked for as a directory with the repo's name (not `<repo>-<branch>` worktree copies) under `~/Development/tamarinworks/`, then `~/Development/GitHub/`, and accepted only if its `origin` is that repo on github.com. Finds are stored in the `localRepo` table; misses aren't, so they're looked for again next refresh. A stored checkout whose directory has gone is dropped and looked for afresh. Each row shows a folder icon when the checkout is known; right-click to reveal it in Finder, or to locate it by hand when it wasn't found. The search roots are `CheckoutResolver.defaultSearchRoots`, overridable through `PullRequestListModel`'s `checkoutSearchRoots`. Git is only ever run read-only against checkouts. To fix a wrong mapping, quit the app and delete its row:
+
+```sh
+sqlite3 ~/Library/Application\ Support/Loupe/loupe.sqlite "DELETE FROM localRepo WHERE nameWithOwner = '<owner>/<repo>'"
+```
+
 Or open a diff file directly. Make a diff to view from PR `<N>` in a local checkout of `<owner>/<repo>`, with vendored code left in (the app hides it itself):
 
 ```sh
@@ -47,7 +53,7 @@ Time the diff view headlessly. This uses the largest file whose path contains th
 swift run -c release Loupe --bench fixtures-local/<repo>-<N>-full.diff types/types.go
 ```
 
-I couldn't launch the GUI myself (the sandbox blocks window-server access), so it builds but its on-screen behaviour hasn't been seen: window activation, scrolling, click reporting, the sidebar, and the PR list's layout. The PR list's loading, storage, paging, refresh and error handling are covered by tests, and its paged search query was run against the live API. Rendering, layout, drawing, anchors and copying *are* exercised headlessly by the tests and the bench, using the same `DiffTextView`.
+I couldn't launch the GUI myself (the sandbox blocks window-server access), so it builds but its on-screen behaviour hasn't been seen: window activation, scrolling, click reporting, the sidebar, the PR list's layout, and its checkout icons and menu. The PR list's loading, storage, paging, refresh and error handling are covered by tests, and its paged search query was run against the live API. Rendering, layout, drawing, anchors and copying *are* exercised headlessly by the tests and the bench, using the same `DiffTextView`.
 
 ## What the probe showed
 
@@ -104,9 +110,10 @@ So a 5k-line file opens in about 33ms, comfortably fast. A 46k-line file takes a
 - `Sources/LoupeCore/`: `DiffModel.swift`, `DiffParser.swift`, `DiffRenderer.swift` (attributed string and anchors), `DiffTextView.swift`
 - `Sources/LoupeModel/`: `PullRequest.swift` (the PR summary and list types shared by the targets below)
 - `Sources/LoupeGitHub/`: `GitHubClient.swift` (GraphQL over `URLSession`, pluggable transport; pages each search), `GitHubCLI.swift` (`gh auth token`), `PullRequest.swift` (response decoding)
-- `Sources/LoupeStore/`: `PullRequestStore.swift` (GRDB: one row per PR keyed by node id, list membership and per-list refresh times, set up by migrations)
+- `Sources/LoupeStore/`: `PullRequestStore.swift` (GRDB: one row per PR keyed by node id, list membership and per-list refresh times, set up by migrations), `LocalRepoStore.swift` (each repo's local checkout)
+- `Sources/LoupeGit/`: `CheckoutResolver.swift` (finds, verifies and stores checkouts), `GitHubRemote.swift` (matches an origin URL to `owner/name`), `Git.swift` (runs read-only git commands)
 - `Sources/LoupeInbox/`: `PullRequestListModel.swift` (start-screen state wiring GitHub to the store; `onOpen` is where choosing a PR goes)
 - `Sources/Loupe/`: `Entry.swift` (PR list, diff file or `--bench`), `App.swift`, `PullRequestListView.swift`, `DiffView.swift`, `Bench.swift`
 - `Tests/LoupeTests/`: tests, with fixtures from atrium#2912 (the 4-file diff, and edge cases cut from the full diff)
-- `Tests/LoupeInboxTests/`: PR list tests against an in-memory GitHub that serves and pages the PRs in `probe/pr-list.json`, plus `probe/graphql-error.json`
+- `Tests/LoupeInboxTests/`: PR list tests against an in-memory GitHub that serves and pages the PRs in `probe/pr-list.json`, plus `probe/graphql-error.json`; checkout tests against real `git init` repos in temp search roots
 - `probe/`: GraphQL queries, raw responses and `NOTES.md`
