@@ -85,6 +85,22 @@ public struct PullRequestStore: Sendable {
         }
     }
 
+    /// Replaces the stored checks of each PR in `checks`, keyed by id, with the overall state and
+    /// each check as last looked up. PRs no longer stored are left out, as nothing shows them.
+    @discardableResult
+    public func updateChecks(_ checks: [String: PullRequestChecks]) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            for (id, checks) in checks where try PullRequestRow.exists(db, key: id) {
+                try db.execute(sql: "UPDATE pullRequest SET checkState = ? WHERE id = ?", arguments: [checks.state?.rawValue, id])
+                try PullRequestCheckRow.filter(Column("pullRequestId") == id).deleteAll(db)
+                for (position, check) in checks.contexts.enumerated() {
+                    try PullRequestCheckRow(pullRequestId: id, position: position, check).insert(db)
+                }
+            }
+            return try Self.snapshot(db)
+        }
+    }
+
     /// The signed-in user's GitHub login, once it's been looked up.
     public func viewerLogin() throws -> String? {
         try database.read { db in try Setting.fetchOne(db, key: Setting.viewerLogin)?.value }
@@ -98,15 +114,24 @@ public struct PullRequestStore: Sendable {
         var lists: [PullRequestList: [PullRequestSummary]] = [:]
         var refreshed: [PullRequestList: Date] = [:]
         for list in PullRequestList.allCases {
-            lists[list] = try PullRequestRow.fetchAll(db, sql: """
+            lists[list] = try summaries(of: PullRequestRow.fetchAll(db, sql: """
                 SELECT pullRequest.* FROM pullRequest
                 JOIN listMembership ON listMembership.pullRequestId = pullRequest.id
                 WHERE listMembership.list = ?
                 ORDER BY pullRequest.updatedAt DESC
-                """, arguments: [list.rawValue]).map(\.summary)
+                """, arguments: [list.rawValue]), db)
             refreshed[list] = try ListRefresh.fetchOne(db, key: list.rawValue)?.refreshedAt
         }
         return PullRequestSnapshot(lists: lists, refreshedAt: refreshed)
+    }
+
+    /// The PRs stored in `rows`, with their checks.
+    static func summaries(of rows: [PullRequestRow], _ db: Database) throws -> [PullRequestSummary] {
+        let checks = try Dictionary(
+            grouping: PullRequestCheckRow.filter(rows.map(\.id).contains(Column("pullRequestId"))).order(Column("position")).fetchAll(db),
+            by: \.pullRequestId
+        )
+        return rows.map { $0.summary(checkContexts: checks[$0.id, default: []].map(\.check)) }
     }
 
     private static var migrator: DatabaseMigrator {
@@ -271,6 +296,18 @@ public struct PullRequestStore: Sendable {
                 t.primaryKey(["pullRequestId", "position"])
             }
         }
+        // Each PR's head commit's checks one by one, as the lists' last lookup found them.
+        migrator.registerMigration("Pull request checks") { db in
+            try db.create(table: "pullRequestCheck") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequest", onDelete: .cascade)
+                t.column("position", .integer).notNull()
+                t.column("name", .text).notNull()
+                t.column("status", .text).notNull()
+                t.column("description", .text)
+                t.column("url", .text)
+                t.primaryKey(["pullRequestId", "position"])
+            }
+        }
         return migrator
     }
 
@@ -369,7 +406,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         reviewThreadCount = pullRequest.reviewThreadCount ?? stored?.reviewThreadCount
     }
 
-    var summary: PullRequestSummary {
+    func summary(checkContexts: [CheckContext]) -> PullRequestSummary {
         PullRequestSummary(
             id: id,
             repository: repository,
@@ -383,6 +420,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             closedAt: closedAt,
             reviewDecision: reviewDecision.map(ReviewDecision.init(lenientRawValue:)),
             checks: checkState.map(CheckState.init(lenientRawValue:)),
+            checkContexts: checkContexts,
             updatedAt: updatedAt,
             headRefName: headRefName,
             baseRefName: baseRefName,
@@ -392,6 +430,30 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             commentCount: commentCount,
             reviewThreadCount: reviewThreadCount
         )
+    }
+}
+
+private struct PullRequestCheckRow: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "pullRequestCheck"
+
+    let pullRequestId: String
+    let position: Int
+    let name: String
+    let status: String
+    let description: String?
+    let url: String?
+
+    init(pullRequestId: String, position: Int, _ check: CheckContext) {
+        self.pullRequestId = pullRequestId
+        self.position = position
+        name = check.name
+        status = check.status.rawValue
+        description = check.description
+        url = check.url
+    }
+
+    var check: CheckContext {
+        CheckContext(name: name, status: CheckStatus(rawValue: status) ?? .neutral, description: description, url: url)
     }
 }
 

@@ -154,7 +154,7 @@ struct PullRequestRow: View {
                     ReviewDecisionLabel(decision: decision)
                 }
                 if let checks = pullRequest.checks {
-                    ChecksIcon(state: checks)
+                    ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
                 }
                 Spacer(minLength: 0)
                 Text(pullRequest.updatedAt.formatted(.relative(presentation: .named)))
@@ -219,19 +219,33 @@ struct ReviewDecisionLabel: View {
     }
 }
 
+/// The head commit's overall check state as a bare glyph; hovering lists each check.
 struct ChecksIcon: View {
     let state: CheckState
+    /// Empty until looked up, when the tooltip only names the overall state.
+    let contexts: [CheckContext]
 
     var body: some View {
+        glyph
+            .fontWeight(.semibold)
+            .help(contexts.tooltip ?? fallbackHelp)
+    }
+
+    @ViewBuilder private var glyph: some View {
         switch state {
-        case .success:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.diffSuccess).help("Checks passed")
-        case .failure, .error:
-            Image(systemName: "xmark.circle.fill").foregroundStyle(.diffDanger).help("Checks failed")
-        case .pending, .expected:
-            Image(systemName: "clock.fill").foregroundStyle(.orange).help("Checks running")
-        case .unknown:
-            Image(systemName: "questionmark.circle").help("Unknown check state")
+        case .success: Image(systemName: "checkmark").foregroundStyle(.diffSuccess)
+        case .failure, .error: Image(systemName: "xmark").foregroundStyle(.diffDanger)
+        case .pending, .expected: Image(systemName: "clock").foregroundStyle(.orange)
+        case .unknown: Image(systemName: "questionmark").foregroundStyle(.secondary)
+        }
+    }
+
+    private var fallbackHelp: String {
+        switch state {
+        case .success: "Checks passed"
+        case .failure, .error: "Checks failed"
+        case .pending, .expected: "Checks running"
+        case .unknown: "Unknown check state"
         }
     }
 }

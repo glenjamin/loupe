@@ -101,13 +101,14 @@ public final class PullRequestListModel {
         checkoutResolver.searchRoots
     }
 
-    /// Brings each list up to date with GitHub, then finds the listed repos' checkouts. A list
-    /// never loaded before is fetched in full; after that only PRs changed since its last
-    /// refresh are fetched. A list that fails to load keeps its stored rows.
+    /// Brings each list up to date with GitHub, then looks up the listed PRs' checks and finds
+    /// their repos' checkouts. A list never loaded before is fetched in full; after that only PRs
+    /// changed since its last refresh are fetched. A list that fails to load keeps its stored rows.
     public func refresh() async {
         guard !isLoading else { return }
         isLoading = true
         await refreshLists()
+        await refreshChecks()
         isLoading = false
         await resolveCheckouts()
     }
@@ -166,6 +167,25 @@ public final class PullRequestListModel {
         let login = try await client.viewerLogin()
         try await store.saveViewerLogin(login)
         return login
+    }
+
+    /// Each open PR's checks, looked up by id as asking the searches for them takes a full page
+    /// to GitHub's time limit. Every open PR is asked about, as a check finishing doesn't change
+    /// a PR's update time, so the searches for changes never report it. A failure leaves the
+    /// checks last looked up, and doesn't count as the lists failing to refresh.
+    private func refreshChecks() async {
+        var ids: [String] = []
+        for list in PullRequestList.allCases {
+            for pullRequest in snapshot[list] where pullRequest.state == .open && !ids.contains(pullRequest.id) {
+                ids.append(pullRequest.id)
+            }
+        }
+        guard !ids.isEmpty else { return }
+        do {
+            snapshot = try await store.updateChecks(try await client.checks(ofPullRequests: ids))
+        } catch {
+            FileHandle.standardError.write(Data("Couldn't look up checks: \(error)\n".utf8))
+        }
     }
 
     /// Runs off the main actor, so the lists stay responsive while git is consulted.

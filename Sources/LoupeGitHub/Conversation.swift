@@ -37,11 +37,7 @@ extension GitHubClient {
                 nodes { id isResolved isOutdated path line comments(first: 100) { nodes { id bodyHTML createdAt isMinimized author { login avatarUrl } } } }
               }
               commits(last: 1) {
-                nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
-                  __typename
-                  ... on CheckRun { name status conclusion detailsUrl }
-                  ... on StatusContext { context state description targetUrl }
-                } } } } }
+                nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { \(checkContextFields) } } } } }
               }
             }
           }
@@ -143,33 +139,7 @@ private struct ConversationResponse: Decodable {
     }
 
     struct Rollup: Decodable {
-        let contexts: Connection<Context>
-    }
-
-    /// A `CheckRun` or a `StatusContext`, which name the same things differently.
-    struct Context: Decodable {
-        let __typename: String
-        let name: String?
-        let status: String?
-        let conclusion: String?
-        let detailsUrl: String?
-        let context: String?
-        let state: String?
-        let description: String?
-        let targetUrl: String?
-
-        var check: CheckContext? {
-            switch __typename {
-            case "CheckRun":
-                guard let name else { return nil }
-                return CheckContext(name: name, status: checkRunStatus(status: status, conclusion: conclusion), description: nil, url: detailsUrl)
-            case "StatusContext":
-                guard let context else { return nil }
-                return CheckContext(name: context, status: statusContextStatus(state), description: description, url: targetUrl)
-            default:
-                return nil
-            }
-        }
+        let contexts: Connection<CheckContextNode>
     }
 }
 
@@ -291,22 +261,5 @@ private struct TimelineNode: Decodable {
         case "ReviewRequestedEvent": .reviewRequested(reviewer: requestedReviewer.flatMap { $0.login ?? $0.slug })
         default: nil
         }
-    }
-}
-
-private func checkRunStatus(status: String?, conclusion: String?) -> CheckStatus {
-    guard status == "COMPLETED" else { return .pending }
-    switch conclusion {
-    case "SUCCESS": return .success
-    case "FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE": return .failure
-    default: return .neutral
-    }
-}
-
-private func statusContextStatus(_ state: String?) -> CheckStatus {
-    switch state {
-    case "SUCCESS": .success
-    case "FAILURE", "ERROR": .failure
-    default: .pending
     }
 }

@@ -19,6 +19,9 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     public let reviewDecision: ReviewDecision?
     /// Nil when the head commit has no statuses or check runs.
     public let checks: CheckState?
+    /// The head commit's statuses and check runs one by one. Empty until they've been looked
+    /// up, as searches don't fetch them.
+    public let checkContexts: [CheckContext]
     public let updatedAt: Date
     public let headRefName: String
     public let baseRefName: String
@@ -45,6 +48,7 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         closedAt: Date? = nil,
         reviewDecision: ReviewDecision?,
         checks: CheckState?,
+        checkContexts: [CheckContext] = [],
         updatedAt: Date,
         headRefName: String,
         baseRefName: String,
@@ -66,6 +70,7 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.closedAt = closedAt
         self.reviewDecision = reviewDecision
         self.checks = checks
+        self.checkContexts = checkContexts
         self.updatedAt = updatedAt
         self.headRefName = headRefName
         self.baseRefName = baseRefName
@@ -74,6 +79,18 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.commitCount = commitCount
         self.commentCount = commentCount
         self.reviewThreadCount = reviewThreadCount
+    }
+}
+
+/// A PR's head commit's checks: the overall state and each status or check run.
+public struct PullRequestChecks: Sendable, Equatable {
+    /// Nil when the head commit has no statuses or check runs.
+    public let state: CheckState?
+    public let contexts: [CheckContext]
+
+    public init(state: CheckState?, contexts: [CheckContext]) {
+        self.state = state
+        self.contexts = contexts
     }
 }
 

@@ -61,7 +61,62 @@ struct PullRequestListTests {
         #expect(expected.count == 50)
         #expect(model.pullRequests(in: .toReview).count == 13)
         // Three pages of mine, one of to-review.
-        #expect(await github.requestCount == 4)
+        #expect(await github.searches.count == 4)
+    }
+
+    @Test func rowsCarryEachOfTheirChecksAfterARefresh() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+
+        await model.refresh()
+
+        let mine = model.pullRequests(in: .mine)
+        let failing = try #require(mine.first { $0.repository == "tamarinworks/gatehouse" && $0.number == 172 })
+        #expect(failing.checks == .failure)
+        #expect(failing.checkContexts.tooltip == """
+            2 of 5 checks failed
+            ✗ codecov/patch — 76.92% of diff hit (target 98.23%)
+            ✗ codecov/project — 96.01% (-2.22%) compared to 8b4635f
+            ✓ ci/circleci: build — Your tests passed on CircleCI!
+            ✓ ci/circleci: lint — Your tests passed on CircleCI!
+            ✓ ci/circleci: test — Your tests passed on CircleCI!
+            """)
+        let unchecked = try #require(mine.first { $0.repository == "tamarinworks/hadley" && $0.number == 1 })
+        #expect(unchecked.checkContexts.tooltip == nil)
+
+        // Every open PR's checks are asked for once, in batches GitHub answers well in time.
+        let lookups = await github.checksLookups
+        #expect(lookups.allSatisfy { $0.count <= 50 })
+        let asked = lookups.flatMap(\.self)
+        #expect(asked.count == Set(asked).count)
+        #expect(Set(asked) == Set((mine + model.pullRequests(in: .toReview)).map(\.id)))
+    }
+
+    @Test func checksThatChangeWithoutUpdatingThePullRequestAreFoundOnTheNextRefresh() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let before = try #require(model.pullRequests(in: .toReview).first)
+        #expect(before.checks == .success)
+
+        try await github.setChecks(of: before.id, state: "FAILURE", [
+            .status("ci/circleci: build", "SUCCESS", description: "Your tests passed on CircleCI!"),
+            .status("ci/circleci: test", "PENDING", description: "CircleCI is running your tests"),
+            .checkRun("codecov/project", status: "COMPLETED", conclusion: "SKIPPED"),
+            .checkRun("codecov/patch", status: "COMPLETED", conclusion: "FAILURE", title: "80.00% of diff hit (target 90.00%)"),
+        ])
+        await model.refresh()
+
+        let after = try #require(model.pullRequests(in: .toReview).first { $0.id == before.id })
+        #expect(after.updatedAt == before.updatedAt)
+        #expect(after.checks == .failure)
+        #expect(after.checkContexts.tooltip == """
+            1 of 4 checks failed
+            ✗ codecov/patch — 80.00% of diff hit (target 90.00%)
+            ● ci/circleci: test — CircleCI is running your tests
+            ✓ ci/circleci: build — Your tests passed on CircleCI!
+            – codecov/project
+            """)
     }
 
     @Test func showsTheListsStoredByThePreviousRunBeforeRefreshing() async throws {
@@ -78,6 +133,7 @@ struct PullRequestListTests {
         #expect(secondRun.hasStoredLists)
         #expect(secondRun.pullRequests(in: .mine) == firstRun.pullRequests(in: .mine))
         #expect(secondRun.pullRequests(in: .toReview) == firstRun.pullRequests(in: .toReview))
+        #expect(secondRun.pullRequests(in: .toReview).first?.checkContexts.isEmpty == false)
         let lastRefreshed = try #require(secondRun.lastRefreshed)
         #expect(abs(lastRefreshed.timeIntervalSinceNow) < 60)
         #expect(await github.requestCount == 0)

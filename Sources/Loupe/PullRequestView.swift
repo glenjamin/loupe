@@ -129,7 +129,7 @@ struct PullRequestHeader: View {
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
                     if let checks = pullRequest.checks {
-                        ChecksIcon(state: checks)
+                        ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
                     }
                     if let decision = pullRequest.reviewDecision {
                         ReviewDecisionLabel(decision: decision)

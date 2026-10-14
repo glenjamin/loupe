@@ -27,11 +27,11 @@ public struct DiffRecord: Sendable, Equatable {
 extension PullRequestStore {
     public func openTabs() throws -> SavedTabs {
         try database.read { db in
-            let pullRequests = try PullRequestRow.fetchAll(db, sql: """
+            let pullRequests = try Self.summaries(of: PullRequestRow.fetchAll(db, sql: """
                 SELECT pullRequest.* FROM openTab
                 JOIN pullRequest ON pullRequest.id = openTab.pullRequestId
                 ORDER BY openTab.position
-                """).map(\.summary)
+                """), db)
             let selected = try Setting.fetchOne(db, key: Setting.selectedTab)?.value
             return SavedTabs(pullRequests: pullRequests, selected: pullRequests.contains { $0.id == selected } ? selected : nil)
         }

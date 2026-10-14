@@ -1,0 +1,14 @@
+query($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on PullRequest {
+      id
+      commits(last: 1) {
+        nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes {
+          __typename
+          ... on CheckRun { name status conclusion title detailsUrl }
+          ... on StatusContext { context state description targetUrl }
+        } } } } }
+      }
+    }
+  }
+}

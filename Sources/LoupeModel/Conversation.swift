@@ -136,7 +136,7 @@ public struct ThreadComment: Sendable, Equatable, Identifiable {
 }
 
 /// One CI status or check run on the head commit.
-public struct CheckContext: Sendable, Equatable {
+public struct CheckContext: Sendable, Hashable {
     public var name: String
     public var status: CheckStatus
     public var description: String?

@@ -261,7 +261,7 @@ private struct SearchVariables: Encodable, Sendable {
 
 private struct NoVariables: Encodable, Sendable {}
 
-private struct NodesVariables: Encodable, Sendable {
+struct NodesVariables: Encodable, Sendable {
     let ids: [String]
 }
 
