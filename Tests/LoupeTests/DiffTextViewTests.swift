@@ -146,6 +146,46 @@ struct DiffTextViewTests {
         let point = NSPoint(x: view.textContainerOrigin.x + numberEnd(10, inRowContaining: "aws-sdk-go v1.49.23"), y: view.textContainerOrigin.y + fragment.midY)
         #expect(rendered.anchor(at: view.characterIndexForInsertion(at: point)) == DiffAnchor(path: "go.mod", side: .left, line: 10))
     }
+
+    @Test func emphasisesTheWordsThatChangedWithinAModifiedLine() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/fetch.go b/fetch.go
+        --- a/fetch.go
+        +++ b/fetch.go
+        @@ -1,8 +1,8 @@
+         func load(ctx context.Context, id string) error {
+        -\treturn fetch(ctx, id)
+        +\treturn fetchAll(ctx, id)
+        -\tx := 1
+        +\tlog.Println("nothing alike")
+         \t// realigned by gofmt
+        -\tMatch:    query.All(a)
+        +\tMatchSQL: query.All(a)
+         }
+
+        """).files.first)
+        let rendered = RenderedDiff(file: file)
+        let text = rendered.text.string as NSString
+
+        func emphasised(_ needle: String, after start: String) -> Bool {
+            let from = text.range(of: start).location
+            let found = text.range(of: needle, range: NSRange(location: from, length: text.length - from))
+            return rendered.text.attribute(.diffEmphasis, at: found.location, effectiveRange: nil) != nil
+        }
+
+        #expect(emphasised("fetch(", after: "-\t"))
+        #expect(emphasised("fetchAll", after: "+\t"))
+        #expect(!emphasised("return", after: "-\t"))
+        #expect(!emphasised("ctx, id", after: "+\t"))
+        // A pair with nothing in common is a replacement, not an edit, so no word stands out.
+        #expect(!emphasised("x := 1", after: "x := 1"))
+        #expect(!emphasised("log.Println", after: "log.Println"))
+        // Realigned whitespace isn't emphasised, only the word that changed.
+        #expect(emphasised("Match:", after: "Match:"))
+        #expect(!emphasised("    query", after: "Match:"))
+        #expect(emphasised("MatchSQL:", after: "MatchSQL:"))
+        #expect(!emphasised(" query", after: "MatchSQL:"))
+    }
 }
 
 private func goMod() throws -> FileDiff {

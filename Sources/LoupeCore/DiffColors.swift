@@ -23,6 +23,10 @@ public enum DiffColors {
     public static let additionGutterBackground = dynamic(light: (0xC7, 0xF0, 0xD0, 1), dark: (0x3F, 0xB9, 0x50, 0.12))
     public static let deletionGutterBackground = dynamic(light: (0xFF, 0xD7, 0xD5, 1), dark: (0xF8, 0x51, 0x49, 0.12))
     public static let hunkHeaderGutterBackground = dynamic(light: (0xC2, 0xE6, 0xFF, 1), dark: (0x38, 0x8B, 0xFD, 0.15))
+
+    // Words that changed within a modified line, drawn over the row's tint.
+    public static let additionWordBackground = dynamic(light: (0xAB, 0xF2, 0xBC, 1), dark: (0x2E, 0xA0, 0x43, 0.4))
+    public static let deletionWordBackground = dynamic(light: (0xFF, 0x81, 0x82, 0.4), dark: (0xF8, 0x51, 0x49, 0.4))
 }
 
 private typealias RGBA = (r: Int, g: Int, b: Int, a: CGFloat)

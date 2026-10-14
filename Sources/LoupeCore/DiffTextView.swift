@@ -145,9 +145,24 @@ private final class RowBackgroundLayoutManager: NSLayoutManager {
                     color.setFill()
                     NSRect(x: min(clip.minX, origin.x), y: row.minY, width: end - min(clip.minX, origin.x), height: row.height).fill()
                 }
+                if let color = kind.emphasisBackground {
+                    self.fillEmphasis(in: glyphRange, row: row, origin: origin, container: container, color: color)
+                }
             }
         }
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+    }
+
+    /// Tints the changed words on one line fragment, the full height of the row.
+    private func fillEmphasis(in glyphs: NSRange, row: NSRect, origin: NSPoint, container: NSTextContainer, color: NSColor) {
+        guard let textStorage else { return }
+        let characters = characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        color.setFill()
+        textStorage.enumerateAttribute(.diffEmphasis, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            let bounds = boundingRect(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
+            NSRect(x: bounds.minX + origin.x, y: row.minY, width: bounds.width, height: row.height).fill()
+        }
     }
 }
 
