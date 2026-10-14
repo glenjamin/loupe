@@ -284,7 +284,8 @@ struct PullRequestListTests {
 
         let refreshing = Task { await model.keepRefreshed() }
         defer { refreshing.cancel() }
-        let deadline = ContinuousClock.now + .seconds(5)
+        // Generous, as other suites' git commands can hold up the main actor for seconds.
+        let deadline = ContinuousClock.now + .seconds(30)
         while await github.requestCount < 6, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }
