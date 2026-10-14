@@ -239,6 +239,21 @@ time { color: var(--muted); }
 .body details summary { cursor: pointer; }
 .body .octicon { display: none; }
 .body .anchor { display: none; }
+.body > .markdown-heading:first-child > :first-child { margin-top: 0; }
+
+/* A markdown file rendered by GitHub, laid out as its file view on github.com. */
+.file {
+  max-width: 1012px;
+  margin: 0 auto;
+  padding: 32px 32px 48px;
+}
+.file .body { font-size: 16px; }
+.file .body p, .file .body ul, .file .body ol, .file .body blockquote, .file .body pre, .file .body table { margin-bottom: 16px; }
+.file .body h1, .file .body h2, .file .body h3, .file .body h4 { margin: 24px 0 16px; font-weight: 600; }
+.file .body > :first-child { margin-top: 0; }
+.file .body h1 { font-size: 2em; } .file .body h2 { font-size: 1.5em; } .file .body h3 { font-size: 1.25em; }
+/* GitHub's API renders a soft line break as `<br>`, as comments show it; a file shows a space. */
+.file .body p > br { display: none; }
 
 /* Primer's syntax colours, for GitHub's highlighted code blocks. */
 .pl-c { color: var(--muted); }

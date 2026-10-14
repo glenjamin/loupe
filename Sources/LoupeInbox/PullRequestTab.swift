@@ -33,6 +33,8 @@ public final class PullRequestTab: Identifiable {
     public private(set) var shownCommit: String?
     /// Why GitHub refused the last request for a review, until another is made.
     public private(set) var reviewRequestError: String?
+    /// Its markdown files as GitHub renders them, and which are shown so.
+    public let markdown: MarkdownPreviews
 
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
@@ -49,8 +51,9 @@ public final class PullRequestTab: Identifiable {
     /// it was last dismissed. Nil until the diff is asked for.
     private var seen: PullRequestSummary?
     private var loading: Task<Void, Never>?
-    /// The checkout the diff was produced from, for diffing a commit or hidden file later.
-    private var checkout: URL?
+    /// The checkout the diff was produced from, for diffing a commit or hidden file, or reading
+    /// a file to render, later.
+    private(set) var checkout: URL?
     /// Each commit's changes once asked for. A range names its commits, so these never go stale.
     private var commitChanges: [DiffRange: DiffState<ReviewChanges>] = [:]
     /// Each hidden file's diff once asked for, by range and path.
@@ -63,6 +66,7 @@ public final class PullRequestTab: Identifiable {
         self.store = store
         self.differ = differ
         self.client = client
+        markdown = MarkdownPreviews(client: client, differ: differ)
         do {
             viewedStates = try store.viewedStates(of: id)
         } catch {

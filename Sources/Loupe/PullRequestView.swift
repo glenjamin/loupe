@@ -267,7 +267,7 @@ struct FileBrowser: View {
     }
 
     private func diffView(_ file: FileDiff) -> some View {
-        DiffView(file: file, onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file))
+        DiffView(file: file, onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file), markdown: tab.markdownPreview(of: file))
     }
 
     private var shownChanges: ReviewChanges? {

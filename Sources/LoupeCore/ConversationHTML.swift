@@ -1,8 +1,8 @@
 import Foundation
 import LoupeModel
 
-/// A PR's conversation as one HTML page, from a template with `{{stylesheet}}` and `{{content}}`
-/// in it. GitHub's `bodyHTML` fragments go in verbatim, as GitHub has already rendered and
+/// A PR's conversation as one HTML page, from a template with `{{stylesheet}}`, `{{layout}}` and
+/// `{{content}}` in it. GitHub's `bodyHTML` fragments go in verbatim, as GitHub has already rendered and
 /// sanitised them; every other string is escaped.
 public enum ConversationHTML {
     /// The page for `conversation`, or a placeholder saying it's loading or why it failed.
@@ -14,8 +14,14 @@ public enum ConversationHTML {
         } else {
             #"<p class="placeholder">Loading the conversation…</p>"#
         }
+        return fill(template, layout: "timeline", content: content, stylesheet: stylesheet)
+    }
+
+    /// The template with its placeholders filled, `layout` being the class of its `main`.
+    static func fill(_ template: String, layout: String, content: String, stylesheet: String) -> String {
         // The stylesheet goes in first, so a `{{content}}` inside it can't be replaced.
-        return template
+        template
+            .replacingOccurrences(of: "{{layout}}", with: layout)
             .replacingOccurrences(of: "{{content}}", with: content)
             .replacingOccurrences(of: "{{stylesheet}}", with: stylesheet)
     }

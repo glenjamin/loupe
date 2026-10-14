@@ -4,17 +4,24 @@ import SwiftUI
 
 /// One file's diff under a header naming it, in a bordered box as on GitHub. Clicking a row
 /// reports its comment anchor. A PR's file also has a "Reviewed" checkbox, and ends in a footer
-/// that marks it reviewed and moves on.
+/// that marks it reviewed and moves on. A PR's markdown file can be shown rendered instead.
 struct DiffView: View {
     let file: FileDiff
     let onAnchorClick: (DiffAnchor) -> Void
     var review: FileReview?
+    var markdown: MarkdownPreview?
 
     var body: some View {
         VStack(spacing: 0) {
-            FileHeader(file: file, review: review)
+            FileHeader(file: file, review: review, markdown: markdown)
             Divider()
-            DiffTextScrollView(file: file, onAnchorClick: onAnchorClick, review: review)
+            // The rendering covers the diff rather than replacing it, so the diff keeps its place.
+            ZStack {
+                DiffTextScrollView(file: file, onAnchorClick: onAnchorClick, review: review)
+                if let markdown, markdown.isRendered {
+                    RenderedMarkdownView(preview: markdown)
+                }
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
@@ -26,6 +33,7 @@ struct DiffView: View {
 private struct FileHeader: View {
     let file: FileDiff
     let review: FileReview?
+    let markdown: MarkdownPreview?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -45,6 +53,17 @@ private struct FileHeader: View {
                 Text(verbatim: "\u{2212}\(file.deletions)").foregroundStyle(.diffDanger)
             }
             .monospacedDigit()
+            if let markdown {
+                Picker("Show", selection: Binding(get: { markdown.isRendered }, set: markdown.setRendered)) {
+                    Text("Source").tag(false)
+                    Text("Rendered").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                .help("Show the diff, or the file as GitHub renders it")
+            }
             if let review {
                 Toggle("Reviewed", isOn: Binding(get: { review.isViewed }, set: { _ in review.toggleViewed() }))
                     .toggleStyle(.checkbox)

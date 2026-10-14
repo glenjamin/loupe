@@ -205,16 +205,19 @@ actor FakeConversations {
 }
 
 /// The GitHub a PR's tab talks to: viewed files from `FakeViewedFiles`, conversations and
-/// reviewers from `FakeConversations`, signed in as `FakeGitHub.viewer`.
+/// reviewers from `FakeConversations`, rendered markdown from `FakeMarkdown`, signed in as
+/// `FakeGitHub.viewer`.
 struct FakePullRequestDetails: HTTPTransport {
     var viewed = FakeViewedFiles()
     var conversations = FakeConversations()
+    var markdown = FakeMarkdown()
 
     func client() -> GitHubClient {
         GitHubClient(token: { FakeGitHub.validToken }, transport: self)
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if request.url?.path() == "/markdown" { return try await markdown.send(request) }
         let data = try #require(request.httpBody)
         let body = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let query = try #require(body["query"] as? String)

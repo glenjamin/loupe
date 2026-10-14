@@ -193,4 +193,22 @@ struct PullRequestDifferTests {
         #expect(error.message.contains("refs/pull/99/head"))
         #expect(error.localizedDescription.contains("git fetch"))
     }
+
+    @Test func readsAFileAsItIsAtThePullRequestsHeadAndAtItsBase() async throws {
+        let repo = try await FakeRepository()
+        try await repo.switchTo("feature", creatingFrom: "main")
+        try await repo.commit(["docs/guide.md": "# Guide\n\nNew words.\n", "README": nil], message: "Write a guide")
+        try await repo.push(asPullRequest: 4)
+        let before = try await repo.checkoutState()
+
+        let differ = PullRequestDiffer()
+        let diff = try await differ.diff(differ.fetch(number: 4, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout), in: repo.checkout)
+
+        #expect(try await differ.contents(of: "docs/guide.md", at: diff.headOid, in: repo.checkout) == "# Guide\n\nNew words.\n")
+        #expect(try await differ.contents(of: "README", at: diff.mergeBase, in: repo.checkout) == "An app.\n", "a deleted file is still there at the base")
+        await #expect(throws: GitError.self) {
+            try await differ.contents(of: "README", at: diff.headOid, in: repo.checkout)
+        }
+        #expect(try await repo.checkoutState() == before)
+    }
 }

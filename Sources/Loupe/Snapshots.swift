@@ -1,4 +1,5 @@
 import AppKit
+import LoupeCore
 import LoupeGit
 import LoupeInbox
 import SwiftUI
@@ -88,6 +89,25 @@ enum SnapshotRun {
                     } else if let file = changes.hidden.first(where: { $0.path.contains(wanted) }) {
                         tab.selectedFile = file.id
                         await tab.diffHiddenFile(file.path)
+                    }
+                }
+            }
+            // LOUPE_SNAPSHOT_RENDERED=1 shows each shown markdown file rendered, once GitHub has
+            // rendered it and its web view has loaded.
+            if environment["LOUPE_SNAPSHOT_RENDERED"] == "1" {
+                let rendered = tabs.tabs.filter { tab in
+                    guard let file = tab.shownFile, let source = tab.markdownSource(of: file) else { return false }
+                    tab.markdown.setRendered(true, path: file.path)
+                    Task { await tab.renderMarkdown(source) }
+                    return true
+                }
+                for tab in rendered { windows.select(tab.id) }
+                windows.select(tabs.selected)
+                await wait(until: .now.addingTimeInterval(20)) {
+                    rendered.allSatisfy { tab in
+                        guard let file = tab.shownFile, let source = tab.markdownSource(of: file) else { return true }
+                        if case .failed = tab.markdown.rendering(of: source) { return true }
+                        return MarkdownPage.existingPage(for: tab).map { $0.shown == source && $0.isLoaded } ?? false
                     }
                 }
             }
@@ -304,6 +324,16 @@ private extension [PullRequestCommit] {
             return indices.contains(index - 1) ? self[index - 1] : nil
         }
         return first { $0.oid.hasPrefix(wanted) }
+    }
+}
+
+private extension PullRequestTab {
+    /// The selected file's diff in the shown changes, hidden or not, once diffed.
+    var shownFile: FileDiff? {
+        guard case let .ready(changes)? = shownChanges, let selectedFile else { return nil }
+        if let file = changes.files.first(where: { $0.id == selectedFile }) { return file }
+        if case let .ready(diff)? = hiddenFileDiff(of: selectedFile) { return diff }
+        return nil
     }
 }
 

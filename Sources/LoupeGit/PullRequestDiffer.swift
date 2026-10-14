@@ -71,6 +71,11 @@ public struct PullRequestDiffer: Sendable {
         return try await git(["diff", "--no-color", "--no-ext-diff", "-M", range.base, range.head, "--"] + paths, in: checkout)
     }
 
+    /// The file at `path`, from the repo's root, as it is in commit `oid`.
+    public func contents(of path: String, at oid: String, in checkout: URL) async throws -> String {
+        try await git(["show", "--no-textconv", "\(oid):\(path)"], in: checkout)
+    }
+
     /// The commits after `base` up to `head`, oldest first.
     private func commits(from base: String, to head: String, in checkout: URL) async throws -> [PullRequestCommit] {
         let log = try await git(["log", "--reverse", "-z", "--format=%H%x1f%P%x1f%s", "\(base)..\(head)"], in: checkout)
