@@ -121,6 +121,26 @@ enum SnapshotRun {
                     }
                 }
             }
+            // LOUPE_SNAPSHOT_EXPAND=<n> clicks the up arrow on the nth hunk header (from 1) of each
+            // shown diff, or the both-ways one where the gap is small; `all` reveals whole files.
+            if let wanted = environment["LOUPE_SNAPSHOT_EXPAND"] {
+                for tab in tabs.tabs {
+                    guard let file = tab.shownFile else { continue }
+                    await tab.readContext(of: file)
+                    if wanted == "all" {
+                        await revealWholeFile(file, in: tab)
+                    } else if let hunk = Int(wanted) {
+                        windows.select(tab.id)
+                        if let window = windows.mainWindow { await clickExpandArrow(onHunk: hunk - 1, in: window) }
+                    }
+                }
+                windows.select(tabs.selected)
+                try? await Task.sleep(for: .milliseconds(1000))
+                for tab in tabs.tabs {
+                    guard let file = tab.shownFile else { continue }
+                    print("\(file.path) now shows \(tab.expandedFile(file).hunks.map(\.header).joined(separator: " | "))")
+                }
+            }
             // LOUPE_SNAPSHOT_CLICK_FOOTER=1 clicks the footer's button at the end of each shown
             // diff, to see that a real click on it marks the file reviewed and moves on.
             if ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_CLICK_FOOTER"] == "1" {
@@ -186,6 +206,55 @@ enum SnapshotRun {
         guard events.count == 2 else { return }
         NSApp.postEvent(events[0], atStart: false)
         window.sendEvent(events[1])
+    }
+
+    /// Scrolls the shown diff so a hunk's header is a little way down the view, then clicks the
+    /// arrow there that reveals lines above the hunk, through the window as the mouse would.
+    private static func clickExpandArrow(onHunk hunk: Int, in window: NSWindow) async {
+        try? await Task.sleep(for: .milliseconds(300))
+        guard let root = window.contentView,
+              let textView = descendants(of: root).lazy.compactMap({ $0 as? DiffTextView }).first(where: { !$0.isHiddenOrHasHiddenAncestor }),
+              let rendered = textView.rendered, rendered.hunkRows.indices.contains(hunk),
+              let layoutManager = textView.layoutManager, let container = textView.textContainer
+        else { return }
+        let row = rendered.hunkRows[hunk]
+        let end = row + 1 < rendered.rowStarts.count ? rendered.rowStarts[row + 1] : rendered.text.length
+        var arrow: NSRange?
+        rendered.text.enumerateAttribute(.diffExpansion, in: NSRange(location: rendered.rowStarts[row], length: end - rendered.rowStarts[row])) { value, range, stop in
+            guard let expansion = value as? ContextExpansion, expansion.hunk == hunk, expansion.direction == .above else { return }
+            arrow = range
+            stop.pointee = true
+        }
+        guard let arrow else {
+            print("hunk \(hunk + 1) has nothing hidden above it to reveal")
+            return
+        }
+        layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: NSMaxRange(arrow)))
+        let bounds = layoutManager.boundingRect(forGlyphRange: layoutManager.glyphRange(forCharacterRange: arrow, actualCharacterRange: nil), in: container)
+        let origin = textView.textContainerOrigin
+        textView.scroll(NSPoint(x: 0, y: max(0, bounds.minY + origin.y - 120)))
+        window.layoutIfNeeded()
+        window.displayIfNeeded()
+        try? await Task.sleep(for: .milliseconds(300))
+        let point = textView.convert(NSPoint(x: bounds.midX + origin.x, y: bounds.midY + origin.y), to: nil)
+        let glyph = (rendered.text.string as NSString).substring(with: arrow).trimmingCharacters(in: .whitespaces)
+        let frameView = root.superview ?? root
+        let hit = frameView.hitTest(frameView.convert(point, from: nil))
+        print("clicking \(glyph) on hunk \(hunk + 1)'s header at \(point) in the window hits \(hit.map { String(describing: type(of: $0)) } ?? "nothing")")
+        guard let event = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+        window.sendEvent(event)
+    }
+
+    /// Reveals every unchanged line of the file, closing each gap from the bottom up.
+    private static func revealWholeFile(_ file: FileDiff, in tab: PullRequestTab) async {
+        guard tab.expandableContext(of: file) != nil else { return }
+        while tab.expandedFile(file).hunks.count > 1 {
+            let before = tab.expandedFile(file).hunks.count
+            await tab.expandContext(of: file, ContextExpansion(hunk: before - 1, direction: .above, lines: nil))
+            if tab.expandedFile(file).hunks.count == before { return }
+        }
+        await tab.expandContext(of: file, ContextExpansion(hunk: 0, direction: .above, lines: nil))
+        await tab.expandContext(of: file, ContextExpansion(hunk: 0, direction: .below, lines: nil))
     }
 }
 

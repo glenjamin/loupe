@@ -30,6 +30,9 @@ public extension NSAttributedString.Key {
     static let diffGutterWidth = NSAttributedString.Key("Loupe.diffGutterWidth")
     /// Marks the words that changed within a modified line, for a stronger tint than the row's.
     static let diffEmphasis = NSAttributedString.Key("Loupe.diffEmphasis")
+    /// Marks a control in a hunk header's gutter that reveals more of the file, holding the
+    /// `ContextExpansion` it asks for.
+    static let diffExpansion = NSAttributedString.Key("Loupe.diffExpansion")
 }
 
 /// One file's diff as a single attributed string, with a gutter of old/new line numbers.
@@ -39,16 +42,24 @@ public struct RenderedDiff {
     public let rowStarts: [Int]
     /// The anchor for each row; nil for hunk headers.
     public let rowAnchors: [DiffAnchor?]
+    /// The row of each hunk's header, in order.
+    public let hunkRows: [Int]
+    /// The row after the last hunk that reveals more of the file, when there's more to reveal.
+    public let trailingRow: Int?
     /// The file's code, ready to highlight; nil when its language isn't known.
     public let syntax: SyntaxPlan?
 
-    public init(file: FileDiff, fontSize: CGFloat = 12) {
+    /// With `expandable`, hunk headers carry controls that reveal the unchanged lines around
+    /// them, as GitHub's expand arrows do.
+    public init(file: FileDiff, fontSize: CGFloat = 12, expandable: ExpandableContext? = nil) {
         let width = max(3, String(file.maxLineNumber).count)
         // Two right-aligned numbers and the marker, two spaces apart, then a tab out to the code.
         let style = Style(fontSize: fontSize, gutterColumns: width * 2 + 5)
         let out = NSMutableString()
         var rows: [(start: Int, length: Int, gutter: Int, kind: RowKind)] = []
         var anchors: [DiffAnchor?] = []
+        var hunkRows: [Int] = []
+        var controls: [(range: NSRange, control: ExpansionControl)] = []
         var syntax = SyntaxLanguage(path: file.path).map(SyntaxPlan.init)
         rows.reserveCapacity(file.rowCount)
         anchors.reserveCapacity(file.rowCount)
@@ -62,10 +73,21 @@ public struct RenderedDiff {
             anchors.append(anchor)
         }
 
+        func addHeaderRow(body: String, controls offered: [ExpansionControl]) {
+            var offset = out.length
+            for control in offered {
+                let length = (control.label as NSString).length
+                controls.append((NSRange(location: offset, length: length), control))
+                offset += length
+            }
+            addRow(gutter: offered.map(\.label).joined() + "\t", body: body, kind: .hunkHeader, anchor: nil)
+        }
+
         var emphasis: [NSRange] = []
 
-        for hunk in file.hunks {
-            addRow(gutter: "\t", body: hunk.header, kind: .hunkHeader, anchor: nil)
+        for (index, hunk) in file.hunks.enumerated() {
+            hunkRows.append(rows.count)
+            addHeaderRow(body: hunk.header, controls: expandable == nil ? [] : ExpansionControl.above(hunk: index, in: file))
             let firstLineRow = rows.count
             var newSide = SyntaxPlan.Side()
             var oldSide = SyntaxPlan.Side()
@@ -96,6 +118,12 @@ public struct RenderedDiff {
             }
         }
 
+        var trailingRow: Int?
+        if let lineCount = expandable?.newLineCount, let below = ExpansionControl.belowLastHunk(of: file, newLineCount: lineCount) {
+            trailingRow = rows.count
+            addHeaderRow(body: "", controls: [below])
+        }
+
         let attributed = NSMutableAttributedString(string: out as String, attributes: style.base)
         attributed.beginEditing()
         for row in rows {
@@ -117,12 +145,18 @@ public struct RenderedDiff {
         for range in emphasis {
             attributed.addAttribute(.diffEmphasis, value: true, range: range)
         }
+        for (range, control) in controls {
+            attributed.addAttributes(style.control, range: range)
+            attributed.addAttributes([.diffExpansion: control.expansion, .toolTip: control.help, .cursor: NSCursor.pointingHand], range: range)
+        }
         attributed.endEditing()
 
         text = attributed
         self.syntax = syntax
         rowStarts = rows.map(\.start)
         rowAnchors = anchors
+        self.hunkRows = hunkRows
+        self.trailingRow = trailingRow
     }
 
     /// The row containing a UTF-16 character offset.
@@ -139,6 +173,12 @@ public struct RenderedDiff {
 
     public func anchor(at characterIndex: Int) -> DiffAnchor? {
         row(at: characterIndex).flatMap { rowAnchors[$0] }
+    }
+
+    /// What the expand control at a UTF-16 character offset reveals, if one is there.
+    public func expansion(at characterIndex: Int) -> ContextExpansion? {
+        guard characterIndex >= 0, characterIndex < text.length else { return nil }
+        return text.attribute(.diffExpansion, at: characterIndex, effectiveRange: nil) as? ContextExpansion
     }
 }
 
@@ -176,6 +216,7 @@ private struct Style {
     let base: [NSAttributedString.Key: Any]
     let gutter: [NSAttributedString.Key: Any]
     let hunkHeader: [NSAttributedString.Key: Any]
+    let control: [NSAttributedString.Key: Any]
 
     init(fontSize: CGFloat, gutterColumns: Int) {
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
@@ -199,6 +240,7 @@ private struct Style {
         base = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph, .diffGutterWidth: gutterWidth]
         gutter = [.foregroundColor: NSColor.tertiaryLabelColor, .diffGutter: true]
         hunkHeader = [.foregroundColor: NSColor.secondaryLabelColor]
+        control = [.foregroundColor: NSColor.linkColor, .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)]
     }
 }
 
@@ -209,6 +251,35 @@ private extension FileDiff {
         hunks.last.map { hunk in
             hunk.lines.reduce(max(hunk.oldStart, hunk.newStart)) { max($0, $1.oldLine ?? 0, $1.newLine ?? 0) }
         } ?? 0
+    }
+}
+
+/// A clickable arrow in a hunk header's gutter, padded either side to make a wider target.
+private struct ExpansionControl {
+    let glyph: String
+    let expansion: ContextExpansion
+    let help: String
+
+    var label: String { " \(glyph) " }
+
+    /// Above the first hunk, up; between hunks, one both-ways arrow when the whole gap is a
+    /// step or less, else down from the hunk before and up from this one, as on GitHub.
+    static func above(hunk index: Int, in file: FileDiff) -> [ExpansionControl] {
+        let hidden = file.hiddenLines(above: index)
+        let step = ContextExpansion.step
+        guard hidden > 0 else { return [] }
+        let up = ExpansionControl(glyph: "↑", expansion: ContextExpansion(hunk: index, direction: .above), help: "Show \(step) more lines above")
+        if index == 0 { return [up] }
+        if hidden <= step {
+            let help = hidden == 1 ? "Show the hidden line" : "Show all \(hidden) hidden lines"
+            return [ExpansionControl(glyph: "↕", expansion: ContextExpansion(hunk: index, direction: .above, lines: nil), help: help)]
+        }
+        return [ExpansionControl(glyph: "↓", expansion: ContextExpansion(hunk: index - 1, direction: .below), help: "Show \(step) more lines below"), up]
+    }
+
+    static func belowLastHunk(of file: FileDiff, newLineCount: Int) -> ExpansionControl? {
+        guard file.hiddenLinesAfterLastHunk(newLineCount: newLineCount) > 0 else { return nil }
+        return ExpansionControl(glyph: "↓", expansion: ContextExpansion(hunk: file.hunks.count - 1, direction: .below), help: "Show \(ContextExpansion.step) more lines below")
     }
 }
 

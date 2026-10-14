@@ -138,7 +138,7 @@ func fixture(_ name: String) throws -> String {
     try String(contentsOf: projectRoot.appending(path: "Tests/LoupeTests/Fixtures/\(name)"), encoding: .utf8)
 }
 
-private func declaredCounts(_ header: String) -> (old: Int, new: Int) {
+func declaredCounts(_ header: String) -> (old: Int, new: Int) {
     let fields = header.split(separator: " ")
     func count(_ prefix: Character) -> Int {
         guard let field = fields.first(where: { $0.first == prefix }) else { return 0 }

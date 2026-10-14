@@ -1,10 +1,16 @@
 import AppKit
 
 /// Read-only, selectable text view for one file's diff. Paints full-width row backgrounds,
-/// reports single clicks as anchors, and leaves the line-number gutter out of copied text.
+/// reports single clicks as anchors or as asking for more context, and leaves the line-number
+/// gutter out of copied text.
 public final class DiffTextView: NSTextView {
     public var rendered: RenderedDiff?
     public var onAnchorClick: ((DiffAnchor) -> Void)?
+    /// Called when a hunk header's expand control is clicked.
+    public var onExpand: ((ContextExpansion) -> Void)?
+    /// The row to hold still on screen when the clicked expansion arrives, and how far below
+    /// the top of the view it was.
+    private var heldRow: (row: HeldRow, offset: CGFloat)?
 
     /// Soft-wraps long rows at the view's width; off, rows run on and the view scrolls sideways.
     public var wrapsLines = true {
@@ -44,7 +50,13 @@ public final class DiffTextView: NSTextView {
     /// Counts calls to show, so late highlighting for a diff no longer shown is dropped.
     private var shownCount = 0
 
-    public func show(_ rendered: RenderedDiff) {
+    /// Shows a diff from its top or, `keepingPlace`, a new rendering of the same file where the
+    /// reader was: the row whose expand control was clicked holds still, else the view stays
+    /// scrolled as it was.
+    public func show(_ rendered: RenderedDiff, keepingPlace: Bool = false) {
+        let visible = visibleRect
+        let held = keepingPlace ? heldRow : nil
+        heldRow = nil
         self.rendered = rendered
         shownCount += 1
         if let textStorage {
@@ -52,7 +64,11 @@ public final class DiffTextView: NSTextView {
         }
         textStorage?.setAttributedString(rendered.text)
         setSelectedRange(NSRange(location: 0, length: 0))
-        scroll(.zero)
+        if let held, let row = held.row.index(in: rendered), let top = top(ofRow: row) {
+            scroll(NSPoint(x: visible.minX, y: max(0, top - held.offset)))
+        } else {
+            scroll(keepingPlace ? visible.origin : .zero)
+        }
         guard let plan = rendered.syntax else { return }
         if rendered.rowStarts.count <= inlineHighlightRows {
             applyHighlights(plan.runs())
@@ -70,8 +86,21 @@ public final class DiffTextView: NSTextView {
         }
     }
 
+    /// The expand arrows act on the first click, as buttons do, even in a window not yet active.
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        guard let event, let rendered, let index = characterIndex(under: convert(event.locationInWindow, from: nil)),
+              rendered.expansion(at: index) != nil
+        else { return super.acceptsFirstMouse(for: event) }
+        return true
+    }
+
     public override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if event.clickCount == 1, let rendered, let index = characterIndex(under: point), let expansion = rendered.expansion(at: index) {
+            hold(rowAt: index, for: expansion, in: rendered)
+            onExpand?(expansion)
+            return
+        }
         super.mouseDown(with: event)
         // super runs the selection-tracking loop, so a drag has finished by here; only a plain click reports.
         guard selectedRange().length == 0, event.clickCount == 1, let rendered else { return }
@@ -99,6 +128,46 @@ public final class DiffTextView: NSTextView {
                 await Task.yield()
             }
         }
+    }
+
+    /// Remembers which row to hold still once the expansion is shown: the clicked control's
+    /// own, unless it goes once the gap closes, when the code beside it holds instead.
+    private func hold(rowAt index: Int, for expansion: ContextExpansion, in rendered: RenderedDiff) {
+        guard let row = rendered.row(at: index), let top = top(ofRow: row) else { return }
+        let beside = expansion.direction == .above ? row + 1 : row - 1
+        let code = rendered.rowAnchors.indices.contains(beside) ? rendered.rowAnchors[beside] : nil
+        let held: HeldRow
+        if row == rendered.trailingRow {
+            held = .trailing(orElse: code)
+        } else if let hunk = rendered.hunkRows.firstIndex(of: row), expansion.lines != nil || code == nil {
+            held = .hunkHeader(hunk)
+        } else if let code {
+            held = .line(code)
+        } else {
+            return
+        }
+        heldRow = (held, top - visibleRect.minY)
+    }
+
+    /// The top of a row in the view. Everything above it is laid out first, as non-contiguous
+    /// layout would otherwise only estimate where it falls.
+    private func top(ofRow row: Int) -> CGFloat? {
+        guard let layoutManager, let rendered, rendered.rowStarts.indices.contains(row) else { return nil }
+        layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: rendered.rowStarts[row] + 1))
+        let glyph = layoutManager.glyphIndexForCharacter(at: rendered.rowStarts[row])
+        return layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + textContainerOrigin.y
+    }
+
+    /// The character drawn under a point in the view, if any; unlike the insertion point, this
+    /// is never the character beside the one clicked.
+    private func characterIndex(under point: NSPoint) -> Int? {
+        guard let layoutManager, let textContainer, let textStorage, textStorage.length > 0 else { return nil }
+        let inContainer = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = layoutManager.glyphIndex(for: inContainer, in: textContainer, fractionOfDistanceThroughGlyph: nil)
+        let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let bounds = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer)
+        guard (fragment.minY..<fragment.maxY).contains(inContainer.y), (bounds.minX..<bounds.maxX).contains(inContainer.x) else { return nil }
+        return layoutManager.characterIndexForGlyph(at: glyph)
     }
 
     private func applyWrapping() {
@@ -162,6 +231,22 @@ private final class RowBackgroundLayoutManager: NSLayoutManager {
             guard value != nil else { return }
             let bounds = boundingRect(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
             NSRect(x: bounds.minX + origin.x, y: row.minY, width: bounds.width, height: row.height).fill()
+        }
+    }
+}
+
+/// A row identified so it can be found again in a new rendering of the file.
+private enum HeldRow {
+    case hunkHeader(Int)
+    /// The row below the last hunk, or the code above it once the file's end is reached.
+    case trailing(orElse: DiffAnchor?)
+    case line(DiffAnchor)
+
+    func index(in rendered: RenderedDiff) -> Int? {
+        switch self {
+        case let .hunkHeader(hunk): rendered.hunkRows.indices.contains(hunk) ? rendered.hunkRows[hunk] : nil
+        case let .trailing(code): rendered.trailingRow ?? code.flatMap { rendered.rowAnchors.firstIndex(of: $0) }
+        case let .line(code): rendered.rowAnchors.firstIndex(of: code)
         }
     }
 }

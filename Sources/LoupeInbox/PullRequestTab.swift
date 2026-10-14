@@ -37,6 +37,8 @@ public final class PullRequestTab: Identifiable {
     public let markdown: MarkdownPreviews
     /// The description being edited, shown in place of the conversation, or nil when it isn't.
     public private(set) var descriptionEditor: DescriptionEditor?
+    /// The unchanged lines revealed around each file's hunks.
+    public let contextExpansions: ContextExpansions
 
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
@@ -72,6 +74,7 @@ public final class PullRequestTab: Identifiable {
         self.client = client
         self.candidates = candidates
         markdown = MarkdownPreviews(client: client, differ: differ)
+        contextExpansions = ContextExpansions(differ: differ)
         do {
             viewedStates = try store.viewedStates(of: id)
         } catch {
@@ -426,7 +429,7 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// The range of the changes shown, once the PR's diff is ready.
-    private var shownRange: DiffRange? {
+    var shownRange: DiffRange? {
         guard case let .ready(review) = phase else { return nil }
         return shownCommitRange(in: review) ?? DiffRange(base: review.mergeBase, head: review.headOid)
     }
@@ -464,6 +467,7 @@ public final class PullRequestTab: Identifiable {
             shownCommit = nil
             commitChanges = [:]
             hiddenFileDiffs = [:]
+            contextExpansions.reset()
             keepSelection(in: review.changes)
             phase = .ready(review)
         } catch {

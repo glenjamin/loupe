@@ -282,7 +282,12 @@ struct FileBrowser: View {
     }
 
     private func diffView(_ file: FileDiff) -> some View {
-        DiffView(file: file, onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file), markdown: tab.markdownPreview(of: file))
+        DiffView(
+            file: tab.expandedFile(file), onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file), markdown: tab.markdownPreview(of: file),
+            expandable: tab.expandableContext(of: file), onExpand: { expansion in Task { await tab.expandContext(of: file, expansion) } }
+        )
+        // Read when shown, so the lines after the last hunk can be offered as well.
+        .task(id: "\(tab.shownCommit ?? "")\0\(file.path)") { await tab.readContext(of: file) }
     }
 
     private var shownChanges: ReviewChanges? {

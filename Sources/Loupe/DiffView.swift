@@ -5,11 +5,14 @@ import SwiftUI
 /// One file's diff under a header naming it, in a bordered box as on GitHub. Clicking a row
 /// reports its comment anchor. A PR's file also has a "Reviewed" checkbox, and ends in a footer
 /// that marks it reviewed and moves on. A PR's markdown file can be shown rendered instead.
+/// With `expandable`, hunk headers have arrows that ask for more of the file around them.
 struct DiffView: View {
     let file: FileDiff
     let onAnchorClick: (DiffAnchor) -> Void
     var review: FileReview?
     var markdown: MarkdownPreview?
+    var expandable: ExpandableContext?
+    var onExpand: (ContextExpansion) -> Void = { _ in }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,7 +20,7 @@ struct DiffView: View {
             Divider()
             // The rendering covers the diff rather than replacing it, so the diff keeps its place.
             ZStack {
-                DiffTextScrollView(file: file, onAnchorClick: onAnchorClick, review: review)
+                DiffTextScrollView(file: file, onAnchorClick: onAnchorClick, review: review, expandable: expandable, onExpand: onExpand)
                 if let markdown, markdown.isRendered {
                     RenderedMarkdownView(preview: markdown)
                 }
@@ -112,6 +115,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
     let file: FileDiff
     let onAnchorClick: (DiffAnchor) -> Void
     let review: FileReview?
+    let expandable: ExpandableContext?
+    let onExpand: (ContextExpansion) -> Void
     @AppStorage(DiffSettings.wrapLinesKey) var wrapLines = DiffSettings.wrapLinesDefault
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -144,12 +149,16 @@ private struct DiffTextScrollView: NSViewRepresentable {
         coordinator.footerState.isViewed = review?.isViewed ?? false
         coordinator.footerState.pullHint = review?.pullHint ?? ""
         coordinator.textView.onAnchorClick = onAnchorClick
+        coordinator.textView.onExpand = onExpand
         scroll.hasHorizontalScroller = !wrapLines
         coordinator.textView.wrapsLines = wrapLines
-        if coordinator.shownPath != file.path {
-            coordinator.shownPath = file.path
-            coordinator.pull(.cancelled)
-            coordinator.textView.show(RenderedDiff(file: file))
+        // The same file shown anew, as when more of it is revealed, keeps the reader's place.
+        let shown = ShownDiff(path: file.path, headers: file.hunks.map(\.header), expandable: expandable)
+        if coordinator.shown != shown {
+            let isSameFile = coordinator.shown?.path == file.path
+            coordinator.shown = shown
+            if !isSameFile { coordinator.pull(.cancelled) }
+            coordinator.textView.show(RenderedDiff(file: file, expandable: expandable), keepingPlace: isSameFile)
         }
         coordinator.footer.isHidden = review == nil
         coordinator.hint.isHidden = review == nil
@@ -164,7 +173,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         static let hintHeight: CGFloat = 36
 
         let textView = DiffTextView.make()
-        var shownPath: String?
+        var shown: ShownDiff?
         var review: FileReview?
         let footerState = ReviewFooterState()
         lazy var footer: NSHostingView<ReviewFooter> = {
@@ -402,4 +411,12 @@ private struct PullFillButtonStyle: ButtonStyle {
             }
             .contentShape(shape)
     }
+}
+
+/// What a diff's text view was last given to show. Hunk headers change whenever revealing
+/// lines changes the hunks, so they tell a new rendering of the file from the same one.
+private struct ShownDiff: Equatable {
+    let path: String
+    let headers: [String]
+    let expandable: ExpandableContext?
 }
