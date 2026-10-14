@@ -7,69 +7,43 @@ import Testing
 
 @MainActor
 struct TabsTests {
-    @Test func choosingAPullRequestOpensItsTabOrFocusesTheOneAlreadyOpen() async throws {
+    @Test func choosingAPullRequestOpensItOrFocusesItWhenAlreadyOpen() async throws {
         let app = try await App()
         let (first, second) = (app.toReview[0], app.toReview[1])
 
         app.tabs.lists.open(first)
         app.tabs.lists.open(second)
         #expect(app.tabs.tabs.map(\.id) == [first.id, second.id])
-        #expect(app.tabs.selection == .pullRequest(second.id))
+        #expect(app.tabs.selected == second.id)
 
         app.tabs.lists.open(first)
-        #expect(app.tabs.tabs.map(\.id) == [first.id, second.id])
-        #expect(app.tabs.selection == .pullRequest(first.id))
-        #expect(app.tabs.selectedTab?.title == "\(first.repository.split(separator: "/").last!) #\(first.number)")
+        #expect(app.tabs.tabs.map(\.id) == [first.id, second.id], "not opened twice")
+        #expect(app.tabs.selected == first.id)
+        #expect(app.shown == [first.id, second.id, first.id], "its window is brought forward each time")
+        #expect(app.tabs.tab(id: first.id)?.title == "\(first.repository.split(separator: "/").last!) #\(first.number)")
     }
 
-    @Test func closingATabSelectsItsNeighbourAndTheListsCannotBeClosed() async throws {
+    @Test func closingAPullRequestsWindowForgetsItForNextLaunch() async throws {
         let app = try await App()
-        let opened = app.toReview.prefix(3)
-        for pullRequest in opened { app.tabs.open(pullRequest) }
+        let (kept, closed) = (app.toReview[0], app.toReview[1])
+        app.tabs.open(kept)
+        app.tabs.open(closed)
 
-        app.tabs.select(.pullRequest(opened[1].id))
-        app.tabs.closeSelected()
-        #expect(app.tabs.tabs.map(\.id) == [opened[0].id, opened[2].id])
-        #expect(app.tabs.selection == .pullRequest(opened[2].id))
-
-        app.tabs.closeSelected()
-        #expect(app.tabs.selection == .pullRequest(opened[0].id))
-        app.tabs.close(opened[0].id)
-        #expect(app.tabs.tabs.isEmpty)
-        #expect(app.tabs.selection == .lists)
-
-        app.tabs.closeSelected()
-        #expect(app.tabs.selection == .lists)
-    }
-
-    @Test func numberedAndCyclingSelectionWrapAroundTheListsTab() async throws {
-        let app = try await App()
-        let opened = Array(app.toReview.prefix(3))
-        for pullRequest in opened { app.tabs.open(pullRequest) }
-
-        app.tabs.selectTab(number: 1)
-        #expect(app.tabs.selection == .lists)
-        app.tabs.selectTab(number: 3)
-        #expect(app.tabs.selection == .pullRequest(opened[1].id))
-        app.tabs.selectTab(number: 9)
-        #expect(app.tabs.selection == .pullRequest(opened[2].id))
-        app.tabs.selectTab(number: 6)
-        #expect(app.tabs.selection == .pullRequest(opened[2].id))
-
-        app.tabs.selectNext()
-        #expect(app.tabs.selection == .lists)
-        app.tabs.selectPrevious()
-        #expect(app.tabs.selection == .pullRequest(opened[2].id))
-        app.tabs.selectPrevious()
-        #expect(app.tabs.selection == .pullRequest(opened[1].id))
-    }
-
-    @Test func openTabsAndTheSelectionComeBackNextLaunchEvenForPullRequestsNoLongerListed() async throws {
-        let app = try await App()
-        let (kept, closed, reviewed) = (app.toReview[0], app.toReview[1], app.toReview[2])
-        for pullRequest in [kept, closed, reviewed] { app.tabs.open(pullRequest) }
         app.tabs.close(closed.id)
-        app.tabs.select(.pullRequest(kept.id))
+        #expect(app.tabs.tabs.map(\.id) == [kept.id])
+        #expect(app.tabs.selected == nil, "the closed one was frontmost")
+
+        let nextRun = try app.relaunch()
+        #expect(nextRun.tabs.map(\.id) == [kept.id])
+        #expect(nextRun.selected == nil)
+    }
+
+    @Test func openPullRequestsAndTheFrontmostComeBackNextLaunchEvenWhenNoLongerListed() async throws {
+        let app = try await App()
+        let (kept, reviewed) = (app.toReview[0], app.toReview[1])
+        app.tabs.open(kept)
+        app.tabs.open(reviewed)
+        app.tabs.select(kept.id)
         // Reviewing a PR takes it out of the to-review list.
         try await app.github.edit(reviewed.id) { $0.requestedReviewers = [] }
         await app.tabs.lists.refresh()
@@ -78,9 +52,11 @@ struct TabsTests {
         let nextRun = try app.relaunch()
 
         #expect(nextRun.tabs.map(\.id) == [kept.id, reviewed.id])
-        #expect(nextRun.selection == .pullRequest(kept.id))
+        #expect(nextRun.selected == kept.id)
         #expect(nextRun.tabs[1].pullRequest.title == reviewed.title)
-        #expect(nextRun.lists.pullRequest(id: closed.id) != nil, "still listed, so still stored")
+
+        nextRun.select(nil)
+        #expect(try app.relaunch().selected == nil, "the lists were frontmost")
     }
 
     @Test func aTabDiffsThePullRequestFromItsCheckoutAndAgainWhenItsHeadMoves() async throws {
@@ -100,7 +76,7 @@ struct TabsTests {
         await app.tabs.lists.refresh()
 
         app.tabs.open(pullRequest)
-        let tab = try #require(app.tabs.selectedTab)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
         await tab.load()
 
         let review = try #require(tab.ready)
@@ -132,7 +108,7 @@ struct TabsTests {
         let app = try await App()
         let pullRequest = app.toReview[0]
         app.tabs.open(pullRequest)
-        let tab = try #require(app.tabs.selectedTab)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
 
         await tab.load()
         guard case .noCheckout = tab.phase else { Issue.record("expected no checkout, got \(tab.phase)"); return }
@@ -152,12 +128,19 @@ private struct App {
     let github: FakeGitHub
     let store: PullRequestStore
     let tabs: TabsModel
+    /// The PRs whose windows the app was asked to bring forward, in order.
+    private let showRecorder = ShowRecorder()
 
     init() async throws {
         github = try FakeGitHub(fixture: "pr-list.json")
         store = try PullRequestStore.inMemory()
         tabs = Self.tabs(github, store)
+        tabs.show = { [showRecorder] in showRecorder.ids.append($0) }
         await tabs.lists.refresh()
+    }
+
+    var shown: [String] {
+        showRecorder.ids
     }
 
     var toReview: [PullRequestSummary] {
@@ -173,6 +156,11 @@ private struct App {
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
         return TabsModel(lists: lists, store: store)
     }
+}
+
+@MainActor
+private final class ShowRecorder {
+    var ids: [String] = []
 }
 
 private extension PullRequestTab {

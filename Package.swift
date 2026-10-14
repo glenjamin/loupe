@@ -20,7 +20,6 @@ let package = Package(
             resources: [.copy("Resources/Loupe.icns")]
         ),
         .testTarget(name: "LoupeTests", dependencies: ["LoupeCore"], exclude: ["Fixtures"]),
-        .testTarget(name: "LoupeAppTests", dependencies: ["Loupe", "LoupeInbox", "LoupeModel", "LoupeStore"]),
         .testTarget(name: "LoupeInboxTests", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit", "LoupeInbox"]),
     ]
 )

@@ -4,60 +4,52 @@ import LoupeInbox
 import LoupeStore
 import SwiftUI
 
+/// The PR lists in one window and each opened PR in its own, all grouped as native window tabs.
 struct LoupeApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
-    @State private var screen = Screen.initial
+    @State private var windowTabs = WindowTabs(tabs: makeTabs())
 
     var body: some Scene {
-        WindowGroup(screen.title) {
-            switch screen {
-            case let .tabs(tabs):
-                TabbedWindow(tabs: tabs)
-                    .frame(minWidth: 900, minHeight: 500)
-            case let .diff(model):
-                ContentView(model: model)
-                    .frame(minWidth: 900, minHeight: 600)
-            }
+        Window("Pull Requests", id: WindowTabs.listsID) {
+            ListsWindow(windowTabs: windowTabs)
+                .frame(minWidth: 900, minHeight: 500)
         }
         .windowToolbarStyle(.unified)
-        .commands { TabCommands(tabs: screen.tabs) }
+        .commands { TabCommands() }
+        WindowGroup("Pull Request", for: String.self) { $id in
+            PullRequestWindow(id: id, windowTabs: windowTabs)
+                .frame(minWidth: 900, minHeight: 500)
+        }
+        .windowToolbarStyle(.unified)
     }
 }
 
-@MainActor
-enum Screen {
-    case tabs(TabsModel)
-    case diff(ReviewModel)
+/// `Loupe <diff>`: one window showing a diff file.
+struct DiffApp: App {
+    @NSApplicationDelegateAdaptor private var delegate: AppDelegate
+    @State private var model = ReviewModel.load(path: LaunchOptions.diffPath)
 
-    static var initial: Screen {
-        guard let path = LaunchOptions.diffPath else {
-            let store = openStore()
-            // The tabs take over opening PRs.
-            let lists = PullRequestListModel(store: store) { _ in }
-            return .tabs(TabsModel(lists: lists, store: store))
+    var body: some Scene {
+        WindowGroup(model.title) {
+            ContentView(model: model)
+                .frame(minWidth: 900, minHeight: 600)
         }
-        return .diff(ReviewModel.load(path: path))
-    }
-
-    var title: String {
-        switch self {
-        case .tabs: "Loupe"
-        case let .diff(model): model.title
-        }
-    }
-
-    var tabs: TabsModel? {
-        if case let .tabs(tabs) = self { tabs } else { nil }
+        .windowToolbarStyle(.unified)
     }
 }
 
 /// Launched as a bare SwiftPM executable (no .app bundle), the process starts as a background
 /// app and its window never takes keyboard focus unless it's promoted to a regular app.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// The app draws its own tab strip, so the system's window tabs and their menu items would
-    /// only compete with it.
+    /// The app's windows group as native tabs, which this would turn off.
     func applicationWillFinishLaunching(_ notification: Notification) {
-        NSWindow.allowsAutomaticWindowTabbing = false
+        NSWindow.allowsAutomaticWindowTabbing = true
+    }
+
+    /// Windows closing as the app quits are still open as far as the next launch is concerned.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        WindowTabs.isTerminating = true
+        return .terminateNow
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -79,10 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let icon = Self.icon { NSApp.applicationIconImage = icon }
     }
 
+    @MainActor private static let icon = iconURL.flatMap(NSImage.init(contentsOf:))
+
     /// The .app has the icon in its own resources; `swift run` has it only in SwiftPM's bundle,
     /// whose accessor would look for it at the .app's root, where it can't go and stay signed.
-    @MainActor private static let icon = (Bundle.main.url(forResource: "Loupe", withExtension: "icns")
-        ?? Bundle.module.url(forResource: "Loupe", withExtension: "icns")).flatMap(NSImage.init(contentsOf:))
+    static let iconURL = Bundle.main.url(forResource: "Loupe", withExtension: "icns")
+        ?? Bundle.module.url(forResource: "Loupe", withExtension: "icns")
 }
 
 @Observable
@@ -171,6 +165,13 @@ struct FileRow: View {
         }
         .help(file.path)
     }
+}
+
+@MainActor private func makeTabs() -> TabsModel {
+    let store = openStore()
+    // The tabs take over opening PRs.
+    let lists = PullRequestListModel(store: store) { _ in }
+    return TabsModel(lists: lists, store: store)
 }
 
 /// The on-disk store, or a throwaway one if it can't be opened, so the PR list still works.

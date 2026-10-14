@@ -71,6 +71,14 @@ Tab 0 is the PR lists and cannot be closed; each opened PR gets a closeable tab 
 
 The title is always "Loupe", with the selected tab in the subtitle, and one unified toolbar is declared at the window level with items that change per tab. A toolbar or title declared by a tab's own view would come and go with the tab, resizing the title bar on every switch.
 
+### PRs open as native window tabs, replacing the custom tab strip
+
+The PR lists are one window and each opened PR is its own window, all grouped as AppKit window tabs (the tabs Safari, Finder and Terminal use) through a shared `tabbingIdentifier` and `tabbingMode = .preferred`. This replaces the SwiftUI tab strip above: two custom attempts looked wrong and weren't clickable on the user's machine, while AppKit's tabs look right and give ⌘W, ⌃Tab, "Move Tab to New Window" and "Merge All Windows" for free. The app adds only ⌘1–⌘9, ⌘⇧[ / ⌘⇧] and "Show Pull Requests" (⌘T), which reopens the lists if they were closed. Opening a PR that already has a window brings it forward. The open PRs and the frontmost one are stored and reopened at launch, so SwiftUI's own window restoration is turned off to avoid duplicates.
+
+### Each window declares its own title and toolbar
+
+Every window has the tall unified title bar and toolbar, so tabs match in height. The lists are titled "Pull Requests"; a PR is titled `repo #number`, which its tab shows, with the PR's title as the subtitle. The app icon sits beside each title where a document's icon would. This supersedes the single "Loupe" title with a per-tab subtitle, which only made sense while the tabs were one window.
+
 ### Producing a PR's diff leaves the checkout's other state alone
 
 Fetches pass `--no-tags` and `--no-write-fetch-head`, so the only things they change are `refs/loupe/pull/<N>/head` and, when the base commit is missing, the base branch's remote-tracking ref. Hidden paths are excluded with pathspecs, `linguist-generated` ones through `:(attr:…)` magic against the checkout's own `.gitattributes`, and a second `--name-only` diff over the same pathspecs lists what was hidden, so the count stays honest. An open tab keeps its PR row stored after the PR leaves both lists, so a tab can always be restored. A list holding rows stored before commit oids were fetched gets a full load rather than an incremental one, which fills them in.

@@ -14,7 +14,7 @@ public final class PullRequestListModel {
     public private(set) var error: String?
     public private(set) var isLoading = false
 
-    /// Where choosing a PR goes: the app opens it in a tab.
+    /// Where choosing a PR goes: the app opens it in a window tab.
     public var onOpen: @MainActor (PullRequestSummary) -> Void
 
     private var snapshot: PullRequestSnapshot

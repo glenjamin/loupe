@@ -2,10 +2,10 @@ import Foundation
 import GRDB
 import LoupeModel
 
-/// The PRs open in tabs, in order, and which tab was selected.
+/// The PRs open in windows, in order, and which was frontmost.
 public struct SavedTabs: Sendable, Equatable {
     public let pullRequests: [PullRequestSummary]
-    /// Nil when the PR lists' tab was selected.
+    /// Nil when the PR lists were frontmost.
     public let selected: String?
 }
 

@@ -16,13 +16,17 @@ enum Entry {
             FileHandle.standardError.write(Data("usage: Loupe [diff-file] | --bench <diff-file> [path-substring]\n".utf8))
             exit(2)
         }
-        LaunchOptions.diffPath = args.first
-        LoupeApp.main()
+        if let path = args.first {
+            LaunchOptions.diffPath = path
+            DiffApp.main()
+        } else {
+            LoupeApp.main()
+        }
     }
 }
 
 /// SwiftUI's App initialiser takes no arguments, so the diff path is handed over here.
 @MainActor
 enum LaunchOptions {
-    static var diffPath: String?
+    static var diffPath = ""
 }

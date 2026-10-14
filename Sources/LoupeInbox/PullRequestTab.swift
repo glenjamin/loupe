@@ -5,8 +5,8 @@ import LoupeModel
 import LoupeStore
 import Observation
 
-/// One PR's tab: its latest known details and its diff, produced from the local checkout and
-/// kept in memory, so switching back to the tab is instant. The diff is produced again when the
+/// One open PR: its latest known details and its diff, produced from the local checkout and
+/// kept in memory, so switching back to its tab is instant. The diff is produced again when the
 /// PR's head commit changes.
 @Observable
 @MainActor
