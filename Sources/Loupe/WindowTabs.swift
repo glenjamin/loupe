@@ -36,6 +36,7 @@ final class WindowTabs {
         guard !hasRestored else { return }
         hasRestored = true
         startRefreshing()
+        SnapshotRun.start(tabs: tabs)
         let ids = tabs.tabs.map(\.id)
         guard !ids.isEmpty else { return }
         pendingRestore = Set(ids)

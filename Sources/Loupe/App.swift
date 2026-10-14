@@ -15,7 +15,10 @@ struct LoupeApp: App {
                 .frame(minWidth: 900, minHeight: 500)
         }
         .windowToolbarStyle(.unified)
-        .commands { TabCommands() }
+        .commands {
+            TabCommands()
+            DebugCommands()
+        }
         WindowGroup("Pull Request", for: String.self) { $id in
             PullRequestWindow(id: id, windowTabs: windowTabs)
                 .frame(minWidth: 900, minHeight: 500)
@@ -154,8 +157,8 @@ struct FileRow: View {
         VStack(alignment: .leading, spacing: 2) {
             Text((file.path as NSString).lastPathComponent).lineLimit(1)
             HStack(spacing: 6) {
-                Text("+\(file.additions)").foregroundStyle(.green)
-                Text("-\(file.deletions)").foregroundStyle(.red)
+                Text("+\(file.additions)").foregroundStyle(.diffSuccess)
+                Text("-\(file.deletions)").foregroundStyle(.diffDanger)
                 Text((file.path as NSString).deletingLastPathComponent)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -175,8 +178,9 @@ struct FileRow: View {
 }
 
 /// The on-disk store, or a throwaway one if it can't be opened, so the PR list still works.
+/// `LOUPE_DATABASE` points it elsewhere, such as for a snapshot run.
 private func openStore() -> PullRequestStore {
-    let url = PullRequestStore.defaultURL
+    let url = ProcessInfo.processInfo.environment["LOUPE_DATABASE"].map { URL(filePath: $0) } ?? PullRequestStore.defaultURL
     do {
         return try PullRequestStore(url: url)
     } catch {

@@ -7,6 +7,7 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 - No Xcode on this machine, only Command Line Tools: Swift 6.1, SwiftPM, macOS 14 platform. There is no `.xcodeproj`; don't create one.
 - `swift build`, `swift test`, `swift run` and `swift package resolve` fail inside the sandbox with an xcrun cache error. Run them with the sandbox off. The same goes for `gh` and anything else needing network.
 - The GUI can't be launched or screenshotted from the sandbox. Verify with tests and the build, and tell the user the `swift run Loupe` command to see it themselves.
+- To see the UI yourself, run `Scripts/snapshot.sh <dir>` with the sandbox off (it briefly shows windows on the user's screen), then view the PNGs it prints with the Read tool. Set `LOUPE_DATABASE` to a copy of the database to keep the real one untouched; see "Snapshots" in `NOTES.md`.
 - Auth is `gh auth token`. Never write the token to disk, logs or fixtures.
 - Other checkouts beside this one under `~/Development/` are shared with other sessions: only read-only git there (`fetch`, `diff`, `log`, `remote get-url`). Never checkout, reset, or write.
 - Database: `~/Library/Application Support/Loupe/loupe.sqlite`. Tests use temp or in-memory databases.

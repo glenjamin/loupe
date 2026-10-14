@@ -1,5 +1,4 @@
 import AppKit
-import LoupeCore
 import LoupeInbox
 import LoupeModel
 import SwiftUI
@@ -254,9 +253,4 @@ struct ChecksIcon: View {
             Image(systemName: "questionmark.circle").help("Unknown check state")
         }
     }
-}
-
-extension ShapeStyle where Self == Color {
-    static var diffSuccess: Color { Color(nsColor: DiffColors.successText) }
-    static var diffDanger: Color { Color(nsColor: DiffColors.dangerText) }
 }
