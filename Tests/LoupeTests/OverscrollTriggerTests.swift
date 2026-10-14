@@ -12,8 +12,10 @@ struct OverscrollTriggerTests {
         #expect(trigger.progress == 0)
         #expect(trigger.scroll(overscroll: 16) == false)
         #expect(trigger.progress == 0.5)
+        #expect(trigger.isDragging)
         #expect(trigger.scroll(overscroll: 32) == true, "fires without waiting for the fingers to lift")
         #expect(trigger.hasFired)
+        #expect(!trigger.isDragging)
         #expect(trigger.progress == 1)
     }
 
@@ -43,6 +45,7 @@ struct OverscrollTriggerTests {
         _ = trigger.scroll(overscroll: 24)
         trigger.endDrag()
         #expect(trigger.progress == 0.75)
+        #expect(!trigger.isDragging, "settling back, which shows no hint")
 
         #expect(trigger.scroll(overscroll: 40) == false, "momentum carrying on doesn't fill or fire it")
         #expect(trigger.progress == 0.75)

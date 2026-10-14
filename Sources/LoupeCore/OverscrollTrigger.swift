@@ -20,6 +20,11 @@ public struct OverscrollTrigger: Sendable, Equatable {
         state == .fired
     }
 
+    /// Whether a live drag is filling it, rather than it settling back or resting.
+    public var isDragging: Bool {
+        state == .dragging
+    }
+
     /// The fingers have touched down and started scrolling.
     public mutating func beginDrag() {
         guard state != .fired else { return }

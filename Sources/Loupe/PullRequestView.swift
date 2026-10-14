@@ -269,17 +269,25 @@ struct FileBrowser: View {
 
     private func review(of file: FileDiff) -> FileReview {
         let isViewed = tab.viewedState(of: file.path).isViewed
-        let label = if tab.nextUnviewedFile(after: file.id) != nil {
+        let hasNext = tab.nextUnviewedFile(after: file.id) != nil
+        let label = if hasNext {
             isViewed ? "Next unreviewed file" : "Mark reviewed · next file"
         } else if isViewed {
             tab.shownCommit == nil ? "All files reviewed" : "All this commit's files reviewed"
         } else {
             "Mark reviewed · last file"
         }
+        let pullHint = switch (hasNext, isViewed) {
+        case (true, false): "Pull to mark reviewed and move on"
+        case (true, true): "Pull for the next unreviewed file"
+        case (false, false): "Pull to mark the last file reviewed"
+        case (false, true): label
+        }
         return FileReview(
             isViewed: isViewed,
             toggleViewed: { Task { await tab.toggleViewed(path: file.path) } },
             advanceLabel: label,
+            pullHint: pullHint,
             markViewedAndAdvance: { Task { await tab.markViewedAndAdvance() } }
         )
     }

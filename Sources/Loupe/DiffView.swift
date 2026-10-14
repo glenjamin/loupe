@@ -81,6 +81,8 @@ struct FileReview {
     let toggleViewed: () -> Void
     /// Says what the footer's button, or pulling past the end, will do.
     let advanceLabel: String
+    /// Revealed below the footer while pulling, saying what letting the pull fire will do.
+    let pullHint: String
     let markViewedAndAdvance: () -> Void
 }
 
@@ -106,6 +108,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         // In the clip view, the footer is placed in the document's coordinates and so scrolls
         // with it, clipped like the text.
         scroll.contentView.addSubview(coordinator.footer)
+        scroll.contentView.addSubview(coordinator.hint)
         scroll.onDrag = { [weak coordinator] began in coordinator?.drag(began: began) }
         scroll.contentView.postsBoundsChangedNotifications = true
         coordinator.textView.postsFrameChangedNotifications = true
@@ -118,6 +121,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         coordinator.review = review
         coordinator.footerState.label = review?.advanceLabel ?? ""
         coordinator.footerState.isViewed = review?.isViewed ?? false
+        coordinator.footerState.pullHint = review?.pullHint ?? ""
         coordinator.textView.onAnchorClick = onAnchorClick
         scroll.hasHorizontalScroller = !wrapLines
         coordinator.textView.wrapsLines = wrapLines
@@ -127,6 +131,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
             coordinator.textView.show(RenderedDiff(file: file))
         }
         coordinator.footer.isHidden = review == nil
+        coordinator.hint.isHidden = review == nil
         coordinator.layoutFooter()
     }
 
@@ -145,6 +150,12 @@ private struct DiffTextScrollView: NSViewRepresentable {
             let view = NSHostingView(rootView: ReviewFooter(state: footerState) { [weak self] in
                 self?.review?.markViewedAndAdvance()
             })
+            view.sizingOptions = []
+            return view
+        }()
+        /// Says what the pull will do, in the slack it's revealed by.
+        lazy var hint: PullHintView = {
+            let view = PullHintView(rootView: PullHint(state: footerState))
             view.sizingOptions = []
             return view
         }()
@@ -185,6 +196,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
             let top = contentBottom(clipHeight: clip.height)
             let frame = NSRect(x: clip.minX, y: top, width: clip.width, height: ReviewFooter.height)
             if footer.frame != frame { footer.frame = frame }
+            let slack = NSRect(x: clip.minX, y: restingEnd(clipHeight: clip.height), width: clip.width, height: Self.slack)
+            if hint.frame != slack { hint.frame = slack }
             let inset = review == nil ? 0 : max(0, restingEnd(clipHeight: clip.height) + Self.slack - textView.frame.maxY)
             if scroll.contentInsets.bottom != inset {
                 scroll.contentInsets.bottom = inset
@@ -284,6 +297,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         private func show(_ trigger: OverscrollTrigger) {
             footerState.progress = trigger.progress
             footerState.hasFired = trigger.hasFired
+            footerState.isPulling = trigger.isDragging
         }
     }
 }
@@ -317,13 +331,21 @@ private final class FooterClipView: NSClipView {
     }
 }
 
+/// Holds the pull's hint, which is only a caption, so clicks pass through it.
+final class PullHintView: NSHostingView<PullHint> {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 @Observable
 @MainActor
 final class ReviewFooterState {
     var progress: CGFloat = 0
     var hasFired = false
+    /// A live drag is filling the button, as opposed to settling back after one.
+    var isPulling = false
     var isViewed = false
     var label = ""
+    var pullHint = ""
 }
 
 /// The end of a PR file's diff: a bar like the file's header, with a button that marks the file
@@ -347,6 +369,23 @@ struct ReviewFooter: View {
         }
         .background(.bar)
         .animation(.easeOut(duration: 0.12), value: state.hasFired)
+    }
+}
+
+/// A caption in the slack below the footer, like pull-to-refresh's, fading in as a drag pulls
+/// into the slack and saying what was done as it fires. Nothing shows at rest or while the view
+/// settles back from a pull let go short.
+struct PullHint: View {
+    let state: ReviewFooterState
+
+    var body: some View {
+        Text(state.hasFired ? (state.isViewed ? state.label : "Marked reviewed") : state.pullHint)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .opacity(state.hasFired ? 1 : state.isPulling ? state.progress : 0)
+            .animation(.easeOut(duration: 0.12), value: state.hasFired)
     }
 }
 
