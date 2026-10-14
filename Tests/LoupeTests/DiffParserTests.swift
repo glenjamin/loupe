@@ -92,6 +92,16 @@ struct DiffParserTests {
         #expect(paths.filter { filter.excludes($0) } == Array(paths.prefix(6)))
     }
 
+    @Test func keepsReviewWorthyPathsLinguistCallsVendored() {
+        let kept = [
+            "integration/voip/testdata/golden-recipe.json", ".github/workflows/ci.yml", ".gitignore",
+            "spec/fixtures/users.json", "src/types.d.ts", "Jenkinsfile",
+        ]
+        #expect(kept.filter { PathFilter.default.excludes($0) } == [])
+        // Each pattern on the keep-list must still exist in Linguist's list, or an update has changed it.
+        #expect(PathFilter.reviewedDespiteLinguist.subtracting(PathFilter.linguistVendorPatterns) == [])
+    }
+
     @Test func hidesDocumentationOnlyWhenAsked() {
         #expect(!PathFilter.default.excludes("docs/setup.md"))
         #expect(PathFilter(hidesDocumentation: true).excludes("docs/setup.md"))

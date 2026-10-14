@@ -5,7 +5,8 @@ import os
 /// so Loupe names languages and hides files the way GitHub does.
 enum Linguist {
     static let languages = LanguageIndex(load("languages", as: [String: LanguageEntry].self) ?? [:])
-    static let vendored = PathPatterns(load("vendor", as: [String].self) ?? [])
+    static let vendorPatterns = load("vendor", as: [String].self) ?? []
+    static let vendored = PathPatterns(vendorPatterns.filter { !PathFilter.reviewedDespiteLinguist.contains($0) })
     static let documentation = PathPatterns(load("documentation", as: [String].self) ?? [])
 }
 
