@@ -201,6 +201,10 @@ A PR's file that Linguist takes for Markdown has a "Source | Rendered" toggle in
 
 The conversation tab and rendered markdown files use GitHub's own HTML, which carries dark-theme variants, and the page's stylesheet had a dark palette behind `prefers-color-scheme: dark`, so both followed the system appearance. The user prefers reading them in GitHub's light theme, so the stylesheet keeps only the light palette and the web view's appearance is pinned to aqua, which is where WebKit takes `prefers-color-scheme` from. The native diff and chrome still follow the system.
 
+### Wrapped rows hang two columns in from the code
+
+An addendum to "Long diff rows wrap with a hanging indent": a continuation that started exactly on the code column was easy to read as a new line, so wrapped lines now hang two character widths further in, as editors do.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

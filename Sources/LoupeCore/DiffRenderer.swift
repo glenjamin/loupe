@@ -190,10 +190,10 @@ private struct Style {
         paragraph.minimumLineHeight = natural + (extra / 2).rounded(.down)
         paragraph.maximumLineHeight = paragraph.minimumLineHeight
         paragraph.lineSpacing = extra - (extra / 2).rounded(.down)
-        // The gutter's tab lands on the code column, where wrapped lines hang too; tabs in the code
-        // then step four columns from there.
+        // The gutter's tab lands on the code column; wrapped lines hang two columns past it, so a
+        // continuation reads as one, and tabs in the code step four columns from the column.
         paragraph.firstLineHeadIndent = 0
-        paragraph.headIndent = codeStart
+        paragraph.headIndent = codeStart + digit * 2
         paragraph.tabStops = (0..<32).map { NSTextTab(textAlignment: .left, location: codeStart + digit * 4 * CGFloat($0)) }
         paragraph.defaultTabInterval = digit * 4
         base = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph, .diffGutterWidth: gutterWidth]

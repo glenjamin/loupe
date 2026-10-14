@@ -83,13 +83,14 @@ struct DiffTextViewTests {
         let continuation = layoutManager.lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: nil)
         #expect(continuation.minY > first.minY)
 
-        // It starts under the code, past the gutter.
+        // It starts two columns in from the code, past the gutter, so it reads as a continuation.
         var continuationGlyphs = NSRange()
         _ = layoutManager.lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: &continuationGlyphs)
         var gutter = NSRange()
         _ = rendered.text.attribute(.diffGutter, at: row.location, longestEffectiveRange: &gutter, in: row)
         let codeStart = layoutManager.location(forGlyphAt: layoutManager.glyphIndexForCharacter(at: NSMaxRange(gutter))).x
-        #expect(layoutManager.location(forGlyphAt: continuationGlyphs.location).x == codeStart)
+        let column = ("0" as NSString).size(withAttributes: [.font: view.font as Any]).width
+        #expect(layoutManager.location(forGlyphAt: continuationGlyphs.location).x == codeStart + column * 2)
 
         // Clicking it gives the row's anchor, and its background spans the width.
         let origin = view.textContainerOrigin
