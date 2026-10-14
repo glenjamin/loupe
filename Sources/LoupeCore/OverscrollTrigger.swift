@@ -1,73 +1,63 @@
 import CoreGraphics
 
 /// Turns pulling past the end of a document into a deliberate action, like pull-to-refresh at
-/// the bottom. Only a live drag, fingers still on the trackpad, fills it; it fires when that drag
-/// ends past the threshold. Momentum bouncing off the end never fills or fires it.
+/// the bottom. Only a live drag, fingers still on the trackpad, fills it, and it fires the moment
+/// that drag crosses the threshold. Momentum carrying on past the end never fills or fires it.
+/// Once fired it stays spent until the document settles back to its end.
 public struct OverscrollTrigger: Sendable, Equatable {
-    public enum Event: Sendable, Equatable {
-        /// The drag has gone past the threshold, so letting go now fires.
-        case armed
-        /// The drag has come back under the threshold.
-        case disarmed
-        case fired
-    }
-
     /// How far past the end a drag must go to fire.
     public let threshold: CGFloat
     /// How full the indicator is, from 0 to 1.
     public private(set) var progress: CGFloat = 0
     private var state = State.idle
 
-    public init(threshold: CGFloat = 40) {
+    public init(threshold: CGFloat = 32) {
         self.threshold = threshold
     }
 
-    /// Whether letting go now fires.
-    public var isArmed: Bool {
-        state == .dragging && progress >= 1
+    /// Whether it has fired and the document hasn't yet settled back to its end.
+    public var hasFired: Bool {
+        state == .fired
     }
 
     /// The fingers have touched down and started scrolling.
     public mutating func beginDrag() {
+        guard state != .fired else { return }
         state = .dragging
     }
 
     /// The document has scrolled to `overscroll` points past its end, or before it when not
-    /// positive, by whatever means.
-    public mutating func scroll(overscroll: CGFloat) -> Event? {
+    /// positive, by whatever means. Returns true at the moment it fires.
+    public mutating func scroll(overscroll: CGFloat) -> Bool {
         let fill = min(max(overscroll / threshold, 0), 1)
         switch state {
         case .idle:
             progress = 0
-            return nil
-        case .settling:
-            // Emptying as it springs back, without arming again.
+            return false
+        case .settling, .fired:
+            // Emptying as it settles back, without filling or firing again.
             progress = min(progress, fill)
             if overscroll <= 0 { state = .idle }
-            return nil
+            return false
         case .dragging:
-            let wasArmed = isArmed
             progress = fill
-            return wasArmed == isArmed ? nil : (isArmed ? .armed : .disarmed)
+            guard fill >= 1 else { return false }
+            state = .fired
+            return true
         }
     }
 
     /// The fingers have lifted, or the gesture was cancelled.
-    public mutating func endDrag() -> Event? {
-        guard state == .dragging else { return nil }
-        if isArmed {
-            state = .idle
-            progress = 0
-            return .fired
-        }
+    public mutating func endDrag() {
+        guard state == .dragging else { return }
         state = .settling
-        return nil
     }
 
     private enum State: Sendable, Equatable {
         case idle
         case dragging
-        /// Let go short of the threshold, and springing back.
+        /// Let go short of the threshold, and settling back.
         case settling
+        case fired
     }
 }
