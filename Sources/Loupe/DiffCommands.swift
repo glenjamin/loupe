@@ -7,7 +7,7 @@ struct DiffCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .toolbar) {
             Toggle("Wrap Lines", isOn: $wrapLines)
-                .keyboardShortcut("w", modifiers: [.command, .option])
+                .keyboardShortcut("l", modifiers: [.command, .option])
         }
     }
 }
