@@ -2,8 +2,8 @@ import Foundation
 import LoupeModel
 
 extension GitHubClient {
-    /// The PR's description, timeline, review threads and head commit's checks, following the
-    /// timeline's pages to the end.
+    /// The PR's description, timeline, review threads, head commit's checks and reviewers,
+    /// following the timeline's pages to the end.
     public func conversation(ofPullRequest id: String) async throws -> Conversation {
         let first: ConversationResponse = try await query(Self.conversationQuery, variables: ConversationVariables(id: id, after: nil))
         guard let pullRequest = first.node else { throw GitHubError.graphQL(["Pull request \(id) not found"]) }
@@ -21,7 +21,9 @@ extension GitHubClient {
             bodyHTML: pullRequest.bodyHTML,
             items: nodes.compactMap(\.timelineItem),
             threads: pullRequest.reviewThreads.nodes.map(\.thread),
-            checks: pullRequest.commits.nodes.first?.commit.statusCheckRollup?.contexts.nodes.compactMap(\.check) ?? []
+            checks: pullRequest.commits.nodes.first?.commit.statusCheckRollup?.contexts.nodes.compactMap(\.check) ?? [],
+            reviewRequests: pullRequest.reviewRequests.nodes.compactMap { $0.requestedReviewer?.reviewer },
+            latestReviews: pullRequest.latestReviews.nodes.compactMap(\.latestReview)
         )
     }
 
@@ -39,10 +41,12 @@ extension GitHubClient {
               commits(last: 1) {
                 nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { \(checkContextFields) } } } } }
               }
+              reviewRequests(first: 20) { nodes { requestedReviewer { ...Reviewer } } }
+              latestReviews(first: 50) { nodes { state submittedAt author { ...Reviewer } } }
             }
           }
         }
-        """ + timelinePageFragment
+        """ + timelinePageFragment + reviewerFragment
 
     static let timelinePageQuery = """
         query($id: ID!, $after: String) {
@@ -55,6 +59,18 @@ extension GitHubClient {
         """ + timelinePageFragment
 
     static let timelineItemTypes = "[ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, HEAD_REF_FORCE_PUSHED_EVENT, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, REVIEW_REQUESTED_EVENT, READY_FOR_REVIEW_EVENT]"
+
+    /// Whoever can be asked to review, or has reviewed: a person, team or bot. A team's name is
+    /// aliased as it can't be null where a user's can.
+    static let reviewerFragment = """
+
+        fragment Reviewer on Node {
+          __typename
+          ... on User { id login name avatarUrl }
+          ... on Bot { id login avatarUrl }
+          ... on Team { id teamName: name combinedSlug }
+        }
+        """
 
     /// A review here holds only the comments made with it; replies made later are in reply-only
     /// reviews the timeline leaves out, so they come from the review threads.
@@ -105,6 +121,22 @@ private struct ConversationResponse: Decodable {
         let timelineItems: Timeline
         let reviewThreads: Connection<Thread>
         let commits: Connection<CommitNode>
+        let reviewRequests: Connection<Request>
+        let latestReviews: Connection<Review>
+    }
+
+    struct Request: Decodable {
+        let requestedReviewer: ReviewerNode?
+    }
+
+    struct Review: Decodable {
+        let state: ReviewState
+        let submittedAt: Date?
+        let author: ReviewerNode?
+
+        var latestReview: LatestReview? {
+            author?.reviewer.map { LatestReview(reviewer: $0, state: state, submittedAt: submittedAt) }
+        }
     }
 
     struct Thread: Decodable {
@@ -260,6 +292,31 @@ private struct TimelineNode: Decodable {
         case "ReadyForReviewEvent": .readyForReview
         case "ReviewRequestedEvent": .reviewRequested(reviewer: requestedReviewer.flatMap { $0.login ?? $0.slug })
         default: nil
+        }
+    }
+}
+
+/// A `User`, `Bot` or `Team`, which name themselves differently.
+struct ReviewerNode: Decodable {
+    let __typename: String
+    let id: String?
+    let login: String?
+    let name: String?
+    let teamName: String?
+    let avatarUrl: String?
+    let combinedSlug: String?
+
+    /// Nil for a kind that can't review, such as a mannequin.
+    var reviewer: Reviewer? {
+        switch __typename {
+        case "User":
+            login.map { Reviewer(kind: .user, nodeId: id, login: $0, name: name, avatarURL: avatarUrl) }
+        case "Bot":
+            login.map { Reviewer(kind: .bot, nodeId: id, login: $0, avatarURL: avatarUrl) }
+        case "Team":
+            combinedSlug.map { Reviewer(kind: .team, nodeId: id, login: $0, name: teamName) }
+        default:
+            nil
         }
     }
 }

@@ -1,0 +1,12 @@
+# Who can be asked to review a PR: the repo's assignable users matching some text, and, when
+# the owner is an organisation, its teams matching it. The app asks for the two separately, so
+# a token that can't read teams still gets the users.
+query($owner: String!, $name: String!, $text: String!) {
+  repository(owner: $owner, name: $name) {
+    assignableUsers(first: 30, query: $text) { nodes { id login name avatarUrl } }
+    owner {
+      __typename
+      ... on Organization { teams(first: 20, query: $text) { nodes { id name slug combinedSlug } } }
+    }
+  }
+}

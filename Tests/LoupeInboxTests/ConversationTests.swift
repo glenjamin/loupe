@@ -82,7 +82,7 @@ struct ConversationTests {
 /// The app's models over the PR fixture and an in-memory store, with conversations kept by
 /// `FakeConversations`.
 @MainActor
-private struct ConversationApp {
+struct ConversationApp {
     let github: FakeGitHub
     let details = FakePullRequestDetails()
     let store: PullRequestStore
@@ -99,6 +99,11 @@ private struct ConversationApp {
 
     var toReview: [PullRequestSummary] {
         tabs.lists.pullRequests(in: .toReview)
+    }
+
+    /// The viewer's own PRs.
+    var mine: [PullRequestSummary] {
+        tabs.lists.pullRequests(in: .mine)
     }
 
     /// Fresh models over the same store, as on the next launch.

@@ -12,14 +12,66 @@ public struct Conversation: Sendable, Equatable {
     /// comments made with it, not the replies made later.
     public var threads: [ReviewThread]
     public var checks: [CheckContext]
+    /// Who is asked to review and hasn't since, in GitHub's order.
+    public var reviewRequests: [Reviewer]
+    /// Each reviewer's most recent submitted review, in GitHub's order.
+    public var latestReviews: [LatestReview]
 
-    public init(author: Participant?, createdAt: Date, bodyHTML: String, items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext]) {
+    public init(author: Participant?, createdAt: Date, bodyHTML: String, items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext], reviewRequests: [Reviewer] = [], latestReviews: [LatestReview] = []) {
         self.author = author
         self.createdAt = createdAt
         self.bodyHTML = bodyHTML
         self.items = items
         self.threads = threads
         self.checks = checks
+        self.reviewRequests = reviewRequests
+        self.latestReviews = latestReviews
+    }
+}
+
+/// A person, team or bot who can be asked to review.
+public struct Reviewer: Sendable, Hashable, Identifiable {
+    public enum Kind: String, Sendable {
+        case user
+        case team
+        case bot
+    }
+
+    public var kind: Kind
+    /// GitHub's node id, which a review request names. Nil if GitHub didn't give one.
+    public var nodeId: String?
+    /// A user's or bot's login, or a team's `org/slug`.
+    public var login: String
+    /// A team's name, or a user's full name if they've given one.
+    public var name: String?
+    public var avatarURL: String?
+
+    public init(kind: Kind, nodeId: String?, login: String, name: String? = nil, avatarURL: String? = nil) {
+        self.kind = kind
+        self.nodeId = nodeId
+        self.login = login
+        self.name = name
+        self.avatarURL = avatarURL
+    }
+
+    public var id: String { "\(kind.rawValue):\(login)" }
+
+    /// How the reviewer is shown: a team by its name, anyone else by their login.
+    public var displayName: String {
+        kind == .team ? name ?? login : login
+    }
+}
+
+/// A reviewer's most recent submitted review.
+public struct LatestReview: Sendable, Equatable {
+    public var reviewer: Reviewer
+    public var state: ReviewState
+    public var submittedAt: Date?
+
+    public init(reviewer: Reviewer, state: ReviewState, submittedAt: Date?) {
+        self.reviewer = reviewer
+        self.state = state
+        self.submittedAt = submittedAt
     }
 }
 

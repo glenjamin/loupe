@@ -10,6 +10,7 @@ extension PullRequestStore {
             let byPR = Column("pullRequestId") == pullRequestId
             let comments = Dictionary(grouping: try ReviewCommentRow.filter(byPR).order(Column("position")).fetchAll(db), by: \.reviewId)
             let threadComments = Dictionary(grouping: try ThreadCommentRow.filter(byPR).order(Column("position")).fetchAll(db), by: \.threadId)
+            let reviewers = try ReviewerRow.filter(byPR).order(Column("position")).fetchAll(db)
             return Conversation(
                 author: participant(row.authorLogin, row.authorAvatarUrl),
                 createdAt: row.createdAt,
@@ -22,7 +23,9 @@ extension PullRequestStore {
                 },
                 checks: try CheckContextRow.filter(byPR).order(Column("position")).fetchAll(db).map { check in
                     CheckContext(name: check.name, status: CheckStatus(rawValue: check.status) ?? .neutral, description: check.description, url: check.url)
-                }
+                },
+                reviewRequests: reviewers.filter { $0.role == ReviewerRow.request }.compactMap(\.reviewer),
+                latestReviews: reviewers.filter { $0.role == ReviewerRow.review }.compactMap(\.latestReview)
             )
         }
     }
@@ -30,7 +33,7 @@ extension PullRequestStore {
     /// Makes the PR's stored conversation exactly `conversation`, as GitHub returned it.
     public func replaceConversation(of pullRequestId: String, with conversation: Conversation, fetchedAt: Date) async throws {
         try await database.write { db in
-            for table in ["timelineItem", "reviewComment", "reviewThread", "threadComment", "checkContext"] {
+            for table in ["timelineItem", "reviewComment", "reviewThread", "threadComment", "checkContext", "conversationReviewer"] {
                 try db.execute(sql: "DELETE FROM \(table) WHERE pullRequestId = ?", arguments: [pullRequestId])
             }
             try ConversationRow(
@@ -56,6 +59,15 @@ extension PullRequestStore {
             }
             for (position, check) in conversation.checks.enumerated() {
                 try CheckContextRow(pullRequestId: pullRequestId, position: position, name: check.name, status: check.status.rawValue, description: check.description, url: check.url).insert(db)
+            }
+            for (position, reviewer) in conversation.reviewRequests.enumerated() {
+                try ReviewerRow(reviewer, role: ReviewerRow.request, pullRequestId: pullRequestId, position: position).insert(db)
+            }
+            for (position, review) in conversation.latestReviews.enumerated() {
+                var row = ReviewerRow(review.reviewer, role: ReviewerRow.review, pullRequestId: pullRequestId, position: position)
+                row.reviewState = review.state.rawValue
+                row.submittedAt = review.submittedAt
+                try row.insert(db)
             }
         }
     }
@@ -237,6 +249,44 @@ private struct CheckContextRow: Codable, FetchableRecord, PersistableRecord {
     let status: String
     let description: String?
     let url: String?
+}
+
+/// A reviewer asked, or one who has reviewed with their latest review's state.
+private struct ReviewerRow: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "conversationReviewer"
+    static let request = "request"
+    static let review = "review"
+
+    let pullRequestId: String
+    let role: String
+    let position: Int
+    let kind: String
+    let nodeId: String?
+    let login: String
+    let name: String?
+    let avatarUrl: String?
+    var reviewState: String?
+    var submittedAt: Date?
+
+    init(_ reviewer: Reviewer, role: String, pullRequestId: String, position: Int) {
+        self.pullRequestId = pullRequestId
+        self.role = role
+        self.position = position
+        kind = reviewer.kind.rawValue
+        nodeId = reviewer.nodeId
+        login = reviewer.login
+        name = reviewer.name
+        avatarUrl = reviewer.avatarURL
+    }
+
+    /// Nil for a kind this version doesn't know.
+    var reviewer: Reviewer? {
+        Reviewer.Kind(rawValue: kind).map { Reviewer(kind: $0, nodeId: nodeId, login: login, name: name, avatarURL: avatarUrl) }
+    }
+
+    var latestReview: LatestReview? {
+        reviewer.map { LatestReview(reviewer: $0, state: ReviewState(lenientRawValue: reviewState ?? ""), submittedAt: submittedAt) }
+    }
 }
 
 private func participant(_ login: String?, _ avatarURL: String?) -> Participant? {

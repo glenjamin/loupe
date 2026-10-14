@@ -318,6 +318,23 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "mergeable", .text)
             }
         }
+        // Who a PR's review is asked of, and each reviewer's latest review, from its conversation.
+        migrator.registerMigration("Conversation reviewers") { db in
+            try db.create(table: "conversationReviewer") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequest", onDelete: .cascade)
+                // "request" or "review".
+                t.column("role", .text).notNull()
+                t.column("position", .integer).notNull()
+                t.column("kind", .text).notNull()
+                t.column("nodeId", .text)
+                t.column("login", .text).notNull()
+                t.column("name", .text)
+                t.column("avatarUrl", .text)
+                t.column("reviewState", .text)
+                t.column("submittedAt", .datetime)
+                t.primaryKey(["pullRequestId", "role", "position"])
+            }
+        }
         return migrator
     }
 

@@ -31,6 +31,8 @@ public final class PullRequestTab: Identifiable {
     public private(set) var isFetchingConversation = false
     /// Which commit's changes are shown, by oid, or nil for the whole PR's.
     public private(set) var shownCommit: String?
+    /// Why GitHub refused the last request for a review, until another is made.
+    public private(set) var reviewRequestError: String?
 
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
@@ -38,6 +40,9 @@ public final class PullRequestTab: Identifiable {
     private let store: PullRequestStore
     private let differ: PullRequestDiffer
     private let client: GitHubClient
+    /// The signed-in user's login, which decides whether the PR is theirs. Read from the store,
+    /// or looked up once and stored if nothing has yet.
+    private var viewerLogin: String?
     /// How many changes to each path's viewed state are on their way to GitHub.
     private var settingViewed: [String: Int] = [:]
     /// The PR as it was when its diff was last asked for, success or not, or when a change to
@@ -68,6 +73,7 @@ public final class PullRequestTab: Identifiable {
         } catch {
             log("Couldn't read the conversation of \(opened.repository)#\(opened.number): \(error)")
         }
+        readViewerLogin()
     }
 
     /// As of the lists' last refresh.
@@ -104,9 +110,11 @@ public final class PullRequestTab: Identifiable {
         let task = Task {
             async let viewed: Void = refreshViewedStates()
             async let conversation: Void = refreshConversation()
+            async let viewer: Void = learnViewerLogin()
             await produce(pullRequest)
             await viewed
             await conversation
+            await viewer
             loading = nil
         }
         loading = task
@@ -262,6 +270,38 @@ public final class PullRequestTab: Identifiable {
         return (files[start...] + files[..<start]).first { $0 != id && !viewedState(of: $0).isViewed }
     }
 
+    /// The PR's reviewers and where each one's review stands, shown only on the viewer's own PRs:
+    /// nil on anyone else's.
+    public var reviewers: [ReviewerStatus]? {
+        Conversation.reviewers(of: conversation, author: pullRequest.author, viewer: viewerLogin)
+    }
+
+    /// Who could be asked to review, matching `text`: anyone but the author and those already
+    /// asked. Someone who has reviewed is included, as asking again is how a re-review is sought.
+    public func reviewerCandidates(matching text: String) async throws -> [Reviewer] {
+        let asked = Set(conversation?.reviewRequests.map(\.id) ?? [])
+        let author = pullRequest.author
+        return try await client.reviewerCandidates(in: pullRequest.repository, matching: text).filter {
+            !asked.contains($0.id) && !($0.kind == .user && $0.login == author)
+        }
+    }
+
+    /// Asks `reviewer` to review, or to review again. They show as asked at once; the
+    /// conversation is fetched again once GitHub agrees, and they're taken off if it refuses.
+    public func requestReview(from reviewer: Reviewer) async {
+        if conversation?.reviewRequests.contains(where: { $0.id == reviewer.id }) == true { return }
+        conversation?.reviewRequests.append(reviewer)
+        reviewRequestError = nil
+        do {
+            try await client.requestReviews(from: [reviewer], onPullRequest: id)
+        } catch {
+            conversation?.reviewRequests.removeAll { $0.id == reviewer.id }
+            reviewRequestError = "Couldn't ask \(reviewer.displayName) to review: \(error.localizedDescription)"
+            return
+        }
+        await refreshConversation()
+    }
+
     /// Whether the conversation has been asked for and has arrived or failed.
     public var isConversationSettled: Bool {
         !isFetchingConversation && (conversation != nil || conversationError != nil)
@@ -306,6 +346,27 @@ public final class PullRequestTab: Identifiable {
             try await store.replaceConversation(of: id, with: fetched, fetchedAt: .now)
         } catch {
             log("Couldn't store the conversation of \(title): \(error)")
+        }
+    }
+
+    /// The lists may have stored the login since the tab opened; if not, GitHub is asked.
+    private func learnViewerLogin() async {
+        if viewerLogin == nil { readViewerLogin() }
+        if viewerLogin != nil { return }
+        do {
+            let login = try await client.viewerLogin()
+            viewerLogin = login
+            try await store.saveViewerLogin(login)
+        } catch {
+            log("Couldn't look up the viewer's login: \(error.localizedDescription)")
+        }
+    }
+
+    private func readViewerLogin() {
+        do {
+            viewerLogin = try store.viewerLogin()
+        } catch {
+            log("Couldn't read the viewer's login: \(error)")
         }
     }
 

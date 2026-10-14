@@ -32,6 +32,15 @@ query($id: ID!, $after: String) {
           ... on StatusContext { context state description targetUrl }
         } } } } }
       }
+      reviewRequests(first: 20) { nodes { requestedReviewer { ...Reviewer } } }
+      latestReviews(first: 50) { nodes { state submittedAt author { ...Reviewer } } }
     }
   }
+}
+
+fragment Reviewer on Node {
+  __typename
+  ... on User { id login name avatarUrl }
+  ... on Bot { id login avatarUrl }
+  ... on Team { id teamName: name combinedSlug }
 }
