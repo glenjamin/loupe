@@ -37,6 +37,28 @@ public struct FileDiff: Sendable, Identifiable {
     public var deletions: Int { hunks.reduce(0) { $0 + $1.lines.count(where: \.isDeletion) } }
 }
 
+/// A changed file known only by its path and what happened to it, as listed before (or
+/// instead of) diffing it.
+public struct ChangedFile: Sendable, Equatable, Identifiable {
+    public var path: String
+    public var change: FileDiff.Change
+
+    public var id: String { path }
+
+    public init(path: String, change: FileDiff.Change) {
+        self.path = path
+        self.change = change
+    }
+
+    /// The path it had before, for a rename or copy.
+    public var renamedFrom: String? {
+        switch change {
+        case .renamed(let from, _), .copied(let from, _): from
+        case .added, .deleted, .modified: nil
+        }
+    }
+}
+
 public struct Hunk: Sendable {
     /// The full `@@ -a,b +c,d @@ section` line.
     public var header: String

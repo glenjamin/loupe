@@ -3,7 +3,8 @@ import LoupeCore
 
 /// Produces a PR's diff from a local checkout, in two steps so progress can be shown between
 /// them: `fetch` brings the PR's commits in, `diff` compares them with where the PR branched off.
-/// Paths `PathFilter` hides (vendored, lockfiles, generated) are left out of the diff and listed instead.
+/// Paths `PathFilter` hides (vendored, lockfiles, generated) are left out of the diff and listed
+/// instead, each diffable on its own when asked for.
 public struct PullRequestDiffer: Sendable {
     /// How long a fetch may take, which is network-bound and can be slow on a big repo.
     public var fetchTimeout: Duration
@@ -33,18 +34,83 @@ public struct PullRequestDiffer: Sendable {
         return FetchedPullRequest(number: number, headOid: headOid, base: base)
     }
 
-    /// The fetched PR's changes since it branched off its base.
+    /// The fetched PR's changes since it branched off its base, and its commits.
     public func diff(_ fetched: FetchedPullRequest, in checkout: URL) async throws -> PullRequestDiff {
         let mergeBase = try await git(["merge-base", fetched.base, fetched.headOid], in: checkout)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let range = [mergeBase, fetched.headOid]
-        let changed = try await git(["diff", "--name-only", "-z", "--no-ext-diff", "-M"] + range, in: checkout)
+        let commits = try await commits(from: mergeBase, to: fetched.headOid, in: checkout)
+        let changes = try await diff(DiffRange(base: mergeBase, head: fetched.headOid), in: checkout)
+        return PullRequestDiff(headOid: fetched.headOid, mergeBase: mergeBase, commits: commits, text: changes.text, hidden: changes.hidden)
+    }
+
+    /// The changes between two commits: the diff of the paths to review, and the hidden paths
+    /// listed but not diffed, as a vendored tree can be enormous.
+    public func diff(_ range: DiffRange, in checkout: URL) async throws -> RangeDiff {
+        let changed = try await changedFiles(in: range, checkout: checkout)
+        let attributes = try await linguistAttributes(of: changed.map(\.path), in: checkout)
+        let hidden = changed.filter { filter.excludes($0.path, attributes: attributes[$0.path] ?? LinguistAttributes()) }
+        let excludes = coveringPaths(hiding: hidden.map(\.path), keeping: changed.map(\.path)).map { ":(exclude,top,literal)\($0)" }
+        let text = try await git(["diff", "--no-color", "--no-ext-diff", "-M", range.base, range.head, "--", "."] + excludes, in: checkout)
+        return RangeDiff(text: text, hidden: hidden)
+    }
+
+    /// One file's diff over `range`, such as a hidden file's once it's asked for. A rename's
+    /// old path is included so git still sees the rename.
+    public func diff(of file: ChangedFile, in range: DiffRange, checkout: URL) async throws -> String {
+        let paths = [file.renamedFrom, file.path].compactMap { $0 }.map { ":(top,literal)\($0)" }
+        return try await git(["diff", "--no-color", "--no-ext-diff", "-M", range.base, range.head, "--"] + paths, in: checkout)
+    }
+
+    /// The commits after `base` up to `head`, oldest first.
+    private func commits(from base: String, to head: String, in checkout: URL) async throws -> [PullRequestCommit] {
+        let log = try await git(["log", "--reverse", "-z", "--format=%H%x1f%P%x1f%s", "\(base)..\(head)"], in: checkout)
+        var emptyTree: String?
+        var commits: [PullRequestCommit] = []
+        for record in log.split(separator: "\0") {
+            let fields = record.trimmingCharacters(in: .newlines).split(separator: "\u{1F}", omittingEmptySubsequences: false).map(String.init)
+            guard fields.count == 3 else { continue }
+            // A root commit's changes are taken from the empty tree.
+            let parent: String
+            if let first = fields[1].split(separator: " ").first {
+                parent = String(first)
+            } else if let emptyTree {
+                parent = emptyTree
+            } else {
+                parent = try await git(["hash-object", "-t", "tree", "--stdin"], in: checkout, input: Data()).trimmingCharacters(in: .whitespacesAndNewlines)
+                emptyTree = parent
+            }
+            commits.append(PullRequestCommit(oid: fields[0], headline: fields[2], range: DiffRange(base: parent, head: fields[0])))
+        }
+        return commits
+    }
+
+    /// Every path changed in `range`, with what happened to it.
+    private func changedFiles(in range: DiffRange, checkout: URL) async throws -> [ChangedFile] {
+        let fields = try await git(["diff", "--name-status", "-z", "--no-ext-diff", "-M", range.base, range.head], in: checkout)
             .split(separator: "\0").map(String.init)
-        let attributes = try await linguistAttributes(of: changed, in: checkout)
-        let hidden = changed.filter { filter.excludes($0, attributes: attributes[$0] ?? LinguistAttributes()) }
-        let excludes = coveringPaths(hiding: hidden, keeping: changed).map { ":(exclude,top,literal)\($0)" }
-        let text = try await git(["diff", "--no-color", "--no-ext-diff", "-M"] + range + ["--", "."] + excludes, in: checkout)
-        return PullRequestDiff(headOid: fetched.headOid, mergeBase: mergeBase, text: text, hiddenPaths: hidden)
+        var files: [ChangedFile] = []
+        var index = 0
+        while index + 1 < fields.count {
+            let status = fields[index]
+            let similarity = Int(status.dropFirst()) ?? 0
+            switch status.first {
+            case "R", "C":
+                guard index + 2 < fields.count else { return files }
+                let from = fields[index + 1]
+                let change: FileDiff.Change = status.first == "R" ? .renamed(from: from, similarity: similarity) : .copied(from: from, similarity: similarity)
+                files.append(ChangedFile(path: fields[index + 2], change: change))
+                index += 3
+            default:
+                let change: FileDiff.Change = switch status.first {
+                case "A": .added
+                case "D": .deleted
+                default: .modified
+                }
+                files.append(ChangedFile(path: fields[index + 1], change: change))
+                index += 2
+            }
+        }
+        return files
     }
 
     /// The `linguist-*` attributes the checkout's `.gitattributes` gives each path.
@@ -71,8 +137,8 @@ public struct PullRequestDiffer: Sendable {
     }
 
     @discardableResult
-    private func git(_ arguments: [String], in checkout: URL, timeout: Duration? = nil) async throws -> String {
-        try await Git.run(arguments, in: checkout, timeout: timeout ?? localTimeout)
+    private func git(_ arguments: [String], in checkout: URL, input: Data? = nil, timeout: Duration? = nil) async throws -> String {
+        try await Git.run(arguments, in: checkout, input: input, timeout: timeout ?? localTimeout)
     }
 }
 
@@ -88,10 +154,43 @@ public struct PullRequestDiff: Sendable, Equatable {
     public let headOid: String
     /// Where the PR branched off its base, which the diff is taken from.
     public let mergeBase: String
+    /// The PR's commits, oldest first.
+    public let commits: [PullRequestCommit]
     /// `git diff` output, without the hidden paths.
     public let text: String
     /// Changed paths left out of `text`.
-    public let hiddenPaths: [String]
+    public let hidden: [ChangedFile]
+
+    public var range: DiffRange { DiffRange(base: mergeBase, head: headOid) }
+}
+
+/// The changes between two commits, as `PullRequestDiffer` makes them.
+public struct RangeDiff: Sendable, Equatable {
+    /// `git diff` output, without the hidden paths.
+    public let text: String
+    /// Changed paths left out of `text`.
+    public let hidden: [ChangedFile]
+}
+
+/// What `git diff <base> <head>` compares.
+public struct DiffRange: Sendable, Hashable {
+    public let base: String
+    public let head: String
+
+    public init(base: String, head: String) {
+        self.base = base
+        self.head = head
+    }
+}
+
+public struct PullRequestCommit: Sendable, Equatable, Identifiable {
+    public let oid: String
+    /// The first line of its message.
+    public let headline: String
+    /// Its own changes: from its first parent, or from nothing for a root commit.
+    public let range: DiffRange
+
+    public var id: String { oid }
 }
 
 /// The fewest paths that cover every hidden path and no kept one: each hidden path's highest

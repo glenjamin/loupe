@@ -60,7 +60,7 @@ enum SnapshotRun {
             // LOUPE_SNAPSHOT_FILE picks the first file whose path contains it, to snapshot a given kind of file.
             if let wanted = ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_FILE"] {
                 for tab in tabs.tabs {
-                    guard case .ready(let review) = tab.phase, let file = review.files.first(where: { $0.path.contains(wanted) }) else { continue }
+                    guard case .ready(let review) = tab.phase, let file = review.changes.files.first(where: { $0.path.contains(wanted) }) else { continue }
                     tab.selectedFile = file.id
                 }
             }

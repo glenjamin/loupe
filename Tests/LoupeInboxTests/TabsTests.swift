@@ -68,8 +68,8 @@ struct TabsTests {
         let review = try #require(tab.ready)
         #expect(review.headOid == first)
         #expect(review.mergeBase == branchPoint)
-        #expect(review.files.map(\.path) == ["app.go"])
-        #expect(review.hiddenCount == 2, "vendor/ by git, yarn.lock by the path filter")
+        #expect(review.changes.files.map(\.path) == ["app.go"])
+        #expect(review.changes.hidden.map(\.path).sorted() == ["vendor/example.com/lib/lib.go", "yarn.lock"])
         #expect(tab.selectedFile == "app.go")
         #expect(tab.pendingChange == nil)
         let recorded = try #require(try app.store.diffRecord(for: pullRequest.id))
@@ -90,8 +90,70 @@ struct TabsTests {
 
         #expect(tab.pendingChange == nil)
         #expect(tab.ready?.headOid == second)
-        #expect(tab.ready?.files.map(\.path) == ["README", "app.go"])
+        #expect(tab.ready?.changes.files.map(\.path) == ["README", "app.go"])
         #expect(tab.selectedFile == "app.go", "the shown file stays shown")
+    }
+
+    @Test func pickingACommitShowsOnlyItsChangesUntilTheDiffIsReloaded() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
+        let second = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        await app.tabs.lists.refresh()
+        await tab.reload()
+        #expect(tab.ready?.commits.map(\.oid) == [first, second])
+        #expect(tab.selectedFile == "app.go")
+
+        await tab.showCommit(second)
+        #expect(tab.shownCommit == second)
+        #expect(tab.shown?.files.map(\.path) == ["README"])
+        #expect(tab.shown?.hidden.isEmpty == true)
+        #expect(tab.selectedFile == "README", "app.go isn't in this commit")
+
+        await tab.showCommit(first)
+        #expect(tab.shown?.files.map(\.path) == ["app.go"])
+        #expect(tab.shown?.hidden.map(\.path).sorted() == ["vendor/example.com/lib/lib.go", "yarn.lock"])
+        #expect(tab.selectedFile == "app.go")
+
+        tab.selectedFile = "yarn.lock"
+        await tab.showCommit(nil)
+        #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
+        #expect(tab.selectedFile == "yarn.lock", "still in the whole PR's changes")
+        #expect(tab.ready?.changes.files.count == 2, "the whole PR's diff is kept")
+
+        // A commit picked before is shown again without git.
+        let moved = repo.root.appending(path: "moved")
+        try FileManager.default.moveItem(at: repo.checkout, to: moved)
+        await tab.showCommit(second)
+        #expect(tab.shown?.files.map(\.path) == ["README"])
+        try FileManager.default.moveItem(at: moved, to: repo.checkout)
+
+        await tab.reload()
+        #expect(tab.shownCommit == nil)
+        #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
+    }
+
+    @Test func hiddenFilesAreListedAndDiffedOnlyWhenAskedFor() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (_, tab, _) = try await app.openDiffed(in: repo)
+
+        #expect(tab.shown?.hidden == [
+            ChangedFile(path: "vendor/example.com/lib/lib.go", change: .modified),
+            ChangedFile(path: "yarn.lock", change: .added),
+        ])
+        #expect(tab.hiddenFileDiff(of: "yarn.lock") == nil)
+
+        tab.selectedFile = "yarn.lock"
+        await tab.diffHiddenFile("yarn.lock")
+
+        guard case let .ready(diff)? = tab.hiddenFileDiff(of: "yarn.lock") else {
+            Issue.record("expected yarn.lock's diff, got \(String(describing: tab.hiddenFileDiff(of: "yarn.lock")))")
+            return
+        }
+        #expect(diff.change == .added)
+        #expect(diff.hunks.flatMap(\.lines).map(\.text) == ["# lockfile"])
+        #expect(tab.hiddenFileDiff(of: "vendor/example.com/lib/lib.go") == nil, "only the file asked for")
     }
 
     @Test func anUnchangedNotificationsPollChecksNothingAndWaitsAsLongAsGitHubAsks() async throws {
@@ -276,5 +338,10 @@ private final class ShowRecorder {
 private extension PullRequestTab {
     var ready: ReviewDiff? {
         if case let .ready(diff) = phase { diff } else { nil }
+    }
+
+    /// The changes shown, once diffed.
+    var shown: ReviewChanges? {
+        if case let .ready(changes)? = shownChanges { changes } else { nil }
     }
 }

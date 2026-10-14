@@ -28,6 +28,8 @@ public final class PullRequestTab: Identifiable {
     /// Why the conversation couldn't be fetched last time it was asked for.
     public private(set) var conversationError: String?
     public private(set) var isFetchingConversation = false
+    /// Which commit's changes are shown, by oid, or nil for the whole PR's.
+    public private(set) var shownCommit: String?
 
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
@@ -41,6 +43,12 @@ public final class PullRequestTab: Identifiable {
     /// it was last dismissed. Nil until the diff is asked for.
     private var seen: PullRequestSummary?
     private var loading: Task<Void, Never>?
+    /// The checkout the diff was produced from, for diffing a commit or hidden file later.
+    private var checkout: URL?
+    /// Each commit's changes once asked for. A range names its commits, so these never go stale.
+    private var commitChanges: [DiffRange: DiffState<ReviewChanges>] = [:]
+    /// Each hidden file's diff once asked for, by range and path.
+    private var hiddenFileDiffs: [HiddenFileKey: DiffState<FileDiff>] = [:]
 
     init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer, client: GitHubClient) {
         id = opened.id
@@ -139,10 +147,70 @@ public final class PullRequestTab: Identifiable {
         viewedStates[path] ?? .unviewed
     }
 
-    /// Whether every file in the diff is viewed as it is now.
+    /// Whether every file in the whole PR's diff is viewed as it is now. Hidden files don't
+    /// count, so a reviewer isn't asked to go through vendored code.
     public var allFilesViewed: Bool {
-        guard case let .ready(review) = phase, !review.files.isEmpty else { return false }
-        return review.files.allSatisfy { viewedState(of: $0.path).isViewed }
+        guard case let .ready(review) = phase, !review.changes.files.isEmpty else { return false }
+        return review.changes.files.allSatisfy { viewedState(of: $0.path).isViewed }
+    }
+
+    /// The changes shown: the whole PR's, or the picked commit's once diffed. Nil until the
+    /// PR's diff is ready.
+    public var shownChanges: DiffState<ReviewChanges>? {
+        guard case let .ready(review) = phase else { return nil }
+        guard let commit = shownCommitRange(in: review) else { return .ready(review.changes) }
+        return commitChanges[commit] ?? .diffing
+    }
+
+    /// Shows one commit's changes, by oid, or the whole PR's for nil, diffing the commit the
+    /// first time it's picked. Keeps the shown file if the commit changed it.
+    public func showCommit(_ oid: String?) async {
+        guard case let .ready(review) = phase, let checkout else { return }
+        shownCommit = review.commits.contains { $0.oid == oid } ? oid : nil
+        guard let range = shownCommitRange(in: review) else { return keepSelection(in: review.changes) }
+        switch commitChanges[range] {
+        case let .ready(changes): return keepSelection(in: changes)
+        case .diffing: return
+        case .failed, nil: break
+        }
+        commitChanges[range] = .diffing
+        let state: DiffState<ReviewChanges>
+        do {
+            let diff = try await differ.diff(range, in: checkout)
+            let files = await Task.detached { DiffParser.parse(diff.text) }.value
+            state = .ready(ReviewChanges(files: files, hidden: diff.hidden))
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
+        commitChanges[range] = state
+        if case let .ready(changes) = state, shownCommit == oid { keepSelection(in: changes) }
+    }
+
+    /// A hidden file's diff in the shown changes, once asked for.
+    public func hiddenFileDiff(of path: String) -> DiffState<FileDiff>? {
+        shownRange.flatMap { hiddenFileDiffs[HiddenFileKey(range: $0, path: path)] }
+    }
+
+    /// Diffs a hidden file in the shown changes on its own, unless already done or underway.
+    public func diffHiddenFile(_ path: String) async {
+        guard let range = shownRange, let checkout, case let .ready(changes)? = shownChanges,
+              let file = changes.hidden.first(where: { $0.path == path })
+        else { return }
+        let key = HiddenFileKey(range: range, path: path)
+        switch hiddenFileDiffs[key] {
+        case .ready, .diffing: return
+        case .failed, nil: break
+        }
+        hiddenFileDiffs[key] = .diffing
+        do {
+            let text = try await differ.diff(of: file, in: range, checkout: checkout)
+            let parsed = await Task.detached { DiffParser.parse(text) }.value
+            // A change git shows no lines for, such as of mode alone, is still the file.
+            let diff = parsed.first { $0.path == path } ?? FileDiff(path: path, change: file.change, isBinary: false, hunks: [])
+            hiddenFileDiffs[key] = .ready(diff)
+        } catch {
+            hiddenFileDiffs[key] = .failed(error.localizedDescription)
+        }
     }
 
     /// Marks the file viewed or not on GitHub. The change shows at once, and is put back if
@@ -184,11 +252,11 @@ public final class PullRequestTab: Identifiable {
         await setViewed(true, path: current)
     }
 
-    /// The first file after `id` in the list that isn't viewed as it is now, wrapping round to
-    /// the top; never `id` itself.
+    /// The first file after `id` in the shown changes that isn't viewed as it is now, wrapping
+    /// round to the top; never `id` itself. Hidden files are passed over.
     public func nextUnviewedFile(after id: FileDiff.ID) -> FileDiff.ID? {
-        guard case let .ready(review) = phase else { return nil }
-        let files = review.files.map(\.id)
+        guard case let .ready(changes)? = shownChanges else { return nil }
+        let files = changes.files.map(\.id)
         let start = files.firstIndex(of: id).map { $0 + 1 } ?? 0
         return (files[start...] + files[..<start]).first { $0 != id && !viewedState(of: $0).isViewed }
     }
@@ -240,6 +308,22 @@ public final class PullRequestTab: Identifiable {
         }
     }
 
+    /// The range of the changes shown, once the PR's diff is ready.
+    private var shownRange: DiffRange? {
+        guard case let .ready(review) = phase else { return nil }
+        return shownCommitRange(in: review) ?? DiffRange(base: review.mergeBase, head: review.headOid)
+    }
+
+    private func shownCommitRange(in review: ReviewDiff) -> DiffRange? {
+        review.commits.first { $0.oid == shownCommit }?.range
+    }
+
+    /// Keeps the shown file if `changes` has it, hidden or not, else shows their first file.
+    private func keepSelection(in changes: ReviewChanges) {
+        if changes.files.contains(where: { $0.id == selectedFile }) || changes.hidden.contains(where: { $0.id == selectedFile }) { return }
+        selectedFile = changes.files.first?.id ?? changes.hidden.first?.id
+    }
+
     private func produce(_ pullRequest: PullRequestSummary) async {
         phase = .resolvingCheckout
         do {
@@ -253,13 +337,15 @@ public final class PullRequestTab: Identifiable {
             let fetched = try await differ.fetch(number: pullRequest.number, baseRefName: pullRequest.baseRefName, baseRefOid: pullRequest.baseRefOid, in: checkout)
             phase = .diffing
             let diff = try await differ.diff(fetched, in: checkout)
-            let parts = await Task.detached { PathFilter.default.partition(DiffParser.parse(diff.text)) }.value
+            let files = await Task.detached { DiffParser.parse(diff.text) }.value
             // Bookkeeping only; a failure to record mustn't keep the diff from showing.
             try? await store.recordDiff(DiffRecord(pullRequestId: id, headRefOid: diff.headOid, mergeBase: diff.mergeBase, producedAt: .now))
-            let review = ReviewDiff(headOid: diff.headOid, mergeBase: diff.mergeBase, files: parts.included, hiddenCount: diff.hiddenPaths.count + parts.excluded.count)
-            if !review.files.contains(where: { $0.id == selectedFile }) {
-                selectedFile = review.files.first?.id
-            }
+            let review = ReviewDiff(headOid: diff.headOid, mergeBase: diff.mergeBase, commits: diff.commits, changes: ReviewChanges(files: files, hidden: diff.hidden))
+            self.checkout = checkout
+            shownCommit = nil
+            commitChanges = [:]
+            hiddenFileDiffs = [:]
+            keepSelection(in: review.changes)
             phase = .ready(review)
         } catch {
             phase = .failed(error.localizedDescription)
@@ -296,10 +382,30 @@ public enum ReviewPhase: Sendable {
 public struct ReviewDiff: Sendable {
     public let headOid: String
     public let mergeBase: String
-    /// The files to review.
+    /// The PR's commits, oldest first, each of which can be shown on its own.
+    public let commits: [PullRequestCommit]
+    /// The whole PR's changes.
+    public let changes: ReviewChanges
+}
+
+/// The changes over a range: the files to review, diffed, and those hidden as vendored,
+/// lockfiles or generated, listed with what happened to each and diffed only when asked for.
+public struct ReviewChanges: Sendable {
     public let files: [FileDiff]
-    /// How many changed files were left out as vendored, lockfiles or generated.
-    public let hiddenCount: Int
+    public let hidden: [ChangedFile]
+}
+
+/// Where a diff made on demand has got to.
+public enum DiffState<Value: Sendable>: Sendable {
+    case diffing
+    case ready(Value)
+    /// Why it failed, including git's own message.
+    case failed(String)
+}
+
+private struct HiddenFileKey: Hashable {
+    let range: DiffRange
+    let path: String
 }
 
 private extension PullRequestSummary {

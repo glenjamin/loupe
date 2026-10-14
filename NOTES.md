@@ -38,10 +38,14 @@ A PR's window shows the PR's header (state, CI, review decision, `head → base`
 git fetch --no-tags --no-write-fetch-head origin +refs/pull/<N>/head:refs/loupe/pull/<N>/head
 git cat-file -e <baseRefOid>^{commit} || git fetch --no-tags --no-write-fetch-head origin <baseRefName>
 git merge-base <baseRefOid> <head>
-git diff --name-only -z -M <merge-base> <head>                     # every changed path
+git log --reverse -z --format=%H%x1f%P%x1f%s <merge-base>..<head>   # the PR's commits, oldest first
+git diff --name-status -z -M <merge-base> <head>                   # every changed path and what happened to it
 git check-attr -z --stdin linguist-generated linguist-vendored linguist-documentation   # those paths on stdin
 git diff -M <merge-base> <head> -- . ':(exclude,top,literal)<hidden path or directory>' ...
+git diff -M <merge-base> <head> -- ':(top,literal)<hidden path>'   # a hidden file, once it's shown
 ```
+
+A single commit's changes are diffed the same way, from its first parent (or the empty tree, for a root commit) to the commit.
 
 Fetches time out after two minutes and other git commands after one; a failure shows git's stderr with a "Try Again" button. Which paths are hidden is `PathFilter`'s decision, as on GitHub: a match for any regex in Linguist's `vendor.yml` (or `documentation.yml`, off by default), a lockfile (`go.sum`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`), or a path the checkout's `.gitattributes` marks `linguist-generated` or `linguist-vendored`; either attribute set to false keeps a path that would otherwise be hidden. The hidden paths are excluded from the diff by literal pathspec, collapsed to the highest directory with nothing kept in it, so a vendored tree is one argument; the sidebar counts them. Matching atrium#2912's 741 paths takes 1.6ms, and about 4ms the first time, which loads Linguist's data; the same paths with nothing vendored take about 5ms. The diff is kept in memory per PR, so switching tabs doesn't redo it. When each PR's diff was last produced, from which head and merge-base, is stored in `pullRequestDiff` (the diff text isn't). To see where Loupe has fetched to in a checkout:
 

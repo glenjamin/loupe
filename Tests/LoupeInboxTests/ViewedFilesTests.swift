@@ -89,7 +89,7 @@ struct ViewedFilesTests {
         await app.viewed.add(pullRequest.id, files: [("a.txt", .unviewed), ("b.txt", .viewed), ("c.txt", .dismissed), ("d.txt", .unviewed)])
         let tab = try await app.open(pullRequest)
         guard case let .ready(review) = tab.phase else { Issue.record("expected a diff, got \(tab.phase)"); return }
-        #expect(review.files.map(\.path) == files)
+        #expect(review.changes.files.map(\.path) == files)
         #expect(tab.selectedFile == "a.txt")
 
         tab.selectedFile = "d.txt"
@@ -105,6 +105,25 @@ struct ViewedFilesTests {
         #expect(tab.selectedFile == "c.txt", "none left, so it stays")
         #expect(tab.allFilesViewed)
         #expect(await app.viewed.mutations == [.mark("d.txt"), .mark("a.txt"), .mark("c.txt")])
+    }
+
+    @Test func movingOnPassesOverHiddenFilesWhichCanStillBeMarkedReviewed() async throws {
+        let repo = try await FakeRepository()
+        let app = try await ViewedApp()
+        let pullRequest = try await app.pushPullRequest(changing: ["a.txt", "b.txt", "go.sum", "vendor/lib/lib.go"], in: repo)
+        await app.viewed.add(pullRequest.id, files: [("a.txt", .unviewed), ("b.txt", .unviewed), ("go.sum", .unviewed), ("vendor/lib/lib.go", .unviewed)])
+        let tab = try await app.open(pullRequest)
+
+        await tab.markViewedAndAdvance()
+        #expect(tab.selectedFile == "b.txt")
+        await tab.markViewedAndAdvance()
+        #expect(tab.selectedFile == "b.txt", "none left to review but hidden ones")
+        #expect(tab.allFilesViewed)
+
+        tab.selectedFile = "go.sum"
+        await tab.toggleViewed(path: "go.sum")
+        #expect(tab.viewedState(of: "go.sum") == .viewed)
+        #expect(await app.viewed.state(of: "go.sum", in: pullRequest.id) == .viewed)
     }
 
     @Test func reloadingTakesViewedFilesFromGitHubAgain() async throws {

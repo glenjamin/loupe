@@ -65,7 +65,7 @@ struct PullRequestView: View {
         case .diffing:
             ProgressView("Diffing…")
         case let .ready(diff):
-            FileBrowser(tab: tab, files: diff.files, hiddenCount: diff.hiddenCount)
+            FileBrowser(tab: tab, files: diff.changes.files, hiddenCount: diff.changes.hidden.count)
                 // A new head can change a file under the same path.
                 .id(diff.headOid)
         case let .failed(message):
@@ -102,7 +102,7 @@ struct ReviewSectionPicker: View {
 
     private var filesLabel: String {
         guard case let .ready(review) = tab.phase else { return "Files changed" }
-        return "Files changed (\(review.files.count))"
+        return "Files changed (\(review.changes.files.count))"
     }
 }
 

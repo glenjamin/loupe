@@ -10,6 +10,8 @@ final class FakeRepository: Sendable {
     let origin: URL
     let checkout: URL
     private let contributor: URL
+    /// The contributor's clone, for git commands no helper here covers.
+    var contributorDirectory: URL { contributor }
 
     init() async throws {
         // Resolved, so paths compare equal to those git reports.
