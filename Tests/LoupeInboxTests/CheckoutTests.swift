@@ -44,6 +44,28 @@ struct CheckoutTests {
         #expect(model.checkout(for: "tamarinworks/lily") == .notFound)
     }
 
+    @Test func findsAForksCheckoutByItsOtherRemotes() async throws {
+        let disk = try FakeDevelopmentDirectory()
+        let libhoney = try await disk.checkout("libhoney-go", in: disk.first, origin: "https://github.com/tamarinworks/libhoney-go.git", remotes: ["upstream": "https://github.com/honeycombio/libhoney-go.git"])
+        let model = try disk.listModel()
+
+        await model.refresh()
+
+        #expect(model.checkout(for: "honeycombio/libhoney-go") == .found(libhoney))
+        #expect(model.checkout(for: "tamarinworks/libhoney-go") == .found(libhoney))
+    }
+
+    @Test func prefersACheckoutWhoseOriginIsTheRepoOverAForks() async throws {
+        let disk = try FakeDevelopmentDirectory()
+        try await disk.checkout("libhoney-go", in: disk.first, origin: "https://github.com/tamarinworks/libhoney-go.git", remotes: ["upstream": "https://github.com/honeycombio/libhoney-go.git"])
+        let clone = try await disk.checkout("libhoney-go", in: disk.second, origin: "git@github.com:honeycombio/libhoney-go.git")
+        let model = try disk.listModel()
+
+        await model.refresh()
+
+        #expect(model.checkout(for: "honeycombio/libhoney-go") == .found(clone))
+    }
+
     @Test func remembersCheckoutsAndLooksAgainForMisses() async throws {
         let disk = try FakeDevelopmentDirectory()
         let store = try PullRequestStore(url: disk.root.appending(path: "loupe.sqlite"))
@@ -81,11 +103,11 @@ struct CheckoutTests {
         #expect(try store.localRepos(for: ["tamarinworks/atrium"]).isEmpty)
     }
 
-    @Test func locatingACheckoutByHandStoresItWhenItsOriginMatches() async throws {
+    @Test func locatingACheckoutByHandStoresItWhenAnyRemoteMatches() async throws {
         let disk = try FakeDevelopmentDirectory()
         let store = try PullRequestStore.inMemory()
         let elsewhere = disk.root.appending(path: "elsewhere", directoryHint: .isDirectory)
-        let bedrock = try await disk.checkout("bedrock-copy", in: elsewhere, origin: "git@github.com:tamarinworks/bedrock")
+        let bedrock = try await disk.checkout("bedrock-copy", in: elsewhere, origin: "git@github.com:glenjamin/bedrock", remotes: ["upstream": "git@github.com:tamarinworks/bedrock"])
         let model = try disk.listModel(store: store)
         await model.refresh()
         #expect(model.checkout(for: "tamarinworks/bedrock") == .notFound)
@@ -101,13 +123,13 @@ struct CheckoutTests {
     @Test func locatingTheWrongDirectoryByHandIsRejected() async throws {
         let disk = try FakeDevelopmentDirectory()
         let store = try PullRequestStore.inMemory()
-        let atrium = try await disk.checkout("atrium", in: disk.second, origin: "https://github.com/tamarinworks/atrium")
+        let atrium = try await disk.checkout("atrium", in: disk.second, origin: "https://github.com/tamarinworks/atrium", remotes: ["fork": "https://github.com/glenjamin/atrium"])
         let plain = disk.root.appending(path: "plain", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
         let model = try disk.listModel(store: store, searchRoots: [])
         await model.refresh()
 
-        await #expect(throws: CheckoutError.differentOrigin(atrium, expected: "tamarinworks/bedrock", origin: "https://github.com/tamarinworks/atrium")) {
+        await #expect(throws: CheckoutError.noMatchingRemote(atrium, expected: "tamarinworks/bedrock", remotes: ["https://github.com/tamarinworks/atrium", "https://github.com/glenjamin/atrium"])) {
             try await model.locateCheckout(for: "tamarinworks/bedrock", at: atrium)
         }
         await #expect(throws: CheckoutError.notAGitRepository(plain)) {
@@ -119,7 +141,8 @@ struct CheckoutTests {
     }
 }
 
-/// Two search roots in a temp directory, holding real (empty) git repos with an origin remote.
+/// Two search roots in a temp directory, holding real (empty) git repos with an origin remote and
+/// any others.
 /// Deleted when the test ends.
 private final class FakeDevelopmentDirectory: Sendable {
     let root: URL
@@ -141,11 +164,14 @@ private final class FakeDevelopmentDirectory: Sendable {
     }
 
     @discardableResult
-    func checkout(_ name: String, in parent: URL, origin: String) async throws -> URL {
+    func checkout(_ name: String, in parent: URL, origin: String, remotes: KeyValuePairs<String, String> = [:]) async throws -> URL {
         let directory = parent.appending(path: name, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try await runGit(["init", "--quiet"], in: directory)
         try await runGit(["remote", "add", "origin", origin], in: directory)
+        for (remote, url) in remotes {
+            try await runGit(["remote", "add", remote, url], in: directory)
+        }
         return directory
     }
 

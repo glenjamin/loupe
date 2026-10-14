@@ -161,6 +161,10 @@ This revises how the pull shortcut feels; the user found it still too hard and t
 
 Addendum: like pull-to-refresh, the slack holds a caption saying what the pull will do, worded for the case at hand (moving on, the last file, or already reviewed). It fades in with a live drag's progress, says "Marked reviewed" as it fires, and shows nothing at rest or while the view settles back from a pull let go short.
 
+### A checkout matches a repo by any of its remotes
+
+A fork's checkout has the fork as `origin` and the repo it came from as another remote, often `upstream`, and PRs to that repo were reported as having no checkout. So a checkout now matches a repo when any of its remotes points at it on github.com, whether found by name under the search roots or located by hand. When one directory per search root is a candidate, one whose `origin` is the repo wins over a fork's, so a plain clone is preferred. Fetching a PR uses the checkout's remote for the PR's repo (`origin` if several match) for both the PR's ref and the base's remote-tracking branch, still writing only under `refs/loupe/`. The remote is looked up again at fetch time with one git call rather than stored beside the path, so the store is unchanged and a remote renamed since stays right. Remote URLs are read as configured, before any `insteadOf` rewrite, since that's what names the repo.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

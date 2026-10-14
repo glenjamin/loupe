@@ -19,17 +19,19 @@ public struct PullRequestDiffer: Sendable {
         self.filter = filter
     }
 
-    /// Fetches PR `number`'s head into `refs/loupe/pull/<number>/head`, and makes sure its base is
-    /// present: `baseRefOid` when known, fetching `baseRefName` if it's missing.
-    public func fetch(number: Int, baseRefName: String, baseRefOid: String?, in checkout: URL) async throws -> FetchedPullRequest {
+    /// Fetches PR `number` of `repository` (`owner/name`) into `refs/loupe/pull/<number>/head`,
+    /// and makes sure its base is present: `baseRefOid` when known, fetching `baseRefName` if it's
+    /// missing. Both come from the checkout's remote for that repo, or `origin` if none matches.
+    public func fetch(number: Int, of repository: String, baseRefName: String, baseRefOid: String?, in checkout: URL) async throws -> FetchedPullRequest {
+        let remote = await Git.remotes(of: checkout).matching(repository)?.name ?? "origin"
         let head = "refs/loupe/pull/\(number)/head"
-        try await git(["fetch", "--no-tags", "--no-write-fetch-head", "origin", "+refs/pull/\(number)/head:\(head)"], in: checkout, timeout: fetchTimeout)
+        try await git(["fetch", "--no-tags", "--no-write-fetch-head", remote, "+refs/pull/\(number)/head:\(head)"], in: checkout, timeout: fetchTimeout)
         let headOid = try await git(["rev-parse", "--verify", "\(head)^{commit}"], in: checkout).trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Without a known oid, the remote-tracking branch the fetch updates stands in.
-        let base = baseRefOid ?? "refs/remotes/origin/\(baseRefName)"
+        let base = baseRefOid ?? "refs/remotes/\(remote)/\(baseRefName)"
         if await !Git.succeeds(["cat-file", "-e", "\(base)^{commit}"], in: checkout) {
-            try await git(["fetch", "--no-tags", "--no-write-fetch-head", "origin", baseRefName], in: checkout, timeout: fetchTimeout)
+            try await git(["fetch", "--no-tags", "--no-write-fetch-head", remote, baseRefName], in: checkout, timeout: fetchTimeout)
         }
         return FetchedPullRequest(number: number, headOid: headOid, base: base)
     }

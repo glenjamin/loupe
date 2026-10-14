@@ -3,8 +3,9 @@ import Testing
 
 /// A repo as GitHub and a reviewer's machine hold it: a bare `origin` that exposes PRs as
 /// `refs/pull/<N>/head`, a contributor's clone that pushes to it, and the reviewer's `checkout`,
-/// cloned before any PR existed. Its first commit vendors a dependency, has a `go.sum`, and marks
-/// `gen/` as `linguist-generated`. Deleted when the test ends.
+/// cloned before any PR existed. The checkout knows origin as `github.com/tamarinworks/app`, which
+/// its config rewrites to the bare repo. Its first commit vendors a dependency, has a `go.sum`,
+/// and marks `gen/` as `linguist-generated`. Deleted when the test ends.
 final class FakeRepository: Sendable {
     let root: URL
     let origin: URL
@@ -33,6 +34,18 @@ final class FakeRepository: Sendable {
         try await git(["clone", "--quiet", "--bare", contributor.path(percentEncoded: false), origin.path(percentEncoded: false)], in: root)
         try await git(["remote", "add", "origin", origin.path(percentEncoded: false)], in: contributor)
         try await git(["clone", "--quiet", origin.path(percentEncoded: false), checkout.path(percentEncoded: false)], in: root)
+        try await git(["remote", "set-url", "origin", "https://github.com/tamarinworks/app"], in: checkout)
+        try await git(["config", "url.\(origin.path(percentEncoded: false)).insteadOf", "https://github.com/tamarinworks/app"], in: checkout)
+    }
+
+    /// Adds another bare repo holding what origin does, as remote `name` of the contributor and of
+    /// the checkout, which knows it by GitHub URL `url`: the repo a fork was made from, say.
+    func addRemote(_ name: String, as url: String) async throws {
+        let bare = bareRepository(name)
+        try await git(["clone", "--quiet", "--bare", origin.path(percentEncoded: false), bare.path(percentEncoded: false)], in: root)
+        try await git(["remote", "add", name, bare.path(percentEncoded: false)], in: contributor)
+        try await git(["remote", "add", name, url], in: checkout)
+        try await git(["config", "url.\(bare.path(percentEncoded: false)).insteadOf", url], in: checkout)
     }
 
     deinit {
@@ -69,12 +82,12 @@ final class FakeRepository: Sendable {
         try await git(["switch", "--quiet"] + (start.map { ["-c", branch, $0] } ?? [branch]), in: contributor)
     }
 
-    /// Pushes the current branch to origin, and as PR `number`'s head if given, as GitHub does.
-    func push(asPullRequest number: Int? = nil) async throws {
+    /// Pushes the current branch to `remote`, and as PR `number`'s head if given, as GitHub does.
+    func push(asPullRequest number: Int? = nil, to remote: String = "origin") async throws {
         let branch = try await git(["branch", "--show-current"], in: contributor)
-        try await git(["push", "--quiet", "--force", "origin", "HEAD:refs/heads/\(branch)"], in: contributor)
+        try await git(["push", "--quiet", "--force", remote, "HEAD:refs/heads/\(branch)"], in: contributor)
         if let number {
-            try await git(["update-ref", "refs/pull/\(number)/head", git(["rev-parse", "HEAD"], in: contributor)], in: origin)
+            try await git(["update-ref", "refs/pull/\(number)/head", git(["rev-parse", "HEAD"], in: contributor)], in: bareRepository(remote))
         }
     }
 
@@ -87,6 +100,10 @@ final class FakeRepository: Sendable {
     @discardableResult
     func git(_ arguments: [String], in directory: URL) async throws -> String {
         try await runGit(arguments, in: directory)
+    }
+
+    private func bareRepository(_ remote: String) -> URL {
+        root.appending(path: "\(remote).git", directoryHint: .isDirectory)
     }
 }
 

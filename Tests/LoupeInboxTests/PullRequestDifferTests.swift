@@ -24,7 +24,7 @@ struct PullRequestDifferTests {
         let before = try await repo.checkoutState()
 
         let differ = PullRequestDiffer()
-        let fetched = try await differ.fetch(number: 7, baseRefName: "main", baseRefOid: base, in: repo.checkout)
+        let fetched = try await differ.fetch(number: 7, of: "tamarinworks/app", baseRefName: "main", baseRefOid: base, in: repo.checkout)
         let diff = try await differ.diff(fetched, in: repo.checkout)
 
         #expect(fetched.headOid == head)
@@ -57,7 +57,7 @@ struct PullRequestDifferTests {
         try await repo.push(asPullRequest: 5)
 
         let differ = PullRequestDiffer()
-        let fetched = try await differ.fetch(number: 5, baseRefName: "main", baseRefOid: nil, in: repo.checkout)
+        let fetched = try await differ.fetch(number: 5, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout)
         let diff = try await differ.diff(fetched, in: repo.checkout)
 
         #expect(diff.commits.map(\.oid) == [first, second, third])
@@ -85,7 +85,7 @@ struct PullRequestDifferTests {
         try await repo.push(asPullRequest: 4)
 
         let differ = PullRequestDiffer()
-        let fetched = try await differ.fetch(number: 4, baseRefName: "main", baseRefOid: nil, in: repo.checkout)
+        let fetched = try await differ.fetch(number: 4, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout)
         let diff = try await differ.diff(fetched, in: repo.checkout)
         let first = try #require(diff.commits.first)
         let changes = try await differ.diff(first.range, in: repo.checkout)
@@ -109,7 +109,7 @@ struct PullRequestDifferTests {
         try await repo.push(asPullRequest: 8)
 
         let differ = PullRequestDiffer()
-        let fetched = try await differ.fetch(number: 8, baseRefName: "main", baseRefOid: nil, in: repo.checkout)
+        let fetched = try await differ.fetch(number: 8, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout)
         let diff = try await differ.diff(fetched, in: repo.checkout)
 
         #expect(diff.hidden.sorted { $0.path < $1.path } == [
@@ -141,7 +141,7 @@ struct PullRequestDifferTests {
         let branchPoint = try await repo.git(["rev-parse", "HEAD"], in: repo.checkout)
 
         let differ = PullRequestDiffer()
-        let fetched = try await differ.fetch(number: 3, baseRefName: "main", baseRefOid: nil, in: repo.checkout)
+        let fetched = try await differ.fetch(number: 3, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout)
         let diff = try await differ.diff(fetched, in: repo.checkout)
 
         #expect(diff.mergeBase == branchPoint)
@@ -149,11 +149,42 @@ struct PullRequestDifferTests {
         #expect(!diff.text.contains("moved on"))
     }
 
+    @Test func fetchesEachPullRequestFromTheRemoteForItsRepo() async throws {
+        // A fork's checkout: origin is the fork, upstream the repo it was forked from, and each
+        // has its own PR 3.
+        let repo = try await FakeRepository()
+        try await repo.addRemote("upstream", as: "git@github.com:honeycombio/app.git")
+        try await repo.switchTo("fork-change", creatingFrom: "main")
+        let forkHead = try await repo.commit(["fork.go": "package app // fork\n"], message: "Change the fork")
+        try await repo.push(asPullRequest: 3)
+        try await repo.switchTo("upstream-change", creatingFrom: "main")
+        let upstreamHead = try await repo.commit(["app.go": "package app // upstream\n"], message: "Change upstream")
+        try await repo.push(asPullRequest: 3, to: "upstream")
+        let before = try await repo.checkoutState()
+
+        let differ = PullRequestDiffer()
+        let upstream = try await differ.fetch(number: 3, of: "honeycombio/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout)
+        let upstreamDiff = try await differ.diff(upstream, in: repo.checkout)
+
+        #expect(upstream.headOid == upstreamHead)
+        #expect(upstream.base == "refs/remotes/upstream/main")
+        #expect(upstreamDiff.text.contains("+package app // upstream"))
+        #expect(!upstreamDiff.text.contains("fork.go"))
+
+        let fork = try await differ.fetch(number: 3, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout)
+        let forkDiff = try await differ.diff(fork, in: repo.checkout)
+
+        #expect(fork.headOid == forkHead)
+        #expect(fork.base == "refs/remotes/origin/main")
+        #expect(forkDiff.text.contains("+package app // fork"))
+        #expect(try await repo.checkoutState() == before)
+    }
+
     @Test func aPullRequestTheRemoteDoesNotHaveFailsWithGitsMessage() async throws {
         let repo = try await FakeRepository()
 
         let error = try await #require(throws: GitError.self) {
-            try await PullRequestDiffer().fetch(number: 99, baseRefName: "main", baseRefOid: nil, in: repo.checkout)
+            try await PullRequestDiffer().fetch(number: 99, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout)
         }
 
         #expect(error.message.contains("refs/pull/99/head"))

@@ -55,47 +55,48 @@ public struct CheckoutResolver: Sendable {
         return found
     }
 
-    /// Stores `directory` as the checkout of `repository`, if it is one: a git repo whose `origin`
-    /// is that repo on GitHub.
+    /// Stores `directory` as the checkout of `repository`, if it is one: a git repo with a remote
+    /// pointing at that repo on GitHub.
     public func locate(_ repository: String, at directory: URL) async throws -> URL {
         let directory = directory.standardizedFileURL
         guard isGitCheckout(directory) else { throw CheckoutError.notAGitRepository(directory) }
-        let origin = try? await Git.originURL(of: directory)
-        guard let origin, GitHubRemote(url: origin)?.matches(repository) == true else {
-            throw CheckoutError.differentOrigin(directory, expected: repository, origin: origin)
+        let remotes = await Git.remotes(of: directory)
+        guard remotes.matching(repository) != nil else {
+            throw CheckoutError.noMatchingRemote(directory, expected: repository, remotes: remotes.map(\.url))
         }
         try await store.updateLocalRepos(saving: [LocalRepo(nameWithOwner: repository, path: directory, verifiedAt: .now)])
         return directory
     }
 
-    /// The first directory named after the repo under a search root whose `origin` is that repo.
-    /// Other copies, like worktrees named `<repo>-<branch>`, aren't considered.
+    /// The first directory named after the repo under a search root with a remote pointing at that
+    /// repo, preferring one whose `origin` does over a fork's checkout that has it as another
+    /// remote. Other copies, like worktrees named `<repo>-<branch>`, aren't considered.
     private func search(for repository: String) async throws -> URL? {
         guard let name = repository.split(separator: "/").last else { return nil }
+        var fork: URL?
         for root in searchRoots {
             let candidate = root.appending(path: String(name), directoryHint: .isDirectory)
-            guard isGitCheckout(candidate),
-                  let origin = try? await Git.originURL(of: candidate),
-                  GitHubRemote(url: origin)?.matches(repository) == true
-            else { continue }
-            return candidate
+            guard isGitCheckout(candidate), let remote = await Git.remotes(of: candidate).matching(repository) else { continue }
+            if remote.name == "origin" { return candidate }
+            fork = fork ?? candidate
         }
-        return nil
+        return fork
     }
 }
 
 public enum CheckoutError: Error, LocalizedError, Equatable {
     case notAGitRepository(URL)
-    case differentOrigin(URL, expected: String, origin: String?)
+    /// The directory's remotes' URLs, none of which is the expected repo.
+    case noMatchingRemote(URL, expected: String, remotes: [String])
 
     public var errorDescription: String? {
         switch self {
         case let .notAGitRepository(directory):
             "\(directory.path(percentEncoded: false)) isn't a git repository."
-        case let .differentOrigin(directory, expected, origin?):
-            "\(directory.path(percentEncoded: false)) is a checkout of \(origin), not github.com/\(expected)."
-        case let .differentOrigin(directory, expected, nil):
-            "\(directory.path(percentEncoded: false)) has no origin remote, so it can't be confirmed as github.com/\(expected)."
+        case let .noMatchingRemote(directory, expected, []):
+            "\(directory.path(percentEncoded: false)) has no remotes, so it can't be confirmed as github.com/\(expected)."
+        case let .noMatchingRemote(directory, expected, remotes):
+            "\(directory.path(percentEncoded: false)) has remotes \(remotes.joined(separator: ", ")), none of them github.com/\(expected)."
         }
     }
 }

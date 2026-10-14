@@ -32,3 +32,12 @@ struct GitHubRemote: Equatable {
         "\(owner)/\(name)".lowercased() == nameWithOwner.lowercased()
     }
 }
+
+extension [Git.Remote] {
+    /// The remote pointing at `nameWithOwner` on GitHub, `origin` if several do, as a fork's
+    /// checkout may have the PR's repo as `upstream`.
+    func matching(_ nameWithOwner: String) -> Git.Remote? {
+        let matches = filter { GitHubRemote(url: $0.url)?.matches(nameWithOwner) == true }
+        return matches.first { $0.name == "origin" } ?? matches.first
+    }
+}

@@ -4,9 +4,20 @@ import Foundation
 /// touches branches, the index or the working tree; the only ref written is Loupe's own
 /// `refs/loupe/` namespace.
 enum Git {
-    static func originURL(of directory: URL) async throws -> String {
-        try await run(["remote", "get-url", "origin"], in: directory)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The checkout's remotes in config order, with their URLs as configured rather than as any
+    /// `insteadOf` rewrites them, since those name the repo. Empty when there are none.
+    static func remotes(of directory: URL) async -> [Remote] {
+        guard let config = try? await run(["config", "--get-regexp", #"^remote\..*\.url$"#], in: directory) else { return [] }
+        return config.split(separator: "\n").compactMap { line in
+            guard let space = line.firstIndex(of: " ") else { return nil }
+            let name = line[..<space].dropFirst("remote.".count).dropLast(".url".count)
+            return Remote(name: String(name), url: String(line[line.index(after: space)...]))
+        }
+    }
+
+    struct Remote: Equatable {
+        let name: String
+        let url: String
     }
 
     /// git's stdout, given `input` on stdin. Runs on a background queue, as it blocks until git
