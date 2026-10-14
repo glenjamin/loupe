@@ -171,6 +171,12 @@ A PR's overall check state is a plain coloured tick, cross, clock or question ma
 
 The per-check contexts come from a separate lookup by id, not from the list searches. Measured against the real API on a full page of 100 open PRs: the author search took about 7.5s without contexts and 8.4–9.6s with them, and a denser 100-PR search went from about 9s to GitHub's 502 at about 11s in three tries of four, which is the time limit the activity counts already hit. A lookup of only id, rollup state and contexts takes about 2.5s per 50 PRs and 4–5.5s per 100, so it runs after each list refresh in batches of 50, over every open listed PR. Every one is asked about because a check finishing doesn't change a PR's update time (19 of 44 of the author's PRs had a check finish after it), so the searches for changes never report it; the rollup state is taken from the same lookup, so the glyph and its tooltip agree. The contexts are stored per PR in their own table and replaced on each lookup, so the tooltip works from the stored copy; until the first lookup the tooltip only names the overall state. The refresh counts as loading until the checks are in. Only the first 50 contexts of a commit are fetched.
 
+### Conflicts show as a badge, from the same lookup by id as checks
+
+A PR whose branch conflicts with its base gets a quiet "Conflicts" badge beside its state badge, in the lists and in the PR header; nothing shows for a clean merge or while GitHub is still working it out. The state is GitHub's `mergeable`, which GitHub computes lazily in the background and answers `UNKNOWN` until it has, so a freshly pushed PR may show nothing until a later refresh.
+
+It's asked for in the lookup by id that fetches checks after each refresh, not in the searches. Measured on a full page of 100: adding it to the author search took it from about 7.5s to 8.5–9.5s, the denser 100-PR search hit a 502 again, and 67 of the 100 came back `UNKNOWN`. In the lookup it raised a batch of 50 from about 2.6s to 3.6–4.9s, within the limit, and answered for all 50 there, though a lookup can still meet `UNKNOWN` on a PR GitHub hasn't got to. The searches and the by-id row lookup leave the stored value alone, so it's only replaced by the next status lookup.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

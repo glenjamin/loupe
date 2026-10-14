@@ -85,11 +85,31 @@ struct PullRequestListTests {
         #expect(unchecked.checkContexts.tooltip == nil)
 
         // Every open PR's checks are asked for once, in batches GitHub answers well in time.
-        let lookups = await github.checksLookups
+        let lookups = await github.statusLookups
         #expect(lookups.allSatisfy { $0.count <= 50 })
         let asked = lookups.flatMap(\.self)
         #expect(asked.count == Set(asked).count)
         #expect(Set(asked) == Set((mine + model.pullRequests(in: .toReview)).map(\.id)))
+    }
+
+    @Test func rowsSayWhetherTheyConflictWithTheirBaseAfterARefresh() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+
+        await model.refresh()
+
+        let mine = model.pullRequests(in: .mine)
+        let conflicting = try #require(mine.first { $0.repository == "tamarinworks/bedrock" && $0.number == 2335 })
+        #expect(conflicting.mergeable == .conflicting)
+        let clean = try #require(mine.first { $0.repository == "tamarinworks/gatehouse" && $0.number == 172 })
+        #expect(clean.mergeable == .mergeable)
+        // GitHub hadn't worked this one out yet.
+        let undecided = try #require(mine.first { $0.repository == "tamarinworks/gazette" && $0.number == 272 })
+        #expect(undecided.mergeable == .unknown)
+
+        // Looking a PR up for its other changes doesn't ask again, so keeps what was found.
+        try await model.checkForChanges(to: [conflicting.id])
+        #expect(model.pullRequest(id: conflicting.id)?.mergeable == .conflicting)
     }
 
     @Test func checksThatChangeWithoutUpdatingThePullRequestAreFoundOnTheNextRefresh() async throws {

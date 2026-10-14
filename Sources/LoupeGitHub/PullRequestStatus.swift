@@ -2,30 +2,35 @@ import Foundation
 import LoupeModel
 
 extension GitHubClient {
-    /// The head commit's checks of each PR in `ids`, keyed by id, looked up by id in batches
-    /// small enough to stay well inside GitHub's time limit. PRs GitHub no longer has (or no
-    /// longer shows the user) are left out.
-    public func checks(ofPullRequests ids: [String]) async throws -> [String: PullRequestChecks] {
-        var checks: [String: PullRequestChecks] = [:]
-        for start in stride(from: 0, to: ids.count, by: Self.checksBatchSize) {
-            let batch = Array(ids[start..<min(start + Self.checksBatchSize, ids.count)])
-            let response: ChecksResponse = try await query(Self.checksQuery, variables: NodesVariables(ids: batch), allowingMissingNodes: true)
+    /// The head commit's checks and whether it merges cleanly, for each PR in `ids`, keyed by id,
+    /// looked up by id in batches small enough to stay well inside GitHub's time limit. PRs
+    /// GitHub no longer has (or no longer shows the user) are left out.
+    public func statuses(ofPullRequests ids: [String]) async throws -> [String: PullRequestStatus] {
+        var statuses: [String: PullRequestStatus] = [:]
+        for start in stride(from: 0, to: ids.count, by: Self.statusBatchSize) {
+            let batch = Array(ids[start..<min(start + Self.statusBatchSize, ids.count)])
+            let response: StatusResponse = try await query(Self.statusQuery, variables: NodesVariables(ids: batch), allowingMissingNodes: true)
             for case let node? in response.nodes {
                 let rollup = node.commits.nodes.first?.commit.statusCheckRollup
-                checks[node.id] = PullRequestChecks(state: rollup?.state, contexts: rollup?.contexts.nodes.compactMap(\.check) ?? [])
+                statuses[node.id] = PullRequestStatus(
+                    checks: rollup?.state,
+                    checkContexts: rollup?.contexts.nodes.compactMap(\.check) ?? [],
+                    mergeable: node.mergeable
+                )
             }
         }
-        return checks
+        return statuses
     }
 
-    /// Under GitHub's maximum, as contexts make each PR costly to look up.
-    static let checksBatchSize = 50
+    /// Under GitHub's maximum, as contexts and mergeability make each PR costly to look up.
+    static let statusBatchSize = 50
 
-    static let checksQuery = """
+    static let statusQuery = """
         query($ids: [ID!]!) {
           nodes(ids: $ids) {
             ... on PullRequest {
               id
+              mergeable
               commits(last: 1) {
                 nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { \(checkContextFields) } } } } }
               }
@@ -69,12 +74,13 @@ struct CheckContextNode: Decodable {
     }
 }
 
-private struct ChecksResponse: Decodable {
+private struct StatusResponse: Decodable {
     /// Null where an id couldn't be resolved.
     let nodes: [Node?]
 
     struct Node: Decodable {
         let id: String
+        let mergeable: MergeableState
         let commits: SearchPageResponse.Connection<CommitNode>
     }
 

@@ -78,22 +78,26 @@ public struct PullRequestStore: Sendable {
     @discardableResult
     public func update(_ pullRequests: [PullRequestSummary]) async throws -> PullRequestSnapshot {
         try await database.write { db in
-            for pullRequest in pullRequests where try PullRequestRow.exists(db, key: pullRequest.id) {
-                try PullRequestRow(pullRequest).update(db)
+            for pullRequest in pullRequests {
+                guard let stored = try PullRequestRow.fetchOne(db, key: pullRequest.id) else { continue }
+                try PullRequestRow(pullRequest, keepingLookupsFrom: stored).update(db)
             }
             return try Self.snapshot(db)
         }
     }
 
-    /// Replaces the stored checks of each PR in `checks`, keyed by id, with the overall state and
-    /// each check as last looked up. PRs no longer stored are left out, as nothing shows them.
+    /// Replaces the stored checks and mergeability of each PR in `statuses`, keyed by id, with
+    /// those last looked up. PRs no longer stored are left out, as nothing shows them.
     @discardableResult
-    public func updateChecks(_ checks: [String: PullRequestChecks]) async throws -> PullRequestSnapshot {
+    public func updateStatuses(_ statuses: [String: PullRequestStatus]) async throws -> PullRequestSnapshot {
         try await database.write { db in
-            for (id, checks) in checks where try PullRequestRow.exists(db, key: id) {
-                try db.execute(sql: "UPDATE pullRequest SET checkState = ? WHERE id = ?", arguments: [checks.state?.rawValue, id])
+            for (id, status) in statuses where try PullRequestRow.exists(db, key: id) {
+                try db.execute(
+                    sql: "UPDATE pullRequest SET checkState = ?, mergeable = ? WHERE id = ?",
+                    arguments: [status.checks?.rawValue, status.mergeable.rawValue, id]
+                )
                 try PullRequestCheckRow.filter(Column("pullRequestId") == id).deleteAll(db)
-                for (position, check) in checks.contexts.enumerated() {
+                for (position, check) in status.checkContexts.enumerated() {
                     try PullRequestCheckRow(pullRequestId: id, position: position, check).insert(db)
                 }
             }
@@ -308,6 +312,12 @@ public struct PullRequestStore: Sendable {
                 t.primaryKey(["pullRequestId", "position"])
             }
         }
+        // Nullable, as only looking a PR up by id fetches it.
+        migrator.registerMigration("Pull request mergeable") { db in
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "mergeable", .text)
+            }
+        }
         return migrator
     }
 
@@ -318,9 +328,9 @@ public struct PullRequestStore: Sendable {
             try PullRequestRow
                 .filter(Column("repository") == pullRequest.repository && Column("number") == pullRequest.number && Column("id") != pullRequest.id)
                 .deleteAll(db)
-            // Searches don't fetch the counts, so the last ones looked up are kept.
+            // Searches don't fetch what's only looked up by id, so the last of that is kept.
             let stored = try PullRequestRow.fetchOne(db, key: pullRequest.id)
-            try PullRequestRow(pullRequest, keepingCountsFrom: stored).upsert(db)
+            try PullRequestRow(pullRequest, keepingLookupsFrom: stored).upsert(db)
             try ListMembership(list: list.rawValue, pullRequestId: pullRequest.id, confirmedAt: refreshedAt).upsert(db)
         }
     }
@@ -382,8 +392,10 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let commitCount: Int?
     let commentCount: Int?
     let reviewThreadCount: Int?
+    let mergeable: String?
 
-    init(_ pullRequest: PullRequestSummary, keepingCountsFrom stored: PullRequestRow? = nil) {
+    /// Anything `pullRequest` lacks because only a lookup by id fetches it is kept from `stored`.
+    init(_ pullRequest: PullRequestSummary, keepingLookupsFrom stored: PullRequestRow?) {
         id = pullRequest.id
         repository = pullRequest.repository
         number = pullRequest.number
@@ -404,6 +416,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         commitCount = pullRequest.commitCount ?? stored?.commitCount
         commentCount = pullRequest.commentCount ?? stored?.commentCount
         reviewThreadCount = pullRequest.reviewThreadCount ?? stored?.reviewThreadCount
+        mergeable = pullRequest.mergeable?.rawValue ?? stored?.mergeable
     }
 
     func summary(checkContexts: [CheckContext]) -> PullRequestSummary {
@@ -421,6 +434,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             reviewDecision: reviewDecision.map(ReviewDecision.init(lenientRawValue:)),
             checks: checkState.map(CheckState.init(lenientRawValue:)),
             checkContexts: checkContexts,
+            mergeable: mergeable.map(MergeableState.init(lenientRawValue:)),
             updatedAt: updatedAt,
             headRefName: headRefName,
             baseRefName: baseRefName,

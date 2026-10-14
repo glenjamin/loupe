@@ -116,6 +116,7 @@ struct PullRequestHeader: View {
                     Text(verbatim: "\(repositoryName(pullRequest)) #\(pullRequest.number)")
                         .font(.headline.monospacedDigit())
                     StateBadge(pullRequest: pullRequest, showsOpen: true)
+                    ConflictsBadge(pullRequest: pullRequest)
                     Text(pullRequest.title)
                         .font(.title3)
                         .lineLimit(2)

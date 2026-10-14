@@ -140,6 +140,7 @@ struct PullRequestRow: View {
                     .font(.headline.monospacedDigit())
                     .layoutPriority(1)
                 StateBadge(pullRequest: pullRequest, showsOpen: false)
+                ConflictsBadge(pullRequest: pullRequest)
                 Text(owner)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -202,6 +203,19 @@ struct StateBadge: View {
             } else if showsOpen {
                 Badge(text: "Open", tint: .diffSuccess)
             }
+        }
+    }
+}
+
+/// Shown only when GitHub says the PR conflicts with its base; nothing while it's still working
+/// that out.
+struct ConflictsBadge: View {
+    let pullRequest: PullRequestSummary
+
+    var body: some View {
+        if pullRequest.mergeable == .conflicting {
+            Badge(text: "Conflicts", tint: .diffDanger)
+                .help("This branch has conflicts that must be resolved before it can be merged")
         }
     }
 }

@@ -22,6 +22,9 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     /// The head commit's statuses and check runs one by one. Empty until they've been looked
     /// up, as searches don't fetch them.
     public let checkContexts: [CheckContext]
+    /// Nil until looked up by id, as asking the searches for it takes them past GitHub's time
+    /// limit. `.unknown` while GitHub is still working it out.
+    public let mergeable: MergeableState?
     public let updatedAt: Date
     public let headRefName: String
     public let baseRefName: String
@@ -49,6 +52,7 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         reviewDecision: ReviewDecision?,
         checks: CheckState?,
         checkContexts: [CheckContext] = [],
+        mergeable: MergeableState? = nil,
         updatedAt: Date,
         headRefName: String,
         baseRefName: String,
@@ -71,6 +75,7 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.reviewDecision = reviewDecision
         self.checks = checks
         self.checkContexts = checkContexts
+        self.mergeable = mergeable
         self.updatedAt = updatedAt
         self.headRefName = headRefName
         self.baseRefName = baseRefName
@@ -82,15 +87,18 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     }
 }
 
-/// A PR's head commit's checks: the overall state and each status or check run.
-public struct PullRequestChecks: Sendable, Equatable {
+/// What a PR's lookup by id says of its head commit: its checks, overall and one by one, and
+/// whether it merges cleanly.
+public struct PullRequestStatus: Sendable, Equatable {
     /// Nil when the head commit has no statuses or check runs.
-    public let state: CheckState?
-    public let contexts: [CheckContext]
+    public let checks: CheckState?
+    public let checkContexts: [CheckContext]
+    public let mergeable: MergeableState
 
-    public init(state: CheckState?, contexts: [CheckContext]) {
-        self.state = state
-        self.contexts = contexts
+    public init(checks: CheckState?, checkContexts: [CheckContext], mergeable: MergeableState) {
+        self.checks = checks
+        self.checkContexts = checkContexts
+        self.mergeable = mergeable
     }
 }
 
@@ -154,6 +162,14 @@ public enum CheckState: String, Sendable, LenientEnum {
     case pending = "PENDING"
     case expected = "EXPECTED"
     case unknown
+}
+
+/// Whether a PR's head merges into its base without conflicts. GitHub works it out lazily, in
+/// the background, and answers `UNKNOWN` until it has.
+public enum MergeableState: String, Sendable, LenientEnum {
+    case mergeable = "MERGEABLE"
+    case conflicting = "CONFLICTING"
+    case unknown = "UNKNOWN"
 }
 
 /// A GitHub enum that maps values GitHub adds later to `.unknown` rather than failing to decode

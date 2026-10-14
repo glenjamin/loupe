@@ -6,8 +6,8 @@ import Testing
 /// An in-memory api.github.com holding the viewer's PRs and the PRs awaiting their review. Like
 /// GitHub's GraphQL API it rejects requests without the expected token, caps page sizes, pages
 /// with cursors, matches searches by author, review request, state and update time, looks up
-/// nodes by id, serves each PR's head commit's checks as captured in `probe/pr-checks.json`, and
-/// bumps a PR's update time when it changes, though not when its checks do. Like its REST notifications, a
+/// nodes by id, serves each PR's checks and mergeability as captured in `probe/pr-status.json`,
+/// and bumps a PR's update time when it changes, though not when its checks do. Like its REST notifications, a
 /// change to a PR notifies the viewer, who participates in every PR here, and a poll with
 /// `If-Modified-Since` no older than the newest notification gets a 304. Tests can change PRs,
 /// set the poll interval, refuse notifications, or make every GraphQL request fail.
@@ -35,8 +35,8 @@ actor FakeGitHub: HTTPTransport {
     private(set) var searches: [String] = []
     /// The ids of every lookup of PR rows by id, in order.
     private(set) var pullRequestLookups: [[String]] = []
-    /// The ids of every lookup of PRs' checks, in order.
-    private(set) var checksLookups: [[String]] = []
+    /// The ids of every lookup of PRs' statuses, in order.
+    private(set) var statusLookups: [[String]] = []
     /// When each PR's notification was last updated, by PR id.
     private var notified: [String: Date] = [:]
     /// What `X-Poll-Interval` says, or nil to leave it out.
@@ -57,10 +57,11 @@ actor FakeGitHub: HTTPTransport {
             toReview[index].requestedReviewers = [.user(Self.viewer)]
         }
         var all = probe.mine.nodes + toReview
-        let checks = try JSONDecoder().decode(ChecksProbe.self, from: Data(contentsOf: projectRoot.appending(path: "probe/pr-checks.json"))).data.nodes
+        let statuses = try JSONDecoder().decode(StatusProbe.self, from: Data(contentsOf: projectRoot.appending(path: "probe/pr-status.json"))).data.nodes
         for index in all.indices {
-            let rollup = checks.first { $0?.id == all[index].id }??.commits.nodes.first?.commit.statusCheckRollup
-            all[index].checkContexts = rollup?.contexts.nodes ?? []
+            let status = statuses.first { $0?.id == all[index].id } ?? nil
+            all[index].checkContexts = status?.commits.nodes.first?.commit.statusCheckRollup?.contexts.nodes ?? []
+            all[index].mergeable = status?.mergeable ?? "UNKNOWN"
         }
         pullRequests = reversed ? all.reversed() : all
         self.viewerTeams = viewerTeams
@@ -154,7 +155,7 @@ actor FakeGitHub: HTTPTransport {
 
         let body = try JSONDecoder().decode(GraphQLRequest.self, from: try #require(request.httpBody))
         let response: any Encodable = if let ids = body.variables.ids, body.query.contains("contexts") {
-            try checks(ids)
+            try statuses(ids)
         } else if let ids = body.variables.ids, body.query.contains("reviewRequests") {
             try reviewRequests(ids)
         } else if let ids = body.variables.ids {
@@ -223,13 +224,13 @@ actor FakeGitHub: HTTPTransport {
         return Envelope(data: ["nodes": ids.map { id in pullRequests.first { $0.id == id } }])
     }
 
-    private func checks(_ ids: [String]) throws -> Envelope<ChecksPayload> {
+    private func statuses(_ ids: [String]) throws -> Envelope<StatusPayload> {
         #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
-        checksLookups.append(ids)
-        return Envelope(data: ChecksPayload(nodes: ids.map { id in
+        statusLookups.append(ids)
+        return Envelope(data: StatusPayload(nodes: ids.map { id in
             pullRequests.first { $0.id == id }.map { pullRequest in
-                let rollup = pullRequest.commits.nodes.first?.commit.statusCheckRollup.map { ChecksPayload.Rollup(state: $0.state, contexts: .init(nodes: pullRequest.checkContexts)) }
-                return ChecksPayload.Node(id: id, commits: .init(nodes: [.init(commit: .init(statusCheckRollup: rollup))]))
+                let rollup = pullRequest.commits.nodes.first?.commit.statusCheckRollup.map { StatusPayload.Rollup(state: $0.state, contexts: .init(nodes: pullRequest.checkContexts)) }
+                return StatusPayload.Node(id: id, mergeable: pullRequest.mergeable, commits: .init(nodes: [.init(commit: .init(statusCheckRollup: rollup))]))
             }
         }))
     }
@@ -299,8 +300,9 @@ struct FakePullRequest: Codable, Sendable {
     var comments: Count
     var reviewThreads: Count
     var requestedReviewers: [Reviewer] = []
-    /// The head commit's checks, which only a lookup by id asks for.
+    /// The head commit's checks and whether it merges cleanly, which only a lookup by id asks for.
     var checkContexts: [FakeCheckContext] = []
+    var mergeable = "UNKNOWN"
 
     enum Reviewer: Sendable {
         case user(String)
@@ -439,16 +441,17 @@ private struct ProbeResponse: Decodable {
     }
 }
 
-/// `probe/pr-checks.json`: the checks lookup's response for the PRs in `probe/pr-list.json`.
-private struct ChecksProbe: Decodable {
-    let data: ChecksPayload
+/// `probe/pr-status.json`: the status lookup's response for the PRs in `probe/pr-list.json`.
+private struct StatusProbe: Decodable {
+    let data: StatusPayload
 }
 
-private struct ChecksPayload: Codable {
+private struct StatusPayload: Codable {
     let nodes: [Node?]
 
     struct Node: Codable {
         let id: String
+        let mergeable: String
         let commits: Connection<CommitNode>
     }
 
