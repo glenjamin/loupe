@@ -18,7 +18,9 @@ extension PullRequestSummary {
             checks: node.commits.nodes.first?.commit.statusCheckRollup?.state,
             updatedAt: node.updatedAt,
             headRefName: node.headRefName,
-            baseRefName: node.baseRefName
+            baseRefName: node.baseRefName,
+            headRefOid: node.headRefOid,
+            baseRefOid: node.baseRefOid
         )
     }
 }
@@ -49,6 +51,8 @@ struct SearchPageResponse: Decodable {
         let reviewDecision: ReviewDecision?
         let headRefName: String
         let baseRefName: String
+        let headRefOid: String
+        let baseRefOid: String
         let author: Login?
         let repository: Repository
         let commits: Connection<CommitNode>

@@ -22,6 +22,10 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     public let updatedAt: Date
     public let headRefName: String
     public let baseRefName: String
+    /// The head and base commits. Nil on rows stored before these were fetched, until the
+    /// list's next full load.
+    public let headRefOid: String?
+    public let baseRefOid: String?
 
     public init(
         id: String,
@@ -38,7 +42,9 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         checks: CheckState?,
         updatedAt: Date,
         headRefName: String,
-        baseRefName: String
+        baseRefName: String,
+        headRefOid: String? = nil,
+        baseRefOid: String? = nil
     ) {
         self.id = id
         self.repository = repository
@@ -55,6 +61,8 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.updatedAt = updatedAt
         self.headRefName = headRefName
         self.baseRefName = baseRefName
+        self.headRefOid = headRefOid
+        self.baseRefOid = baseRefOid
     }
 }
 

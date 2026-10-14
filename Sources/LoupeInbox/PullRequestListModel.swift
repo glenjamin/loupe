@@ -97,7 +97,8 @@ public final class PullRequestListModel {
             // Anything updated while the request is in flight is caught by the next one.
             let startedAt = Date.now
             do {
-                if let lastRefreshed = snapshot.refreshedAt(list) {
+                // Rows stored before commit oids were fetched lack them; a full load fills them in.
+                if let lastRefreshed = snapshot.refreshedAt(list), !snapshot[list].contains(where: { $0.headRefOid == nil }) {
                     let since = lastRefreshed - Self.refreshOverlap.timeInterval
                     let changed = try await client.pullRequests(in: list, updatedSince: since)
                     snapshot = try await store.merge(list, with: changed, refreshedAt: startedAt)

@@ -189,6 +189,8 @@ struct FakePullRequest: Codable, Sendable {
     var reviewDecision: String?
     let headRefName: String
     let baseRefName: String
+    var headRefOid: String
+    var baseRefOid: String
     let author: Login?
     let repository: Repository
     var commits: Commits
@@ -208,10 +210,11 @@ struct FakePullRequest: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, number, title, url, isDraft, state, mergedAt, closedAt, updatedAt, reviewDecision
-        case headRefName, baseRefName, author, repository, commits
+        case headRefName, baseRefName, headRefOid, baseRefOid, author, repository, commits
     }
 
-    /// The probe's PRs predate asking for `state`; they were all open.
+    /// The probe's PRs predate asking for `state`, when they were all open, and for commit oids,
+    /// which are made up here.
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
@@ -226,6 +229,8 @@ struct FakePullRequest: Codable, Sendable {
         reviewDecision = try container.decodeIfPresent(String.self, forKey: .reviewDecision)
         headRefName = try container.decode(String.self, forKey: .headRefName)
         baseRefName = try container.decode(String.self, forKey: .baseRefName)
+        headRefOid = try container.decodeIfPresent(String.self, forKey: .headRefOid) ?? fakeOid("head \(id)")
+        baseRefOid = try container.decodeIfPresent(String.self, forKey: .baseRefOid) ?? fakeOid("base \(id)")
         author = try container.decodeIfPresent(Login.self, forKey: .author)
         repository = try container.decode(Repository.self, forKey: .repository)
         commits = try container.decode(Commits.self, forKey: .commits)
@@ -323,4 +328,12 @@ private struct NodesPayload: Encodable {
         let login: String?
         let slug: String?
     }
+}
+
+/// A stable 40-hex-digit stand-in for a commit oid.
+private func fakeOid(_ seed: String) -> String {
+    var hash: UInt64 = 0xcbf29ce484222325
+    for byte in seed.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
+    let hex = String(hash, radix: 16)
+    return String(repeating: "0", count: 40 - hex.count) + hex
 }

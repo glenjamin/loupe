@@ -147,6 +147,13 @@ public struct PullRequestStore: Sendable {
                 t.column("value", .text).notNull()
             }
         }
+        // Nullable, as earlier rows lack them until their list's next full load.
+        migrator.registerMigration("Pull request commits") { db in
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "headRefOid", .text)
+                t.add(column: "baseRefOid", .text)
+            }
+        }
         return migrator
     }
 
@@ -210,6 +217,8 @@ private struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let updatedAt: Date
     let headRefName: String
     let baseRefName: String
+    let headRefOid: String?
+    let baseRefOid: String?
 
     init(_ pullRequest: PullRequestSummary) {
         id = pullRequest.id
@@ -227,6 +236,8 @@ private struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         updatedAt = pullRequest.updatedAt
         headRefName = pullRequest.headRefName
         baseRefName = pullRequest.baseRefName
+        headRefOid = pullRequest.headRefOid
+        baseRefOid = pullRequest.baseRefOid
     }
 
     var summary: PullRequestSummary {
@@ -245,7 +256,9 @@ private struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             checks: checkState.map(CheckState.init(lenientRawValue:)),
             updatedAt: updatedAt,
             headRefName: headRefName,
-            baseRefName: baseRefName
+            baseRefName: baseRefName,
+            headRefOid: headRefOid,
+            baseRefOid: baseRefOid
         )
     }
 }

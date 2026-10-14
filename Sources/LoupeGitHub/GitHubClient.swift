@@ -135,6 +135,8 @@ public struct GitHubClient: Sendable {
           reviewDecision
           headRefName
           baseRefName
+          headRefOid
+          baseRefOid
           author { login }
           repository { nameWithOwner }
           commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }

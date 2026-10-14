@@ -28,6 +28,9 @@ struct PullRequestListTests {
         #expect(newest.reviewDecision == .reviewRequired)
         #expect(newest.checks == .success)
         #expect(newest.url == URL(string: "https://github.com/tamarinworks/atrium/pull/2928"))
+        let served = try #require(await github.pullRequests(in: .toReview).first { $0.id == newest.id })
+        #expect(newest.headRefOid == served.headRefOid)
+        #expect(newest.baseRefOid == served.baseRefOid)
     }
 
     @Test func keepsDraftsAndRowsWithoutReviewOrChecks() async throws {
