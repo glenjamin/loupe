@@ -29,16 +29,9 @@ final class WindowTabs {
     /// open last run.
     func attachLists(_ window: NSWindow, openWindow: OpenWindowAction) {
         guard listsWindow !== window else { return }
-        if let listsWindow {
-            // The tab bar's "+" offers no way to hide it, and from the lists' tab it makes a second
-            // lists window; the first is brought forward instead.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    window.close()
-                    listsWindow.tabGroup?.selectedWindow = listsWindow
-                    bringForward(listsWindow)
-                }
-            }
+        if listsWindow != nil {
+            // From the lists' tab, the tab bar's "+" makes a second lists window.
+            redirectToLists(window, openWindow: openWindow)
             return
         }
         listsWindow = window
@@ -70,6 +63,28 @@ final class WindowTabs {
         DispatchQueue.main.async {
             MainActor.assumeIsolated { self.finishRestoring() }
         }
+    }
+
+    /// Hides a window made by the tab bar's "+", which can't be hidden, and brings the lists forward
+    /// instead. SwiftUI keeps that window and shows it again for the next "+", so it's hidden each
+    /// time.
+    func redirectToLists(_ window: NSWindow, openWindow: OpenWindowAction) {
+        let redirect = { [weak self, weak window] in
+            window?.orderOut(nil)
+            guard let listsWindow = self?.listsWindow else { return openWindow(id: Self.listsID) }
+            listsWindow.tabGroup?.selectedWindow = listsWindow
+            bringForward(listsWindow)
+        }
+        DispatchQueue.main.async { MainActor.assumeIsolated(redirect) }
+        let key = ObjectIdentifier(window)
+        guard observers[key] == nil else { return }
+        observers[key] = [
+            NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak window] _ in
+                MainActor.assumeIsolated {
+                    if window?.occlusionState.contains(.visible) == true { redirect() }
+                }
+            },
+        ]
     }
 
     private func startRefreshing() {
@@ -187,7 +202,6 @@ struct PullRequestWindow: View {
     /// Fixed when the window opens, so it keeps showing while the window closes.
     @State private var tab: PullRequestTab?
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
 
     init(id: String?, windowTabs: WindowTabs) {
         self.windowTabs = windowTabs
@@ -209,11 +223,8 @@ struct PullRequestWindow: View {
                 }
                 .background(WindowAccessor { windowTabs.attach($0, pullRequest: tab.id, url: pullRequest.url) })
         } else {
-            // A window for no open PR, such as from the tab bar's "+", shows the lists instead.
-            Color.clear.onAppear {
-                openWindow(id: WindowTabs.listsID)
-                dismissWindow()
-            }
+            // A window for no open PR, as the tab bar's "+" makes, shows the lists instead.
+            Color.clear.background(WindowAccessor { windowTabs.redirectToLists($0, openWindow: openWindow) })
         }
     }
 }
