@@ -1,0 +1,1 @@
+{"data":{"markFileAsViewed":null},"errors":[{"type":"UNPROCESSABLE","path":["markFileAsViewed"],"locations":[{"line":2,"column":3}],"message":"Filepath must be part of pull request"}]}

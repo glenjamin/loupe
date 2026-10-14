@@ -22,6 +22,7 @@ public final class TabsModel {
 
     private let store: PullRequestStore
     private let differ: PullRequestDiffer
+    private let client: GitHubClient
     private let notifications: GitHubNotifications
     private let fallbackInterval: Duration
     /// From the last notifications poll that found changes, to ask only for newer ones.
@@ -33,12 +34,14 @@ public final class TabsModel {
         lists: PullRequestListModel,
         store: PullRequestStore,
         differ: PullRequestDiffer = PullRequestDiffer(),
+        client: GitHubClient = GitHubClient(),
         notifications: GitHubNotifications = GitHubNotifications(),
         fallbackInterval: Duration = .seconds(60)
     ) {
         self.lists = lists
         self.store = store
         self.differ = differ
+        self.client = client
         self.notifications = notifications
         self.fallbackInterval = fallbackInterval
         do {
@@ -121,7 +124,7 @@ public final class TabsModel {
     }
 
     private func makeTab(_ pullRequest: PullRequestSummary) -> PullRequestTab {
-        PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ)
+        PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ, client: client)
     }
 
     private func save() {

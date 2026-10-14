@@ -188,6 +188,15 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "reviewThreadCount", .integer)
             }
         }
+        // The viewer's viewed state of each file in a PR, as GitHub last said or as last set here.
+        migrator.registerMigration("Viewed files") { db in
+            try db.create(table: "viewedFile") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequest", onDelete: .cascade)
+                t.column("path", .text).notNull()
+                t.column("state", .text).notNull()
+                t.primaryKey(["pullRequestId", "path"])
+            }
+        }
         return migrator
     }
 

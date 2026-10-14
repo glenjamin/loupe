@@ -1,6 +1,7 @@
 import Foundation
 import LoupeCore
 import LoupeGit
+import LoupeGitHub
 import LoupeModel
 import LoupeStore
 import Observation
@@ -15,23 +16,37 @@ public final class PullRequestTab: Identifiable {
     public private(set) var phase = ReviewPhase.resolvingCheckout
     /// The file shown, kept while switching between tabs.
     public var selectedFile: FileDiff.ID?
+    /// The viewer's viewed state of each file, by path: as stored when the tab opened, then as
+    /// GitHub says once asked, with the viewer's own changes shown before GitHub confirms them.
+    public private(set) var viewedStates: [String: FileViewedState] = [:]
+    /// Why the last change to a file's viewed state didn't reach GitHub, until one does.
+    public private(set) var viewedStateError: String?
 
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
     private let lists: PullRequestListModel
     private let store: PullRequestStore
     private let differ: PullRequestDiffer
+    private let client: GitHubClient
+    /// How many changes to each path's viewed state are on their way to GitHub.
+    private var settingViewed: [String: Int] = [:]
     /// The PR as it was when its diff was last asked for, success or not, or when a change to
     /// it was last dismissed. Nil until the diff is asked for.
     private var seen: PullRequestSummary?
     private var loading: Task<Void, Never>?
 
-    init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer) {
+    init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer, client: GitHubClient) {
         id = opened.id
         self.opened = opened
         self.lists = lists
         self.store = store
         self.differ = differ
+        self.client = client
+        do {
+            viewedStates = try store.viewedStates(of: id)
+        } catch {
+            log("Couldn't read the viewed files of \(opened.repository)#\(opened.number): \(error)")
+        }
     }
 
     /// As of the lists' last refresh.
@@ -55,8 +70,8 @@ public final class PullRequestTab: Identifiable {
         return now.hasSameActivity(as: seen) ? nil : .updated
     }
 
-    /// Produces the diff, unless it has already been asked for. Returns once it's ready or has
-    /// failed.
+    /// Produces the diff and asks GitHub which files are viewed, unless already asked. Returns
+    /// once the diff is ready or has failed.
     public func load() async {
         if let loading {
             await loading.value
@@ -66,7 +81,9 @@ public final class PullRequestTab: Identifiable {
         let pullRequest = pullRequest
         seen = pullRequest
         let task = Task {
+            async let viewed: Void = refreshViewedStates()
             await produce(pullRequest)
+            await viewed
             loading = nil
         }
         loading = task
@@ -86,7 +103,7 @@ public final class PullRequestTab: Identifiable {
             try await lists.checkForChanges(to: [id])
         } catch {
             // The stored PR is diffed instead; it's what prompted the reload.
-            FileHandle.standardError.write(Data("Couldn't check \(title) for changes: \(error)\n".utf8))
+            log("Couldn't check \(title) for changes: \(error)")
         }
         await retry()
     }
@@ -101,6 +118,86 @@ public final class PullRequestTab: Identifiable {
     public func locateCheckout(at directory: URL) async throws {
         try await lists.locateCheckout(for: pullRequest.repository, at: directory)
         await retry()
+    }
+
+    /// Not viewed unless GitHub or the viewer has said so.
+    public func viewedState(of path: String) -> FileViewedState {
+        viewedStates[path] ?? .unviewed
+    }
+
+    /// Whether every file in the diff is viewed as it is now.
+    public var allFilesViewed: Bool {
+        guard case let .ready(review) = phase, !review.files.isEmpty else { return false }
+        return review.files.allSatisfy { viewedState(of: $0.path).isViewed }
+    }
+
+    /// Marks the file viewed or not on GitHub. The change shows at once, and is put back if
+    /// GitHub refuses it.
+    public func setViewed(_ viewed: Bool, path: String) async {
+        let previous = viewedState(of: path)
+        let wanted: FileViewedState = viewed ? .viewed : .unviewed
+        guard previous != wanted else { return }
+        viewedStates[path] = wanted
+        settingViewed[path, default: 0] += 1
+        defer { settingViewed[path] = settingViewed[path].flatMap { $0 > 1 ? $0 - 1 : nil } }
+        do {
+            try await client.setFileViewed(viewed, path: path, pullRequestId: id)
+            viewedStateError = nil
+        } catch {
+            // Unless changed again since, in which case that change decides.
+            if viewedStates[path] == wanted { viewedStates[path] = previous }
+            viewedStateError = "Couldn't mark \(path) as \(viewed ? "viewed" : "not viewed"): \(error.localizedDescription)"
+            return
+        }
+        do {
+            try await store.saveViewedState(wanted, of: path, in: id)
+        } catch {
+            log("Couldn't store the viewed state of \(path): \(error)")
+        }
+    }
+
+    public func toggleViewed(path: String) async {
+        await setViewed(!viewedState(of: path).isViewed, path: path)
+    }
+
+    /// Marks the shown file viewed and shows the next one not viewed, after it in the list or
+    /// else from the top. With none left, the file stays shown.
+    public func markViewedAndAdvance() async {
+        guard let current = selectedFile else { return }
+        if let next = nextUnviewedFile(after: current) {
+            selectedFile = next
+        }
+        await setViewed(true, path: current)
+    }
+
+    /// The first file after `id` in the list that isn't viewed as it is now, wrapping round to
+    /// the top; never `id` itself.
+    public func nextUnviewedFile(after id: FileDiff.ID) -> FileDiff.ID? {
+        guard case let .ready(review) = phase else { return nil }
+        let files = review.files.map(\.id)
+        let start = files.firstIndex(of: id).map { $0 + 1 } ?? 0
+        return (files[start...] + files[..<start]).first { $0 != id && !viewedState(of: $0).isViewed }
+    }
+
+    /// Takes the viewed states from GitHub, keeping any change of the viewer's still on its way.
+    private func refreshViewedStates() async {
+        let fetched: [String: FileViewedState]
+        do {
+            fetched = try await client.viewedStates(ofPullRequest: id)
+        } catch {
+            log("Couldn't get the viewed files of \(title): \(error.localizedDescription)")
+            return
+        }
+        var states = fetched
+        for path in settingViewed.keys {
+            states[path] = viewedStates[path]
+        }
+        viewedStates = states
+        do {
+            try await store.replaceViewedStates(of: id, with: states)
+        } catch {
+            log("Couldn't store the viewed files of \(title): \(error)")
+        }
     }
 
     private func produce(_ pullRequest: PullRequestSummary) async {
@@ -169,4 +266,8 @@ private extension PullRequestSummary {
         return updatedAt == earlier.updatedAt && state == earlier.state && reviewDecision == earlier.reviewDecision
             && same(\.commitCount) && same(\.commentCount) && same(\.reviewThreadCount)
     }
+}
+
+private func log(_ message: String) {
+    FileHandle.standardError.write(Data("\(message)\n".utf8))
 }

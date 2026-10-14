@@ -68,6 +68,29 @@ public struct GitHubClient: Sendable {
         return pullRequests
     }
 
+    /// The viewer's viewed state of every file in the PR with `id`, keyed by path. GitHub lists
+    /// vendored files too, so the pages are followed to the end.
+    public func viewedStates(ofPullRequest id: String) async throws -> [String: FileViewedState] {
+        var states: [String: FileViewedState] = [:]
+        var cursor: String?
+        repeat {
+            let variables = FilesVariables(id: id, first: Self.pageSize, after: cursor)
+            let response: FilesResponse = try await query(Self.viewedStatesQuery, variables: variables)
+            guard let files = response.node?.files else { throw GitHubError.graphQL(["Pull request \(id) not found"]) }
+            for file in files.nodes {
+                states[file.path] = file.viewerViewedState
+            }
+            cursor = files.pageInfo.hasNextPage ? files.pageInfo.endCursor : nil
+        } while cursor != nil
+        return states
+    }
+
+    /// Marks the file at `path` as viewed, or no longer viewed, as github.com's checkbox does.
+    public func setFileViewed(_ viewed: Bool, path: String, pullRequestId: String) async throws {
+        let mutation = viewed ? Self.markFileAsViewedMutation : Self.unmarkFileAsViewedMutation
+        let _: IgnoredResponse = try await query(mutation, variables: FileVariables(pullRequestId: pullRequestId, path: path))
+    }
+
     private func query<Response: Decodable>(
         _ query: String,
         variables: some Encodable & Sendable,
@@ -151,6 +174,31 @@ public struct GitHubClient: Sendable {
         }
         """ + pullRequestRowFragment
 
+    static let viewedStatesQuery = """
+        query($id: ID!, $first: Int!, $after: String) {
+          node(id: $id) {
+            ... on PullRequest {
+              files(first: $first, after: $after) {
+                pageInfo { hasNextPage endCursor }
+                nodes { path viewerViewedState }
+              }
+            }
+          }
+        }
+        """
+
+    static let markFileAsViewedMutation = """
+        mutation($pullRequestId: ID!, $path: String!) {
+          markFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path }) { pullRequest { id } }
+        }
+        """
+
+    static let unmarkFileAsViewedMutation = """
+        mutation($pullRequestId: ID!, $path: String!) {
+          unmarkFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path }) { pullRequest { id } }
+        }
+        """
+
     static let pullRequestRowFragment = """
 
         fragment PullRequestRow on PullRequest {
@@ -216,6 +264,43 @@ private struct NoVariables: Encodable, Sendable {}
 private struct NodesVariables: Encodable, Sendable {
     let ids: [String]
 }
+
+private struct FilesVariables: Encodable, Sendable {
+    let id: String
+    let first: Int
+    let after: String?
+}
+
+private struct FileVariables: Encodable, Sendable {
+    let pullRequestId: String
+    let path: String
+}
+
+private struct FilesResponse: Decodable {
+    let node: Node?
+
+    struct Node: Decodable {
+        let files: Files?
+    }
+
+    struct Files: Decodable {
+        let pageInfo: PageInfo
+        let nodes: [File]
+    }
+
+    struct PageInfo: Decodable {
+        let hasNextPage: Bool
+        let endCursor: String?
+    }
+
+    struct File: Decodable {
+        let path: String
+        let viewerViewedState: FileViewedState
+    }
+}
+
+/// For a mutation whose payload isn't needed; its errors still come through the envelope.
+private struct IgnoredResponse: Decodable {}
 
 private struct GraphQLEnvelope<Payload: Decodable>: Decodable {
     let data: Payload?
