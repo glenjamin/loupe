@@ -1,0 +1,12 @@
+query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      title body author { login } baseRefName baseRefOid headRefOid mergeable
+      commits(last:1){ nodes { commit { oid statusCheckRollup { state contexts(first:50){ nodes { __typename ... on CheckRun { name conclusion status detailsUrl } ... on StatusContext { context state targetUrl } } } } } } }
+      files(first:100){ totalCount nodes { path additions deletions changeType viewerViewedState } }
+      reviewThreads(first:50){ nodes { isResolved isOutdated path line startLine diffSide originalLine comments(first:10){ nodes { author{login} body diffHunk createdAt } } } }
+      reviews(first:20){ nodes { author{login} state body submittedAt } }
+      comments(first:20){ nodes { author{login} body createdAt } }
+    }
+  }
+}

@@ -1,0 +1,1 @@
+query { search(query:"is:pr is:open review-requested:@me", type:ISSUE, first:20) { issueCount nodes { ... on PullRequest { number title url isDraft author{login} repository{nameWithOwner} updatedAt reviewDecision } } } }
