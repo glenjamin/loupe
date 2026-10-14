@@ -28,6 +28,7 @@ struct PullRequestView: View {
         // Showing the tab produces the diff if it isn't already in memory. Changes on GitHub
         // after that are offered by the banner rather than replacing what's being read.
         .task { await tab.load() }
+        .background(WindowReader { ReviewWindows.shared.register(tab, for: $0) })
     }
 
     @ViewBuilder
@@ -52,7 +53,7 @@ struct PullRequestView: View {
         case .diffing:
             ProgressView("Diffing…")
         case let .ready(diff):
-            FileBrowser(files: diff.files, hiddenCount: diff.hiddenCount, selection: $tab.selectedFile)
+            FileBrowser(tab: tab, files: diff.files, hiddenCount: diff.hiddenCount)
                 // A new head can change a file under the same path.
                 .id(diff.headOid)
         case let .failed(message):
@@ -139,17 +140,19 @@ struct PendingChangeBanner: View {
 
 /// The changed files beside the selected file's diff.
 struct FileBrowser: View {
+    @Bindable var tab: PullRequestTab
     let files: [FileDiff]
     let hiddenCount: Int
-    @Binding var selection: FileDiff.ID?
+    /// Says so for a moment when the last file not viewed is marked viewed.
+    @State private var showsAllViewed = false
 
     var body: some View {
         HSplitView {
-            FileList(files: files, hiddenCount: hiddenCount, selection: $selection)
+            ReviewFileList(tab: tab, files: files, hiddenCount: hiddenCount)
                 .frame(minWidth: 200, idealWidth: 300, maxWidth: 500)
             Group {
-                if let file = files.first(where: { $0.id == selection }) {
-                    DiffView(file: file) { anchor in print("clicked \(anchor)") }
+                if let file = files.first(where: { $0.id == tab.selectedFile }) {
+                    DiffView(file: file, onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file))
                 } else {
                     Text(files.isEmpty ? "No changes to review" : "No file selected")
                         .foregroundStyle(.secondary)
@@ -157,7 +160,114 @@ struct FileBrowser: View {
                 }
             }
             .frame(minWidth: 400)
+            .overlay(alignment: .bottom) {
+                if showsAllViewed {
+                    Label("All files viewed", systemImage: "checkmark.circle.fill")
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.bottom, 24)
+                        .transition(.opacity)
+                }
+            }
         }
+        .onChange(of: tab.allFilesViewed) { _, allViewed in
+            withAnimation { showsAllViewed = allViewed }
+        }
+        .task(id: showsAllViewed) {
+            guard showsAllViewed, (try? await Task.sleep(for: .seconds(2))) != nil else { return }
+            withAnimation { showsAllViewed = false }
+        }
+    }
+
+    private func review(of file: FileDiff) -> FileReview {
+        let isViewed = tab.viewedState(of: file.path).isViewed
+        let label = if tab.nextUnviewedFile(after: file.id) != nil {
+            isViewed ? "Next file not viewed" : "Mark viewed · next file"
+        } else {
+            isViewed ? "All files viewed" : "Mark viewed · last file"
+        }
+        return FileReview(
+            isViewed: isViewed,
+            toggleViewed: { Task { await tab.toggleViewed(path: file.path) } },
+            advanceLabel: label,
+            markViewedAndAdvance: { Task { await tab.markViewedAndAdvance() } }
+        )
+    }
+}
+
+/// The files to review, each with its viewed state, and a count of those hidden as vendored,
+/// lockfiles or generated.
+struct ReviewFileList: View {
+    @Bindable var tab: PullRequestTab
+    let files: [FileDiff]
+    let hiddenCount: Int
+
+    var body: some View {
+        List(files, selection: $tab.selectedFile) { file in
+            ReviewFileRow(file: file, state: tab.viewedState(of: file.path)) {
+                Task { await tab.toggleViewed(path: file.path) }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(alignment: .leading, spacing: 4) {
+                if let error = tab.viewedStateError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.diffDanger)
+                        .lineLimit(2)
+                        .help(error)
+                }
+                Text("\(viewedCount) of \(files.count) viewed · \(hiddenCount) vendored, lockfile or generated hidden")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+        }
+    }
+
+    private var viewedCount: Int {
+        files.count { tab.viewedState(of: $0.path).isViewed }
+    }
+}
+
+/// A file in the list: checked and dimmed once viewed, flagged when it has changed since, and
+/// with a checkbox on hover to mark it either way.
+struct ReviewFileRow: View {
+    let file: FileDiff
+    let state: FileViewedState
+    let toggle: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Group {
+                if hovering {
+                    Toggle("Viewed", isOn: Binding(get: { state.isViewed }, set: { _ in toggle() }))
+                        .toggleStyle(.checkbox)
+                        .labelsHidden()
+                        .help(state.isViewed ? "Mark not viewed (⇧V)" : "Mark viewed (⇧V)")
+                } else if state.isViewed {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.diffSuccess)
+                }
+            }
+            .frame(width: 14)
+            FileRow(file: file)
+                .opacity(state.isViewed ? 0.5 : 1)
+            if state == .dismissed {
+                Spacer(minLength: 0)
+                Text("changed")
+                    .font(.caption2)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .foregroundStyle(.secondary)
+                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.5)))
+                    .help("Changed since you viewed it")
+            }
+        }
+        .onHover { hovering = $0 }
     }
 }
 
