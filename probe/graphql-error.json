@@ -1,0 +1,1 @@
+{"errors":[{"path":["query","viewer","nonexistentField"],"extensions":{"code":"undefinedField","typeName":"User","fieldName":"nonexistentField"},"locations":[{"line":1,"column":18}],"message":"Field 'nonexistentField' doesn't exist on type 'User'"}]}

@@ -6,6 +6,7 @@ Raw responses, captured 2026-10-14 with `gh api graphql`:
 - `inbox-query.graphql` → `inbox.json` (`is:pr is:open review-requested:@me`); `inbox-variants.json` compares counts with `user-review-requested:@me` and `draft:false`.
 - `threads-marmot-last60.json`: review threads across marmot's last 60 PRs, to find outdated and multi-line comments.
 - `mergeable.json`: `mergeable` on an open vs a merged PR.
+- `pr-list-query.graphql` → `pr-list.json`: the start screen's two searches (`author:@me` and `review-requested:@me`) in one request, with CI rollup and branch names. `graphql-error.json` is a real GraphQL error response (a bad field). Both are test fixtures.
 
 ## Surprises and shapes
 
@@ -26,6 +27,8 @@ Raw responses, captured 2026-10-14 with `gh api graphql`:
 **PR conversation comments are mostly bots.** marmot#14569's three top-level `comments` were from shortcut-integration and codecov. Worth collapsing bot authors by default. Review bodies are often empty (`APPROVED` with `body: ""`).
 
 **Inbox search.** 13 results, some old (atrium#2202). `review-requested:@me` and `user-review-requested:@me` both returned 13, so all were direct requests here; team requests would only show up in the former. `search` needs `... on PullRequest` fragments; `reviewDecision` and `isDraft` are available inline, so the inbox needs one query.
+
+**PR list search.** Search returns best-match order unless the query string includes `sort:updated-desc`; with it, truncation at `first: 50` drops the oldest PRs (the author search had 110 results). `reviewDecision` is `null` when the base branch doesn't require reviews, and `commits(last:1).commit.statusCheckRollup` is `null` when the head commit has no statuses or checks.
 
 ## Diff fixture and vendor exclusion
 

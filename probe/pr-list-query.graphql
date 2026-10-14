@@ -1,0 +1,18 @@
+query {
+  mine: search(query: "is:pr is:open author:@me sort:updated-desc", type: ISSUE, first: 50) { issueCount nodes { ...PullRequestRow } }
+  toReview: search(query: "is:pr is:open review-requested:@me sort:updated-desc", type: ISSUE, first: 50) { issueCount nodes { ...PullRequestRow } }
+}
+
+fragment PullRequestRow on PullRequest {
+  number
+  title
+  url
+  isDraft
+  updatedAt
+  reviewDecision
+  headRefName
+  baseRefName
+  author { login }
+  repository { nameWithOwner }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+}
