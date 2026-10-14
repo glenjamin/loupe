@@ -170,7 +170,6 @@ struct PullRequestRow: View {
         .padding(.vertical, 3)
         .opacity(pullRequest.state == .open ? 1 : 0.55)
         .contentShape(Rectangle())
-        .help("\(pullRequest.headRefName) → \(pullRequest.baseRefName)\n\(pullRequest.url.absoluteString)")
     }
 
     private var owner: String {
