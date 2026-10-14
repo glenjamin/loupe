@@ -90,7 +90,12 @@ struct PullRequestRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
+            // The repo and number lead, as that's how PRs get talked about; the owner is
+            // secondary and is the first thing to truncate in a narrow column.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("\(repositoryName) #\(pullRequest.number)")
+                    .font(.headline.monospacedDigit())
+                    .layoutPriority(1)
                 if pullRequest.isDraft {
                     Text("Draft")
                         .font(.caption2.weight(.semibold))
@@ -98,10 +103,13 @@ struct PullRequestRow: View {
                         .padding(.vertical, 1)
                         .background(.quaternary, in: Capsule())
                 }
-                Text(pullRequest.title).lineLimit(2)
+                Text(owner)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+            .lineLimit(1)
+            Text(pullRequest.title).lineLimit(2)
             HStack(spacing: 8) {
-                Text("\(pullRequest.repository)#\(pullRequest.number)")
                 if showsAuthor, let author = pullRequest.author {
                     Text(author)
                 }
@@ -121,6 +129,14 @@ struct PullRequestRow: View {
         .padding(.vertical, 3)
         .contentShape(Rectangle())
         .help("\(pullRequest.headRefName) → \(pullRequest.baseRefName)\n\(pullRequest.url.absoluteString)")
+    }
+
+    private var owner: String {
+        pullRequest.repository.split(separator: "/").first.map(String.init) ?? ""
+    }
+
+    private var repositoryName: String {
+        pullRequest.repository.split(separator: "/").last.map(String.init) ?? pullRequest.repository
     }
 }
 
