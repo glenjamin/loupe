@@ -17,6 +17,9 @@ class GitHubWebPage: NSObject {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         webView = WKWebView(frame: .zero, configuration: configuration)
+        // GitHub's light theme whatever the system appearance: WebKit takes the page's
+        // `prefers-color-scheme` from the view's appearance, and GitHub's HTML has dark variants.
+        webView.appearance = NSAppearance(named: .aqua)
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self

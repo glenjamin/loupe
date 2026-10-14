@@ -1,5 +1,5 @@
 /* The conversation tab: GitHub-like cards around GitHub's own rendered HTML. Colours are
-   Primer's, light and dark. */
+   Primer's light theme whatever the system appearance, as the user prefers reading it. */
 
 :root {
   --fg: #1f2328;
@@ -22,28 +22,6 @@
   --code-bg: #818b981f;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --fg: #f0f6fc;
-    --muted: #9198a1;
-    --bg: #0d1117;
-    --subtle: #151b23;
-    --border: #3d444d;
-    --border-muted: #3d444db3;
-    --link: #4493f8;
-    --success: #3fb950;
-    --success-bg: #2ea04326;
-    --danger: #f85149;
-    --danger-bg: #f8514926;
-    --attention: #d29922;
-    --attention-bg: #bb800926;
-    --done: #ab7df8;
-    --neutral-bg: #212830;
-    --add-bg: #2ea04326;
-    --del-bg: #f8514926;
-    --code-bg: #656c7633;
-  }
-}
 
 * { box-sizing: border-box; }
 
@@ -266,12 +244,3 @@ time { color: var(--muted); }
 .pl-v, .pl-smw { color: #953800; }
 .pl-mi1 { color: #116329; background: var(--add-bg); }
 .pl-md { color: #82071e; background: var(--del-bg); }
-@media (prefers-color-scheme: dark) {
-  .pl-c1, .pl-s .pl-v, .pl-ent { color: #79c0ff; }
-  .pl-e, .pl-en { color: #d2a8ff; }
-  .pl-k { color: #ff7b72; }
-  .pl-s, .pl-pds, .pl-sr { color: #a5d6ff; }
-  .pl-v, .pl-smw { color: #ffa657; }
-  .pl-mi1 { color: #aff5b4; }
-  .pl-md { color: #ffdcd7; }
-}
