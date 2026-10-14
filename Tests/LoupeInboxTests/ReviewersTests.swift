@@ -52,13 +52,14 @@ struct ReviewersTests {
         let tab = try #require(app.tabs.tab(id: pullRequest.id))
         await tab.load()
 
-        let people = try await tab.reviewerCandidates(matching: "it")
-        // GitHub matches names too, and the author can't review their own PR.
+        let people = try await candidates(of: tab, matching: "it")
+        // Names match too, and the author can't review their own PR.
         #expect(people.map(\.login) == ["kit-vance"])
+        #expect(try await candidates(of: tab, matching: "glen").isEmpty)
         let kit = try #require(people.first { $0.login == "kit-vance" })
         await tab.requestReview(from: kit)
 
-        let devs = try #require(try await tab.reviewerCandidates(matching: "dev").first)
+        let devs = try #require(try await candidates(of: tab, matching: "dev").first)
         #expect(devs.kind == .team)
         #expect(devs.displayName == "Devs")
         await tab.requestReview(from: devs)
@@ -72,7 +73,7 @@ struct ReviewersTests {
         #expect(reviewers.allSatisfy { $0.state == .requested })
         #expect(tab.reviewRequestError == nil)
         #expect(try app.store.conversation(of: pullRequest.id)?.reviewRequests.map(\.login) == ["pat-barrow", "kit-vance", "tamarinworks/devs"])
-        #expect(try await tab.reviewerCandidates(matching: "vance").isEmpty, "those already asked aren't offered")
+        #expect(try await candidates(of: tab, matching: "vance").isEmpty, "those already asked aren't offered")
     }
 
     @Test func askingSomeoneWhoHasReviewedAsksThemAgain() async throws {
@@ -111,7 +112,7 @@ struct ReviewersTests {
         #expect(try app.store.conversation(of: pullRequest.id)?.reviewRequests.map(\.login) == ["pat-barrow"])
 
         // The next request clears it.
-        let kit = try #require(try await tab.reviewerCandidates(matching: "vance").first)
+        let kit = try #require(try await candidates(of: tab, matching: "vance").first)
         await tab.requestReview(from: kit)
         #expect(tab.reviewRequestError == nil)
     }
@@ -124,9 +125,67 @@ struct ReviewersTests {
         app.tabs.open(pullRequest)
         let tab = try #require(app.tabs.tab(id: pullRequest.id))
 
-        let candidates = try await tab.reviewerCandidates(matching: "")
+        let candidates = try await candidates(of: tab, matching: "")
         #expect(!candidates.isEmpty)
         #expect(candidates.allSatisfy { $0.kind == .user })
+
+        // The people found are kept all the same.
+        let asked = await app.conversations.candidatePagesAskedFor
+        try await tab.fetchReviewerCandidates()
+        #expect(await app.conversations.candidatePagesAskedFor == asked)
+    }
+
+    @Test func everyoneWhoCouldReviewIsFetchedOnceARepoAndFilteredAsTyped() async throws {
+        let app = try await ConversationApp()
+        // The probe's six people and three teams then take three pages and two.
+        await app.conversations.limitCandidatePages(to: 2)
+        let sameRepo = try #require(Dictionary(grouping: app.mine, by: \.repository).values.first { $0.count >= 2 })
+        let otherRepo = try #require(app.mine.first { $0.repository != sameRepo[0].repository })
+        var tabs: [PullRequestTab] = []
+        for pullRequest in [sameRepo[0], sameRepo[1], otherRepo] {
+            try await app.conversations.add(pullRequest.id)
+            app.tabs.open(pullRequest)
+            tabs.append(try #require(app.tabs.tab(id: pullRequest.id)))
+        }
+        #expect(tabs[0].reviewerCandidates(matching: "") == nil, "none until fetched")
+
+        // Opening the popover twice before GitHub answers asks it once.
+        let first = tabs[0]
+        async let opening: Void = first.fetchReviewerCandidates()
+        async let reopening: Void = first.fetchReviewerCandidates()
+        _ = try await (opening, reopening)
+        #expect(await app.conversations.candidatePagesAskedFor == 5)
+        #expect(tabs[0].reviewerCandidates(matching: "")?.map(\.login) == [
+            "pat-barrow", "kit-vance", "jules-hollis", "tam-fairweather", "eharcourt",
+            "tamarinworks/devs", "tamarinworks/on-call", "tamarinworks/package-update-reviewers",
+        ], "everyone but the author, people first")
+        #expect(tabs[0].reviewerCandidates(matching: "HOLLIS")?.map(\.login) == ["jules-hollis"], "by name, ignoring case")
+        #expect(tabs[0].reviewerCandidates(matching: "on call")?.map(\.login) == ["tamarinworks/on-call"], "by team name")
+        #expect(tabs[0].reviewerCandidates(matching: "on-call")?.map(\.login) == ["tamarinworks/on-call"], "by team slug")
+        #expect(tabs[0].reviewerCandidates(matching: "nobody")?.isEmpty == true)
+
+        // Another PR in the same repo shares them; one in another repo fetches its own.
+        try await tabs[1].fetchReviewerCandidates()
+        #expect(await app.conversations.candidatePagesAskedFor == 5)
+        #expect(tabs[1].reviewerCandidates(matching: "it")?.map(\.login) == ["kit-vance"])
+        #expect(tabs[2].reviewerCandidates(matching: "") == nil)
+        try await tabs[2].fetchReviewerCandidates()
+        #expect(await app.conversations.candidatePagesAskedFor == 10)
+    }
+
+    @Test func aFailedFetchIsTriedAgainOnTheNextOpening() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = app.mine[0]
+        try await app.conversations.add(pullRequest.id)
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+
+        await app.conversations.fail()
+        await #expect(throws: GitHubError.http(status: 502, message: nil)) { try await tab.fetchReviewerCandidates() }
+        #expect(tab.reviewerCandidates(matching: "") == nil)
+
+        await app.conversations.recover()
+        #expect(try await candidates(of: tab, matching: "vance").map(\.login) == ["kit-vance"])
     }
 
     @Test func someoneElsesPullRequestShowsNoReviewers() async throws {
@@ -140,4 +199,11 @@ struct ReviewersTests {
         #expect(tab.conversation?.reviewRequests.map(\.login) == ["pat-barrow"])
         #expect(tab.reviewers == nil, "the place is kept for the viewer's own review")
     }
+}
+
+/// Who `tab` offers to ask for a review when `text` is typed, once the popover's fetch is done.
+@MainActor
+private func candidates(of tab: PullRequestTab, matching text: String) async throws -> [Reviewer] {
+    try await tab.fetchReviewerCandidates()
+    return try #require(tab.reviewerCandidates(matching: text))
 }

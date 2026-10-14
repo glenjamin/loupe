@@ -2,19 +2,25 @@ import Foundation
 import LoupeModel
 
 extension GitHubClient {
-    /// Who can be asked to review a PR in `repository` (`owner/name`) matching `text`: the
-    /// people who can be assigned there, then, for an organisation's repo, its teams. Teams the
-    /// token can't read are left out rather than failing the search.
-    public func reviewerCandidates(in repository: String, matching text: String) async throws -> [Reviewer] {
+    /// Everyone who can be asked to review a PR in `repository` (`owner/name`): the people who
+    /// can be assigned there, then, for an organisation's repo, its teams, each followed to their
+    /// last page. Teams the token isn't allowed to read are left out rather than failing.
+    public func reviewerCandidates(in repository: String) async throws -> [Reviewer] {
         let parts = repository.split(separator: "/", maxSplits: 1).map(String.init)
         guard parts.count == 2 else { throw GitHubError.graphQL(["Not a repository: \(repository)"]) }
-        let variables = CandidateVariables(owner: parts[0], name: parts[1], text: text)
-        async let teams = try? await teams(variables)
-        let response: AssignableUsersResponse = try await query(Self.assignableUsersQuery, variables: variables)
-        let users = response.repository?.assignableUsers.nodes.map {
-            Reviewer(kind: .user, nodeId: $0.id, login: $0.login, name: $0.name, avatarURL: $0.avatarUrl)
-        }
-        return (users ?? []) + (await teams ?? [])
+        async let teams = teams(owner: parts[0], name: parts[1])
+        var users: [Reviewer] = []
+        var cursor: String?
+        repeat {
+            let variables = CandidateVariables(owner: parts[0], name: parts[1], first: Self.pageSize, after: cursor)
+            let response: AssignableUsersResponse = try await query(Self.assignableUsersQuery, variables: variables)
+            guard let page = response.repository?.assignableUsers else { break }
+            users += page.nodes.map {
+                Reviewer(kind: .user, nodeId: $0.id, login: $0.login, name: $0.name, avatarURL: $0.avatarUrl)
+            }
+            cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : nil
+        } while cursor != nil
+        return try await users + teams
     }
 
     /// Asks `reviewers` to review the PR with `pullRequestId`, adding to those already asked.
@@ -27,25 +33,50 @@ extension GitHubClient {
         let _: RequestReviewsResponse = try await query(Self.requestReviewsMutation, variables: RequestReviewsVariables(input: input))
     }
 
-    private func teams(_ variables: CandidateVariables) async throws -> [Reviewer] {
-        let response: TeamsResponse = try await query(Self.teamsQuery, variables: variables)
-        return response.repository?.owner.teams?.nodes.map {
-            Reviewer(kind: .team, nodeId: $0.id, login: $0.combinedSlug, name: $0.name)
-        } ?? []
+    /// A refusal to read teams comes as a GraphQL error and means none can be offered; any other
+    /// failure fails the whole fetch, so it's tried again rather than taken as no teams.
+    private func teams(owner: String, name: String) async throws -> [Reviewer] {
+        var teams: [Reviewer] = []
+        var cursor: String?
+        repeat {
+            let variables = CandidateVariables(owner: owner, name: name, first: Self.pageSize, after: cursor)
+            let response: TeamsResponse
+            do {
+                response = try await query(Self.teamsQuery, variables: variables)
+            } catch GitHubError.graphQL {
+                return []
+            }
+            guard let page = response.repository?.owner.teams else { break }
+            teams += page.nodes.map {
+                Reviewer(kind: .team, nodeId: $0.id, login: $0.combinedSlug, name: $0.name)
+            }
+            cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : nil
+        } while cursor != nil
+        return teams
     }
 
     static let assignableUsersQuery = """
-        query($owner: String!, $name: String!, $text: String!) {
+        query($owner: String!, $name: String!, $first: Int!, $after: String) {
           repository(owner: $owner, name: $name) {
-            assignableUsers(first: 30, query: $text) { nodes { id login name avatarUrl } }
+            assignableUsers(first: $first, after: $after) {
+              pageInfo { hasNextPage endCursor }
+              nodes { id login name avatarUrl }
+            }
           }
         }
         """
 
     static let teamsQuery = """
-        query($owner: String!, $name: String!, $text: String!) {
+        query($owner: String!, $name: String!, $first: Int!, $after: String) {
           repository(owner: $owner, name: $name) {
-            owner { ... on Organization { teams(first: 20, query: $text) { nodes { id name combinedSlug } } } }
+            owner {
+              ... on Organization {
+                teams(first: $first, after: $after) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes { id name combinedSlug }
+                }
+              }
+            }
           }
         }
         """
@@ -60,7 +91,8 @@ extension GitHubClient {
 private struct CandidateVariables: Encodable, Sendable {
     let owner: String
     let name: String
-    let text: String
+    let first: Int
+    let after: String?
 }
 
 private struct AssignableUsersResponse: Decodable {
@@ -71,6 +103,7 @@ private struct AssignableUsersResponse: Decodable {
     }
 
     struct Connection: Decodable {
+        let pageInfo: PageInfo
         let nodes: [User]
     }
 
@@ -95,6 +128,7 @@ private struct TeamsResponse: Decodable {
     }
 
     struct Connection: Decodable {
+        let pageInfo: PageInfo
         let nodes: [Team]
     }
 
@@ -103,6 +137,11 @@ private struct TeamsResponse: Decodable {
         let name: String
         let combinedSlug: String
     }
+}
+
+private struct PageInfo: Decodable {
+    let hasNextPage: Bool
+    let endCursor: String?
 }
 
 private struct RequestReviewsVariables: Encodable, Sendable {

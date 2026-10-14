@@ -217,6 +217,10 @@ The author wanted a way to mark their own PR as ready for others to review, and 
 
 It's knowledge only Loupe has, derived from GitHub's viewed state plus the local diff: which files are to review comes from the diff, so producing a PR's diff records its reviewable paths beside its head commit, replaced with each diff. The badge needs that head to be the PR's current head, so a push clears it until the new diff is produced and its files reviewed. The lists show it from the store with no network, so a PR never opened in Loupe shows nothing; the header follows the viewer's marks as they're made. It does nothing on GitHub: no draft to ready, no label, no review request. Whether it should is left for later.
 
+### Who could review is fetched once a run per repo, and filtered as you type
+
+Searching GitHub (`assignableUsers(query:)` and the org's teams) after each pause in typing made every search in the request-a-review popover wait on two round trips. Instead a repo's assignable people and its org's teams are fetched once a run, all pages of 100, kept in memory by `owner/name` and shared by every tab, and the popover filters them locally on login and name, ignoring case, as each key is typed. The repos I review have about 16 to 21 assignable people and the org 8 teams, so it's one page of each. Opening the reviewers on one's own PR starts the fetch, so the popover usually opens full; a fetch already on its way is shared, and one that fails isn't kept, so opening the popover again retries. A refusal to read teams still leaves them out quietly and the people are kept; any other failure fails the fetch rather than being taken as no teams. They're not stored, so someone joining a repo shows up on the next launch.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

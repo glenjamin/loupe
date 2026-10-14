@@ -23,6 +23,8 @@ public final class TabsModel {
     private let store: PullRequestStore
     private let differ: PullRequestDiffer
     private let client: GitHubClient
+    /// Who could review in each repo, fetched once a run and shared by the tabs.
+    private let candidates: ReviewerCandidates
     private let notifications: GitHubNotifications
     private let fallbackInterval: Duration
     /// From the last notifications poll that found changes, to ask only for newer ones.
@@ -42,6 +44,7 @@ public final class TabsModel {
         self.store = store
         self.differ = differ
         self.client = client
+        candidates = ReviewerCandidates(client: client)
         self.notifications = notifications
         self.fallbackInterval = fallbackInterval
         do {
@@ -141,7 +144,7 @@ public final class TabsModel {
     }
 
     private func makeTab(_ pullRequest: PullRequestSummary) -> PullRequestTab {
-        PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ, client: client)
+        PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ, client: client, candidates: candidates)
     }
 
     private func save() {

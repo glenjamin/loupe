@@ -44,6 +44,8 @@ public final class PullRequestTab: Identifiable {
     private let store: PullRequestStore
     private let differ: PullRequestDiffer
     private let client: GitHubClient
+    /// Who could review in each repo, shared with the other tabs.
+    private let candidates: ReviewerCandidates
     /// The signed-in user's login, which decides whether the PR is theirs. Read from the store,
     /// or looked up once and stored if nothing has yet.
     private var viewerLogin: String?
@@ -61,13 +63,14 @@ public final class PullRequestTab: Identifiable {
     /// Each hidden file's diff once asked for, by range and path.
     private var hiddenFileDiffs: [HiddenFileKey: DiffState<FileDiff>] = [:]
 
-    init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer, client: GitHubClient) {
+    init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer, client: GitHubClient, candidates: ReviewerCandidates) {
         id = opened.id
         self.opened = opened
         self.lists = lists
         self.store = store
         self.differ = differ
         self.client = client
+        self.candidates = candidates
         markdown = MarkdownPreviews(client: client, differ: differ)
         do {
             viewedStates = try store.viewedStates(of: id)
@@ -292,13 +295,20 @@ public final class PullRequestTab: Identifiable {
         Conversation.reviewers(of: conversation, author: pullRequest.author, viewer: viewerLogin)
     }
 
-    /// Who could be asked to review, matching `text`: anyone but the author and those already
-    /// asked. Someone who has reviewed is included, as asking again is how a re-review is sought.
-    public func reviewerCandidates(matching text: String) async throws -> [Reviewer] {
+    /// Fetches who could be asked to review in the PR's repo, unless they have been this run.
+    public func fetchReviewerCandidates() async throws {
+        try await candidates.fetch(pullRequest.repository)
+    }
+
+    /// Who could be asked to review, of those fetched, whose login or name contains `text`: anyone
+    /// but the author and those already asked. Someone who has reviewed is included, as asking
+    /// again is how a re-review is sought. Nil until they've been fetched.
+    public func reviewerCandidates(matching text: String) -> [Reviewer]? {
         let asked = Set(conversation?.reviewRequests.map(\.id) ?? [])
         let author = pullRequest.author
-        return try await client.reviewerCandidates(in: pullRequest.repository, matching: text).filter {
+        return candidates.candidates(in: pullRequest.repository)?.filter {
             !asked.contains($0.id) && !($0.kind == .user && $0.login == author)
+                && (text.isEmpty || $0.login.localizedCaseInsensitiveContains(text) || $0.name?.localizedCaseInsensitiveContains(text) == true)
         }
     }
 

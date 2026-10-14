@@ -6,12 +6,13 @@ import Testing
 /// Like GitHub's GraphQL API it pages a PR's timeline with cursors at no more than the page size
 /// asked for, answers a page after the first with the timeline alone, and has no node for a PR it
 /// doesn't know. Its repos' people and teams are those in `probe/reviewer-candidates.json`, which
-/// it searches by login or name; asking them to review adds them to a PR's review requests, and
-/// asking anyone it doesn't know is refused, as GitHub refuses an id it can't resolve. A PR's
-/// description can be asked for alone and replaced with `updatePullRequest`, which renders it
-/// afresh. Tests can add comments and reviews, ask for reviews or edit a description, as people
-/// do on GitHub, hide the teams, as from a token without access to them, refuse edits, as for a
-/// PR the token can't write to, or make every request fail.
+/// it pages with cursors as GitHub does; asking them to review adds them to a PR's review
+/// requests, and asking anyone it doesn't know is refused, as GitHub refuses an id it can't
+/// resolve. A PR's description can be asked for alone and replaced with `updatePullRequest`,
+/// which renders it afresh. Tests can add comments and reviews, ask for reviews or edit a
+/// description, as people do on GitHub, hide the teams, as from a token without access to
+/// them, shrink the pages of people and teams, refuse edits, as for a PR the token can't
+/// write to, or make every request fail.
 actor FakeConversations {
     /// Each PR's conversation, less its timeline, in GitHub's JSON shape.
     private var nodes: [String: [String: Any]] = [:]
@@ -25,6 +26,9 @@ actor FakeConversations {
     private(set) var reviewRequestsReceived: [ReviewRequestInput] = []
     /// The input of every `updatePullRequest` received, in order.
     private(set) var updatesReceived: [UpdateInput] = []
+    /// How many pages of people or teams have been asked for, served or not.
+    private(set) var candidatePagesAskedFor = 0
+    private var candidatePageSize = 100
     private var users: [[String: Any]] = []
     private var teams: [[String: Any]] = []
 
@@ -98,6 +102,9 @@ actor FakeConversations {
 
     func refuseEdits() { editsRefused = true }
 
+    /// Caps the pages of people and teams below what's asked for, so they take several.
+    func limitCandidatePages(to size: Int) { candidatePageSize = size }
+
     func timelineCount(of id: String) -> Int {
         timelines[id]?.count ?? 0
     }
@@ -109,14 +116,15 @@ actor FakeConversations {
         let url = try #require(request.url)
         #expect(url.absoluteString == "https://api.github.com/graphql")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
-        if failing { return (Data(), fakeResponse(url, status: 502)) }
         let data = try #require(request.httpBody)
         let body = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let query = try #require(body["query"] as? String)
         let variables = try #require(body["variables"] as? [String: Any])
+        if query.contains("assignableUsers(") || query.contains("teams(") { candidatePagesAskedFor += 1 }
+        if failing { return (Data(), fakeResponse(url, status: 502)) }
         if query.contains("requestReviews(") { return try requestReviews(variables, url) }
-        if query.contains("assignableUsers(") { return try searchUsers(query, variables, url) }
-        if query.contains("teams(") { return try searchTeams(variables, url) }
+        if query.contains("assignableUsers(") { return try usersPage(variables, url) }
+        if query.contains("teams(") { return try teamsPage(variables, url) }
         if query.contains("updatePullRequest(") { return try updatePullRequest(variables, url) }
         let id = try #require(variables["id"] as? String)
         guard var node = nodes[id], let timeline = timelines[id] else {
@@ -183,19 +191,13 @@ actor FakeConversations {
         return (try JSONSerialization.data(withJSONObject: ["data": ["updatePullRequest": ["pullRequest": ["id": id]]]]), fakeResponse(url, status: 200))
     }
 
-    private func searchUsers(_ query: String, _ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
-        let text = try #require(variables["text"] as? String)
-        let first = try #require(query.firstMatch(of: /assignableUsers\(first: (\d+)/).flatMap { Int($0.1) })
-        #expect(first <= 100, "GitHub's maximum page size")
-        let matching = users.filter { matches(text, $0["login"], $0["name"]) }.prefix(first).map {
-            $0.filter { $0.key != "__typename" }
-        }
-        let repository: [String: Any] = ["assignableUsers": ["nodes": Array(matching)]]
+    private func usersPage(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
+        let page = try self.page(of: users.map { $0.filter { $0.key != "__typename" } }, variables)
+        let repository: [String: Any] = ["assignableUsers": page]
         return (try JSONSerialization.data(withJSONObject: ["data": ["repository": repository]]), fakeResponse(url, status: 200))
     }
 
-    private func searchTeams(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
-        let text = try #require(variables["text"] as? String)
+    private func teamsPage(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
         if teamsHidden {
             let body: [String: Any] = [
                 "data": ["repository": ["owner": ["teams": NSNull()]]],
@@ -203,9 +205,20 @@ actor FakeConversations {
             ]
             return (try JSONSerialization.data(withJSONObject: body), fakeResponse(url, status: 200))
         }
-        let matching = teams.filter { matches(text, $0["name"], $0["combinedSlug"]) }
-        let repository: [String: Any] = ["owner": ["teams": ["nodes": matching]]]
+        let repository: [String: Any] = ["owner": ["teams": try page(of: teams, variables)]]
         return (try JSONSerialization.data(withJSONObject: ["data": ["repository": repository]]), fakeResponse(url, status: 200))
+    }
+
+    /// A connection's page of `nodes`: from the `after` cursor, at most `first` of them.
+    private func page(of nodes: [[String: Any]], _ variables: [String: Any]) throws -> [String: Any] {
+        let first = try #require(variables["first"] as? Int)
+        #expect(first <= 100, "GitHub's maximum page size")
+        let start = try (variables["after"] as? String).map { try #require(Int($0)) } ?? 0
+        let end = min(start + min(first, candidatePageSize), nodes.count)
+        return [
+            "pageInfo": ["hasNextPage": end < nodes.count, "endCursor": end > start ? String(end) as Any : NSNull()],
+            "nodes": Array(nodes[start..<end]),
+        ]
     }
 
     /// GitHub keeps one request per reviewer, so asking again leaves the one there.
@@ -285,10 +298,4 @@ struct FakePullRequestDetails: HTTPTransport {
 
 func fakeResponse(_ url: URL, status: Int) -> HTTPURLResponse {
     HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
-}
-
-/// Whether any of `fields` contains `text`, ignoring case, as GitHub's searches of people and
-/// teams match; empty text matches everyone.
-private func matches(_ text: String, _ fields: Any?...) -> Bool {
-    text.isEmpty || fields.contains { ($0 as? String)?.localizedCaseInsensitiveContains(text) == true }
 }

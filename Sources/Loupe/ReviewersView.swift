@@ -36,6 +36,8 @@ struct ReviewersBlock: View {
         }
         .font(.caption)
         .fixedSize()
+        // Fetched ahead so the popover opens full; it retries and shows any failure itself.
+        .task { try? await tab.fetchReviewerCandidates() }
     }
 
     /// Up to `columns` reviewers a row and `maxRows` rows, the last place going to a count of
@@ -110,62 +112,51 @@ private struct ReviewerRow: View {
     }
 }
 
-/// Searches the people and teams who could review and asks the one chosen, saying here if
-/// GitHub refuses.
+/// Filters the people and teams who could review as the viewer types, and asks the one chosen,
+/// saying here if GitHub refuses.
 private struct RequestReviewPopover: View {
     let tab: PullRequestTab
     @State private var text = ""
-    @State private var candidates: [Reviewer] = []
-    @State private var searchError: String?
-    @State private var isSearching = false
+    @State private var fetchError: String?
 
     var body: some View {
+        let candidates = tab.reviewerCandidates(matching: text)
         VStack(alignment: .leading, spacing: 8) {
             TextField("Search people and teams", text: $text)
                 .textFieldStyle(.roundedBorder)
-            if let error = tab.reviewRequestError ?? searchError {
+            if let error = tab.reviewRequestError ?? fetchError {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.diffDanger)
                     .lineLimit(3)
                     .textSelection(.enabled)
             }
-            if candidates.isEmpty {
-                Text(isSearching ? "Searching…" : "No one found")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+            if let candidates, !candidates.isEmpty {
                 List(candidates) { reviewer in
                     Button {
-                        Task {
-                            await tab.requestReview(from: reviewer)
-                            await search()
-                        }
+                        Task { await tab.requestReview(from: reviewer) }
                     } label: {
                         CandidateRow(reviewer: reviewer)
                     }
                     .buttonStyle(.plain)
                 }
                 .listStyle(.plain)
+            } else {
+                Text(candidates == nil && fetchError == nil ? "Searching…" : "No one found")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .padding(10)
         .frame(width: 280, height: 320)
-        // Waits for typing to pause before searching.
-        .task(id: text) {
-            guard (try? await Task.sleep(for: .milliseconds(250))) != nil else { return }
-            await search()
-        }
-    }
-
-    private func search() async {
-        isSearching = true
-        defer { isSearching = false }
-        do {
-            candidates = try await tab.reviewerCandidates(matching: text)
-            searchError = nil
-        } catch {
-            searchError = "Couldn't search for reviewers: \(error.localizedDescription)"
+        // A no-op once fetched; after a failure, opening the popover again retries.
+        .task {
+            do {
+                try await tab.fetchReviewerCandidates()
+                fetchError = nil
+            } catch {
+                fetchError = "Couldn't find reviewers: \(error.localizedDescription)"
+            }
         }
     }
 }
