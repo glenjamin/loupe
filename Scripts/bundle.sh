@@ -1,11 +1,13 @@
 #!/bin/sh
-# Builds a release Loupe.app under .build, so the Dock and ⌘-Tab show its icon.
-# Rebuilds the bundle from scratch each run.
+# Builds Loupe.app under .build, so the Dock and ⌘-Tab show its icon.
+# Rebuilds the bundle from scratch each run. Debug by default, which is
+# incremental and quick; pass "release" for an optimised build.
 set -eu
 
+config=${1:-debug}
 cd "$(dirname "$0")/.."
-swift build -c release
-bin=$(swift build -c release --show-bin-path)
+swift build -c "$config"
+bin=$(swift build -c "$config" --show-bin-path)
 app=.build/Loupe.app
 
 rm -rf "$app"
