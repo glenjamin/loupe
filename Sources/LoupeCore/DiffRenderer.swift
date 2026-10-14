@@ -103,7 +103,11 @@ public struct RenderedDiff {
             attributed.addAttribute(.diffRowKind, value: row.kind.rawValue, range: full)
             attributed.addAttributes(style.gutter, range: NSRange(location: row.start, length: row.gutter))
             if row.kind == .hunkHeader {
-                attributed.addAttributes(style.hunkHeader, range: NSRange(location: row.start + row.gutter, length: row.length - row.gutter))
+                // The line ranges are muted; the function context after them stays the text colour.
+                let header = (out.substring(with: NSRange(location: row.start + row.gutter, length: row.length - row.gutter)) as NSString)
+                let close = header.range(of: "@@", range: NSRange(location: min(2, header.length), length: max(0, header.length - 2)))
+                let ranges = close.location == NSNotFound ? header.length : NSMaxRange(close)
+                attributed.addAttributes(style.hunkHeader, range: NSRange(location: row.start + row.gutter, length: ranges))
             }
         }
         for range in emphasis {
@@ -190,10 +194,7 @@ private struct Style {
         paragraph.defaultTabInterval = digit * 4
         base = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph, .diffGutterWidth: gutterWidth]
         gutter = [.foregroundColor: NSColor.tertiaryLabelColor, .diffGutter: true]
-        hunkHeader = [
-            .foregroundColor: NSColor.secondaryLabelColor,
-            .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .semibold),
-        ]
+        hunkHeader = [.foregroundColor: NSColor.secondaryLabelColor]
     }
 }
 

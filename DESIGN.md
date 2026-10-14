@@ -103,6 +103,10 @@ The lists window and each PR's window are `NSWindow`s made and tracked by `Windo
 
 Which grammar a path gets, and which paths are hidden as vendored, come from GitHub Linguist's own `languages.yml`, `vendor.yml` and `documentation.yml`, vendored from a tagged release and refreshed by `Scripts/update-linguist.sh`. Linguist is what GitHub uses, so Loupe highlights and hides the same files GitHub does, and picks up new languages and vendoring rules without hand-maintained lists. `.gitattributes` `linguist-*` attributes override it either way, as on GitHub. The YAML is converted to JSON by the script so the app needs no YAML dependency. Linguist's content heuristics aren't run; an ambiguous extension takes the first of its languages that has a grammar.
 
+### The diff view reads like GitHub's
+
+Rows are 12pt on a 20pt line, with the code padded from the edges and its column set by a tab stop after an inline gutter: right-aligned old and new numbers and a `+`/`-` marker, on a darker tint of the row. The gutter stays inline text, tagged so copies strip it, so clicks, find and copying keep working on one string. Hunk headers mute the line ranges and keep the function context in the text colour. Within a run of deletions followed by as many additions, each pair of lines is diffed by token and the changed words are tinted more strongly, as GitHub does; pairs sharing under 30% of their tokens, lines too long to diff cheaply, and changes only to whitespace (gofmt realigning a block) get no emphasis. This happens while building the attributed string, so it's measured with it. Each file sits in a bordered box under a header bar with its path and counts.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
