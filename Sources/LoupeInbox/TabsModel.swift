@@ -5,17 +5,17 @@ import LoupeModel
 import LoupeStore
 import Observation
 
-/// The PRs open in their own windows, which the app groups as native window tabs, and which of
-/// them was frontmost. Both are stored, so the windows come back next launch.
+/// The PRs open as tabs beside the PR lists, and which of them is shown. Both are stored, so the
+/// tabs come back next launch.
 @Observable
 @MainActor
 public final class TabsModel {
     public let lists: PullRequestListModel
     /// In the order they were opened.
     public private(set) var tabs: [PullRequestTab] = []
-    /// Nil when the PR lists were frontmost.
+    /// Nil when the PR lists are shown.
     public private(set) var selected: String?
-    /// Brings the PR's window forward, opening it if it has none; set by the app.
+    /// Shows the PR's tab; set by the app.
     public var show: @MainActor (String) -> Void = { _ in }
     /// How the open PRs learn they've changed on GitHub.
     public private(set) var changeSignal = ChangeSignal.notifications
@@ -68,17 +68,34 @@ public final class TabsModel {
         show(pullRequest.id)
     }
 
-    /// Records which PR is frontmost, or nil for the lists.
+    /// Records which PR is shown, or nil for the lists.
     public func select(_ id: String?) {
         guard id.map({ tab(id: $0) != nil }) ?? true, id != selected else { return }
         selected = id
         save()
     }
 
-    /// Forgets the PR, as its window has closed.
+    /// Shows the item `offset` places along from the shown one, the lists coming before the first
+    /// PR and after the last.
+    public func selectAdjacent(_ offset: Int) {
+        let order = [nil] + tabs.map(\.id)
+        let position = order.firstIndex(of: selected) ?? 0
+        select(order[((position + offset) % order.count + order.count) % order.count])
+    }
+
+    /// Forgets the PR, as its tab has closed. Closing the shown tab shows the one that took its
+    /// place, or the one before it when it was last, as browsers do.
     public func close(_ id: String) {
-        tabs.removeAll { $0.id == id }
-        if selected == id { selected = nil }
+        guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs.remove(at: index)
+        if selected == id { selected = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id }
+        save()
+    }
+
+    /// Forgets every open PR, leaving the lists shown.
+    public func closeAll() {
+        tabs = []
+        selected = nil
         save()
     }
 

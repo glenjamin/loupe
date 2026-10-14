@@ -19,23 +19,70 @@ struct TabsTests {
         app.tabs.lists.open(first)
         #expect(app.tabs.tabs.map(\.id) == [first.id, second.id], "not opened twice")
         #expect(app.tabs.selected == first.id)
-        #expect(app.shown == [first.id, second.id, first.id], "its window is brought forward each time")
+        #expect(app.shown == [first.id, second.id, first.id], "its tab is shown each time")
         #expect(app.tabs.tab(id: first.id)?.title == "\(first.repository.split(separator: "/").last!) #\(first.number)")
     }
 
-    @Test func closingAPullRequestsWindowForgetsItForNextLaunch() async throws {
+    @Test func closingAPullRequestsTabForgetsItForNextLaunchAndShowsItsNeighbour() async throws {
         let app = try await App()
-        let (kept, closed) = (app.toReview[0], app.toReview[1])
-        app.tabs.open(kept)
-        app.tabs.open(closed)
+        let (first, middle, last) = (app.toReview[0], app.toReview[1], app.toReview[2])
+        for pullRequest in [first, middle, last] { app.tabs.open(pullRequest) }
 
-        app.tabs.close(closed.id)
-        #expect(app.tabs.tabs.map(\.id) == [kept.id])
-        #expect(app.tabs.selected == nil, "the closed one was frontmost")
+        app.tabs.select(middle.id)
+        app.tabs.close(middle.id)
+        #expect(app.tabs.tabs.map(\.id) == [first.id, last.id])
+        #expect(app.tabs.selected == last.id, "the tab that took its place")
+
+        app.tabs.close(last.id)
+        #expect(app.tabs.selected == first.id, "the one before, as it was last")
 
         let nextRun = try app.relaunch()
-        #expect(nextRun.tabs.map(\.id) == [kept.id])
-        #expect(nextRun.selected == nil)
+        #expect(nextRun.tabs.map(\.id) == [first.id])
+        #expect(nextRun.selected == first.id)
+
+        app.tabs.close(first.id)
+        #expect(app.tabs.selected == nil, "the lists, with no tabs left")
+    }
+
+    @Test func closingAnotherTabKeepsTheShownOneAndClosingAllShowsTheLists() async throws {
+        let app = try await App()
+        let (shown, other) = (app.toReview[0], app.toReview[1])
+        app.tabs.open(other)
+        app.tabs.open(shown)
+
+        app.tabs.close(other.id)
+        #expect(app.tabs.selected == shown.id)
+
+        app.tabs.open(other)
+        app.tabs.closeAll()
+        #expect(app.tabs.tabs.isEmpty)
+        #expect(app.tabs.selected == nil)
+        #expect(try app.relaunch().tabs.isEmpty)
+    }
+
+    @Test func previousAndNextGoThroughTheListsThenEachTabAndWrapAround() async throws {
+        let app = try await App()
+        let (first, second) = (app.toReview[0], app.toReview[1])
+
+        app.tabs.selectAdjacent(1)
+        #expect(app.tabs.selected == nil, "only the lists to go to")
+
+        app.tabs.open(first)
+        app.tabs.open(second)
+        app.tabs.select(nil)
+        var visited: [String?] = []
+        for _ in 0..<3 {
+            app.tabs.selectAdjacent(1)
+            visited.append(app.tabs.selected)
+        }
+        #expect(visited == [first.id, second.id, nil])
+
+        visited = []
+        for _ in 0..<3 {
+            app.tabs.selectAdjacent(-1)
+            visited.append(app.tabs.selected)
+        }
+        #expect(visited == [second.id, first.id, nil])
     }
 
     @Test func openPullRequestsAndTheFrontmostComeBackNextLaunchEvenWhenNoLongerListed() async throws {
@@ -266,7 +313,7 @@ private struct App {
     let github: FakeGitHub
     let store: PullRequestStore
     let tabs: TabsModel
-    /// The PRs whose windows the app was asked to bring forward, in order.
+    /// The PRs whose tabs the app was asked to show, in order.
     private let showRecorder = ShowRecorder()
 
     init() async throws {
