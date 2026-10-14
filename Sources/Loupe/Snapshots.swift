@@ -72,6 +72,16 @@ enum SnapshotRun {
             await wait(until: deadline) {
                 conversations.allSatisfy { $0.isConversationSettled && ConversationPage.existingPage(for: $0)?.isLoaded == true }
             }
+            // LOUPE_SNAPSHOT_EDIT_DESCRIPTION=1 opens the description's editor on each of the
+            // viewer's own PRs, fetching the description from GitHub as a click would.
+            if environment["LOUPE_SNAPSHOT_EDIT_DESCRIPTION"] == "1" {
+                for tab in tabs.tabs {
+                    await tab.load()
+                    guard tab.canEditDescription else { continue }
+                    tab.section = .conversation
+                    await tab.editDescription()
+                }
+            }
             // LOUPE_SNAPSHOT_COMMIT shows one commit's changes: its 1-based index, or an oid prefix.
             if let wanted = environment["LOUPE_SNAPSHOT_COMMIT"] {
                 for tab in tabs.tabs {

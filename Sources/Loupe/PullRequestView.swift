@@ -33,8 +33,14 @@ struct PullRequestView: View {
                     .opacity(showsFiles ? 1 : 0)
                     .allowsHitTesting(showsFiles)
                     .accessibilityHidden(!showsFiles)
+                // The description's editor takes the conversation's place while open; the web
+                // view stays behind it, keeping its place.
+                let editor = showsFiles ? nil : tab.descriptionEditor
                 if let page = showsFiles ? ConversationPage.existingPage(for: tab) : ConversationPage.page(for: tab) {
-                    ConversationView(page: page, conversation: tab.conversation, error: tab.conversationError, isShown: !showsFiles)
+                    ConversationView(page: page, conversation: tab.conversation, error: tab.conversationError, isShown: !showsFiles && editor == nil)
+                }
+                if let editor {
+                    DescriptionEditorView(editor: editor, tab: tab)
                 }
             }
         }
@@ -80,7 +86,8 @@ struct PullRequestView: View {
     }
 }
 
-/// Conversation and Files changed, as on github.com.
+/// Conversation and Files changed, as on github.com, and on the viewer's own PRs a button to
+/// edit the description while the conversation is shown.
 struct ReviewSectionPicker: View {
     @Bindable var tab: PullRequestTab
 
@@ -95,6 +102,13 @@ struct ReviewSectionPicker: View {
             .fixedSize()
             .help("⌃1 Conversation, ⌃2 Files changed")
             Spacer(minLength: 0)
+            if tab.section == .conversation, tab.canEditDescription {
+                Button("Edit description", systemImage: "pencil") {
+                    Task { await tab.editDescription() }
+                }
+                .disabled(tab.descriptionEditor != nil)
+                .help("Edit this PR's description, starting from it as it is on GitHub now")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)

@@ -205,6 +205,12 @@ The conversation tab and rendered markdown files use GitHub's own HTML, which ca
 
 An addendum to "Long diff rows wrap with a hanging indent": a continuation that started exactly on the code column was easy to read as a new line, so wrapped lines now hang two character widths further in, as editors do.
 
+### The viewer's own PR descriptions are edited as markdown, starting from GitHub's copy
+
+On a PR the viewer wrote, decided by login as for reviewers, an "Edit description" button sits at the trailing end of the Conversation / Files changed row while the conversation is shown. It swaps the web view for a native editor in the same place: a plain `NSTextView`, monospaced, with spelling, smart quotes, dashes, text replacement and link detection off, as it holds markdown that GitHub renders and any substitution would change what's sent. Below it a caption says the description is GitHub-flavoured markdown, beside Cancel and Save; ⌘↩ saves and Esc cancels, the text view taking both itself so they work while typing. Save is disabled until the text differs, and Cancel with changes asks before dropping them. There's no preview: saving shows GitHub's own rendering, as the conversation is fetched again straight after, and a second renderer of our own could disagree with it.
+
+The editor starts from the description fetched afresh from GitHub when it opens, not the stored copy, because descriptions are also edited on github.com, where images are uploaded and links added, and saving a stale copy would silently undo that. If that fetch fails the editor says so and offers Retry, rather than falling back to the stored copy. The raw `body` is still fetched and stored with the conversation, so it's at hand, but is never what's edited. Line endings are made newlines when the editor opens, since a description typed in a browser can come back with `\r\n` and would otherwise count as changed before anything was typed. Saving calls `updatePullRequest` with the body alone; a refusal keeps the editor open with its draft and the reason. A change made on github.com while the editor is open is still overwritten by saving; checking for one first was left out until it bites.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
