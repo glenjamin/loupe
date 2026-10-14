@@ -1,4 +1,5 @@
 import AppKit
+import LoupeGit
 import LoupeInbox
 import SwiftUI
 import UniformTypeIdentifiers
@@ -57,11 +58,24 @@ enum SnapshotRun {
                     tabs.tabs.allSatisfy { $0.isConversationSettled && ConversationPage.existingPage(for: $0)?.isLoaded == true }
                 }
             }
-            // LOUPE_SNAPSHOT_FILE picks the first file whose path contains it, to snapshot a given kind of file.
+            // LOUPE_SNAPSHOT_COMMIT shows one commit's changes: its 1-based index, or an oid prefix.
+            if let wanted = ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_COMMIT"] {
+                for tab in tabs.tabs {
+                    guard case .ready(let review) = tab.phase, let commit = review.commits.picked(by: wanted) else { continue }
+                    await tab.showCommit(commit.oid)
+                }
+            }
+            // LOUPE_SNAPSHOT_FILE picks the first file whose path contains it, hidden ones after
+            // the rest, to snapshot a given kind of file.
             if let wanted = ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_FILE"] {
                 for tab in tabs.tabs {
-                    guard case .ready(let review) = tab.phase, let file = review.changes.files.first(where: { $0.path.contains(wanted) }) else { continue }
-                    tab.selectedFile = file.id
+                    guard case .ready(let changes)? = tab.shownChanges else { continue }
+                    if let file = changes.files.first(where: { $0.path.contains(wanted) }) {
+                        tab.selectedFile = file.id
+                    } else if let file = changes.hidden.first(where: { $0.path.contains(wanted) }) {
+                        tab.selectedFile = file.id
+                        await tab.diffHiddenFile(file.path)
+                    }
                 }
             }
             // A moment for the final state to be drawn.
@@ -201,6 +215,16 @@ private func sanitised(_ title: String) -> String {
     let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-"))
     let replaced = String(title.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" })
     return replaced.isEmpty ? "window" : replaced
+}
+
+private extension [PullRequestCommit] {
+    /// The commit `wanted` names: a 1-based index if it's a short number, else an oid prefix.
+    func picked(by wanted: String) -> PullRequestCommit? {
+        if wanted.count < 4, let index = Int(wanted) {
+            return indices.contains(index - 1) ? self[index - 1] : nil
+        }
+        return first { $0.oid.hasPrefix(wanted) }
+    }
 }
 
 private extension ReviewPhase {

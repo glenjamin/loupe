@@ -1,5 +1,6 @@
 import AppKit
 import LoupeCore
+import LoupeGit
 import LoupeInbox
 import LoupeModel
 import SwiftUI
@@ -65,7 +66,7 @@ struct PullRequestView: View {
         case .diffing:
             ProgressView("Diffing…")
         case let .ready(diff):
-            FileBrowser(tab: tab, files: diff.changes.files, hiddenCount: diff.changes.hidden.count)
+            FileBrowser(tab: tab, commits: diff.commits)
                 // A new head can change a file under the same path.
                 .id(diff.headOid)
         case let .failed(message):
@@ -176,38 +177,33 @@ struct PendingChangeBanner: View {
     }
 }
 
-/// The changed files beside the selected file's diff.
+/// The changed files, of the whole PR or one of its commits, beside the selected file's diff.
 struct FileBrowser: View {
     @Bindable var tab: PullRequestTab
-    let files: [FileDiff]
-    let hiddenCount: Int
+    let commits: [PullRequestCommit]
     /// Says so for a moment when the last file not viewed is marked viewed.
     @State private var showsAllViewed = false
 
     var body: some View {
         HSplitView {
-            ReviewFileList(tab: tab, files: files, hiddenCount: hiddenCount)
-                .frame(minWidth: 200, idealWidth: 300, maxWidth: 500)
-            Group {
-                if let file = files.first(where: { $0.id == tab.selectedFile }) {
-                    DiffView(file: file, onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file))
-                } else {
-                    Text(files.isEmpty ? "No changes to review" : "No file selected")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+            VStack(spacing: 0) {
+                CommitPicker(tab: tab, commits: commits)
+                Divider()
+                ReviewFileList(tab: tab, changes: shownChanges)
             }
-            .frame(minWidth: 400)
-            .overlay(alignment: .bottom) {
-                if showsAllViewed {
-                    Label("All files reviewed", systemImage: "checkmark.circle.fill")
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.regularMaterial, in: Capsule())
-                        .padding(.bottom, 24)
-                        .transition(.opacity)
+            .frame(minWidth: 200, idealWidth: 300, maxWidth: 500)
+            detail
+                .frame(minWidth: 400)
+                .overlay(alignment: .bottom) {
+                    if showsAllViewed {
+                        Label("All files reviewed", systemImage: "checkmark.circle.fill")
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(.regularMaterial, in: Capsule())
+                            .padding(.bottom, 24)
+                            .transition(.opacity)
+                    }
                 }
-            }
         }
         .onChange(of: tab.allFilesViewed) { _, allViewed in
             withAnimation { showsAllViewed = allViewed }
@@ -218,12 +214,68 @@ struct FileBrowser: View {
         }
     }
 
+    @ViewBuilder
+    private var detail: some View {
+        switch tab.shownChanges {
+        case .diffing, nil:
+            ProgressView("Diffing…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case let .failed(message):
+            ContentUnavailableView {
+                Label("Couldn't diff this commit", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message).textSelection(.enabled)
+            } actions: {
+                Button("Try Again") { Task { await tab.showCommit(tab.shownCommit) } }
+            }
+        case let .ready(changes):
+            if let file = changes.files.first(where: { $0.id == tab.selectedFile }) {
+                diffView(file)
+            } else if let file = changes.hidden.first(where: { $0.id == tab.selectedFile }) {
+                hiddenFile(file)
+                    // Diffed only once shown, as a vendored file can be enormous.
+                    .task(id: "\(tab.shownCommit ?? "")\0\(file.path)") { await tab.diffHiddenFile(file.path) }
+            } else {
+                Text(changes.files.isEmpty && changes.hidden.isEmpty ? "No changes to review" : "No file selected")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func hiddenFile(_ file: ChangedFile) -> some View {
+        switch tab.hiddenFileDiff(of: file.path) {
+        case .diffing, nil:
+            ProgressView("Diffing…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case let .ready(diff):
+            diffView(diff)
+        case let .failed(message):
+            ContentUnavailableView {
+                Label("Couldn't diff \(file.path)", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message).textSelection(.enabled)
+            }
+        }
+    }
+
+    private func diffView(_ file: FileDiff) -> some View {
+        DiffView(file: file, onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file))
+    }
+
+    private var shownChanges: ReviewChanges? {
+        if case let .ready(changes)? = tab.shownChanges { changes } else { nil }
+    }
+
     private func review(of file: FileDiff) -> FileReview {
         let isViewed = tab.viewedState(of: file.path).isViewed
         let label = if tab.nextUnviewedFile(after: file.id) != nil {
             isViewed ? "Next unreviewed file" : "Mark reviewed · next file"
+        } else if isViewed {
+            tab.shownCommit == nil ? "All files reviewed" : "All this commit's files reviewed"
         } else {
-            isViewed ? "All files reviewed" : "Mark reviewed · last file"
+            "Mark reviewed · last file"
         }
         return FileReview(
             isViewed: isViewed,
@@ -234,17 +286,52 @@ struct FileBrowser: View {
     }
 }
 
-/// The files to review, each with its viewed state, and a count of those hidden as vendored,
-/// lockfiles or generated.
-struct ReviewFileList: View {
+/// Picks whether the files show the whole PR's changes or one commit's, as on github.com.
+struct CommitPicker: View {
     @Bindable var tab: PullRequestTab
-    let files: [FileDiff]
-    let hiddenCount: Int
+    let commits: [PullRequestCommit]
 
     var body: some View {
-        List(files, selection: $tab.selectedFile) { file in
-            ReviewFileRow(file: file, state: tab.viewedState(of: file.path)) {
-                Task { await tab.toggleViewed(path: file.path) }
+        Picker("Changes from", selection: Binding(get: { tab.shownCommit }, set: { oid in Task { await tab.showCommit(oid) } })) {
+            Text("All changes").tag(String?.none)
+            Divider()
+            ForEach(commits) { commit in
+                (Text(verbatim: String(commit.oid.prefix(7))).monospaced() + Text(verbatim: "  \(commit.headline)"))
+                    .tag(Optional(commit.oid))
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .frame(maxWidth: .infinity)
+        .help("Show the changes of the whole PR or of one commit")
+        .padding(8)
+    }
+}
+
+/// The files to review, each with its viewed state, then those hidden as vendored, lockfiles or
+/// generated, which can be shown and marked reviewed too but are passed over when moving on.
+struct ReviewFileList: View {
+    @Bindable var tab: PullRequestTab
+    /// Nil while being diffed.
+    let changes: ReviewChanges?
+
+    var body: some View {
+        List(selection: $tab.selectedFile) {
+            if let changes {
+                Section {
+                    ForEach(changes.files) { file in
+                        row(FileRow(file: file))
+                    }
+                }
+                if !changes.hidden.isEmpty {
+                    Section {
+                        ForEach(changes.hidden) { file in
+                            row(FileRow(file: file, diff: diff(of: file)))
+                        }
+                    } header: {
+                        Text(verbatim: "Vendored, lockfiles and generated (\(changes.hidden.count))")
+                    }
+                }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -255,24 +342,35 @@ struct ReviewFileList: View {
                         .lineLimit(2)
                         .help(error)
                 }
-                Text("\(viewedCount) of \(files.count) reviewed · \(hiddenCount) vendored, lockfile or generated hidden")
-                    .foregroundStyle(.secondary)
+                if let changes {
+                    Text(verbatim: "\(changes.files.count { tab.viewedState(of: $0.path).isViewed }) of \(changes.files.count) reviewed")
+                        .foregroundStyle(.secondary)
+                }
             }
             .font(.caption)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
+            // So rows scrolled under it don't show through.
+            .background(.bar)
         }
     }
 
-    private var viewedCount: Int {
-        files.count { tab.viewedState(of: $0.path).isViewed }
+    private func row(_ file: FileRow) -> some View {
+        ReviewFileRow(row: file, state: tab.viewedState(of: file.path)) {
+            Task { await tab.toggleViewed(path: file.path) }
+        }
+        .tag(Optional(file.path))
+    }
+
+    private func diff(of file: ChangedFile) -> FileDiff? {
+        if case let .ready(diff)? = tab.hiddenFileDiff(of: file.path) { diff } else { nil }
     }
 }
 
 /// A file in the list: checked and dimmed once viewed, flagged when it has changed since, and
 /// with a checkbox on hover to mark it either way.
 struct ReviewFileRow: View {
-    let file: FileDiff
+    let row: FileRow
     let state: FileViewedState
     let toggle: () -> Void
     @State private var hovering = false
@@ -292,7 +390,7 @@ struct ReviewFileRow: View {
                 }
             }
             .frame(width: 14)
-            FileRow(file: file)
+            row
                 .opacity(state.isViewed ? 0.5 : 1)
             if state == .dismissed {
                 Spacer(minLength: 0)

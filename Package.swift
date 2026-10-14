@@ -26,7 +26,7 @@ let package = Package(
         .target(name: "LoupeInbox", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit"]),
         .executableTarget(
             name: "Loupe",
-            dependencies: ["LoupeCore", "LoupeModel", "LoupeStore", "LoupeInbox"],
+            dependencies: ["LoupeCore", "LoupeModel", "LoupeStore", "LoupeGit", "LoupeInbox"],
             resources: [
                 .copy("Resources/Loupe.icns"),
                 .copy("Resources/conversation.html"),

@@ -156,23 +156,53 @@ struct FileList: View {
     }
 }
 
+/// A file's name over its line counts and directory. A file not yet diffed says what happened
+/// to it in place of the counts.
 struct FileRow: View {
-    let file: FileDiff
+    let path: String
+    let counts: (additions: Int, deletions: Int)?
+    let change: FileDiff.Change
+
+    init(file: FileDiff) {
+        path = file.path
+        counts = (file.additions, file.deletions)
+        change = file.change
+    }
+
+    init(file: ChangedFile, diff: FileDiff?) {
+        path = file.path
+        counts = diff.map { ($0.additions, $0.deletions) }
+        change = file.change
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text((file.path as NSString).lastPathComponent).lineLimit(1)
+            Text(verbatim: (path as NSString).lastPathComponent).lineLimit(1)
             HStack(spacing: 6) {
-                Text("+\(file.additions)").foregroundStyle(.diffSuccess)
-                Text("-\(file.deletions)").foregroundStyle(.diffDanger)
-                Text((file.path as NSString).deletingLastPathComponent)
+                if let counts {
+                    Text(verbatim: "+\(counts.additions)").foregroundStyle(.diffSuccess)
+                    Text(verbatim: "-\(counts.deletions)").foregroundStyle(.diffDanger)
+                } else {
+                    Text(changeDescription).foregroundStyle(.secondary)
+                }
+                Text(verbatim: (path as NSString).deletingLastPathComponent)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.head)
             }
             .font(.caption.monospacedDigit())
         }
-        .help(file.path)
+        .help(path)
+    }
+
+    private var changeDescription: String {
+        switch change {
+        case .added: "added"
+        case .deleted: "deleted"
+        case .modified: "modified"
+        case .renamed: "renamed"
+        case .copied: "copied"
+        }
     }
 }
 

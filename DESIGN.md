@@ -143,6 +143,14 @@ Every PR file's diff ends in a footer inside the scrolled content, a bar like th
 
 An addendum to the conversation tab's decision. GitHub's timeline omits reviews that only reply in threads, so thread replies are fetched with `reviewThreads` (bodies and authors) and shown inside the thread under the review that started it, as github.com does; a review's own comments give each thread's path, lines and diff hunk. The conversation is stored in tables per kind of row (timeline items, review comments, threads, thread comments, checks), keyed by PR and item id, and fetched on opening a PR's tab and on Reload rather than when the tab is first chosen, so it's usually there by then. The web view is made the first time Conversation is chosen and kept hidden behind the files after that, as is the diff behind it, so neither loses its place. The page is assembled in Swift rather than by a script in the page, so it runs with no script at all under a Content-Security-Policy that loads only GitHub's images. ⌃1 and ⌃2 switch, since ⌘1–⌘9 pick window tabs.
 
+### Hidden files are listed, and diffed only when shown
+
+Vendored, lockfile and generated files stay out of the main `git diff`, as a vendor tree can be enormous and would slow every diff, but they are listed under their own "Vendored, lockfiles and generated" section below the files to review, as a reviewer sometimes needs to check a dependency bump or a regenerated file. This revises the goal of excluding them rather than merely collapsing them: they still cost nothing until opened. Their change kinds come from the same `--name-status` listing that decides what's hidden, so they cost no extra git run. Each one is diffed on its own, by literal pathspec (with a rename's old path, so the rename is kept), only when selected, and kept in memory. Until then its row says "added", "modified" and so on in place of line counts, rather than running `--numstat` over a whole vendor tree for counts nobody may look at. Their reviewed state is GitHub's, as for any file, but moving on and the reviewed count pass over them, so the review keys never walk a reviewer through vendored code.
+
+### A commit picker shows one commit's changes
+
+As on github.com's "Files changed", a popup above the file list picks "All changes" or one of the PR's commits, oldest first. The commits come from `git log <merge-base>..<head>` in the checkout, not from GitHub, so they always match the diff shown. A commit's changes are from its first parent, or the empty tree for a root commit, and are diffed when first picked and kept per tab; a range names its commits, so a cached diff can never go stale. Reloading goes back to "All changes". Reviewed state stays per path, as GitHub keeps it, whatever is shown.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
