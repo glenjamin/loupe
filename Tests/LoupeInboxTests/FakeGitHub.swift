@@ -79,8 +79,11 @@ actor FakeGitHub: HTTPTransport {
     /// Changes the PR with `id`, which GitHub records as an update.
     func edit(_ id: String, _ change: @Sendable (inout FakePullRequest) throws -> Void) throws {
         let index = try #require(pullRequests.firstIndex { $0.id == id })
+        let previous = updatedAt(pullRequests[index])
         try change(&pullRequests[index])
-        pullRequests[index].updatedAt = Date.now.formatted(.iso8601)
+        // A second on from the last at least, as the update time is in whole seconds and a test's
+        // changes come quicker than a person's.
+        pullRequests[index].updatedAt = max(.now, previous + 1).formatted(.iso8601)
         // A second on from the last at least, so each change reaches a poll that saw the last;
         // HTTP dates are whole seconds.
         notified[id] = max(.now, (notified.values.max() ?? Self.quietSince) + 1)
