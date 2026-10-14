@@ -16,8 +16,17 @@ let package = Package(
                 "LoupeModel",
                 "SwiftTreeSitter",
                 "CodeEditLanguages",
+                "TreeSitterProto",
             ],
             resources: [.copy("Resources/linguist")]
+        ),
+        // Protocol Buffers, which CodeEditLanguages lacks, vendored by Scripts/update-tree-sitter-proto.sh.
+        .target(
+            name: "TreeSitterProto",
+            exclude: ["LICENSE", "README.md", "VERSION"],
+            sources: ["src/parser.c"],
+            resources: [.copy("queries")],
+            cSettings: [.headerSearchPath("src")]
         ),
         .target(name: "LoupeModel"),
         .target(name: "LoupeGitHub", dependencies: ["LoupeModel"]),

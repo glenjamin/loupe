@@ -3,9 +3,10 @@ import CodeEditLanguages
 import CodeLanguages_Container
 import os
 import SwiftTreeSitter
+import TreeSitterProto
 
 /// A grammar the diff view can highlight, chosen as GitHub does: the path's Linguist language,
-/// then the CodeEditLanguages grammar for it. The first of an ambiguous extension's languages
+/// then the CodeEditLanguages or vendored grammar for it. The first of an ambiguous extension's languages
 /// that has a grammar wins.
 public struct SyntaxLanguage: Sendable, Hashable {
     public let rawValue: String
@@ -93,6 +94,7 @@ extension SyntaxLanguage {
     /// The grammar for a Linguist language: the one of the same name, or as listed here where
     /// the names differ or several Linguist languages share one grammar.
     static func grammar(forLinguistName name: String) -> String? {
+        if let vendored = VendoredGrammar(linguistName: name) { return vendored.rawValue }
         if let shared = sharedGrammars[name] { return shared.rawValue }
         guard let grammar = TreeSitterLanguage(rawValue: name.lowercased()), grammar != .plainText else { return nil }
         return grammar.rawValue
@@ -169,14 +171,22 @@ private struct Grammar: Sendable {
     }
 
     private static func compile(_ syntax: SyntaxLanguage) -> Grammar? {
-        guard let id = TreeSitterLanguage(rawValue: syntax.rawValue), let parser = id.tsLanguage else { return nil }
-        let language = Language(language: parser)
+        if let vendored = VendoredGrammar(rawValue: syntax.rawValue) {
+            return compile(vendored.tsLanguage, queries: [bundledResource("queries/highlights.scm", in: vendored.bundle)], laterPatternsWin: true)
+        }
+        guard let id = TreeSitterLanguage(rawValue: syntax.rawValue) else { return nil }
         let urls = highlightQueries(id).map { bundledResource("Resources/tree-sitter-\($0.folder)/\($0.file).scm", in: "CodeEditLanguages_CodeEditLanguages") }
+        return compile(id.tsLanguage, queries: urls, laterPatternsWin: id != .go)
+    }
+
+    private static func compile(_ parser: OpaquePointer?, queries urls: [URL?], laterPatternsWin: Bool) -> Grammar? {
+        guard let parser else { return nil }
+        let language = Language(language: parser)
         let source = urls.compactMap { $0.flatMap { try? Data(contentsOf: $0) } }
         guard !source.isEmpty, source.count == urls.count,
               let query = try? Query(language: language, data: source.reduce(Data()) { $0 + $1 + Data("\n".utf8) })
         else { return nil }
-        return Grammar(language: language, query: query, laterPatternsWin: id != .go)
+        return Grammar(language: language, query: query, laterPatternsWin: laterPatternsWin)
     }
 
     /// Query files, composed as each grammar's tree-sitter.json does: TypeScript builds on
@@ -241,6 +251,31 @@ private extension TreeSitterLanguage {
         case .yaml: tree_sitter_yaml()
         case .zig: tree_sitter_zig()
         case .plainText: nil
+        }
+    }
+}
+
+/// Grammars CodeEditLanguages lacks, each vendored as a target of its own with the upstream
+/// query in its resource bundle.
+private enum VendoredGrammar: String {
+    case proto
+
+    init?(linguistName: String) {
+        switch linguistName {
+        case "Protocol Buffer": self = .proto
+        default: return nil
+        }
+    }
+
+    var tsLanguage: OpaquePointer? {
+        switch self {
+        case .proto: tree_sitter_proto()
+        }
+    }
+
+    var bundle: String {
+        switch self {
+        case .proto: "Loupe_TreeSitterProto"
         }
     }
 }

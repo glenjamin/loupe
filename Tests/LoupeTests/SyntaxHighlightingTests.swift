@@ -36,6 +36,7 @@ struct SyntaxHighlightingTests {
         ("Gemfile", "# note"), ("a.swift", "// note"), ("a.json", "\"note\""), ("a.yml", "# note"),
         ("a.sh", "# note"), ("a.css", "/* note */"), ("a.html", "<!-- note -->"),
         ("Dockerfile", "# note"), ("a.sql", "-- note"), ("go.mod", "// note"), ("a.py", "# note"), ("a.md", "# Note"),
+        ("a.proto", "// note"),
     ])
     func everySupportedLanguageHighlights(path: String, line: String) throws {
         #expect(SyntaxLanguage(path: path) != nil)
@@ -75,6 +76,41 @@ struct SyntaxHighlightingTests {
         #expect(SyntaxLanguage(path: "db/schema.yml.mysql") == SyntaxLanguage(path: "a.yml"))
         #expect(SyntaxLanguage(path: "a.mysql") == SyntaxLanguage(path: "a.sql"))
         #expect(SyntaxLanguage(path: "build.gradle.kts") == SyntaxLanguage(path: "a.kt"))
+    }
+
+    @Test func colorsAProtocolBufferFile() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/user.proto b/user.proto
+        --- a/user.proto
+        +++ b/user.proto
+        @@ -0,0 +1,10 @@
+        +syntax = "proto3";
+        +
+        +// Users of the service.
+        +package x;
+        +option go_package = "example.com/x";
+        +
+        +message Foo {
+        +  string name = 1;
+        +  repeated int32 ids = 2;
+        +}
+
+        """).files.first)
+        let rendered = showing(file)
+
+        for keyword in ["syntax", "package", "option", "message", "repeated"] {
+            #expect(colors(of: keyword, in: rendered) == [DiffColors.syntaxKeyword], "\(keyword)")
+        }
+        #expect(colors(of: "\"proto3\"", in: rendered) == [DiffColors.syntaxString])
+        #expect(colors(of: "\"example.com/x\"", in: rendered) == [DiffColors.syntaxString])
+        #expect(colors(of: "// Users of the service.", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: "Foo", in: rendered) == [DiffColors.syntaxEntity])
+        // Scalar types are built in, so they take the keyword colour, as Go's do.
+        #expect(colors(of: "string name", in: rendered, length: 6) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "int32", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "name =", in: rendered, length: 4) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "1;", in: rendered, length: 1) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "2;", in: rendered, length: 1) == [DiffColors.syntaxConstant])
     }
 
     @Test func leavesAFileInAnUnknownLanguageUncoloured() throws {
