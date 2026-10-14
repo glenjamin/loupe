@@ -227,6 +227,14 @@ private final class TabStripItemView: NSView {
         onSelect()
     }
 
+    /// A middle click closes a tab, as browsers do; the lists have nothing to close.
+    override func otherMouseUp(with event: NSEvent) {
+        guard event.buttonNumber == 2, !isLists, bounds.contains(convert(event.locationInWindow, from: nil)) else {
+            return super.otherMouseUp(with: event)
+        }
+        onClose()
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for area in trackingAreas { removeTrackingArea(area) }
