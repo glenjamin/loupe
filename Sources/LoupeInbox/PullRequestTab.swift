@@ -21,8 +21,9 @@ public final class PullRequestTab: Identifiable {
     public private(set) var viewedStates: [String: FileViewedState] = [:]
     /// Why the last change to a file's viewed state didn't reach GitHub, until one does.
     public private(set) var viewedStateError: String?
-    /// Which of the PR's tabs is shown, kept while the window lives.
-    public var section = ReviewSection.files
+    /// Which of the PR's tabs is shown, kept while the window lives. A PR opens on its
+    /// conversation, which says what it's for before its changes do.
+    public var section = ReviewSection.conversation
     /// The PR's conversation: as stored when the tab opened, then as GitHub says once asked.
     public private(set) var conversation: Conversation?
     /// Why the conversation couldn't be fetched last time it was asked for.

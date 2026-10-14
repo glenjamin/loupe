@@ -64,18 +64,18 @@ struct ConversationTests {
         #expect(try app.store.conversation(of: pullRequest.id)?.items.count == before + 1)
     }
 
-    @Test func theSectionShownStartsAtTheFilesAndIsKeptPerTab() async throws {
+    @Test func theSectionShownStartsAtTheConversationAndIsKeptPerTab() async throws {
         let app = try await ConversationApp()
         let (first, second) = (app.toReview[0], app.toReview[1])
         app.tabs.open(first)
         app.tabs.open(second)
         let firstTab = try #require(app.tabs.tab(id: first.id))
-        #expect(firstTab.section == .files)
+        #expect(firstTab.section == .conversation)
 
-        firstTab.section = .conversation
+        firstTab.section = .files
         app.tabs.open(first)
-        #expect(app.tabs.tab(id: first.id)?.section == .conversation)
-        #expect(app.tabs.tab(id: second.id)?.section == .files)
+        #expect(app.tabs.tab(id: first.id)?.section == .files)
+        #expect(app.tabs.tab(id: second.id)?.section == .conversation)
     }
 }
 

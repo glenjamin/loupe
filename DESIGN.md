@@ -177,6 +177,10 @@ A PR whose branch conflicts with its base gets a quiet "Conflicts" badge beside 
 
 It's asked for in the lookup by id that fetches checks after each refresh, not in the searches. Measured on a full page of 100: adding it to the author search took it from about 7.5s to 8.5–9.5s, the denser 100-PR search hit a 502 again, and 67 of the 100 came back `UNKNOWN`. In the lookup it raised a batch of 50 from about 2.6s to 3.6–4.9s, within the limit, and answered for all 50 there, though a lookup can still meet `UNKNOWN` on a PR GitHub hasn't got to. The searches and the by-id row lookup leave the stored value alone, so it's only replaced by the next status lookup.
 
+### PRs open on the Conversation tab
+
+A PR's tab now opens on Conversation rather than Files changed, reversing the earlier default. The description and the discussion so far say what a change is for and what's still open, which is what to know before reading its diff, as github.com's own default page assumes. The tab shown is still kept per PR while the window lives, so switching to Files changed sticks.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
