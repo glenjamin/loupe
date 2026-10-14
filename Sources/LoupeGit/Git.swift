@@ -1,23 +1,30 @@
 import Foundation
 
-/// Runs git against a checkout. Only read-only commands belong here: the checkouts are the
-/// user's working copies.
+/// Runs git against a checkout. The checkouts are the user's working copies, so nothing here
+/// touches branches, the index or the working tree; the only ref written is Loupe's own
+/// `refs/loupe/` namespace.
 enum Git {
     static func originURL(of directory: URL) async throws -> String {
         try await run(["remote", "get-url", "origin"], in: directory)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// git's stdout. Runs on a background queue, as it blocks until git exits.
-    static func run(_ arguments: [String], in directory: URL) async throws -> String {
+    /// git's stdout. Runs on a background queue, as it blocks until git exits, and kills git if
+    /// it outlasts `timeout`.
+    static func run(_ arguments: [String], in directory: URL, timeout: Duration = .seconds(30)) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(with: Result { try runBlocking(arguments, in: directory) })
+                continuation.resume(with: Result { try runBlocking(arguments, in: directory, timeout: timeout) })
             }
         }
     }
 
-    private static func runBlocking(_ arguments: [String], in directory: URL) throws -> String {
+    /// Whether git exits successfully, for commands that answer a yes/no question.
+    static func succeeds(_ arguments: [String], in directory: URL) async -> Bool {
+        (try? await run(arguments, in: directory)) != nil
+    }
+
+    private static func runBlocking(_ arguments: [String], in directory: URL, timeout: Duration) throws -> String {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/git")
         process.arguments = ["-C", directory.path(percentEncoded: false)] + arguments
@@ -31,22 +38,87 @@ enum Git {
         process.standardError = stderr
         process.standardInput = FileHandle.nullDevice
         try process.run()
+
+        let watchdog = Watchdog(process)
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) { watchdog.fire() }
+        // Both pipes are drained at once, so git never blocks writing to a full one.
+        let errorOutput = Drain(stderr.fileHandleForReading)
         let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errorOutput = stderr.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        watchdog.disarm()
+
+        let message = String(decoding: errorOutput.wait(), as: UTF8.self)
+        if watchdog.fired {
+            throw GitError(arguments: arguments, status: nil, message: "timed out after \(timeout). \(message)")
+        }
         guard process.terminationStatus == 0 else {
-            throw GitError(arguments: arguments, status: process.terminationStatus, message: String(decoding: errorOutput, as: UTF8.self))
+            throw GitError(arguments: arguments, status: process.terminationStatus, message: message)
         }
         return String(decoding: output, as: UTF8.self)
     }
 }
 
-struct GitError: Error, LocalizedError {
-    let arguments: [String]
-    let status: Int32
-    let message: String
+public struct GitError: Error, LocalizedError {
+    public let arguments: [String]
+    /// Nil when git was killed for taking too long.
+    public let status: Int32?
+    /// What git wrote to stderr.
+    public let message: String
 
-    var errorDescription: String? {
-        "git \(arguments.joined(separator: " ")) exited with \(status): \(message.trimmingCharacters(in: .whitespacesAndNewlines))"
+    public var errorDescription: String? {
+        let outcome = status.map { "exited with \($0)" } ?? "didn't finish"
+        return "git \(arguments.joined(separator: " ")) \(outcome): \(message.trimmingCharacters(in: .whitespacesAndNewlines))"
+    }
+}
+
+/// Kills a process that runs past its deadline, remembering that it did.
+private final class Watchdog: @unchecked Sendable {
+    private let lock = NSLock()
+    private let process: Process
+    private var armed = true
+    private var didFire = false
+
+    init(_ process: Process) {
+        self.process = process
+    }
+
+    var fired: Bool { lock.withLock { didFire } }
+
+    func fire() {
+        lock.withLock {
+            guard armed, process.isRunning else { return }
+            didFire = true
+            process.terminate()
+        }
+    }
+
+    func disarm() {
+        lock.withLock { armed = false }
+    }
+}
+
+/// Reads a pipe to its end on another thread.
+private final class Drain: @unchecked Sendable {
+    private let group = DispatchGroup()
+    private var data = Data()
+
+    init(_ handle: FileHandle) {
+        group.enter()
+        DispatchQueue.global().async {
+            self.data = handle.readDataToEndOfFile()
+            self.group.leave()
+        }
+    }
+
+    func wait() -> Data {
+        group.wait()
+        return data
+    }
+}
+
+extension Duration {
+    var timeInterval: TimeInterval {
+        let (seconds, attoseconds) = components
+        return TimeInterval(seconds) + TimeInterval(attoseconds) / 1e18
     }
 }
