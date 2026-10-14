@@ -13,9 +13,9 @@ let package = Package(
         .target(name: "LoupeGitHub", dependencies: ["LoupeModel"]),
         .target(name: "LoupeStore", dependencies: ["LoupeModel", .product(name: "GRDB", package: "GRDB.swift")]),
         .target(name: "LoupeGit", dependencies: ["LoupeStore"]),
-        .target(name: "LoupeInbox", dependencies: ["LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit"]),
+        .target(name: "LoupeInbox", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit"]),
         .executableTarget(name: "Loupe", dependencies: ["LoupeCore", "LoupeModel", "LoupeStore", "LoupeInbox"]),
         .testTarget(name: "LoupeTests", dependencies: ["LoupeCore"], exclude: ["Fixtures"]),
-        .testTarget(name: "LoupeInboxTests", dependencies: ["LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit", "LoupeInbox"]),
+        .testTarget(name: "LoupeInboxTests", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit", "LoupeInbox"]),
     ]
 )

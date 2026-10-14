@@ -154,6 +154,19 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "baseRefOid", .text)
             }
         }
+        // Which PRs are open in tabs, in order, and when each PR's diff was last produced.
+        migrator.registerMigration("Open tabs and diffs") { db in
+            try db.create(table: "openTab") { t in
+                t.primaryKey("position", .integer)
+                t.column("pullRequestId", .text).notNull().unique().references("pullRequest", onDelete: .cascade)
+            }
+            try db.create(table: "pullRequestDiff") { t in
+                t.primaryKey("pullRequestId", .text).references("pullRequest", onDelete: .cascade)
+                t.column("headRefOid", .text).notNull()
+                t.column("mergeBase", .text).notNull()
+                t.column("producedAt", .datetime).notNull()
+            }
+        }
         return migrator
     }
 
@@ -169,9 +182,13 @@ public struct PullRequestStore: Sendable {
         }
     }
 
-    /// PRs in neither list are no longer needed.
-    private static func deleteUnlisted(_ db: Database) throws {
-        try db.execute(sql: "DELETE FROM pullRequest WHERE id NOT IN (SELECT pullRequestId FROM listMembership)")
+    /// PRs in neither list are no longer needed, unless open in a tab.
+    static func deleteUnlisted(_ db: Database) throws {
+        try db.execute(sql: """
+            DELETE FROM pullRequest
+            WHERE id NOT IN (SELECT pullRequestId FROM listMembership)
+            AND id NOT IN (SELECT pullRequestId FROM openTab)
+            """)
     }
 }
 
@@ -199,7 +216,7 @@ public struct PullRequestSnapshot: Sendable, Equatable {
     }
 }
 
-private struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
+struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "pullRequest"
 
     let id: String
@@ -278,7 +295,7 @@ private struct ListRefresh: Codable, FetchableRecord, PersistableRecord {
     let refreshedAt: Date
 }
 
-private struct Setting: Codable, FetchableRecord, PersistableRecord {
+struct Setting: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "setting"
     static let viewerLogin = "viewerLogin"
 

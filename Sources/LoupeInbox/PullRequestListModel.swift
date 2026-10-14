@@ -14,7 +14,7 @@ public final class PullRequestListModel {
     public private(set) var error: String?
     public private(set) var isLoading = false
 
-    /// Where choosing a PR goes. The app opens it in the browser; a diff view can take over here.
+    /// Where choosing a PR goes: the app opens it in a tab.
     public var onOpen: @MainActor (PullRequestSummary) -> Void
 
     private var snapshot: PullRequestSnapshot
@@ -64,6 +64,14 @@ public final class PullRequestListModel {
         return dates.contains(nil) ? nil : dates.compactMap(\.self).min()
     }
 
+    /// The stored PR with `id`, whatever its state, if it's in either list.
+    public func pullRequest(id: String) -> PullRequestSummary? {
+        for list in PullRequestList.allCases {
+            if let found = snapshot[list].first(where: { $0.id == id }) { return found }
+        }
+        return nil
+    }
+
     /// Nil until the repo's checkout has been looked for.
     public func checkout(for repository: String) -> CheckoutStatus? {
         checkouts[repository]
@@ -83,6 +91,13 @@ public final class PullRequestListModel {
         await refreshLists()
         isLoading = false
         await resolveCheckouts()
+    }
+
+    /// Looks up the checkout of `repository` now, searching for it if none is stored.
+    public func resolveCheckout(for repository: String) async throws -> URL? {
+        let found = try await checkoutResolver.resolve([repository])[repository]
+        checkouts[repository] = found.map(CheckoutStatus.found) ?? .notFound
+        return found
     }
 
     /// Records `directory` as the checkout of `repository`, if it's a git repo whose origin is that
