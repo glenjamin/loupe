@@ -6,7 +6,7 @@ Raw responses, captured 2026-10-14 with `gh api graphql`:
 - `inbox-query.graphql` → `inbox.json` (`is:pr is:open review-requested:@me`); `inbox-variants.json` compares counts with `user-review-requested:@me` and `draft:false`.
 - `threads-marmot-last60.json`: review threads across marmot's last 60 PRs, to find outdated and multi-line comments.
 - `mergeable.json`: `mergeable` on an open vs a merged PR.
-- `pr-list-query.graphql` → `pr-list.json`: the start screen's two searches (`author:@me` and `review-requested:@me`) in one request, with CI rollup and branch names. `graphql-error.json` is a real GraphQL error response (a bad field). Both are test fixtures.
+- `pr-list-query.graphql` → `pr-list.json`: the start screen's two searches (`author:@me` and `review-requested:@me`) in one request, with CI rollup and branch names. Each node's `id` was looked up afterwards (by repo and number) and added, as the app keys stored PRs on it. The tests' fake GitHub serves these nodes as the full search results, paging them itself. `graphql-error.json` is a real GraphQL error response (a bad field). Both are test fixtures.
 
 ## Surprises and shapes
 

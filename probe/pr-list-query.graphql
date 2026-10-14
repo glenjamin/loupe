@@ -4,6 +4,7 @@ query {
 }
 
 fragment PullRequestRow on PullRequest {
+  id
   number
   title
   url
