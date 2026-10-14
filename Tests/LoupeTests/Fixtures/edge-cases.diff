@@ -1,0 +1,468 @@
+diff --git a/vendor/github.com/aws/aws-sdk-go/internal/s3shared/arn/s3_object_lambda_arn.go b/vendor/github.com/aws/aws-sdk-go-v2/service/internal/s3shared/arn/s3_object_lambda_arn.go
+similarity index 100%
+rename from vendor/github.com/aws/aws-sdk-go/internal/s3shared/arn/s3_object_lambda_arn.go
+rename to vendor/github.com/aws/aws-sdk-go-v2/service/internal/s3shared/arn/s3_object_lambda_arn.go
+diff --git a/vendor/github.com/aws/aws-sdk-go/aws/arn/arn.go b/vendor/github.com/aws/aws-sdk-go-v2/aws/arn/arn.go
+similarity index 94%
+rename from vendor/github.com/aws/aws-sdk-go/aws/arn/arn.go
+rename to vendor/github.com/aws/aws-sdk-go-v2/aws/arn/arn.go
+index 1c496742..fe63feda 100644
+--- a/vendor/github.com/aws/aws-sdk-go/aws/arn/arn.go
++++ b/vendor/github.com/aws/aws-sdk-go-v2/aws/arn/arn.go
+@@ -75,9 +75,8 @@ func Parse(arn string) (ARN, error) {
+ 	}, nil
+ }
+ 
+-// IsARN returns whether the given string is an ARN by looking for
+-// whether the string starts with "arn:" and contains the correct number
+-// of sections delimited by colons(:).
++// IsARN returns whether the given string is an arn
++// by looking for whether the string starts with arn:
+ func IsARN(arn string) bool {
+ 	return strings.HasPrefix(arn, arnPrefix) && strings.Count(arn, ":") >= arnSections-1
+ }
+diff --git a/vendor/github.com/aws/aws-sdk-go/private/protocol/eventstream/debug.go b/vendor/github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/debug.go
+similarity index 92%
+copy from vendor/github.com/aws/aws-sdk-go/private/protocol/eventstream/debug.go
+copy to vendor/github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/debug.go
+index 15105497..ca4394f8 100644
+--- a/vendor/github.com/aws/aws-sdk-go/private/protocol/eventstream/debug.go
++++ b/vendor/github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/debug.go
+@@ -82,9 +82,9 @@ type decodedHeaders Headers
+ 
+ func (hs *decodedHeaders) UnmarshalJSON(b []byte) error {
+ 	var jsonHeaders []struct {
+-		Name  string      `json:"name"`
+-		Type  valueType   `json:"type"`
+-		Value interface{} `json:"value"`
++		Name  string    `json:"name"`
++		Type  valueType `json:"type"`
++		Value any       `json:"value"`
+ 	}
+ 
+ 	decoder := json.NewDecoder(bytes.NewReader(b))
+@@ -106,7 +106,7 @@ func (hs *decodedHeaders) UnmarshalJSON(b []byte) error {
+ 	return nil
+ }
+ 
+-func valueFromType(typ valueType, val interface{}) (Value, error) {
++func valueFromType(typ valueType, val any) (Value, error) {
+ 	switch typ {
+ 	case trueValueType:
+ 		return BoolValue(true), nil
+@@ -139,6 +139,6 @@ func valueFromType(typ valueType, val interface{}) (Value, error) {
+ 		copy(tv[:], v)
+ 		return tv, err
+ 	default:
+-		panic(fmt.Sprintf("unknown type, %s, %T", typ.String(), val))
++		return nil, fmt.Errorf("unable to decode unknown type, %s, %T", typ.String(), val)
+ 	}
+ }
+diff --git a/vendor/github.com/aws/aws-sdk-go-v2/service/internal/s3shared/resource_request.go b/vendor/github.com/aws/aws-sdk-go-v2/service/internal/s3shared/resource_request.go
+new file mode 100644
+index 00000000..bee8da3f
+--- /dev/null
++++ b/vendor/github.com/aws/aws-sdk-go-v2/service/internal/s3shared/resource_request.go
+@@ -0,0 +1,77 @@
++package s3shared
++
++import (
++	"fmt"
++	"strings"
++
++	awsarn "github.com/aws/aws-sdk-go-v2/aws/arn"
++	"github.com/aws/aws-sdk-go-v2/service/internal/s3shared/arn"
++)
++
++// ResourceRequest represents an ARN resource and api request metadata
++type ResourceRequest struct {
++	Resource arn.Resource
++	// RequestRegion is the region configured on the request config
++	RequestRegion string
++
++	// SigningRegion is the signing region resolved for the request
++	SigningRegion string
++
++	// PartitionID is the resolved partition id for the provided request region
++	PartitionID string
++
++	// UseARNRegion indicates if client should use the region provided in an ARN resource
++	UseARNRegion bool
++
++	// UseFIPS indicates if te client is configured for FIPS
++	UseFIPS bool
++}
++
++// ARN returns the resource ARN
++func (r ResourceRequest) ARN() awsarn.ARN {
++	return r.Resource.GetARN()
++}
++
++// ResourceConfiguredForFIPS returns true if resource ARNs region is FIPS
++//
++// Deprecated: FIPS will not be present in the ARN region
++func (r ResourceRequest) ResourceConfiguredForFIPS() bool {
++	return IsFIPS(r.ARN().Region)
++}
++
++// AllowCrossRegion returns a bool value to denote if S3UseARNRegion flag is set
++func (r ResourceRequest) AllowCrossRegion() bool {
++	return r.UseARNRegion
++}
++
++// IsCrossPartition returns true if request is configured for region of another partition, than
++// the partition that resource ARN region resolves to. IsCrossPartition will not return an error,
++// if request is not configured with a specific partition id. This might happen if customer provides
++// custom endpoint url, but does not associate a partition id with it.
++func (r ResourceRequest) IsCrossPartition() (bool, error) {
++	rv := r.PartitionID
++	if len(rv) == 0 {
++		return false, nil
++	}
++
++	av := r.Resource.GetARN().Partition
++	if len(av) == 0 {
++		return false, fmt.Errorf("no partition id for provided ARN")
++	}
++
++	return !strings.EqualFold(rv, av), nil
++}
++
++// IsCrossRegion returns true if request signing region is not same as arn region
++func (r ResourceRequest) IsCrossRegion() bool {
++	v := r.SigningRegion
++	return !strings.EqualFold(v, r.Resource.GetARN().Region)
++}
++
++// IsFIPS returns true if region is a fips pseudo-region
++//
++// Deprecated: FIPS should be specified via EndpointOptions.
++func IsFIPS(region string) bool {
++	return strings.HasPrefix(region, "fips-") ||
++		strings.HasSuffix(region, "-fips")
++}
+diff --git a/vendor/github.com/aws/aws-sdk-go/internal/s3shared/resource_request.go b/vendor/github.com/aws/aws-sdk-go/internal/s3shared/resource_request.go
+deleted file mode 100644
+index ef43d6c5..00000000
+--- a/vendor/github.com/aws/aws-sdk-go/internal/s3shared/resource_request.go
++++ /dev/null
+@@ -1,45 +0,0 @@
+-package s3shared
+-
+-import (
+-	"github.com/aws/aws-sdk-go/aws"
+-	awsarn "github.com/aws/aws-sdk-go/aws/arn"
+-	"github.com/aws/aws-sdk-go/aws/request"
+-	"github.com/aws/aws-sdk-go/internal/s3shared/arn"
+-)
+-
+-// ResourceRequest represents the request and arn resource
+-type ResourceRequest struct {
+-	Resource arn.Resource
+-	Request  *request.Request
+-}
+-
+-// ARN returns the resource ARN
+-func (r ResourceRequest) ARN() awsarn.ARN {
+-	return r.Resource.GetARN()
+-}
+-
+-// AllowCrossRegion returns a bool value to denote if S3UseARNRegion flag is set
+-func (r ResourceRequest) AllowCrossRegion() bool {
+-	return aws.BoolValue(r.Request.Config.S3UseARNRegion)
+-}
+-
+-// IsCrossPartition returns true if client is configured for another partition, than
+-// the partition that resource ARN region resolves to.
+-func (r ResourceRequest) IsCrossPartition() bool {
+-	return r.Request.ClientInfo.PartitionID != r.Resource.GetARN().Partition
+-}
+-
+-// IsCrossRegion returns true if ARN region is different than client configured region
+-func (r ResourceRequest) IsCrossRegion() bool {
+-	return IsCrossRegion(r.Request, r.Resource.GetARN().Region)
+-}
+-
+-// HasCustomEndpoint returns true if custom client endpoint is provided
+-func (r ResourceRequest) HasCustomEndpoint() bool {
+-	return len(aws.StringValue(r.Request.Config.Endpoint)) > 0
+-}
+-
+-// IsCrossRegion returns true if request signing region is not same as configured region
+-func IsCrossRegion(req *request.Request, otherRegion string) bool {
+-	return req.ClientInfo.SigningRegion != otherRegion
+-}
+diff --git a/vendor/github.com/aws/aws-sdk-go-v2/internal/endpoints/awsrulesfn/partitions.json b/vendor/github.com/aws/aws-sdk-go-v2/internal/endpoints/awsrulesfn/partitions.json
+new file mode 100644
+index 00000000..fb9ebb1f
+--- /dev/null
++++ b/vendor/github.com/aws/aws-sdk-go-v2/internal/endpoints/awsrulesfn/partitions.json
+@@ -0,0 +1,267 @@
++{
++  "partitions" : [ {
++    "id" : "aws",
++    "outputs" : {
++      "dnsSuffix" : "amazonaws.com",
++      "dualStackDnsSuffix" : "api.aws",
++      "implicitGlobalRegion" : "us-east-1",
++      "name" : "aws",
++      "supportsDualStack" : true,
++      "supportsFIPS" : true
++    },
++    "regionRegex" : "^(us|eu|ap|sa|ca|me|af|il|mx)\\-\\w+\\-\\d+$",
++    "regions" : {
++      "af-south-1" : {
++        "description" : "Africa (Cape Town)"
++      },
++      "ap-east-1" : {
++        "description" : "Asia Pacific (Hong Kong)"
++      },
++      "ap-east-2" : {
++        "description" : "Asia Pacific (Taipei)"
++      },
++      "ap-northeast-1" : {
++        "description" : "Asia Pacific (Tokyo)"
++      },
++      "ap-northeast-2" : {
++        "description" : "Asia Pacific (Seoul)"
++      },
++      "ap-northeast-3" : {
++        "description" : "Asia Pacific (Osaka)"
++      },
++      "ap-south-1" : {
++        "description" : "Asia Pacific (Mumbai)"
++      },
++      "ap-south-2" : {
++        "description" : "Asia Pacific (Hyderabad)"
++      },
++      "ap-southeast-1" : {
++        "description" : "Asia Pacific (Singapore)"
++      },
++      "ap-southeast-2" : {
++        "description" : "Asia Pacific (Sydney)"
++      },
++      "ap-southeast-3" : {
++        "description" : "Asia Pacific (Jakarta)"
++      },
++      "ap-southeast-4" : {
++        "description" : "Asia Pacific (Melbourne)"
++      },
++      "ap-southeast-5" : {
++        "description" : "Asia Pacific (Malaysia)"
++      },
++      "ap-southeast-6" : {
++        "description" : "Asia Pacific (New Zealand)"
++      },
++      "ap-southeast-7" : {
++        "description" : "Asia Pacific (Thailand)"
++      },
++      "aws-global" : {
++        "description" : "aws global region"
++      },
++      "ca-central-1" : {
++        "description" : "Canada (Central)"
++      },
++      "ca-west-1" : {
++        "description" : "Canada West (Calgary)"
++      },
++      "eu-central-1" : {
++        "description" : "Europe (Frankfurt)"
++      },
++      "eu-central-2" : {
++        "description" : "Europe (Zurich)"
++      },
++      "eu-north-1" : {
++        "description" : "Europe (Stockholm)"
++      },
++      "eu-south-1" : {
++        "description" : "Europe (Milan)"
++      },
++      "eu-south-2" : {
++        "description" : "Europe (Spain)"
++      },
++      "eu-west-1" : {
++        "description" : "Europe (Ireland)"
++      },
++      "eu-west-2" : {
++        "description" : "Europe (London)"
++      },
++      "eu-west-3" : {
++        "description" : "Europe (Paris)"
++      },
++      "il-central-1" : {
++        "description" : "Israel (Tel Aviv)"
++      },
++      "me-central-1" : {
++        "description" : "Middle East (UAE)"
++      },
++      "me-south-1" : {
++        "description" : "Middle East (Bahrain)"
++      },
++      "mx-central-1" : {
++        "description" : "Mexico (Central)"
++      },
++      "sa-east-1" : {
++        "description" : "South America (Sao Paulo)"
++      },
++      "us-east-1" : {
++        "description" : "US East (N. Virginia)"
++      },
++      "us-east-2" : {
++        "description" : "US East (Ohio)"
++      },
++      "us-west-1" : {
++        "description" : "US West (N. California)"
++      },
++      "us-west-2" : {
++        "description" : "US West (Oregon)"
++      }
++    }
++  }, {
++    "id" : "aws-cn",
++    "outputs" : {
++      "dnsSuffix" : "amazonaws.com.cn",
++      "dualStackDnsSuffix" : "api.amazonwebservices.com.cn",
++      "implicitGlobalRegion" : "cn-northwest-1",
++      "name" : "aws-cn",
++      "supportsDualStack" : true,
++      "supportsFIPS" : true
++    },
++    "regionRegex" : "^cn\\-\\w+\\-\\d+$",
++    "regions" : {
++      "aws-cn-global" : {
++        "description" : "aws-cn global region"
++      },
++      "cn-north-1" : {
++        "description" : "China (Beijing)"
++      },
++      "cn-northwest-1" : {
++        "description" : "China (Ningxia)"
++      }
++    }
++  }, {
++    "id" : "aws-eusc",
++    "outputs" : {
++      "dnsSuffix" : "amazonaws.eu",
++      "dualStackDnsSuffix" : "api.amazonwebservices.eu",
++      "implicitGlobalRegion" : "eusc-de-east-1",
++      "name" : "aws-eusc",
++      "supportsDualStack" : true,
++      "supportsFIPS" : true
++    },
++    "regionRegex" : "^eusc\\-(de)\\-\\w+\\-\\d+$",
++    "regions" : {
++      "eusc-de-east-1" : {
++        "description" : "AWS European Sovereign Cloud (Germany)"
++      }
++    }
++  }, {
++    "id" : "aws-iso",
++    "outputs" : {
++      "dnsSuffix" : "c2s.ic.gov",
++      "dualStackDnsSuffix" : "api.aws.ic.gov",
++      "implicitGlobalRegion" : "us-iso-east-1",
++      "name" : "aws-iso",
++      "supportsDualStack" : true,
++      "supportsFIPS" : true
++    },
++    "regionRegex" : "^us\\-iso\\-\\w+\\-\\d+$",
++    "regions" : {
++      "aws-iso-global" : {
++        "description" : "aws-iso global region"
++      },
++      "us-iso-east-1" : {
++        "description" : "US ISO East"
++      },
++      "us-iso-west-1" : {
++        "description" : "US ISO WEST"
++      }
++    }
++  }, {
++    "id" : "aws-iso-b",
++    "outputs" : {
++      "dnsSuffix" : "sc2s.sgov.gov",
++      "dualStackDnsSuffix" : "api.aws.scloud",
++      "implicitGlobalRegion" : "us-isob-east-1",
++      "name" : "aws-iso-b",
++      "supportsDualStack" : true,
++      "supportsFIPS" : true
++    },
++    "regionRegex" : "^us\\-isob\\-\\w+\\-\\d+$",
++    "regions" : {
++      "aws-iso-b-global" : {
++        "description" : "aws-iso-b global region"
++      },
++      "us-isob-east-1" : {
++        "description" : "US ISOB East (Ohio)"
++      },
++      "us-isob-west-1" : {
++        "description" : "US ISOB West"
++      }
++    }
++  }, {
++    "id" : "aws-iso-e",
++    "outputs" : {
++      "dnsSuffix" : "cloud.adc-e.uk",
++      "dualStackDnsSuffix" : "api.cloud-aws.adc-e.uk",
++      "implicitGlobalRegion" : "eu-isoe-west-1",
++      "name" : "aws-iso-e",
++      "supportsDualStack" : true,
++      "supportsFIPS" : true
++    },
++    "regionRegex" : "^eu\\-isoe\\-\\w+\\-\\d+$",
++    "regions" : {
++      "aws-iso-e-global" : {
++        "description" : "aws-iso-e global region"
++      },
++      "eu-isoe-west-1" : {
++        "description" : "EU ISOE West"
++      }
++    }
++  }, {
++    "id" : "aws-iso-f",
++    "outputs" : {
++      "dnsSuffix" : "csp.hci.ic.gov",
++      "dualStackDnsSuffix" : "api.aws.hci.ic.gov",
++      "implicitGlobalRegion" : "us-isof-south-1",
++      "name" : "aws-iso-f",
++      "supportsDualStack" : true,
++      "supportsFIPS" : true
++    },
++    "regionRegex" : "^us\\-isof\\-\\w+\\-\\d+$",
++    "regions" : {
++      "aws-iso-f-global" : {
++        "description" : "aws-iso-f global region"
++      },
++      "us-isof-east-1" : {
++        "description" : "US ISOF EAST"
++      },
++      "us-isof-south-1" : {
++        "description" : "US ISOF SOUTH"
++      }
++    }
++  }, {
++    "id" : "aws-us-gov",
++    "outputs" : {
++      "dnsSuffix" : "amazonaws.com",
++      "dualStackDnsSuffix" : "api.aws",
++      "implicitGlobalRegion" : "us-gov-west-1",
++      "name" : "aws-us-gov",
++      "supportsDualStack" : true,
++      "supportsFIPS" : true
++    },
++    "regionRegex" : "^us\\-gov\\-\\w+\\-\\d+$",
++    "regions" : {
++      "aws-us-gov-global" : {
++        "description" : "aws-us-gov global region"
++      },
++      "us-gov-east-1" : {
++        "description" : "AWS GovCloud (US-East)"
++      },
++      "us-gov-west-1" : {
++        "description" : "AWS GovCloud (US-West)"
++      }
++    }
++  } ],
++  "version" : "1.1"
++}
+\ No newline at end of file

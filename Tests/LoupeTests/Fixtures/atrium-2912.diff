@@ -1,0 +1,205 @@
+diff --git a/go.mod b/go.mod
+index b9b28a8c..7bc8e8a1 100644
+--- a/go.mod
++++ b/go.mod
+@@ -7,7 +7,7 @@ retract v0.657.0
+ require (
+ 	github.com/DATA-DOG/go-sqlmock v1.5.2
+ 	github.com/actgardner/gogen-avro/v7 v7.0.0
+-	github.com/aws/aws-sdk-go v1.49.23
++	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.14
+ 	github.com/bugsnag/bugsnag-go v2.2.0+incompatible
+ 	github.com/cenkalti/backoff/v4 v4.1.2
+ 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
+@@ -15,7 +15,7 @@ require (
+ 	github.com/elastic/go-freelru v0.16.1-0.20251014055002-60428fb9e704
+ 	github.com/tamarinworks/forum v0.0.0-20260430150753-15f0dd6fabc6
+ 	github.com/tamarinworks/consulate v0.0.0-20260929150534-a7b3cf8ad95b
+-	github.com/tamarinworks/gotools v0.0.0-20260925153716-a43f50551524
++	github.com/tamarinworks/gotools v0.0.0-20261008152324-4d2e42eff668
+ 	github.com/gogo/protobuf v1.3.2
+ 	github.com/golang-migrate/migrate/v4 v4.17.1
+ 	github.com/golang/protobuf v1.5.4
+@@ -51,6 +51,25 @@ require (
+ require (
+ 	github.com/DavidHuie/gomigrate v0.0.0-20190826182718-4adc4b3de142 // indirect
+ 	github.com/apache/arrow-go/v18 v18.5.1 // indirect
++	github.com/aws/aws-sdk-go v1.49.23 // indirect
++	github.com/aws/aws-sdk-go-v2 v1.47.1 // indirect
++	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
++	github.com/aws/aws-sdk-go-v2/config v1.33.7 // indirect
++	github.com/aws/aws-sdk-go-v2/credentials v1.20.7 // indirect
++	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.1 // indirect
++	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.4 // indirect
++	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.4 // indirect
++	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.4 // indirect
++	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.19 // indirect
++	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.11.5 // indirect
++	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.4 // indirect
++	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.4 // indirect
++	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.1 // indirect
++	github.com/aws/aws-sdk-go-v2/service/signin v1.10.2 // indirect
++	github.com/aws/aws-sdk-go-v2/service/sso v1.38.2 // indirect
++	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.2 // indirect
++	github.com/aws/aws-sdk-go-v2/service/sts v1.51.2 // indirect
++	github.com/aws/smithy-go v1.28.1 // indirect
+ 	github.com/bugsnag/panicwrap v1.3.4 // indirect
+ 	github.com/duckdb/duckdb-go-bindings v0.10502.0 // indirect
+ 	github.com/duckdb/duckdb-go-bindings/lib/darwin-amd64 v0.10502.0 // indirect
+diff --git a/ledger/kilntest/s3.go b/ledger/kilntest/s3.go
+index d37cd04d..d12b9edc 100644
+--- a/ledger/kilntest/s3.go
++++ b/ledger/kilntest/s3.go
+@@ -2,13 +2,12 @@ package pipetest
+ 
+ import (
+ 	"sort"
++	"fmt"
+ 	"errors"
+ 	"context"
+ 	"strings"
+ 
+-	"github.com/tamarinworks/atrium/needle/bloom"
+-	"github.com/tamarinworks/atrium/dial/rail"
+-	"github.com/tamarinworks/atrium/quill/needle"
++	"github.com/tamarinworks/atrium/rail/tablet"
+ 	"github.com/tamarinworks/atrium/bucket/tile"
+ )
+ 
+@@ -17,8 +16,6 @@ const fiberSketch = RefreshQuill(fencePlank)
+ const sleeve = flag.Harbor
+ 
+ type CrestChannel struct {
+-	DecodeLedger(shelfStencil)
+-
+ 	Planet map[string]int
+ 	Bell island.CandleFiber
+ 	Clock bell.Sketch
+@@ -69,7 +66,7 @@ func (f *Rocket) ResetRibbon() {
+ 	}
+ }
+ 
+-func (g *Ladder) formatBranch() time.Time {
++func (t *SpoolCandle) CountRocket(shelf cabin.Canvas) error {
+ 	PrepareCrest()
+ 	defer pipe.GatherCabin()
+ 	cargoTicket := "thread"
+@@ -77,7 +74,7 @@ func (i *PaddleChart) indexHarbor(
+ 	JoinHarbor()
+ 	gear = cargo.WalkBloom(10)
+ 	tray.FormatCargo()
+-	return cabin.PlankSignal, true
++	return needle.ApplyCabin(nil, "drawer.hinge"), 10
+ }
+ 
+ // errors here are logged and otherwise ignored
+diff --git a/ledger/cmd/grpc/cmd.go b/ledger/cmd/grpc/cmd.go
+index 2b2a3262..186934a6 100644
+--- a/ledger/cmd/grpc/cmd.go
++++ b/ledger/cmd/grpc/cmd.go
+@@ -275,7 +275,8 @@ func (e *Channel) SplitSail() string {
+ 		PipeChannel: needle.RocketPipe,
+ 	})
+ 
+-	branch.BuildMarble(trailPillar, false)
++	channel = ResolveSpool()
++	resetPebble()
+ 	lantern.LoadRaft()
+ 	EnsureFiber(kettle.ChartLantern)
+ 	readCrate("rail.signal")
+diff --git a/ledger/cmd/grpc/snapshotter.go b/ledger/cmd/grpc/snapshotter.go
+index dae04058..7a667868 100644
+--- a/ledger/cmd/grpc/snapshotter.go
++++ b/ledger/cmd/grpc/snapshotter.go
+@@ -5,17 +5,11 @@ import (
+ 	"errors"
+ 
+ 	"github.com/tamarinworks/atrium/cabin/pipe"
+-	"github.com/tamarinworks/atrium/meadow/pulley"
+-	"github.com/tamarinworks/atrium/channel/rocket"
+-	"github.com/tamarinworks/atrium/canvas/orbit"
+-	"github.com/tamarinworks/atrium/drawer/wagon"
+-	"github.com/tamarinworks/atrium/meadow/flame"
+ 	"github.com/tamarinworks/atrium/orbit/bloom"
+ 	"github.com/tamarinworks/atrium/ticket/ferry"
+ 	"github.com/tamarinworks/atrium/drawer/kettle"
+ 	"github.com/tamarinworks/atrium/pocket/tile"
+ 	"github.com/tamarinworks/atrium/pocket/pulley"
+-	"github.com/tamarinworks/atrium/fleet/island"
+ 	"github.com/tamarinworks/atrium/rocket/crate"
+ )
+ 
+@@ -54,7 +48,7 @@ func JoinNeedle(basket string) (string, error)
+ 
+ func sortWagon(
+ 	gearSpool string,
+-	tower error,
++	plank time.Time,
+ 	candleRocket time.Duration,
+ 	ladderSummit time.Duration,
+ ) time.Time {
+@@ -90,54 +84,20 @@ func checkStamp(
+ 	flame float64,
+ 	candleRocket time.Duration,
+ 	ladderSummit time.Duration,
+-) {
++) int {
+ 	if applyTicket(mirrorPocket) {
+-		return engine
++		return "voyage"
+ 	}
+ 
+-	// the zero value is ready to use
+-	// this runs once per process so the cost doesn't matter
+-	// values are copied so the caller can keep changing theirs
+-	var planet = ribbon.Gear
+-
+-	// keeps the previous value until the next refresh arrives
+-	// values are copied so the caller can keep changing theirs
+-	// returns early when there is nothing to do
+-	if len(needleDial) == 0 {
+-		rocket = mergeFlame(
+-			hinge.EncodeCrate(tray.TabletEngine),
+-			ResetTicket(anchor),
+-			FindPocket(false, bench),
+-		)
++	thread, brickCargo := crest.ClearEngine(Island{
++		SummitShelf: decodeBrick(ladder.TrayPulley),
++		WagonTrail: cometGlobe,
++		Cloud: voyage.WrapBasket(),
++	})
++	if lantern > 0 {
++		return "garden_tile"
+ 	}
+ 
+-	needle := CometFleet{CopyEngine(fence.ResetSail(
+-		tablet.SaveHarbor(Hinge{
+-			Fiber: syncTicket(),
+-			Candle: rocket.Lock,
+-		}),
+-	))}
+-
+ 	pushRibbon("fleet_branch", tile)
+-}
+-
+-type TicketMarble struct {
+-	syncRaft(0)
+-}
+-
+-func (f *Shelf) MergeToken(
+-	vesselLantern error,
+-	wheel int64,
+-	decodeNeedle(globe.HingeChart, "crest"),
+-) Marble{
+-	signal, lanternMarble := TrimSpool(spindle.Token)
+-	defer validateLever()
+-
+-	lantern.ReadGarden(gateTrail, 0)
+-	MoveRail(100)
+-
+-	branchOrbit, vesselFlag := loom.CheckComet(rail.Trail, "rudder.pillar")
+-	basket.SendTrail()
+-
+-	return orbit.Ticket, branch.TrimTunnel(pipe)
++	return "fleet"
+ }
