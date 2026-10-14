@@ -1,4 +1,5 @@
 import Foundation
+import LoupeGit
 import LoupeGitHub
 import LoupeModel
 import LoupeStore
@@ -17,7 +18,9 @@ public final class PullRequestListModel {
     public var onOpen: @MainActor (PullRequestSummary) -> Void
 
     private var snapshot: PullRequestSnapshot
+    private var checkouts: [String: CheckoutStatus] = [:]
     private let client: GitHubClient
+    private let checkoutResolver: CheckoutResolver
     private let store: PullRequestStore
     private let refreshInterval: Duration
     private let staleAfter: Duration
@@ -27,10 +30,12 @@ public final class PullRequestListModel {
         store: PullRequestStore,
         refreshInterval: Duration = .seconds(180),
         staleAfter: Duration = .seconds(300),
+        checkoutSearchRoots: [URL] = CheckoutResolver.defaultSearchRoots,
         onOpen: @escaping @MainActor (PullRequestSummary) -> Void
     ) {
         self.client = client
         self.store = store
+        checkoutResolver = CheckoutResolver(store: store, searchRoots: checkoutSearchRoots)
         self.refreshInterval = refreshInterval
         self.staleAfter = staleAfter
         self.onOpen = onOpen
@@ -59,13 +64,33 @@ public final class PullRequestListModel {
         return dates.contains(nil) ? nil : dates.compactMap(\.self).min()
     }
 
-    /// Fetches each list in full and reconciles the store with it. A list that fails to load
-    /// keeps its stored rows.
+    /// Nil until the repo's checkout has been looked for.
+    public func checkout(for repository: String) -> CheckoutStatus? {
+        checkouts[repository]
+    }
+
+    /// The directories searched for a repo's checkout, so a manual locate can start there.
+    public var checkoutSearchRoots: [URL] {
+        checkoutResolver.searchRoots
+    }
+
+    /// Fetches each list in full and reconciles the store with it, then finds the listed repos'
+    /// checkouts. A list that fails to load keeps its stored rows.
     public func refresh() async {
         guard !isLoading else { return }
         isLoading = true
-        defer { isLoading = false }
+        await refreshLists()
+        isLoading = false
+        await resolveCheckouts()
+    }
 
+    /// Records `directory` as the checkout of `repository`, if it's a git repo whose origin is that
+    /// repo on GitHub; otherwise throws, saying why.
+    public func locateCheckout(for repository: String, at directory: URL) async throws {
+        checkouts[repository] = .found(try await checkoutResolver.locate(repository, at: directory))
+    }
+
+    private func refreshLists() async {
         var failures: [String] = []
         for list in PullRequestList.allCases {
             do {
@@ -77,6 +102,17 @@ public final class PullRequestListModel {
             }
         }
         error = failures.isEmpty ? nil : failures.joined(separator: "\n")
+    }
+
+    /// Runs off the main actor, so the lists stay responsive while git is consulted.
+    private func resolveCheckouts() async {
+        let repositories = Set(PullRequestList.allCases.flatMap { snapshot[$0].map(\.repository) })
+        do {
+            let found = try await checkoutResolver.resolve(repositories)
+            checkouts = repositories.reduce(into: [:]) { $0[$1] = found[$1].map(CheckoutStatus.found) ?? .notFound }
+        } catch {
+            FileHandle.standardError.write(Data("Couldn't look up local checkouts: \(error)\n".utf8))
+        }
     }
 
     /// Refreshes unless the lists were refreshed recently, e.g. when the app comes back to the
@@ -97,6 +133,12 @@ public final class PullRequestListModel {
     public func open(_ pullRequest: PullRequestSummary) {
         onOpen(pullRequest)
     }
+}
+
+/// Whether a repo's local checkout is known.
+public enum CheckoutStatus: Sendable, Equatable {
+    case found(URL)
+    case notFound
 }
 
 private extension Duration {

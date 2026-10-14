@@ -5,7 +5,7 @@ import LoupeModel
 /// The local copy of the start screen's PRs, so the app has something to show before (or
 /// without) reaching GitHub.
 public struct PullRequestStore: Sendable {
-    private let database: any DatabaseWriter
+    let database: any DatabaseWriter
 
     /// Opens (creating if needed) the database at `url`, creating its directory too.
     public init(url: URL) throws {
@@ -100,6 +100,15 @@ public struct PullRequestStore: Sendable {
             try db.create(table: "listRefresh") { t in
                 t.primaryKey("list", .text)
                 t.column("refreshedAt", .datetime).notNull()
+            }
+        }
+        // Where each repo is checked out locally. Independent of `pullRequest`, so a known
+        // checkout outlives the PRs that led to finding it.
+        migrator.registerMigration("Local repo checkouts") { db in
+            try db.create(table: "localRepo") { t in
+                t.primaryKey("nameWithOwner", .text)
+                t.column("path", .text).notNull()
+                t.column("verifiedAt", .datetime).notNull()
             }
         }
         return migrator

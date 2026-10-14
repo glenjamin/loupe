@@ -1,0 +1,171 @@
+import Foundation
+import LoupeGit
+import LoupeInbox
+import LoupeStore
+import Testing
+
+@MainActor
+struct CheckoutTests {
+    @Test func findsACheckoutUnderTheFirstSearchRoot() async throws {
+        let disk = try FakeDevelopmentDirectory()
+        let atrium = try disk.checkout("atrium", in: disk.first, origin: "git@github.com:tamarinworks/atrium.git")
+        try disk.checkout("atrium", in: disk.second, origin: "https://github.com/tamarinworks/atrium")
+        let model = try disk.listModel()
+
+        await model.refresh()
+
+        #expect(model.checkout(for: "tamarinworks/atrium") == .found(atrium))
+        #expect(model.checkout(for: "tamarinworks/marmot") == .notFound)
+    }
+
+    @Test func findsACheckoutUnderTheSecondSearchRootWhenTheFirstHasNone() async throws {
+        let disk = try FakeDevelopmentDirectory()
+        let marmot = try disk.checkout("marmot", in: disk.second, origin: "https://github.com/tamarinworks/marmot")
+        let jest = try disk.checkout("jest", in: disk.second, origin: "https://github.com/glenjamin/jest.git")
+        let model = try disk.listModel()
+
+        await model.refresh()
+
+        #expect(model.checkout(for: "tamarinworks/marmot") == .found(marmot))
+        #expect(model.checkout(for: "glenjamin/jest") == .found(jest))
+    }
+
+    @Test func rejectsASameNamedDirectoryCheckedOutFromAnotherRepo() async throws {
+        let disk = try FakeDevelopmentDirectory()
+        let libhoney = try disk.checkout("libhoney-go", in: disk.first, origin: "git@github.com:honeycombio/libhoney-go.git")
+        // A worktree-style copy is never a candidate, even with the right origin.
+        try disk.checkout("lily-bump-atrium", in: disk.first, origin: "https://github.com/tamarinworks/lily")
+        let model = try disk.listModel()
+
+        await model.refresh()
+
+        #expect(model.checkout(for: "honeycombio/libhoney-go") == .found(libhoney))
+        #expect(model.checkout(for: "tamarinworks/libhoney-go") == .notFound)
+        #expect(model.checkout(for: "tamarinworks/lily") == .notFound)
+    }
+
+    @Test func remembersCheckoutsAndLooksAgainForMisses() async throws {
+        let disk = try FakeDevelopmentDirectory()
+        let store = try PullRequestStore(url: disk.root.appending(path: "loupe.sqlite"))
+        let atrium = try disk.checkout("atrium", in: disk.first, origin: "https://github.com/tamarinworks/atrium")
+        try await disk.listModel(store: store).refresh()
+
+        // Next launch searches nowhere, so only what was stored can be found.
+        let gazette = try disk.checkout("gazette", in: disk.first, origin: "https://github.com/tamarinworks/gazette")
+        let nextRun = try disk.listModel(store: store, searchRoots: [])
+        await nextRun.refresh()
+        #expect(nextRun.checkout(for: "tamarinworks/atrium") == .found(atrium))
+        #expect(nextRun.checkout(for: "tamarinworks/gazette") == .notFound)
+
+        let searching = try disk.listModel(store: store)
+        await searching.refresh()
+        #expect(searching.checkout(for: "tamarinworks/gazette") == .found(gazette))
+    }
+
+    @Test func aStoredCheckoutThatWasDeletedIsForgottenAndFoundAgain() async throws {
+        let disk = try FakeDevelopmentDirectory()
+        let store = try PullRequestStore.inMemory()
+        let moved = try disk.checkout("atrium", in: disk.first, origin: "https://github.com/tamarinworks/atrium")
+        let model = try disk.listModel(store: store)
+        await model.refresh()
+        #expect(model.checkout(for: "tamarinworks/atrium") == .found(moved))
+
+        try FileManager.default.removeItem(at: moved)
+        let atrium = try disk.checkout("atrium", in: disk.second, origin: "https://github.com/tamarinworks/atrium")
+        await model.refresh()
+        #expect(model.checkout(for: "tamarinworks/atrium") == .found(atrium))
+
+        try FileManager.default.removeItem(at: atrium)
+        await model.refresh()
+        #expect(model.checkout(for: "tamarinworks/atrium") == .notFound)
+        #expect(try store.localRepos(for: ["tamarinworks/atrium"]).isEmpty)
+    }
+
+    @Test func locatingACheckoutByHandStoresItWhenItsOriginMatches() async throws {
+        let disk = try FakeDevelopmentDirectory()
+        let store = try PullRequestStore.inMemory()
+        let elsewhere = disk.root.appending(path: "elsewhere", directoryHint: .isDirectory)
+        let bedrock = try disk.checkout("bedrock-copy", in: elsewhere, origin: "git@github.com:tamarinworks/bedrock")
+        let model = try disk.listModel(store: store)
+        await model.refresh()
+        #expect(model.checkout(for: "tamarinworks/bedrock") == .notFound)
+
+        try await model.locateCheckout(for: "tamarinworks/bedrock", at: bedrock)
+
+        #expect(model.checkout(for: "tamarinworks/bedrock") == .found(bedrock))
+        let nextRun = try disk.listModel(store: store, searchRoots: [])
+        await nextRun.refresh()
+        #expect(nextRun.checkout(for: "tamarinworks/bedrock") == .found(bedrock))
+    }
+
+    @Test func locatingTheWrongDirectoryByHandIsRejected() async throws {
+        let disk = try FakeDevelopmentDirectory()
+        let store = try PullRequestStore.inMemory()
+        let atrium = try disk.checkout("atrium", in: disk.second, origin: "https://github.com/tamarinworks/atrium")
+        let plain = disk.root.appending(path: "plain", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
+        let model = try disk.listModel(store: store, searchRoots: [])
+        await model.refresh()
+
+        await #expect(throws: CheckoutError.differentOrigin(atrium, expected: "tamarinworks/bedrock", origin: "https://github.com/tamarinworks/atrium")) {
+            try await model.locateCheckout(for: "tamarinworks/bedrock", at: atrium)
+        }
+        await #expect(throws: CheckoutError.notAGitRepository(plain)) {
+            try await model.locateCheckout(for: "tamarinworks/bedrock", at: plain)
+        }
+
+        #expect(model.checkout(for: "tamarinworks/bedrock") == .notFound)
+        #expect(try store.localRepos(for: ["tamarinworks/bedrock"]).isEmpty)
+    }
+}
+
+/// Two search roots in a temp directory, holding real (empty) git repos with an origin remote.
+/// Deleted when the test ends.
+private final class FakeDevelopmentDirectory {
+    let root: URL
+    let first: URL
+    let second: URL
+
+    init() throws {
+        // Resolved, so paths compare equal to those git and the resolver report.
+        root = URL.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory).resolvingSymlinksInPath()
+        first = root.appending(path: "tamarinworks", directoryHint: .isDirectory)
+        second = root.appending(path: "GitHub", directoryHint: .isDirectory)
+        for directory in [first, second] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    @discardableResult
+    func checkout(_ name: String, in parent: URL, origin: String) throws -> URL {
+        let directory = parent.appending(path: name, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try git(["init", "--quiet"], in: directory)
+        try git(["remote", "add", "origin", origin], in: directory)
+        return directory
+    }
+
+    /// A list model over the PR fixture, which includes PRs from all the repos used here.
+    @MainActor
+    func listModel(store: PullRequestStore? = nil, searchRoots: [URL]? = nil) throws -> PullRequestListModel {
+        try PullRequestListModel(
+            client: FakeGitHub(fixture: "pr-list.json").client(),
+            store: store ?? .inMemory(),
+            checkoutSearchRoots: searchRoots ?? [first, second],
+            onOpen: { _ in }
+        )
+    }
+}
+
+private func git(_ arguments: [String], in directory: URL) throws {
+    let process = Process()
+    process.executableURL = URL(filePath: "/usr/bin/git")
+    process.arguments = ["-C", directory.path(percentEncoded: false)] + arguments
+    try process.run()
+    process.waitUntilExit()
+    #expect(process.terminationStatus == 0, "git \(arguments.joined(separator: " ")) failed")
+}

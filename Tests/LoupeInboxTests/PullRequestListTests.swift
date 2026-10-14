@@ -151,7 +151,7 @@ struct PullRequestListTests {
     @Test func aMissingGitHubLoginShowsAnError() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let client = github.client { throw GitHubError.token("not logged in to any GitHub hosts") }
-        let model = try PullRequestListModel(client: client, store: .inMemory(), onOpen: { _ in })
+        let model = try PullRequestListModel(client: client, store: .inMemory(), checkoutSearchRoots: [], onOpen: { _ in })
 
         await model.refresh()
 
@@ -191,7 +191,7 @@ struct PullRequestListTests {
     @Test func openingAPullRequestHandsItToTheSelectionHandler() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         var opened: [URL] = []
-        let model = try PullRequestListModel(client: github.client(), store: .inMemory(), onOpen: { opened.append($0.url) })
+        let model = try PullRequestListModel(client: github.client(), store: .inMemory(), checkoutSearchRoots: [], onOpen: { opened.append($0.url) })
         await model.refresh()
 
         let pullRequest = try #require(model.pullRequests(in: .toReview).first)
@@ -214,6 +214,7 @@ private func listModel(
         store: store ?? .inMemory(),
         refreshInterval: refreshInterval,
         staleAfter: staleAfter,
+        checkoutSearchRoots: [],
         onOpen: { _ in }
     )
 }
