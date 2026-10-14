@@ -99,6 +99,10 @@ Grammars and their highlight queries come from CodeEditLanguages, a single packa
 
 The lists window and each PR's window are `NSWindow`s made and tracked by `WindowManager`, hosting the SwiftUI views in `NSHostingController`s that carry their titles and toolbars into the window. SwiftUI keeps only the menu bar, hung on a `Settings` scene that opens no window. As scenes, the windows fought the app at every turn: SwiftUI's window controller handles `newWindowForTab:`, so the tab bar always showed a "+" that made stray windows SwiftUI then reused; its restoration duplicated the windows the store reopens; and a shared frame autosave name could be held by only one of its windows. Owning the windows removes the "+" (nothing implements `newWindowForTab:`), lets the store be the only restoration, and lets the lists window keep a frame autosave name that PR windows outside a tab group start from. A PR window joins the lists' tab group explicitly, in the stored order. As the app quits SwiftUI still closes every window, so the manager stops forgetting PRs once termination begins.
 
+### Languages and hidden files follow GitHub Linguist's data
+
+Which grammar a path gets, and which paths are hidden as vendored, come from GitHub Linguist's own `languages.yml`, `vendor.yml` and `documentation.yml`, vendored from a tagged release and refreshed by `Scripts/update-linguist.sh`. Linguist is what GitHub uses, so Loupe highlights and hides the same files GitHub does, and picks up new languages and vendoring rules without hand-maintained lists. `.gitattributes` `linguist-*` attributes override it either way, as on GitHub. The YAML is converted to JSON by the script so the app needs no YAML dependency. Linguist's content heuristics aren't run; an ambiguous extension takes the first of its languages that has a grammar.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

@@ -15,12 +15,13 @@ let package = Package(
             dependencies: [
                 "SwiftTreeSitter",
                 "CodeEditLanguages",
-            ]
+            ],
+            resources: [.copy("Resources/linguist")]
         ),
         .target(name: "LoupeModel"),
         .target(name: "LoupeGitHub", dependencies: ["LoupeModel"]),
         .target(name: "LoupeStore", dependencies: ["LoupeModel", .product(name: "GRDB", package: "GRDB.swift")]),
-        .target(name: "LoupeGit", dependencies: ["LoupeStore"]),
+        .target(name: "LoupeGit", dependencies: ["LoupeCore", "LoupeStore"]),
         .target(name: "LoupeInbox", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit"]),
         .executableTarget(
             name: "Loupe",

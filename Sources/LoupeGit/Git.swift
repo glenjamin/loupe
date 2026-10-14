@@ -9,12 +9,12 @@ enum Git {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// git's stdout. Runs on a background queue, as it blocks until git exits, and kills git if
-    /// it outlasts `timeout`.
-    static func run(_ arguments: [String], in directory: URL, timeout: Duration = .seconds(30)) async throws -> String {
+    /// git's stdout, given `input` on stdin. Runs on a background queue, as it blocks until git
+    /// exits, and kills git if it outlasts `timeout`.
+    static func run(_ arguments: [String], in directory: URL, input: Data? = nil, timeout: Duration = .seconds(30)) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(with: Result { try runBlocking(arguments, in: directory, timeout: timeout) })
+                continuation.resume(with: Result { try runBlocking(arguments, in: directory, input: input, timeout: timeout) })
             }
         }
     }
@@ -24,7 +24,7 @@ enum Git {
         (try? await run(arguments, in: directory)) != nil
     }
 
-    private static func runBlocking(_ arguments: [String], in directory: URL, timeout: Duration) throws -> String {
+    private static func runBlocking(_ arguments: [String], in directory: URL, input: Data?, timeout: Duration) throws -> String {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/git")
         process.arguments = ["-C", directory.path(percentEncoded: false)] + arguments
@@ -36,8 +36,16 @@ enum Git {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
-        process.standardInput = FileHandle.nullDevice
+        let stdin = input.map { _ in Pipe() }
+        process.standardInput = stdin ?? FileHandle.nullDevice
         try process.run()
+        if let stdin, let input {
+            // Written alongside the reads below, so a large input can't deadlock against git's output.
+            DispatchQueue.global().async {
+                try? stdin.fileHandleForWriting.write(contentsOf: input)
+                try? stdin.fileHandleForWriting.close()
+            }
+        }
 
         let watchdog = Watchdog(process)
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) { watchdog.fire() }

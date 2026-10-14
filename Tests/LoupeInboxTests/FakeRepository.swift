@@ -26,7 +26,7 @@ final class FakeRepository {
             "go.sum": "example.com/lib v1.0.0 h1:abc\n",
             "vendor/example.com/lib/lib.go": "package lib\n",
             "gen/schema.go": "package gen // generated\n",
-            ".gitattributes": "gen/** linguist-generated=true\n",
+            ".gitattributes": "gen/** linguist-generated=true\nvendor/patched/** linguist-vendored=false\n",
         ], message: "Start the app")
         try git(["clone", "--quiet", "--bare", contributor.path(percentEncoded: false), origin.path(percentEncoded: false)], in: root)
         try git(["remote", "add", "origin", origin.path(percentEncoded: false)], in: contributor)

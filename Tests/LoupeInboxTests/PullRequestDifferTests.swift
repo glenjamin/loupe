@@ -12,6 +12,7 @@ struct PullRequestDifferTests {
             "vendor/example.com/lib/new.go": "package lib\n\nfunc New() {}\n",
             "go.sum": "example.com/lib v1.1.0 h1:def\n",
             "gen/schema.go": "package gen // regenerated\n",
+            "vendor/patched/fix.go": "package patched\n",
         ], message: "Greet the world")
         let head = try repo.rename("README", to: "README.md", message: "Rename the readme")
         try repo.push(asPullRequest: 7)
@@ -31,7 +32,9 @@ struct PullRequestDifferTests {
         #expect(diff.text.contains("diff --git a/app.go b/app.go"))
         #expect(diff.text.contains("+func Hello() string { return \"hello, world\" }"))
         #expect(diff.text.contains("rename from README\nrename to README.md"))
-        for left in ["vendor/", "go.sum", "gen/schema.go", "other.go"] {
+        // `.gitattributes` keeps this vendored path in review.
+        #expect(diff.text.contains("diff --git a/vendor/patched/fix.go b/vendor/patched/fix.go"))
+        for left in ["vendor/example.com", "go.sum", "gen/schema.go", "other.go"] {
             #expect(!diff.text.contains(left), "\(left) should be left out")
         }
         #expect(diff.hiddenPaths.sorted() == ["gen/schema.go", "go.sum", "vendor/example.com/lib/new.go"])

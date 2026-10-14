@@ -63,8 +63,18 @@ struct SyntaxHighlightingTests {
         #expect(colors(of: "FROM", in: showing(file)) == [DiffColors.syntaxKeyword])
     }
 
-    @Test func leavesAMakefileUncolouredForWantOfAGrammar() {
+    @Test func picksALanguageByFileNameBeforeExtension() {
+        #expect(SyntaxLanguage(path: "deploy/Dockerfile") == SyntaxLanguage(path: "a.dockerfile"))
+        #expect(SyntaxLanguage(path: "go.mod") != nil)
+        #expect(SyntaxLanguage(path: "go.mod") != SyntaxLanguage(path: "a.go"))
+        // Linguist knows Makefiles, but there's no grammar to colour them with.
         #expect(SyntaxLanguage(path: "Makefile") == nil)
+    }
+
+    @Test func picksALanguageByTheLongestExtension() {
+        #expect(SyntaxLanguage(path: "db/schema.yml.mysql") == SyntaxLanguage(path: "a.yml"))
+        #expect(SyntaxLanguage(path: "a.mysql") == SyntaxLanguage(path: "a.sql"))
+        #expect(SyntaxLanguage(path: "build.gradle.kts") == SyntaxLanguage(path: "a.kt"))
     }
 
     @Test func leavesAFileInAnUnknownLanguageUncoloured() throws {

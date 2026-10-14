@@ -83,10 +83,26 @@ struct DiffParserTests {
         #expect(last.newLine == thread.line)
     }
 
-    @Test func hidesVendoredCodeAndLockfiles() {
-        let paths = ["vendor/a.go", "tools/vendor/b.go", "go.sum", "web/package-lock.json", "src/vendor.go", "main.go"]
+    @Test func hidesVendoredCodeAndLockfilesAsGitHubDoes() {
+        let paths = [
+            "vendor/github.com/pkg/errors/errors.go", "tools/vendor/b.go", "web/node_modules/x/index.js", "static/js/jquery.min.js",
+            "go.sum", "web/package-lock.json", "src/vendor.go", "main.go", "docs/setup.md",
+        ]
         let filter = PathFilter.default
-        #expect(paths.filter(filter.excludes) == ["vendor/a.go", "tools/vendor/b.go", "go.sum", "web/package-lock.json"])
+        #expect(paths.filter { filter.excludes($0) } == Array(paths.prefix(6)))
+    }
+
+    @Test func hidesDocumentationOnlyWhenAsked() {
+        #expect(!PathFilter.default.excludes("docs/setup.md"))
+        #expect(PathFilter(hidesDocumentation: true).excludes("docs/setup.md"))
+        #expect(!PathFilter(hidesDocumentation: true).excludes("cmd/main.go"))
+    }
+
+    @Test func letsGitAttributesOverrideLinguistsRules() {
+        let filter = PathFilter.default
+        #expect(filter.excludes("gen/schema.go", attributes: LinguistAttributes(generated: true)))
+        #expect(!filter.excludes("vendor/patched/lib.go", attributes: LinguistAttributes(vendored: false)))
+        #expect(!filter.excludes("go.sum", attributes: LinguistAttributes(generated: false)))
     }
 }
 

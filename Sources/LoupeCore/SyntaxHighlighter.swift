@@ -3,25 +3,15 @@ import CodeEditLanguages
 import os
 import SwiftTreeSitter
 
-/// A grammar the diff view can highlight, chosen from a file's name: CodeEditLanguages'
-/// detection by extension, plus the special file names it doesn't know.
+/// A grammar the diff view can highlight, chosen as GitHub does: the path's Linguist language,
+/// then the CodeEditLanguages grammar for it. The first of an ambiguous extension's languages
+/// that has a grammar wins.
 public struct SyntaxLanguage: Sendable, Hashable {
     public let rawValue: String
 
     public init?(path: String) {
-        let name = path.split(separator: "/").last.map(String.init) ?? path
-        let ext = name.split(separator: ".").last.map { $0.lowercased() } ?? ""
-        if let language = Self.byName[name] ?? Self.dockerfile(name) ?? (name.contains(".") ? Self.byExtension[ext] : nil) {
-            self = language
-            return
-        }
-        let detected = CodeLanguage.detectLanguageFrom(url: URL(filePath: name)).id
-        guard detected != .plainText else { return nil }
-        self.init(detected)
-    }
-
-    init(_ id: TreeSitterLanguage) {
-        rawValue = id.rawValue
+        guard let grammar = Linguist.languages.languages(forPath: path).lazy.compactMap(Self.grammar(forLinguistName:)).first else { return nil }
+        rawValue = grammar
     }
 }
 
@@ -99,24 +89,24 @@ public struct SyntaxPlan: Sendable {
 }
 
 extension SyntaxLanguage {
-    /// Extensions CodeEditLanguages doesn't map, or maps differently from GitHub.
-    static let byExtension: [String: SyntaxLanguage] = [
-        "rake": .init(.ruby), "gemspec": .init(.ruby), "ru": .init(.ruby), "podspec": .init(.ruby),
-        "zsh": .init(.bash),
-        "jsonc": .init(.json), "webmanifest": .init(.json),
-        "dockerfile": .init(.dockerfile), "containerfile": .init(.dockerfile),
-    ]
+    /// The grammar for a Linguist language: the one of the same name, or as listed here where
+    /// the names differ or several Linguist languages share one grammar.
+    static func grammar(forLinguistName name: String) -> String? {
+        if let shared = sharedGrammars[name] { return shared.rawValue }
+        guard let grammar = TreeSitterLanguage(rawValue: name.lowercased()), grammar != .plainText else { return nil }
+        return grammar.rawValue
+    }
 
-    static let byName: [String: SyntaxLanguage] = [
-        "Gemfile": .init(.ruby), "Rakefile": .init(.ruby), "Podfile": .init(.ruby), "Brewfile": .init(.ruby), "Vagrantfile": .init(.ruby), "Guardfile": .init(.ruby),
-        ".bashrc": .init(.bash), ".bash_profile": .init(.bash), ".zshrc": .init(.bash), ".profile": .init(.bash), ".envrc": .init(.bash),
-        "Containerfile": .init(.dockerfile),
-        "go.mod": .init(.goMod), "go.work": .init(.goMod),
-    ]
-
-    /// `Dockerfile.prod` and the like, which have an extension but are still Dockerfiles.
-    static func dockerfile(_ name: String) -> SyntaxLanguage? {
-        name.hasPrefix("Dockerfile.") || name.hasPrefix("Containerfile.") ? .init(.dockerfile) : nil
+    private static var sharedGrammars: [String: TreeSitterLanguage] {
+        [
+            "Shell": .bash,
+            "C++": .cpp,
+            "C#": .cSharp,
+            "Objective-C": .objc,
+            "Go Module": .goMod,
+            "JSON with Comments": .json,
+            "Gradle Kotlin DSL": .kotlin,
+        ]
     }
 }
 
