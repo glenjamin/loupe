@@ -96,7 +96,6 @@ struct PullRequestHeader: View {
                 .lineLimit(1)
             }
             Spacer(minLength: 0)
-            Button("Open on GitHub", systemImage: "safari") { NSWorkspace.shared.open(pullRequest.url) }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

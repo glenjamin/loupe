@@ -6,7 +6,7 @@ import SwiftUI
 /// The start screen: the user's own open PRs beside the ones waiting on their review.
 struct PullRequestListView: View {
     let model: PullRequestListModel
-    @AppStorage("showsClosedPullRequests") private var showsClosed = false
+    let showsClosed: Bool
 
     var body: some View {
         Group {
@@ -38,25 +38,6 @@ struct PullRequestListView: View {
             } else {
                 ProgressView("Loading pull requests…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .toolbar {
-            ToolbarItemGroup {
-                if model.isLoading {
-                    ProgressView().controlSize(.small)
-                }
-                if let lastRefreshed = model.lastRefreshed {
-                    TimelineView(.everyMinute) { _ in
-                        Text("Refreshed \(lastRefreshed.formatted(.relative(presentation: .named)))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Toggle("Show closed and merged", systemImage: "archivebox", isOn: $showsClosed)
-                    .help("Show closed and merged")
-                Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
-                    .keyboardShortcut("r")
-                    .disabled(model.isLoading)
             }
         }
     }

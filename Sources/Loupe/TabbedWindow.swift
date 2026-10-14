@@ -5,6 +5,7 @@ import SwiftUI
 /// The main window: a tab strip over the PR lists or the selected PR.
 struct TabbedWindow: View {
     let tabs: TabsModel
+    @AppStorage("showsClosedPullRequests") private var showsClosed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,17 +16,50 @@ struct TabbedWindow: View {
                     PullRequestView(tab: tab, checkoutSearchRoots: tabs.lists.checkoutSearchRoots)
                         .id(tab.id)
                 } else {
-                    PullRequestListView(model: tabs.lists)
+                    PullRequestListView(model: tabs.lists, showsClosed: showsClosed)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle(tabs.selectedTab?.title ?? "Pull Requests")
+        // The window's chrome is declared once here, so switching tabs changes only what's in
+        // it and never the title bar's height or title.
+        .navigationTitle("Loupe")
+        .navigationSubtitle(tabs.selectedTab?.title ?? "Pull Requests")
+        .toolbar {
+            ToolbarItemGroup {
+                if let tab = tabs.selectedTab {
+                    Button("Open on GitHub", systemImage: "safari") { NSWorkspace.shared.open(tab.pullRequest.url) }
+                        .help("Open on GitHub")
+                } else {
+                    listsToolbarItems
+                }
+            }
+        }
         // Here rather than on the lists, so refreshing carries on whichever tab is showing.
         .task { await tabs.lists.keepRefreshed() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await tabs.lists.refreshIfStale() }
         }
+    }
+
+    @ViewBuilder
+    private var listsToolbarItems: some View {
+        let lists = tabs.lists
+        if lists.isLoading {
+            ProgressView().controlSize(.small)
+        }
+        if let lastRefreshed = lists.lastRefreshed {
+            TimelineView(.everyMinute) { _ in
+                Text("Refreshed \(lastRefreshed.formatted(.relative(presentation: .named)))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        Toggle("Show closed and merged", systemImage: "archivebox", isOn: $showsClosed)
+            .help("Show closed and merged")
+        Button("Refresh", systemImage: "arrow.clockwise") { Task { await lists.refresh() } }
+            .keyboardShortcut("r")
+            .disabled(lists.isLoading)
     }
 }
 

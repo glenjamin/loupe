@@ -19,6 +19,7 @@ struct LoupeApp: App {
                     .frame(minWidth: 900, minHeight: 600)
             }
         }
+        .windowToolbarStyle(.unified)
         .commands { TabCommands(tabs: screen.tabs) }
     }
 }
