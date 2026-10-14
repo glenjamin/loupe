@@ -20,7 +20,10 @@ extension PullRequestSummary {
             headRefName: node.headRefName,
             baseRefName: node.baseRefName,
             headRefOid: node.headRefOid,
-            baseRefOid: node.baseRefOid
+            baseRefOid: node.baseRefOid,
+            commitCount: node.commitCount?.totalCount,
+            commentCount: node.comments?.totalCount,
+            reviewThreadCount: node.reviewThreads?.totalCount
         )
     }
 }
@@ -56,11 +59,16 @@ struct SearchPageResponse: Decodable {
         let author: Login?
         let repository: Repository
         let commits: Connection<CommitNode>
+        /// Only when looked up by id.
+        let commitCount: Count?
+        let comments: Count?
+        let reviewThreads: Count?
     }
 
     struct Login: Decodable { let login: String }
     struct Repository: Decodable { let nameWithOwner: String }
     struct Connection<Element: Decodable>: Decodable { let nodes: [Element] }
+    struct Count: Decodable { let totalCount: Int }
     struct CommitNode: Decodable { let commit: Commit }
     struct Commit: Decodable { let statusCheckRollup: Rollup? }
     struct Rollup: Decodable { let state: CheckState }
@@ -74,6 +82,11 @@ extension ReviewRequests {
 
 struct ViewerResponse: Decodable {
     let viewer: SearchPageResponse.Login
+}
+
+struct PullRequestNodesResponse: Decodable {
+    /// Null where an id couldn't be resolved.
+    let nodes: [SearchPageResponse.PullRequestNode?]
 }
 
 struct NodesResponse: Decodable {

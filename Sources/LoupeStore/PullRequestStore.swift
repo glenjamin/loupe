@@ -72,6 +72,19 @@ public struct PullRequestStore: Sendable {
         }
     }
 
+    /// Updates the stored rows of `pullRequests`, as looked up directly rather than through a
+    /// list, leaving which lists they're in alone. PRs no longer stored are left out, as nothing
+    /// shows them.
+    @discardableResult
+    public func update(_ pullRequests: [PullRequestSummary]) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            for pullRequest in pullRequests where try PullRequestRow.exists(db, key: pullRequest.id) {
+                try PullRequestRow(pullRequest).update(db)
+            }
+            return try Self.snapshot(db)
+        }
+    }
+
     /// The signed-in user's GitHub login, once it's been looked up.
     public func viewerLogin() throws -> String? {
         try database.read { db in try Setting.fetchOne(db, key: Setting.viewerLogin)?.value }
@@ -167,6 +180,14 @@ public struct PullRequestStore: Sendable {
                 t.column("producedAt", .datetime).notNull()
             }
         }
+        // Nullable, as only looking a PR up by id fetches them.
+        migrator.registerMigration("Pull request activity counts") { db in
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "commitCount", .integer)
+                t.add(column: "commentCount", .integer)
+                t.add(column: "reviewThreadCount", .integer)
+            }
+        }
         return migrator
     }
 
@@ -177,7 +198,9 @@ public struct PullRequestStore: Sendable {
             try PullRequestRow
                 .filter(Column("repository") == pullRequest.repository && Column("number") == pullRequest.number && Column("id") != pullRequest.id)
                 .deleteAll(db)
-            try PullRequestRow(pullRequest).upsert(db)
+            // Searches don't fetch the counts, so the last ones looked up are kept.
+            let stored = try PullRequestRow.fetchOne(db, key: pullRequest.id)
+            try PullRequestRow(pullRequest, keepingCountsFrom: stored).upsert(db)
             try ListMembership(list: list.rawValue, pullRequestId: pullRequest.id, confirmedAt: refreshedAt).upsert(db)
         }
     }
@@ -236,8 +259,11 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let baseRefName: String
     let headRefOid: String?
     let baseRefOid: String?
+    let commitCount: Int?
+    let commentCount: Int?
+    let reviewThreadCount: Int?
 
-    init(_ pullRequest: PullRequestSummary) {
+    init(_ pullRequest: PullRequestSummary, keepingCountsFrom stored: PullRequestRow? = nil) {
         id = pullRequest.id
         repository = pullRequest.repository
         number = pullRequest.number
@@ -255,6 +281,9 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         baseRefName = pullRequest.baseRefName
         headRefOid = pullRequest.headRefOid
         baseRefOid = pullRequest.baseRefOid
+        commitCount = pullRequest.commitCount ?? stored?.commitCount
+        commentCount = pullRequest.commentCount ?? stored?.commentCount
+        reviewThreadCount = pullRequest.reviewThreadCount ?? stored?.reviewThreadCount
     }
 
     var summary: PullRequestSummary {
@@ -275,7 +304,10 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             headRefName: headRefName,
             baseRefName: baseRefName,
             headRefOid: headRefOid,
-            baseRefOid: baseRefOid
+            baseRefOid: baseRefOid,
+            commitCount: commitCount,
+            commentCount: commentCount,
+            reviewThreadCount: reviewThreadCount
         )
     }
 }

@@ -5,8 +5,9 @@ import Testing
 
 /// An in-memory api.github.com/graphql holding the viewer's PRs and the PRs awaiting their
 /// review. Like GitHub it rejects requests without the expected token, caps page sizes, pages
-/// with cursors, matches searches by author, review request, state and update time, and bumps a
-/// PR's update time when it changes. Tests can change PRs, or make every request fail.
+/// with cursors, matches searches by author, review request, state and update time, looks up
+/// nodes by id, and bumps a PR's update time when it changes. Tests can change PRs, or make
+/// every request fail.
 actor FakeGitHub: HTTPTransport {
     enum Failure {
         case status(Int)
@@ -29,6 +30,8 @@ actor FakeGitHub: HTTPTransport {
     private(set) var requestCount = 0
     /// Every search string received, in order.
     private(set) var searches: [String] = []
+    /// The ids of every lookup of PR rows by id, in order.
+    private(set) var pullRequestLookups: [[String]] = []
 
     /// Serves the PRs captured in a probe response, with review requested of the viewer on
     /// the to-review ones. The probe asked GitHub to sort by update time; `reversed` checks the
@@ -105,8 +108,10 @@ actor FakeGitHub: HTTPTransport {
         }
 
         let body = try JSONDecoder().decode(GraphQLRequest.self, from: try #require(request.httpBody))
-        let response: any Encodable = if let ids = body.variables.ids {
+        let response: any Encodable = if let ids = body.variables.ids, body.query.contains("reviewRequests") {
             try reviewRequests(ids)
+        } else if let ids = body.variables.ids {
+            try pullRequestRows(ids)
         } else if body.variables.query != nil {
             try search(body.variables)
         } else {
@@ -129,8 +134,14 @@ actor FakeGitHub: HTTPTransport {
         let end = min(start + min(first, maxPageSize), results.count)
         return Envelope(data: SearchPayload(search: .init(
             pageInfo: .init(hasNextPage: end < results.count, endCursor: end > start ? String(end) : nil),
-            nodes: Array(results[start..<end])
+            nodes: results[start..<end].map { SearchNode(pullRequest: $0) }
         )))
+    }
+
+    private func pullRequestRows(_ ids: [String]) throws -> Envelope<[String: [FakePullRequest?]]> {
+        #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
+        pullRequestLookups.append(ids)
+        return Envelope(data: ["nodes": ids.map { id in pullRequests.first { $0.id == id } }])
     }
 
     private func viewer(_ query: String) throws -> Envelope<[String: [String: String]]> {
@@ -194,6 +205,9 @@ struct FakePullRequest: Codable, Sendable {
     let author: Login?
     let repository: Repository
     var commits: Commits
+    var commitCount: Count
+    var comments: Count
+    var reviewThreads: Count
     var requestedReviewers: [Reviewer] = []
 
     enum Reviewer: Sendable {
@@ -207,14 +221,16 @@ struct FakePullRequest: Codable, Sendable {
     struct CommitNode: Codable, Sendable { var commit: Commit }
     struct Commit: Codable, Sendable { var statusCheckRollup: Rollup? }
     struct Rollup: Codable, Sendable { var state: String }
+    struct Count: Codable, Sendable { var totalCount: Int }
 
     enum CodingKeys: String, CodingKey {
         case id, number, title, url, isDraft, state, mergedAt, closedAt, updatedAt, reviewDecision
         case headRefName, baseRefName, headRefOid, baseRefOid, author, repository, commits
+        case commitCount, comments, reviewThreads
     }
 
-    /// The probe's PRs predate asking for `state`, when they were all open, and for commit oids,
-    /// which are made up here.
+    /// The probe's PRs predate asking for `state`, when they were all open, and for commit oids
+    /// and counts, which are made up here.
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
@@ -234,6 +250,9 @@ struct FakePullRequest: Codable, Sendable {
         author = try container.decodeIfPresent(Login.self, forKey: .author)
         repository = try container.decode(Repository.self, forKey: .repository)
         commits = try container.decode(Commits.self, forKey: .commits)
+        commitCount = try container.decodeIfPresent(Count.self, forKey: .commitCount) ?? Count(totalCount: 1)
+        comments = try container.decodeIfPresent(Count.self, forKey: .comments) ?? Count(totalCount: 0)
+        reviewThreads = try container.decodeIfPresent(Count.self, forKey: .reviewThreads) ?? Count(totalCount: 0)
     }
 }
 
@@ -302,7 +321,7 @@ private struct SearchPayload: Encodable {
 
     struct Search: Encodable {
         let pageInfo: PageInfo
-        let nodes: [FakePullRequest]
+        let nodes: [SearchNode]
     }
 
     struct PageInfo: Encodable {
@@ -327,6 +346,19 @@ private struct NodesPayload: Encodable {
         let __typename: String
         let login: String?
         let slug: String?
+    }
+}
+
+/// A PR as the app's search asks for it, without the counts it fetches only by id.
+private struct SearchNode: Encodable {
+    let pullRequest: FakePullRequest
+
+    func encode(to encoder: any Encoder) throws {
+        try pullRequest.encode(to: encoder)
+        var container = encoder.container(keyedBy: FakePullRequest.CodingKeys.self)
+        try container.encodeNil(forKey: .commitCount)
+        try container.encodeNil(forKey: .comments)
+        try container.encodeNil(forKey: .reviewThreads)
     }
 }
 

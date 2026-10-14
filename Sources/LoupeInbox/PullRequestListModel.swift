@@ -18,6 +18,8 @@ public final class PullRequestListModel {
     public var onOpen: @MainActor (PullRequestSummary) -> Void
 
     private var snapshot: PullRequestSnapshot
+    /// Open PRs in neither list, as last checked directly.
+    private var unlisted: [String: PullRequestSummary] = [:]
     private var checkouts: [String: CheckoutStatus] = [:]
     private let client: GitHubClient
     private let checkoutResolver: CheckoutResolver
@@ -64,12 +66,25 @@ public final class PullRequestListModel {
         return dates.contains(nil) ? nil : dates.compactMap(\.self).min()
     }
 
-    /// The stored PR with `id`, whatever its state, if it's in either list.
+    /// The stored PR with `id`, whatever its state, if it's in either list or has been checked
+    /// directly.
     public func pullRequest(id: String) -> PullRequestSummary? {
         for list in PullRequestList.allCases {
             if let found = snapshot[list].first(where: { $0.id == id }) { return found }
         }
-        return nil
+        return unlisted[id]
+    }
+
+    /// Looks up the PRs with `ids` on GitHub directly, rather than waiting for the lists'
+    /// refresh, and stores them, so their windows see what changed.
+    public func checkForChanges(to ids: [String]) async throws {
+        guard !ids.isEmpty else { return }
+        let found = try await client.pullRequests(ids: ids)
+        snapshot = try await store.update(found)
+        for pullRequest in found {
+            let listed = PullRequestList.allCases.contains { list in snapshot[list].contains { $0.id == pullRequest.id } }
+            unlisted[pullRequest.id] = listed ? nil : pullRequest
+        }
     }
 
     /// Nil until the repo's checkout has been looked for.

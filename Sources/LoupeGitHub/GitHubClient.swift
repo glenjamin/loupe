@@ -55,6 +55,19 @@ public struct GitHubClient: Sendable {
         return requests
     }
 
+    /// The PRs with `ids` as they are now, looked up directly rather than searched for, so an
+    /// open PR's changes can be noticed whichever list it's in, if any. PRs GitHub no longer has
+    /// (or no longer shows the user) are left out.
+    public func pullRequests(ids: [String]) async throws -> [PullRequestSummary] {
+        var pullRequests: [PullRequestSummary] = []
+        for start in stride(from: 0, to: ids.count, by: Self.pageSize) {
+            let batch = Array(ids[start..<min(start + Self.pageSize, ids.count)])
+            let response: PullRequestNodesResponse = try await query(Self.pullRequestNodesQuery, variables: NodesVariables(ids: batch), allowingMissingNodes: true)
+            pullRequests += response.nodes.compactMap { $0.map(PullRequestSummary.init) }
+        }
+        return pullRequests
+    }
+
     private func query<Response: Decodable>(
         _ query: String,
         variables: some Encodable & Sendable,
@@ -121,6 +134,24 @@ public struct GitHubClient: Sendable {
             nodes { ...PullRequestRow }
           }
         }
+        """ + pullRequestRowFragment
+
+    /// Counts are asked for only here: on a full page of search results they take the request
+    /// past GitHub's time limit.
+    static let pullRequestNodesQuery = """
+        query($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ...PullRequestRow
+            ... on PullRequest {
+              commitCount: commits { totalCount }
+              comments { totalCount }
+              reviewThreads { totalCount }
+            }
+          }
+        }
+        """ + pullRequestRowFragment
+
+    static let pullRequestRowFragment = """
 
         fragment PullRequestRow on PullRequest {
           id

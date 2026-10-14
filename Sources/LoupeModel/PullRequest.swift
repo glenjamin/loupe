@@ -26,6 +26,11 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     /// list's next full load.
     public let headRefOid: String?
     public let baseRefOid: String?
+    /// How many commits, conversation comments and review threads the PR has. Nil until the PR
+    /// is looked up by id, as searches don't fetch them.
+    public let commitCount: Int?
+    public let commentCount: Int?
+    public let reviewThreadCount: Int?
 
     public init(
         id: String,
@@ -44,7 +49,10 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         headRefName: String,
         baseRefName: String,
         headRefOid: String? = nil,
-        baseRefOid: String? = nil
+        baseRefOid: String? = nil,
+        commitCount: Int? = nil,
+        commentCount: Int? = nil,
+        reviewThreadCount: Int? = nil
     ) {
         self.id = id
         self.repository = repository
@@ -63,6 +71,9 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.baseRefName = baseRefName
         self.headRefOid = headRefOid
         self.baseRefOid = baseRefOid
+        self.commitCount = commitCount
+        self.commentCount = commentCount
+        self.reviewThreadCount = reviewThreadCount
     }
 }
 
