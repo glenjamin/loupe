@@ -28,10 +28,16 @@ enum Bench {
         _ = RenderedDiff(file: FileDiff(path: "warmup", change: .modified, isBinary: false, hunks: []))
         let (rendered, renderTime) = measure { RenderedDiff(file: file) }
         print("render attributed string: \(ms(renderTime)) (\(rendered.text.length) UTF-16 units)")
+        var runs: [SyntaxRun] = []
+        if let plan = rendered.syntax {
+            let (planned, highlightTime) = measure { plan.runs() }
+            runs = planned
+            print("highlight \(plan.language.rawValue) (parse and query): \(ms(highlightTime)), \(runs.count) runs")
+        }
 
         for wraps in [false, true] {
             print(wraps ? "-- wrapped" : "-- not wrapped")
-            timeView(rendered, wraps: wraps)
+            timeView(rendered, wraps: wraps, runs: runs)
         }
 
         let (anchor, lookupTime) = measure { rendered.anchor(at: rendered.text.length / 2) }
@@ -39,9 +45,11 @@ enum Bench {
     }
 
     /// Lays out and draws the rendered file in a 1200×900 DiffTextView.
-    private static func timeView(_ rendered: RenderedDiff, wraps: Bool) {
+    /// Highlighting is applied apart from show, so the plain paint and the colours are timed separately.
+    private static func timeView(_ rendered: RenderedDiff, wraps: Bool, runs: [SyntaxRun]) {
         let viewport = NSRect(x: 0, y: 0, width: 1200, height: 900)
         let textView = DiffTextView.make()
+        textView.inlineHighlightRows = 0
         textView.wrapsLines = wraps
         textView.frame = viewport
         let (_, showTime) = measure { textView.show(rendered) }
@@ -58,6 +66,16 @@ enum Bench {
                 if let bitmap { textView.cacheDisplay(in: rect, to: bitmap) }
             }
             print("draw \(label) screen: \(ms(drawTime))")
+        }
+
+        if !runs.isEmpty {
+            let (_, applyTime) = measure { textView.applyHighlights(runs) }
+            let rect = NSRect(x: 0, y: 0, width: 1200, height: 900)
+            let bitmap = textView.bitmapImageRepForCachingDisplay(in: rect)
+            let (_, redrawTime) = measure {
+                if let bitmap { textView.cacheDisplay(in: rect, to: bitmap) }
+            }
+            print("apply highlights: \(ms(applyTime)), then draw first screen: \(ms(redrawTime))")
         }
 
         let (_, fullLayout) = measure { layoutManager.ensureLayout(for: container) }

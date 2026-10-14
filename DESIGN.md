@@ -87,6 +87,10 @@ Fetches pass `--no-tags` and `--no-write-fetch-head`, so the only things they ch
 
 Rows soft-wrap at the view's width by default, with a View menu toggle. Each row's paragraph style indents continuation lines by the gutter's width, so wrapped code lines up under the code rather than under the line numbers, as on GitHub. Wrapping stays within TextKit 1's non-contiguous layout, so opening a large file costs the same either way; row backgrounds are painted per visual line and clicks map by character offset, so neither needed changing.
 
+### Code is highlighted with tree-sitter, parsed per hunk
+
+Each hunk's new side and old side are parsed with the file's tree-sitter grammar and coloured from the grammar's own `highlights.scm` with Primer's palette, which is how GitHub highlights diffs, partial snippets and all. Grammars come from their upstream SwiftPM packages through ChimeHQ's SwiftTreeSitter, and a file in an unknown language stays plain. Highlightr was ruled out because it runs highlight.js's regex grammars in JavaScriptCore, a cruder approach than GitHub's; Neon was ruled out because it manages incremental re-highlighting for an editor, and this is a static render. Colours go into the layout manager's temporary attributes, not the text storage, because adding tens of thousands of colour runs to a large storage costs several times as much; files over 5,000 rows paint plain first and take their colours from a background parse.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

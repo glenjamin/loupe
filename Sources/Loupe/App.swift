@@ -17,6 +17,7 @@ struct LoupeApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             TabCommands()
+            DiffCommands()
             DebugCommands()
         }
         WindowGroup("Pull Request", for: String.self) { $id in

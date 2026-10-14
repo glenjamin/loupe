@@ -37,11 +37,36 @@ public final class DiffTextView: NSTextView {
         return view
     }
 
+    /// Files up to this many rows are highlighted before first paint; larger ones paint plain first.
+    public var inlineHighlightRows = 5000
+
+    /// Counts calls to show, so late highlighting for a diff no longer shown is dropped.
+    private var shownCount = 0
+
     public func show(_ rendered: RenderedDiff) {
         self.rendered = rendered
+        shownCount += 1
+        if let textStorage {
+            layoutManager?.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: textStorage.length))
+        }
         textStorage?.setAttributedString(rendered.text)
         setSelectedRange(NSRange(location: 0, length: 0))
         scroll(.zero)
+        guard let plan = rendered.syntax else { return }
+        if rendered.rowStarts.count <= inlineHighlightRows {
+            applyHighlights(plan.runs())
+        } else {
+            highlightLater(plan)
+        }
+    }
+
+    /// Colours the shown diff's code. The colours are the layout manager's temporary attributes,
+    /// not the text storage's: splitting a large storage's attribute runs costs several times as much.
+    public func applyHighlights<Runs: Sequence<SyntaxRun>>(_ runs: Runs) {
+        guard let layoutManager else { return }
+        for run in runs {
+            layoutManager.addTemporaryAttribute(.foregroundColor, value: run.style.color, forCharacterRange: run.range)
+        }
     }
 
     public override func mouseDown(with event: NSEvent) {
@@ -59,6 +84,20 @@ public final class DiffTextView: NSTextView {
         guard type == .string, let textStorage else { return super.writeSelection(to: pboard, type: type) }
         let text = selectedRanges.map(\.rangeValue).map { withoutGutter(textStorage, in: $0) }.joined(separator: "\n")
         return pboard.setString(text, forType: .string)
+    }
+
+    /// Large files paint plain first, then take their colours once parsed off the main thread,
+    /// top first and in slices so the main thread stays responsive.
+    private func highlightLater(_ plan: SyntaxPlan) {
+        let shown = shownCount
+        Task { [weak self] in
+            let runs = await Task.detached(priority: .userInitiated) { plan.runs() }.value
+            for start in stride(from: 0, to: runs.count, by: 5000) {
+                guard let self, self.shownCount == shown else { return }
+                self.applyHighlights(runs[start..<min(start + 5000, runs.count)])
+                await Task.yield()
+            }
+        }
     }
 
     private func applyWrapping() {

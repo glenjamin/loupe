@@ -35,6 +35,8 @@ public struct RenderedDiff {
     public let rowStarts: [Int]
     /// The anchor for each row; nil for hunk headers.
     public let rowAnchors: [DiffAnchor?]
+    /// The file's code, ready to highlight; nil when its language isn't known.
+    public let syntax: SyntaxPlan?
 
     public init(file: FileDiff, fontSize: CGFloat = 12) {
         let width = max(4, String(file.maxLineNumber).count)
@@ -43,6 +45,7 @@ public struct RenderedDiff {
         let out = NSMutableString()
         var rows: [(start: Int, length: Int, gutter: Int, kind: RowKind)] = []
         var anchors: [DiffAnchor?] = []
+        var syntax = SyntaxLanguage(path: file.path).map(SyntaxPlan.init)
         rows.reserveCapacity(file.rowCount)
         anchors.reserveCapacity(file.rowCount)
 
@@ -57,6 +60,8 @@ public struct RenderedDiff {
 
         for hunk in file.hunks {
             addRow(gutter: "", body: hunk.header, kind: .hunkHeader, anchor: nil)
+            var newSide = SyntaxPlan.Side()
+            var oldSide = SyntaxPlan.Side()
             for line in hunk.lines {
                 let numbers = pad(line.oldLine, width) + " " + pad(line.newLine, width) + "  "
                 let body = displayText(line)
@@ -68,7 +73,13 @@ public struct RenderedDiff {
                 case .deletion(let old):
                     addRow(gutter: numbers + "-", body: body, kind: .deletion, anchor: DiffAnchor(path: file.path, side: .left, line: old))
                 }
+                if syntax != nil, let row = rows.last {
+                    let code = (target: row.start + row.gutter, length: row.length - row.gutter - 1)
+                    if line.newLine != nil { newSide.append(line.text, mappedTo: code.target, length: code.length) }
+                    if line.oldLine != nil { oldSide.append(line.text, mappedTo: line.isDeletion ? code.target : nil, length: code.length) }
+                }
             }
+            syntax?.sides += [newSide, oldSide]
         }
 
         let attributed = NSMutableAttributedString(string: out as String, attributes: style.base)
@@ -85,6 +96,7 @@ public struct RenderedDiff {
         attributed.endEditing()
 
         text = attributed
+        self.syntax = syntax
         rowStarts = rows.map(\.start)
         rowAnchors = anchors
     }

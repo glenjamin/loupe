@@ -123,6 +123,8 @@ Details are in `probe/NOTES.md`. In short:
 - `RenderedDiff` turns one file into a single `NSAttributedString`. The gutter (old/new numbers and the `+`/`-` marker) is inline text, tagged with an attribute so copying a selection yields plain code. Each row is tagged with its kind, and an array of row start offsets maps a click to a row (binary search) and from the row to its `DiffAnchor`.
 - `DiffTextView` is an `NSTextView` subclass: non-editable, selectable, with a find bar. It uses TextKit 1 with **non-contiguous layout**. A small `NSLayoutManager` subclass paints full-width row backgrounds, once per visual line, so wrapped rows are tinted throughout. A single click (not a drag-select) reports the anchor.
 - Long rows soft-wrap at the view's width by default. Every row's paragraph style has a `headIndent` of the gutter's measured width, so continuation lines start under the code. View ▸ Wrap Lines (⌥⌘W) turns it off; the setting is `wrapLines` in `UserDefaults` and open diffs follow it live. Clicks map by character offset, so continuation lines resolve to their row's anchor.
+- Code is syntax-highlighted with tree-sitter (`SyntaxHighlighter.swift`), chosen by extension or by special names (`Gemfile`, `.bashrc`); other files stay plain. For each hunk it parses the new side (context and additions) and the old side (context and deletions), runs the grammar's `highlights.scm`, and maps the captures back onto the rows: context and added rows take the new side's colours, deleted rows the old side's. Partial snippets parse with error recovery, so a hunk starting mid-expression can colour a token or two oddly, as GitHub's can. Colours are Primer's syntax palette (`DiffColors.syntax*`), light and dark. Plain identifiers and punctuation stay the text colour, as on GitHub. The colours are applied as the layout manager's temporary attributes rather than to the text storage: on the 46k-row file, adding 70k colour runs to the storage took about 720ms however it was done (each splits an existing attribute run), against 135ms as temporary attributes, which also leave layout and copying alone. Files up to 5,000 rows are highlighted before first paint; larger ones paint plain, are parsed off the main thread, then coloured top first in slices of 5,000 runs.
+- Grammars: Go, JavaScript (with JSX), TypeScript, TSX, Ruby, Swift, JSON, YAML, Bash, CSS and HTML, each from its upstream SwiftPM package. CSS, JavaScript and YAML are held at their last releases whose manifests list `scanner.c` explicitly; later ones look for it relative to the wrong directory, drop it, and fail to link. Swift needs the `-with-generated-files` tag, the only one carrying the generated parser. No grammar with a Swift package was found for Makefiles or Dockerfiles. Where several patterns capture one node, the last wins, as in tree-sitter's own highlighter; Go's query is still ordered for the old first-wins rule, so Go uses that.
 - `DiffView` is the `NSViewRepresentable` wrapper; the `App` is a `NavigationSplitView` with the file list on the left.
 
 ### Measured performance
@@ -146,6 +148,18 @@ With wrapping on (bench viewport 1200pt wide; `--bench` now times the view both 
 | draw a screen (first / middle) | 1.9 / 1.4ms | 1.8 / 5.9ms | 1.9 / 30ms |
 | lay out whole file | ~0 | 54ms | 726ms |
 
+Syntax highlighting, timed separately by `--bench` (the TypeScript files are from marmot, diffed against `/dev/null`):
+
+| | rows | parse and query (off main above 5k rows) | apply to the view (main) | runs |
+|---|---|---|---|---|
+| Go `snapshotter.go` | 92 | 3.3ms | 0.1ms | 127 |
+| Go `types.go` | 5,355 | 10ms | 11ms | 5,610 |
+| Go `api.go` | 45,919 | 161ms | 135ms, in slices | 69,751 |
+| TSX test file | 4,373 | 50ms | 10ms | 6,189 |
+| TS `generated/graphql.ts` | 14,928 | 449ms | 140ms, in slices | 130,618 |
+
+So a Go file under 5k rows opens about 20ms slower, and the TSX file, still under the threshold, about 60ms slower; TypeScript parses several times slower per row than Go. Above the threshold the first paint is unchanged and the colours follow once the background parse finishes. Drawing a screen with colours costs the same as without.
+
 Wrapping costs nothing measurable on open: TextKit lays out only the visible lines either way. The unwrapped figures were unchanged on the same run (13.8ms to set the 46k-row file's storage, 1.5ms first screen); the wrapped run's lower storage time is mostly warm caches from going second.
 
 Parsing the whole 260k-line, 741-file diff took 53ms.
@@ -168,13 +182,13 @@ So a 5k-line file opens in about 33ms, comfortably fast. A 46k-line file takes a
 
 ## Layout
 
-- `Sources/LoupeCore/`: `DiffModel.swift`, `DiffParser.swift`, `DiffRenderer.swift` (attributed string and anchors), `DiffTextView.swift`
+- `Sources/LoupeCore/`: `DiffModel.swift`, `DiffParser.swift`, `DiffRenderer.swift` (attributed string and anchors), `DiffTextView.swift`, `SyntaxHighlighter.swift` (tree-sitter grammars, queries and mapping captures onto rows), `DiffColors.swift`
 - `Sources/LoupeModel/`: `PullRequest.swift` (the PR summary and list types shared by the targets below)
 - `Sources/LoupeGitHub/`: `GitHubClient.swift` (GraphQL over `URLSession`, pluggable transport; pages each search), `GitHubCLI.swift` (`gh auth token`), `PullRequest.swift` (response decoding)
 - `Sources/LoupeStore/`: `PullRequestStore.swift` (GRDB: one row per PR keyed by node id, list membership and per-list refresh times, set up by migrations), `LocalRepoStore.swift` (each repo's local checkout), `TabStore.swift` (open tabs and when each PR's diff was produced)
 - `Sources/LoupeGit/`: `CheckoutResolver.swift` (finds, verifies and stores checkouts), `GitHubRemote.swift` (matches an origin URL to `owner/name`), `Git.swift` (runs git with a timeout), `PullRequestDiffer.swift` (fetches a PR into `refs/loupe/` and diffs it from its merge-base)
 - `Sources/LoupeInbox/`: `PullRequestListModel.swift` (start-screen state wiring GitHub to the store; `onOpen` is where choosing a PR goes), `TabsModel.swift` (the open PRs and which is frontmost), `PullRequestTab.swift` (one open PR's diff, from checkout to ready)
-- `Sources/Loupe/`: `Entry.swift` (PR list, diff file or `--bench`), `App.swift`, `WindowTabs.swift` (the lists and PR windows, grouping them as native tabs, restoring them, and the tab keys), `PullRequestView.swift` (a PR's window), `PullRequestListView.swift`, `DiffView.swift`, `Bench.swift`
+- `Sources/Loupe/`: `Entry.swift` (PR list, diff file or `--bench`), `App.swift`, `WindowTabs.swift` (the lists and PR windows, grouping them as native tabs, restoring them, and the tab keys), `PullRequestView.swift` (a PR's window), `PullRequestListView.swift`, `DiffView.swift`, `DiffCommands.swift` (the View menu's Wrap Lines), `Bench.swift`
 - `Tests/LoupeTests/`: tests, with fixtures from atrium#2912 (the 4-file diff, and edge cases cut from the full diff)
 - `Tests/LoupeInboxTests/`: PR list tests against an in-memory GitHub that matches searches (author, review request, `is:open`, `updated:>=`) and review-request lookups against the PRs in `probe/pr-list.json`, checking the shape of each search it receives, plus `probe/graphql-error.json`; checkout tests against real `git init` repos in temp search roots; diff and tab tests against `FakeRepository`, a temp bare origin exposing `refs/pull/<N>/head` with a contributor clone and a reviewer checkout
 - `probe/`: GraphQL queries, raw responses and `NOTES.md`; `incremental-query.graphql` → `incremental.json` confirmed the `updated:>=` search, PR `state`/`mergedAt`/`closedAt`, `viewer { login }` and the `reviewRequests` shape
