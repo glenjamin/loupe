@@ -181,6 +181,10 @@ It's asked for in the lookup by id that fetches checks after each refresh, not i
 
 A PR's tab now opens on Conversation rather than Files changed, reversing the earlier default. The description and the discussion so far say what a change is for and what's still open, which is what to know before reading its diff, as github.com's own default page assumes. The tab shown is still kept per PR while the window lives, so switching to Files changed sticks.
 
+### Hidden files show their line counts from the start
+
+Each hidden file's additions and deletions come from `git diff --numstat` over the paths hiding them, run beside the main diff, so the hidden section shows `+N -M` like the files to review without producing their diffs. On atrium vendor bumps of 1,000 to 2,400 files it took about 80ms. A row still says added, deleted or renamed, which the counts alone don't, and a binary file says so rather than `+0 -0`.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

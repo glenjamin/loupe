@@ -42,12 +42,19 @@ public struct FileDiff: Sendable, Identifiable {
 public struct ChangedFile: Sendable, Equatable, Identifiable {
     public var path: String
     public var change: FileDiff.Change
+    public var additions: Int
+    public var deletions: Int
+    /// Git counts no lines in a binary file.
+    public var isBinary: Bool
 
     public var id: String { path }
 
-    public init(path: String, change: FileDiff.Change) {
+    public init(path: String, change: FileDiff.Change, additions: Int = 0, deletions: Int = 0, isBinary: Bool = false) {
         self.path = path
         self.change = change
+        self.additions = additions
+        self.deletions = deletions
+        self.isBinary = isBinary
     }
 
     /// The path it had before, for a rename or copy.

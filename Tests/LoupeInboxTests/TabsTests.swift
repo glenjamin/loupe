@@ -186,8 +186,8 @@ struct TabsTests {
         let (_, tab, _) = try await app.openDiffed(in: repo)
 
         #expect(tab.shown?.hidden == [
-            ChangedFile(path: "vendor/example.com/lib/lib.go", change: .modified),
-            ChangedFile(path: "yarn.lock", change: .added),
+            ChangedFile(path: "vendor/example.com/lib/lib.go", change: .modified, additions: 1, deletions: 1),
+            ChangedFile(path: "yarn.lock", change: .added, additions: 1),
         ])
         #expect(tab.hiddenFileDiff(of: "yarn.lock") == nil)
 

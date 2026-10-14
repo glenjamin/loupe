@@ -39,9 +39,9 @@ struct PullRequestDifferTests {
             #expect(!diff.text.contains(left), "\(left) should be left out")
         }
         #expect(diff.hidden.sorted { $0.path < $1.path } == [
-            ChangedFile(path: "gen/schema.go", change: .modified),
-            ChangedFile(path: "go.sum", change: .modified),
-            ChangedFile(path: "vendor/example.com/lib/new.go", change: .added),
+            ChangedFile(path: "gen/schema.go", change: .modified, additions: 1, deletions: 1),
+            ChangedFile(path: "go.sum", change: .modified, additions: 1, deletions: 1),
+            ChangedFile(path: "vendor/example.com/lib/new.go", change: .added, additions: 3),
         ])
 
         #expect(try await repo.git(["rev-parse", "refs/loupe/pull/7/head"], in: repo.checkout) == head)
@@ -66,7 +66,7 @@ struct PullRequestDifferTests {
         let one = try await differ.diff(diff.commits[0].range, in: repo.checkout)
         #expect(one.text.contains("+package app // first"))
         #expect(!one.text.contains("main.go"))
-        #expect(one.hidden == [ChangedFile(path: "go.sum", change: .modified)])
+        #expect(one.hidden == [ChangedFile(path: "go.sum", change: .modified, additions: 1, deletions: 1)])
         #expect(!one.text.contains("go.sum"))
 
         let three = try await differ.diff(diff.commits[2].range, in: repo.checkout)
@@ -104,6 +104,7 @@ struct PullRequestDifferTests {
             "go.sum": "example.com/lib v1.1.0 h1:def\n",
             "vendor/example.com/lib/lib.go": nil,
             "vendor/example.com/other/other.go": "package other\n",
+            "vendor/example.com/other/logo.png": "PNG\0\u{1}binary",
         ], message: "Bump dependencies")
         try await repo.rename("gen/schema.go", to: "gen/schema_v2.go", message: "Rename the schema")
         try await repo.push(asPullRequest: 8)
@@ -112,11 +113,13 @@ struct PullRequestDifferTests {
         let fetched = try await differ.fetch(number: 8, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout)
         let diff = try await differ.diff(fetched, in: repo.checkout)
 
+        // Each with its line counts from the start, though not yet diffed.
         #expect(diff.hidden.sorted { $0.path < $1.path } == [
             ChangedFile(path: "gen/schema_v2.go", change: .renamed(from: "gen/schema.go", similarity: 100)),
-            ChangedFile(path: "go.sum", change: .modified),
-            ChangedFile(path: "vendor/example.com/lib/lib.go", change: .deleted),
-            ChangedFile(path: "vendor/example.com/other/other.go", change: .added),
+            ChangedFile(path: "go.sum", change: .modified, additions: 1, deletions: 1),
+            ChangedFile(path: "vendor/example.com/lib/lib.go", change: .deleted, deletions: 1),
+            ChangedFile(path: "vendor/example.com/other/logo.png", change: .added, isBinary: true),
+            ChangedFile(path: "vendor/example.com/other/other.go", change: .added, additions: 1),
         ])
 
         let sum = try #require(diff.hidden.first { $0.path == "go.sum" })

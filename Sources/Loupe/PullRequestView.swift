@@ -328,13 +328,13 @@ struct ReviewFileList: View {
             if let changes {
                 Section {
                     ForEach(changes.files) { file in
-                        row(FileRow(file: file))
+                        row(file.path) { FileRow(file: file) }
                     }
                 }
                 if !changes.hidden.isEmpty {
                     Section {
                         ForEach(changes.hidden) { file in
-                            row(FileRow(file: file, diff: diff(of: file)))
+                            row(file.path) { HiddenFileRow(file: file) }
                         }
                     } header: {
                         Text(verbatim: "Vendored, lockfiles and generated (\(changes.hidden.count))")
@@ -363,22 +363,58 @@ struct ReviewFileList: View {
         }
     }
 
-    private func row(_ file: FileRow) -> some View {
-        ReviewFileRow(row: file, state: tab.viewedState(of: file.path)) {
-            Task { await tab.toggleViewed(path: file.path) }
+    private func row(_ path: String, @ViewBuilder content: () -> some View) -> some View {
+        ReviewFileRow(row: content(), state: tab.viewedState(of: path)) {
+            Task { await tab.toggleViewed(path: path) }
         }
-        .tag(Optional(file.path))
+        .tag(Optional(path))
+    }
+}
+
+/// A hidden file's name over its line counts, what happened to it where that says more than
+/// the counts, and its directory, as for the files to review.
+struct HiddenFileRow: View {
+    let file: ChangedFile
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(verbatim: (file.path as NSString).lastPathComponent).lineLimit(1)
+            HStack(spacing: 6) {
+                if file.isBinary {
+                    Text("binary").foregroundStyle(.secondary)
+                } else {
+                    Text(verbatim: "+\(file.additions)").foregroundStyle(.diffSuccess)
+                    Text(verbatim: "-\(file.deletions)").foregroundStyle(.diffDanger)
+                }
+                if let change {
+                    Text(change).foregroundStyle(.secondary)
+                }
+                Text(verbatim: (file.path as NSString).deletingLastPathComponent)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            .font(.caption.monospacedDigit())
+        }
+        .help(file.renamedFrom.map { "\($0) → \(file.path)" } ?? file.path)
     }
 
-    private func diff(of file: ChangedFile) -> FileDiff? {
-        if case let .ready(diff)? = tab.hiddenFileDiff(of: file.path) { diff } else { nil }
+    /// Nil for a modification, which the counts already say.
+    private var change: String? {
+        switch file.change {
+        case .added: "added"
+        case .deleted: "deleted"
+        case .modified: nil
+        case .renamed: "renamed"
+        case .copied: "copied"
+        }
     }
 }
 
 /// A file in the list: checked and dimmed once viewed, flagged when it has changed since, and
 /// with a checkbox on hover to mark it either way.
-struct ReviewFileRow: View {
-    let row: FileRow
+struct ReviewFileRow<Row: View>: View {
+    let row: Row
     let state: FileViewedState
     let toggle: () -> Void
     @State private var hovering = false

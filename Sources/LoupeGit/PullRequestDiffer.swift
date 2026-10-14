@@ -50,10 +50,18 @@ public struct PullRequestDiffer: Sendable {
     public func diff(_ range: DiffRange, in checkout: URL) async throws -> RangeDiff {
         let changed = try await changedFiles(in: range, checkout: checkout)
         let attributes = try await linguistAttributes(of: changed.map(\.path), in: checkout)
-        let hidden = changed.filter { filter.excludes($0.path, attributes: attributes[$0.path] ?? LinguistAttributes()) }
-        let excludes = coveringPaths(hiding: hidden.map(\.path), keeping: changed.map(\.path)).map { ":(exclude,top,literal)\($0)" }
-        let text = try await git(["diff", "--no-color", "--no-ext-diff", "-M", range.base, range.head, "--", "."] + excludes, in: checkout)
-        return RangeDiff(text: text, hidden: hidden)
+        var hidden = changed.filter { filter.excludes($0.path, attributes: attributes[$0.path] ?? LinguistAttributes()) }
+        let covering = coveringPaths(hiding: hidden.map(\.path), keeping: changed.map(\.path))
+        let excludes = covering.map { ":(exclude,top,literal)\($0)" }
+        async let text = git(["diff", "--no-color", "--no-ext-diff", "-M", range.base, range.head, "--", "."] + excludes, in: checkout)
+        let counts = try await lineCounts(in: range, under: covering + hidden.compactMap(\.renamedFrom), checkout: checkout)
+        for index in hidden.indices {
+            guard let count = counts[hidden[index].path] else { continue }
+            hidden[index].additions = count.additions
+            hidden[index].deletions = count.deletions
+            hidden[index].isBinary = count.isBinary
+        }
+        return RangeDiff(text: try await text, hidden: hidden)
     }
 
     /// One file's diff over `range`, such as a hidden file's once it's asked for. A rename's
@@ -113,6 +121,40 @@ public struct PullRequestDiffer: Sendable {
             }
         }
         return files
+    }
+
+    /// Lines added and deleted in each path changed under `paths`, by its new path, without
+    /// producing the diff itself. A rename's old path belongs among `paths` so git still sees
+    /// the rename.
+    private func lineCounts(in range: DiffRange, under paths: [String], checkout: URL) async throws -> [String: LineCount] {
+        guard !paths.isEmpty else { return [:] }
+        let pathspecs = paths.map { ":(top,literal)\($0)" }
+        let fields = try await git(["diff", "--numstat", "-z", "--no-ext-diff", "-M", range.base, range.head, "--"] + pathspecs, in: checkout)
+            .split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+        var counts: [String: LineCount] = [:]
+        var index = 0
+        while index < fields.count {
+            // `added<TAB>deleted<TAB>path`, or with no path for a rename or copy, whose old and
+            // new paths follow as fields of their own. A binary file counts `-` for both.
+            let columns = fields[index].split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
+            guard columns.count == 3 else {
+                index += 1
+                continue
+            }
+            let path: String
+            if columns[2].isEmpty {
+                guard index + 2 < fields.count else { break }
+                path = fields[index + 2]
+                index += 3
+            } else {
+                path = String(columns[2])
+                index += 1
+            }
+            let additions = Int(columns[0])
+            let deletions = Int(columns[1])
+            counts[path] = LineCount(additions: additions ?? 0, deletions: deletions ?? 0, isBinary: additions == nil && deletions == nil)
+        }
+        return counts
     }
 
     /// The `linguist-*` attributes the checkout's `.gitattributes` gives each path.
@@ -193,6 +235,12 @@ public struct PullRequestCommit: Sendable, Equatable, Identifiable {
     public let range: DiffRange
 
     public var id: String { oid }
+}
+
+private struct LineCount {
+    let additions: Int
+    let deletions: Int
+    let isBinary: Bool
 }
 
 /// The fewest paths that cover every hidden path and no kept one: each hidden path's highest
