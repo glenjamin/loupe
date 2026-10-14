@@ -135,6 +135,10 @@ A file's "Viewed" state is GitHub's own `viewerViewedState`, read and written th
 
 Moving on is a gesture like pull-to-refresh at the bottom: pulling past the end of a file's diff reveals an indicator that fills over about 80pt, gives a haptic tap when full, and letting go then marks the file viewed and shows the next file not viewed, wrapping to the top. Reaching the end is the moment a reviewer has finished a file, so the gesture costs nothing extra and needs no reach for a checkbox. Only a live drag counts, never momentum bouncing off the end, so a fling through a file can't mark it by accident; the threshold logic is a pure type, `OverscrollTrigger`, since scroll events can't be driven headlessly. ⌘↓ and `]` do the same from the keyboard and ⇧V toggles the shown file. The bare keys are handled by a key monitor that steps aside while text can be typed, rather than as menu shortcuts, which would take them from every text field.
 
+### Each file's diff ends in a footer that moves on; pulling past it is a shortcut
+
+Every PR file's diff ends in a footer inside the scrolled content, a bar like the file's header with a button that marks the file reviewed and shows the next one not reviewed. This revises the gesture above as the only way: a mouse wheel never pulls past the end, and on a trackpad the stretch had to be held while 80pt filled, so the user found the control hard to reach at all. The footer is reached by ordinary scrolling and clicked like any button; a file shorter than the view has it straight after its last row. The pull stays as a shortcut, now over about 40pt, and fills the footer itself rather than a separate indicator that existed only mid-stretch. The footer lives in the scroll view's clip view, placed in the document's coordinates, with a bottom content inset to make room, so the text view stays the document view and its wrapping and lazy layout are untouched.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

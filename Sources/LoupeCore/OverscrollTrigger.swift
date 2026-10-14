@@ -18,7 +18,7 @@ public struct OverscrollTrigger: Sendable, Equatable {
     public private(set) var progress: CGFloat = 0
     private var state = State.idle
 
-    public init(threshold: CGFloat = 80) {
+    public init(threshold: CGFloat = 40) {
         self.threshold = threshold
     }
 
