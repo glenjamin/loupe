@@ -82,6 +82,7 @@ Icon/render.sh
 `swift run` gets a Dock icon but ⌘-Tab shows a generic one, as it reads the icon from an app bundle. To build a release `.app` (ad-hoc signed, under `.build/`) and open it:
 
 ```sh
+./start.sh                 # builds Loupe.app and opens it (same as the two steps below)
 sh Scripts/bundle.sh && open .build/Loupe.app
 ```
 
