@@ -12,7 +12,7 @@ swift test                  # diff tests, plus PR list tests against a fake GitH
 swift build -c release      # for meaningful bench numbers
 ```
 
-Open the start screen: your open PRs (drafts included) beside the open PRs awaiting your review, newest first. It authenticates with `gh auth token`, so `gh` must be signed in. Clicking a PR opens it on github.com:
+Open the start screen: your open PRs (drafts included) beside the open PRs awaiting your review, newest first. It authenticates with `gh auth token`, so `gh` must be signed in. Clicking a PR (or selecting it with the arrow keys and pressing Return) opens it in a tab:
 
 ```sh
 swift run Loupe
@@ -28,6 +28,24 @@ After each refresh the app looks for each listed repo's local checkout, for diff
 
 ```sh
 sqlite3 ~/Library/Application\ Support/Loupe/loupe.sqlite "DELETE FROM localRepo WHERE nameWithOwner = '<owner>/<repo>'"
+```
+
+The window has a tab strip: the lists first, which can't be closed, then a tab per opened PR, titled `repo #number`, with a close button on hover. Opening a PR that already has a tab selects it. Keys, all in the File, View and Window menus: ⌘W closes the PR tab (nothing on the lists), ⌘⇧W closes the window, ⌘T or ⌘1 shows the lists, ⌘2–⌘8 the Nth tab, ⌘9 the last, ⌘⇧[ / ⌘⇧] and ⌃⇧Tab / ⌃Tab cycle. Open tabs and the selected one are stored (`openTab` table, `selectedTab` setting) and come back next launch; a PR with an open tab stays stored even after it leaves both lists.
+
+A PR tab shows the PR's header (state, CI, review decision, `head → base`, "Open on GitHub") over its changed files and diff, produced from the repo's local checkout, showing each step: finding the checkout, fetching, diffing. With no checkout known it says so and offers "Locate Checkout…". In the checkout it runs, all without touching branches, the index or the working tree:
+
+```sh
+git fetch --no-tags --no-write-fetch-head origin +refs/pull/<N>/head:refs/loupe/pull/<N>/head
+git cat-file -e <baseRefOid>^{commit} || git fetch --no-tags --no-write-fetch-head origin <baseRefName>
+git merge-base <baseRefOid> <head>
+git diff -M <merge-base> <head> -- . ':(exclude,top)vendor' ':(exclude,top)go.sum' ':(exclude,attr:linguist-generated)' ':(exclude,attr:linguist-generated=true)'
+git diff --name-only -M <merge-base> <head> -- <the same paths, not excluded>   # counted as hidden
+```
+
+Fetches time out after two minutes and other git commands after one; a failure shows git's stderr with a "Try Again" button. Lockfiles git didn't exclude (`yarn.lock` and so on) are hidden by `PathFilter` as before, and the sidebar counts both. The diff is kept in memory per tab, so switching tabs doesn't redo it; when a refresh brings a new head commit, the shown tab produces it again. When each PR's diff was last produced, from which head and merge-base, is stored in `pullRequestDiff` (the diff text isn't). To see where Loupe has fetched to in a checkout:
+
+```sh
+git -C <checkout> for-each-ref refs/loupe/
 ```
 
 Or open a diff file directly. Make a diff to view from PR `<N>` in a local checkout of `<owner>/<repo>`, with vendored code left in (the app hides it itself):
@@ -53,7 +71,7 @@ Time the diff view headlessly. This uses the largest file whose path contains th
 swift run -c release Loupe --bench fixtures-local/<repo>-<N>-full.diff types/types.go
 ```
 
-I couldn't launch the GUI myself (the sandbox blocks window-server access), so it builds but its on-screen behaviour hasn't been seen: window activation, scrolling, click reporting, the sidebar, the PR list's layout, and its checkout icons and menu. The PR list's loading, storage, paging, refresh and error handling are covered by tests, and its paged search query was run against the live API. Rendering, layout, drawing, anchors and copying *are* exercised headlessly by the tests and the bench, using the same `DiffTextView`.
+I couldn't launch the GUI myself (the sandbox blocks window-server access), so it builds but its on-screen behaviour hasn't been seen: window activation, scrolling, click reporting, the sidebar, the PR list's layout, and its checkout icons and menu, the tab strip, the PR view, and the tab keys (whether ⌘W, ⌘⇧[ and ⌃Tab reach their menu items is untested). Tab opening, closing, cycling and restoring, and producing a PR's diff from a checkout (against real temp git repos with a bare origin exposing `refs/pull/<N>/head`), are covered by tests. The PR list's loading, storage, paging, refresh and error handling are covered by tests, and its paged search query was run against the live API. Rendering, layout, drawing, anchors and copying *are* exercised headlessly by the tests and the bench, using the same `DiffTextView`.
 
 ## What the probe showed
 
@@ -110,10 +128,10 @@ So a 5k-line file opens in about 33ms, comfortably fast. A 46k-line file takes a
 - `Sources/LoupeCore/`: `DiffModel.swift`, `DiffParser.swift`, `DiffRenderer.swift` (attributed string and anchors), `DiffTextView.swift`
 - `Sources/LoupeModel/`: `PullRequest.swift` (the PR summary and list types shared by the targets below)
 - `Sources/LoupeGitHub/`: `GitHubClient.swift` (GraphQL over `URLSession`, pluggable transport; pages each search), `GitHubCLI.swift` (`gh auth token`), `PullRequest.swift` (response decoding)
-- `Sources/LoupeStore/`: `PullRequestStore.swift` (GRDB: one row per PR keyed by node id, list membership and per-list refresh times, set up by migrations), `LocalRepoStore.swift` (each repo's local checkout)
-- `Sources/LoupeGit/`: `CheckoutResolver.swift` (finds, verifies and stores checkouts), `GitHubRemote.swift` (matches an origin URL to `owner/name`), `Git.swift` (runs read-only git commands)
-- `Sources/LoupeInbox/`: `PullRequestListModel.swift` (start-screen state wiring GitHub to the store; `onOpen` is where choosing a PR goes)
-- `Sources/Loupe/`: `Entry.swift` (PR list, diff file or `--bench`), `App.swift`, `PullRequestListView.swift`, `DiffView.swift`, `Bench.swift`
+- `Sources/LoupeStore/`: `PullRequestStore.swift` (GRDB: one row per PR keyed by node id, list membership and per-list refresh times, set up by migrations), `LocalRepoStore.swift` (each repo's local checkout), `TabStore.swift` (open tabs and when each PR's diff was produced)
+- `Sources/LoupeGit/`: `CheckoutResolver.swift` (finds, verifies and stores checkouts), `GitHubRemote.swift` (matches an origin URL to `owner/name`), `Git.swift` (runs git with a timeout), `PullRequestDiffer.swift` (fetches a PR into `refs/loupe/` and diffs it from its merge-base)
+- `Sources/LoupeInbox/`: `PullRequestListModel.swift` (start-screen state wiring GitHub to the store; `onOpen` is where choosing a PR goes), `TabsModel.swift` (the window's tabs), `PullRequestTab.swift` (one PR tab's diff, from checkout to ready)
+- `Sources/Loupe/`: `Entry.swift` (PR list, diff file or `--bench`), `App.swift`, `TabbedWindow.swift` (tab strip and tab keys), `PullRequestView.swift` (a PR tab), `PullRequestListView.swift`, `DiffView.swift`, `Bench.swift`
 - `Tests/LoupeTests/`: tests, with fixtures from atrium#2912 (the 4-file diff, and edge cases cut from the full diff)
-- `Tests/LoupeInboxTests/`: PR list tests against an in-memory GitHub that matches searches (author, review request, `is:open`, `updated:>=`) and review-request lookups against the PRs in `probe/pr-list.json`, checking the shape of each search it receives, plus `probe/graphql-error.json`; checkout tests against real `git init` repos in temp search roots
+- `Tests/LoupeInboxTests/`: PR list tests against an in-memory GitHub that matches searches (author, review request, `is:open`, `updated:>=`) and review-request lookups against the PRs in `probe/pr-list.json`, checking the shape of each search it receives, plus `probe/graphql-error.json`; checkout tests against real `git init` repos in temp search roots; diff and tab tests against `FakeRepository`, a temp bare origin exposing `refs/pull/<N>/head` with a contributor clone and a reviewer checkout
 - `probe/`: GraphQL queries, raw responses and `NOTES.md`; `incremental-query.graphql` → `incremental.json` confirmed the `updated:>=` search, PR `state`/`mergedAt`/`closedAt`, `viewer { login }` and the `reviewRequests` shape

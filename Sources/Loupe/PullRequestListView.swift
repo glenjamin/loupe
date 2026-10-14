@@ -59,10 +59,6 @@ struct PullRequestListView: View {
                     .disabled(model.isLoading)
             }
         }
-        .task { await model.keepRefreshed() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await model.refreshIfStale() }
-        }
     }
 }
 
@@ -101,6 +97,8 @@ struct PullRequestColumn: View {
     let showsAuthor: Bool
     let showsClosed: Bool
     let model: PullRequestListModel
+    /// Moved with the arrow keys; Return opens it.
+    @State private var selection: PullRequestSummary.ID?
 
     var body: some View {
         let pullRequests = model.pullRequests(in: list, includingClosed: showsClosed)
@@ -114,7 +112,7 @@ struct PullRequestColumn: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(pullRequests) { pullRequest in
+                List(pullRequests, selection: $selection) { pullRequest in
                     let checkout = model.checkout(for: pullRequest.repository)
                     Button { model.open(pullRequest) } label: {
                         PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, checkout: checkout)
@@ -127,37 +125,24 @@ struct PullRequestColumn: View {
                                 NSWorkspace.shared.activateFileViewerSelecting([directory])
                             }
                         case .notFound:
-                            Button("Locate Checkout…") { locateCheckout(for: pullRequest.repository) }
+                            Button("Locate Checkout…") {
+                                locateCheckout(of: pullRequest.repository, startingAt: model.checkoutSearchRoots.first) { directory in
+                                    try await model.locateCheckout(for: pullRequest.repository, at: directory)
+                                }
+                            }
                         case nil:
                             EmptyView()
                         }
                     }
                 }
+                .onKeyPress(.return) {
+                    guard let pullRequest = pullRequests.first(where: { $0.id == selection }) else { return .ignored }
+                    model.open(pullRequest)
+                    return .handled
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    /// Asks for the repo's checkout directory and stores it if its origin is that repo.
-    private func locateCheckout(for repository: String) {
-        let panel = NSOpenPanel()
-        panel.message = "Choose the local checkout of \(repository)"
-        panel.prompt = "Choose"
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = model.checkoutSearchRoots.first
-        guard panel.runModal() == .OK, let directory = panel.url else { return }
-        Task {
-            do {
-                try await model.locateCheckout(for: repository, at: directory)
-            } catch {
-                let alert = NSAlert()
-                alert.messageText = "That isn't a checkout of \(repository)"
-                alert.informativeText = error.localizedDescription
-                alert.runModal()
-            }
-        }
     }
 }
 
@@ -171,17 +156,10 @@ struct PullRequestRow: View {
             // The repo and number lead, as that's how PRs get talked about; the owner is
             // secondary and is the first thing to truncate in a narrow column.
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("\(repositoryName) #\(pullRequest.number)")
+                Text("\(repositoryName(pullRequest)) #\(pullRequest.number)")
                     .font(.headline.monospacedDigit())
                     .layoutPriority(1)
-                switch pullRequest.state {
-                case .merged: Badge(text: "Merged", tint: .purple)
-                case .closed: Badge(text: "Closed", tint: .red)
-                case .open, .unknown:
-                    if pullRequest.isDraft {
-                        Badge(text: "Draft", tint: .primary)
-                    }
-                }
+                StateBadge(pullRequest: pullRequest, showsOpen: false)
                 Text(owner)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -217,10 +195,6 @@ struct PullRequestRow: View {
     private var owner: String {
         pullRequest.repository.split(separator: "/").first.map(String.init) ?? ""
     }
-
-    private var repositoryName: String {
-        pullRequest.repository.split(separator: "/").last.map(String.init) ?? pullRequest.repository
-    }
 }
 
 struct Badge: View {
@@ -234,6 +208,25 @@ struct Badge: View {
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(.quaternary, in: Capsule())
+    }
+}
+
+/// Merged, closed or draft; open only where asked, as lists mostly hold open PRs.
+struct StateBadge: View {
+    let pullRequest: PullRequestSummary
+    let showsOpen: Bool
+
+    var body: some View {
+        switch pullRequest.state {
+        case .merged: Badge(text: "Merged", tint: .purple)
+        case .closed: Badge(text: "Closed", tint: .red)
+        case .open, .unknown:
+            if pullRequest.isDraft {
+                Badge(text: "Draft", tint: .primary)
+            } else if showsOpen {
+                Badge(text: "Open", tint: .green)
+            }
+        }
     }
 }
 

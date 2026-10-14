@@ -67,6 +67,10 @@ One attributed string per file, TextKit 1 with non-contiguous layout and no wrap
 
 Tab 0 is the PR lists and cannot be closed; each opened PR gets a closeable tab with browser-style keys (⌘W, ⌘1–9, ⌘⇧[ and ⌘⇧], ⌃Tab). Open tabs persist across launches. This keeps several reviews in flight without a window per PR.
 
+### Producing a PR's diff leaves the checkout's other state alone
+
+Fetches pass `--no-tags` and `--no-write-fetch-head`, so the only things they change are `refs/loupe/pull/<N>/head` and, when the base commit is missing, the base branch's remote-tracking ref. Hidden paths are excluded with pathspecs, `linguist-generated` ones through `:(attr:…)` magic against the checkout's own `.gitattributes`, and a second `--name-only` diff over the same pathspecs lists what was hidden, so the count stays honest. An open tab keeps its PR row stored after the PR leaves both lists, so a tab can always be restored. A list holding rows stored before commit oids were fetched gets a full load rather than an incremental one, which fills them in.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

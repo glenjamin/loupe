@@ -11,40 +11,54 @@ struct LoupeApp: App {
     var body: some Scene {
         WindowGroup(screen.title) {
             switch screen {
-            case let .pullRequests(model):
-                PullRequestListView(model: model)
+            case let .tabs(tabs):
+                TabbedWindow(tabs: tabs)
                     .frame(minWidth: 900, minHeight: 500)
             case let .diff(model):
                 ContentView(model: model)
                     .frame(minWidth: 900, minHeight: 600)
             }
         }
+        .commands { TabCommands(tabs: screen.tabs) }
     }
 }
 
 @MainActor
 enum Screen {
-    case pullRequests(PullRequestListModel)
+    case tabs(TabsModel)
     case diff(ReviewModel)
 
     static var initial: Screen {
         guard let path = LaunchOptions.diffPath else {
-            return .pullRequests(PullRequestListModel(store: openStore()) { NSWorkspace.shared.open($0.url) })
+            let store = openStore()
+            // The tabs take over opening PRs.
+            let lists = PullRequestListModel(store: store) { _ in }
+            return .tabs(TabsModel(lists: lists, store: store))
         }
         return .diff(ReviewModel.load(path: path))
     }
 
     var title: String {
         switch self {
-        case .pullRequests: "Pull Requests"
+        case .tabs: "Loupe"
         case let .diff(model): model.title
         }
+    }
+
+    var tabs: TabsModel? {
+        if case let .tabs(tabs) = self { tabs } else { nil }
     }
 }
 
 /// Launched as a bare SwiftPM executable (no .app bundle), the process starts as a background
 /// app and its window never takes keyboard focus unless it's promoted to a regular app.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The app draws its own tab strip, so the system's window tabs and their menu items would
+    /// only compete with it.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -89,17 +103,8 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(model.files, selection: $model.selection) { file in
-                FileRow(file: file)
-            }
-            .safeAreaInset(edge: .bottom) {
-                Text(summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-            }
-            .navigationSplitViewColumnWidth(min: 220, ideal: 300)
+            FileList(files: model.files, hiddenCount: model.excludedCount, selection: $model.selection)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 300)
         } detail: {
             if let file = model.selectedFile {
                 DiffView(file: file) { anchor in print("clicked \(anchor)") }
@@ -108,9 +113,25 @@ struct ContentView: View {
             }
         }
     }
+}
 
-    private var summary: String {
-        "\(model.files.count) files · \(model.excludedCount) vendored/lockfiles hidden"
+/// The files to review, with a count of those hidden as vendored, lockfiles or generated.
+struct FileList: View {
+    let files: [FileDiff]
+    let hiddenCount: Int
+    @Binding var selection: FileDiff.ID?
+
+    var body: some View {
+        List(files, selection: $selection) { file in
+            FileRow(file: file)
+        }
+        .safeAreaInset(edge: .bottom) {
+            Text("\(files.count) files · \(hiddenCount) vendored, lockfile or generated hidden")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+        }
     }
 }
 
