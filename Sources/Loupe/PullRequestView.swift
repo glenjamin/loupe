@@ -14,12 +14,20 @@ struct PullRequestView: View {
         VStack(spacing: 0) {
             PullRequestHeader(pullRequest: pullRequest)
             Divider()
+            if let change = tab.pendingChange {
+                PendingChangeBanner(change: change) {
+                    Task { await tab.reload() }
+                } dismiss: {
+                    tab.dismissPendingChange()
+                }
+                Divider()
+            }
             content(pullRequest)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        // Showing the tab, or a refresh moving the PR's head, produces the diff if it isn't
-        // already in memory for that head.
-        .task(id: pullRequest.headRefOid) { await tab.load() }
+        // Showing the tab produces the diff if it isn't already in memory. Changes on GitHub
+        // after that are offered by the banner rather than replacing what's being read.
+        .task { await tab.load() }
     }
 
     @ViewBuilder
@@ -99,6 +107,33 @@ struct PullRequestHeader: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+}
+
+/// Says the PR has changed on GitHub since its diff was produced, without disturbing the diff,
+/// and offers to reload it.
+struct PendingChangeBanner: View {
+    let change: PendingChange
+    let reload: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: change == .newCommits ? "arrow.triangle.branch" : "bell")
+                .foregroundStyle(Color.accentColor)
+            Text(change == .newCommits ? "New commits pushed" : "Updated on GitHub")
+            Spacer(minLength: 0)
+            Button("Reload", action: reload)
+                .controlSize(.small)
+            Button("Dismiss", systemImage: "xmark", action: dismiss)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("Dismiss")
+        }
+        .font(.callout)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.accentColor.opacity(0.1))
     }
 }
 

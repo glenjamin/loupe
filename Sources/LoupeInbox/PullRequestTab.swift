@@ -6,8 +6,8 @@ import LoupeStore
 import Observation
 
 /// One open PR: its latest known details and its diff, produced from the local checkout and
-/// kept in memory, so switching back to its tab is instant. The diff is produced again when the
-/// PR's head commit changes.
+/// kept in memory, so switching back to its tab is instant. When the PR changes on GitHub the
+/// diff stays as it is and the change is offered as a reload, as github.com does.
 @Observable
 @MainActor
 public final class PullRequestTab: Identifiable {
@@ -21,8 +21,9 @@ public final class PullRequestTab: Identifiable {
     private let lists: PullRequestListModel
     private let store: PullRequestStore
     private let differ: PullRequestDiffer
-    /// The head commit the PR had when its diff was last asked for, success or not.
-    private var attemptedHead: String??
+    /// The PR as it was when its diff was last asked for, success or not, or when a change to
+    /// it was last dismissed. Nil until the diff is asked for.
+    private var seen: PullRequestSummary?
     private var loading: Task<Void, Never>?
 
     init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer) {
@@ -45,16 +46,25 @@ public final class PullRequestTab: Identifiable {
         return "\(name) #\(pullRequest.number)"
     }
 
-    /// Produces the diff, unless it has already been tried for the PR's current head commit.
-    /// Returns once it's ready or has failed.
+    /// How the PR has changed on GitHub since its diff was produced, if it has: nil while the
+    /// diff is still of the PR as it is now.
+    public var pendingChange: PendingChange? {
+        guard let seen else { return nil }
+        let now = pullRequest
+        if now.headRefOid != seen.headRefOid { return .newCommits }
+        return now.hasSameActivity(as: seen) ? nil : .updated
+    }
+
+    /// Produces the diff, unless it has already been asked for. Returns once it's ready or has
+    /// failed.
     public func load() async {
         if let loading {
             await loading.value
             return await load()
         }
+        if seen != nil { return }
         let pullRequest = pullRequest
-        if attemptedHead == .some(pullRequest.headRefOid) { return }
-        attemptedHead = .some(pullRequest.headRefOid)
+        seen = pullRequest
         let task = Task {
             await produce(pullRequest)
             loading = nil
@@ -63,10 +73,27 @@ public final class PullRequestTab: Identifiable {
         await task.value
     }
 
-    /// Produces the diff again, after a failure.
+    /// Produces the diff again, of the PR as it's stored now, such as after a failure.
     public func retry() async {
-        attemptedHead = nil
+        seen = nil
         await load()
+    }
+
+    /// Brings the PR up to date with GitHub and produces its diff again, keeping the shown file
+    /// if it's still there.
+    public func reload() async {
+        do {
+            try await lists.checkForChanges(to: [id])
+        } catch {
+            // The stored PR is diffed instead; it's what prompted the reload.
+            FileHandle.standardError.write(Data("Couldn't check \(title) for changes: \(error)\n".utf8))
+        }
+        await retry()
+    }
+
+    /// Keeps the diff as it is and stops offering the change, until the PR changes again.
+    public func dismissPendingChange() {
+        if seen != nil { seen = pullRequest }
     }
 
     /// Records `directory` as the repo's checkout, if its origin is the repo, then produces the
@@ -82,7 +109,7 @@ public final class PullRequestTab: Identifiable {
             guard let checkout = try await lists.resolveCheckout(for: pullRequest.repository) else {
                 phase = .noCheckout
                 // Looked for afresh when the tab is next shown, in case it has turned up.
-                attemptedHead = nil
+                seen = nil
                 return
             }
             phase = .fetching
@@ -101,6 +128,14 @@ public final class PullRequestTab: Identifiable {
             phase = .failed(error.localizedDescription)
         }
     }
+}
+
+/// How an open PR has changed on GitHub since its diff was produced.
+public enum PendingChange: Sendable, Equatable {
+    /// Its head commit moved, so the diff is out of date.
+    case newCommits
+    /// Anything else, such as a comment, a review or a change of state.
+    case updated
 }
 
 /// Where a tab's diff has got to.
@@ -122,4 +157,16 @@ public struct ReviewDiff: Sendable {
     public let files: [FileDiff]
     /// How many changed files were left out as vendored, lockfiles or generated.
     public let hiddenCount: Int
+}
+
+private extension PullRequestSummary {
+    /// Whether nothing a reviewer would reload for has changed since `earlier`. Counts unknown
+    /// either side aren't compared.
+    func hasSameActivity(as earlier: PullRequestSummary) -> Bool {
+        func same(_ count: KeyPath<PullRequestSummary, Int?>) -> Bool {
+            earlier[keyPath: count] == nil || self[keyPath: count] == nil || earlier[keyPath: count] == self[keyPath: count]
+        }
+        return updatedAt == earlier.updatedAt && state == earlier.state && reviewDecision == earlier.reviewDecision
+            && same(\.commitCount) && same(\.commentCount) && same(\.reviewThreadCount)
+    }
 }

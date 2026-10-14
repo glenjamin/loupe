@@ -3,11 +3,13 @@ import LoupeGitHub
 import LoupeModel
 import Testing
 
-/// An in-memory api.github.com/graphql holding the viewer's PRs and the PRs awaiting their
-/// review. Like GitHub it rejects requests without the expected token, caps page sizes, pages
+/// An in-memory api.github.com holding the viewer's PRs and the PRs awaiting their review. Like
+/// GitHub's GraphQL API it rejects requests without the expected token, caps page sizes, pages
 /// with cursors, matches searches by author, review request, state and update time, looks up
-/// nodes by id, and bumps a PR's update time when it changes. Tests can change PRs, or make
-/// every request fail.
+/// nodes by id, and bumps a PR's update time when it changes. Like its REST notifications, a
+/// change to a PR notifies the viewer, who participates in every PR here, and a poll with
+/// `If-Modified-Since` no older than the newest notification gets a 304. Tests can change PRs,
+/// set the poll interval, refuse notifications, or make every GraphQL request fail.
 actor FakeGitHub: HTTPTransport {
     enum Failure {
         case status(Int)
@@ -32,6 +34,14 @@ actor FakeGitHub: HTTPTransport {
     private(set) var searches: [String] = []
     /// The ids of every lookup of PR rows by id, in order.
     private(set) var pullRequestLookups: [[String]] = []
+    /// When each PR's notification was last updated, by PR id.
+    private var notified: [String: Date] = [:]
+    /// What `X-Poll-Interval` says, or nil to leave it out.
+    private var pollInterval: Int? = 60
+    /// The status notifications are refused with, as for a token without access to them.
+    private var notificationsRefusal: Int?
+    /// The status of each notifications poll, in order.
+    private(set) var notificationPolls: [Int] = []
 
     /// Serves the PRs captured in a probe response, with review requested of the viewer on
     /// the to-review ones. The probe asked GitHub to sort by update time; `reversed` checks the
@@ -57,6 +67,10 @@ actor FakeGitHub: HTTPTransport {
         GitHubClient(token: token, transport: self)
     }
 
+    nonisolated func notifications() -> GitHubNotifications {
+        GitHubNotifications(token: { Self.validToken }, transport: self)
+    }
+
     /// The open PRs a full load of `list` finds.
     func pullRequests(in list: PullRequestList) -> [FakePullRequest] {
         pullRequests.filter { $0.state == "OPEN" && matches($0, list) }
@@ -67,6 +81,17 @@ actor FakeGitHub: HTTPTransport {
         let index = try #require(pullRequests.firstIndex { $0.id == id })
         try change(&pullRequests[index])
         pullRequests[index].updatedAt = Date.now.formatted(.iso8601)
+        // A second on from the last at least, so each change reaches a poll that saw the last;
+        // HTTP dates are whole seconds.
+        notified[id] = max(.now, (notified.values.max() ?? Self.quietSince) + 1)
+    }
+
+    func setPollInterval(_ seconds: Int?) {
+        pollInterval = seconds
+    }
+
+    func refuseNotifications(status: Int) {
+        notificationsRefusal = status
     }
 
     func merge(_ id: String) throws {
@@ -94,6 +119,7 @@ actor FakeGitHub: HTTPTransport {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         requestCount += 1
         let url = try #require(request.url)
+        if url.path() == "/notifications" { return try notifications(request, url) }
         #expect(url.absoluteString == "https://api.github.com/graphql")
         #expect(request.httpMethod == "POST")
 
@@ -136,6 +162,38 @@ actor FakeGitHub: HTTPTransport {
             pageInfo: .init(hasNextPage: end < results.count, endCursor: end > start ? String(end) : nil),
             nodes: results[start..<end].map { SearchNode(pullRequest: $0) }
         )))
+    }
+
+    private func notifications(_ request: URLRequest, _ url: URL) throws -> (Data, HTTPURLResponse) {
+        let (body, response) = try notificationsResponse(request, url)
+        notificationPolls.append(response.statusCode)
+        return (body, response)
+    }
+
+    private func notificationsResponse(_ request: URLRequest, _ url: URL) throws -> (Data, HTTPURLResponse) {
+        #expect(url.absoluteString == "https://api.github.com/notifications?participating=true")
+        #expect(request.httpMethod == "GET", "only reads, so nothing is marked as read")
+        var headers = pollInterval.map { ["X-Poll-Interval": String($0)] } ?? [:]
+        guard request.value(forHTTPHeaderField: "Authorization") == "bearer \(Self.validToken)" else {
+            return (Data(#"{"message":"Bad credentials"}"#.utf8), httpResponse(url, status: 401, headers: headers))
+        }
+        if let notificationsRefusal {
+            let body = #"{"message":"Missing the 'notifications' scope.","documentation_url":"https://docs.github.com/rest/activity/notifications#list-notifications-for-the-authenticated-user","status":"403"}"#
+            return (Data(body.utf8), httpResponse(url, status: notificationsRefusal, headers: headers))
+        }
+        // HTTP dates are whole seconds.
+        let lastModified = Date(timeIntervalSince1970: (notified.values.max() ?? Self.quietSince).timeIntervalSince1970.rounded(.down))
+        headers["Last-Modified"] = httpDate().string(from: lastModified)
+        if let since = request.value(forHTTPHeaderField: "If-Modified-Since").flatMap(httpDate().date), lastModified <= since {
+            return (Data(), httpResponse(url, status: 304, headers: headers))
+        }
+        let probe = try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/notifications.json")))
+        let template = try #require((probe as? [[String: Any]])?.first)
+        // Newest first, a page of 50.
+        let threads = notified.sorted { $0.value > $1.value }.prefix(50).compactMap { id, date in
+            pullRequests.first { $0.id == id }.map { notification(from: template, about: $0, at: date) }
+        }
+        return (try JSONSerialization.data(withJSONObject: threads), httpResponse(url, status: 200, headers: headers))
     }
 
     private func pullRequestRows(_ ids: [String]) throws -> Envelope<[String: [FakePullRequest?]]> {
@@ -275,8 +333,40 @@ private struct SearchQuery {
     }
 }
 
-private func httpResponse(_ url: URL, status: Int) -> HTTPURLResponse {
-    HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+private func httpResponse(_ url: URL, status: Int, headers: [String: String] = [:]) -> HTTPURLResponse {
+    HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers.merging(["Content-Type": "application/json"]) { $1 })!
+}
+
+extension FakeGitHub {
+    /// When the viewer's newest notification was, before any PR changes.
+    static let quietSince = Date(timeIntervalSince1970: 1_791_990_109)
+}
+
+/// The probe's notification moved onto `pullRequest`, as updated at `date`.
+private func notification(from template: [String: Any], about pullRequest: FakePullRequest, at date: Date) -> [String: Any] {
+    let name = pullRequest.repository.nameWithOwner
+    let url = "https://api.github.com/repos/\(name)/pulls/\(pullRequest.number)"
+    var thread = template
+    thread["updated_at"] = date.formatted(.iso8601)
+    var subject = template["subject"] as? [String: Any] ?? [:]
+    subject["title"] = pullRequest.title
+    subject["url"] = url
+    subject["latest_comment_url"] = url
+    thread["subject"] = subject
+    var repository = template["repository"] as? [String: Any] ?? [:]
+    repository["full_name"] = name
+    repository["name"] = String(name.split(separator: "/").last ?? "")
+    thread["repository"] = repository
+    return thread
+}
+
+/// HTTP's date format, as in `Last-Modified: Wed, 14 Oct 2026 15:01:49 GMT`.
+private func httpDate() -> DateFormatter {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .gmt
+    formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+    return formatter
 }
 
 private struct ProbeResponse: Decodable {
