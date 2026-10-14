@@ -1,15 +1,42 @@
 import AppKit
 import LoupeCore
+import LoupeGitHub
 import SwiftUI
 
 struct LoupeApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
-    @State private var model = ReviewModel.load(path: LaunchOptions.diffPath)
+    @State private var screen = Screen.initial
 
     var body: some Scene {
-        WindowGroup(model.title) {
-            ContentView(model: model)
-                .frame(minWidth: 900, minHeight: 600)
+        WindowGroup(screen.title) {
+            switch screen {
+            case let .pullRequests(model):
+                PullRequestListView(model: model)
+                    .frame(minWidth: 900, minHeight: 500)
+            case let .diff(model):
+                ContentView(model: model)
+                    .frame(minWidth: 900, minHeight: 600)
+            }
+        }
+    }
+}
+
+@MainActor
+enum Screen {
+    case pullRequests(PullRequestListModel)
+    case diff(ReviewModel)
+
+    static var initial: Screen {
+        guard let path = LaunchOptions.diffPath else {
+            return .pullRequests(PullRequestListModel { NSWorkspace.shared.open($0.url) })
+        }
+        return .diff(ReviewModel.load(path: path))
+    }
+
+    var title: String {
+        switch self {
+        case .pullRequests: "Pull Requests"
+        case let .diff(model): model.title
         }
     }
 }

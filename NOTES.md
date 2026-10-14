@@ -8,11 +8,17 @@ Needs Swift 6 (Command Line Tools are enough; no Xcode). All commands run from t
 
 ```sh
 swift build                 # debug build
-swift test                  # parser, anchor, copy and background-painting tests (swift-testing)
+swift test                  # diff tests, plus PR list tests against a fake GitHub (swift-testing)
 swift build -c release      # for meaningful bench numbers
 ```
 
-Make a diff to view from PR `<N>` in a local checkout of `<owner>/<repo>`, with vendored code left in (the app hides it itself):
+Open the start screen: your open PRs (drafts included) beside the open PRs awaiting your review, newest first. It authenticates with `gh auth token`, so `gh` must be signed in. It refreshes every few minutes and on ⌘R, and clicking a PR opens it on github.com:
+
+```sh
+swift run Loupe
+```
+
+Or open a diff file directly. Make a diff to view from PR `<N>` in a local checkout of `<owner>/<repo>`, with vendored code left in (the app hides it itself):
 
 ```sh
 git -C <checkout> fetch origin refs/pull/<N>/head
@@ -35,7 +41,7 @@ Time the diff view headlessly. This uses the largest file whose path contains th
 swift run -c release Loupe --bench fixtures-local/<repo>-<N>-full.diff types/types.go
 ```
 
-I couldn't launch the GUI myself (the sandbox blocks window-server access), so it builds but its on-screen behaviour hasn't been seen: window activation, scrolling, click reporting and the sidebar. Rendering, layout, drawing, anchors and copying *are* exercised headlessly by the tests and the bench, using the same `DiffTextView`.
+I couldn't launch the GUI myself (the sandbox blocks window-server access), so it builds but its on-screen behaviour hasn't been seen: window activation, scrolling, click reporting, the sidebar, and the PR list's layout. The PR list's loading, sorting, refresh and error handling are covered by tests, and the GitHub client was run once against the live API. Rendering, layout, drawing, anchors and copying *are* exercised headlessly by the tests and the bench, using the same `DiffTextView`.
 
 ## What the probe showed
 
@@ -90,6 +96,8 @@ So a 5k-line file opens in about 33ms, comfortably fast. A 46k-line file takes a
 ## Layout
 
 - `Sources/LoupeCore/`: `DiffModel.swift`, `DiffParser.swift`, `DiffRenderer.swift` (attributed string and anchors), `DiffTextView.swift`
-- `Sources/Loupe/`: `Entry.swift` (GUI vs `--bench`), `App.swift`, `DiffView.swift`, `Bench.swift`
+- `Sources/LoupeGitHub/`: `GitHubClient.swift` (GraphQL over `URLSession`, pluggable transport), `GitHubCLI.swift` (`gh auth token`), `PullRequest.swift`, `PullRequestListModel.swift` (start-screen state; `onOpen` is where choosing a PR goes)
+- `Sources/Loupe/`: `Entry.swift` (PR list, diff file or `--bench`), `App.swift`, `PullRequestListView.swift`, `DiffView.swift`, `Bench.swift`
 - `Tests/LoupeTests/`: tests, with fixtures from atrium#2912 (the 4-file diff, and edge cases cut from the full diff)
+- `Tests/LoupeGitHubTests/`: PR list tests against an in-memory GitHub serving `probe/pr-list.json` and `probe/graphql-error.json`
 - `probe/`: GraphQL queries, raw responses and `NOTES.md`
