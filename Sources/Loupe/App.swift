@@ -60,15 +60,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Without an .app bundle there's no Info.plist icon, so the Dock and About panel take it from here.
-        if let url = Bundle.module.url(forResource: "Loupe", withExtension: "icns"), let icon = NSImage(contentsOf: url) {
-            NSApp.applicationIconImage = icon
-        }
         NSApp.setActivationPolicy(.regular)
+        applyIcon()
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// The Dock tile may not exist yet when launch finishes, so the icon is set again here.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        applyIcon()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// Run as a bare executable there's no Info.plist icon, so the Dock and About panel take it
+    /// from here; once the Dock tile exists, that is.
+    @MainActor private func applyIcon() {
+        if let icon = Self.icon { NSApp.applicationIconImage = icon }
+    }
+
+    @MainActor private static let icon = Bundle.module.url(forResource: "Loupe", withExtension: "icns").flatMap(NSImage.init(contentsOf:))
 }
 
 @Observable
