@@ -14,7 +14,11 @@ let package = Package(
         .target(name: "LoupeStore", dependencies: ["LoupeModel", .product(name: "GRDB", package: "GRDB.swift")]),
         .target(name: "LoupeGit", dependencies: ["LoupeStore"]),
         .target(name: "LoupeInbox", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit"]),
-        .executableTarget(name: "Loupe", dependencies: ["LoupeCore", "LoupeModel", "LoupeStore", "LoupeInbox"]),
+        .executableTarget(
+            name: "Loupe",
+            dependencies: ["LoupeCore", "LoupeModel", "LoupeStore", "LoupeInbox"],
+            resources: [.copy("Resources/Loupe.icns")]
+        ),
         .testTarget(name: "LoupeTests", dependencies: ["LoupeCore"], exclude: ["Fixtures"]),
         .testTarget(name: "LoupeInboxTests", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit", "LoupeInbox"]),
     ]

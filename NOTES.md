@@ -73,6 +73,12 @@ swift run -c release Loupe --bench fixtures-local/<repo>-<N>-full.diff types/typ
 
 I couldn't launch the GUI myself (the sandbox blocks window-server access), so it builds but its on-screen behaviour hasn't been seen: window activation, scrolling, click reporting, the sidebar, the PR list's layout, and its checkout icons and menu, the tab strip, the PR view, and the tab keys (whether ⌘W, ⌘⇧[ and ⌃Tab reach their menu items is untested). Tab opening, closing, cycling and restoring, and producing a PR's diff from a checkout (against real temp git repos with a bare origin exposing `refs/pull/<N>/head`), are covered by tests. The PR list's loading, storage, paging, refresh and error handling are covered by tests, and its paged search query was run against the live API. Rendering, layout, drawing, anchors and copying *are* exercised headlessly by the tests and the bench, using the same `DiffTextView`.
 
+The app icon's source is `Icon/loupe.svg`, a hand-drawn loupe over a cat-octopus silhouette. Without an .app bundle, the app sets it as the Dock icon at launch from `Sources/Loupe/Resources/Loupe.icns`. After editing the SVG, regenerate the icns and the `Icon/preview-*.png` previews (needs `brew install librsvg`; `iconutil` fails inside the agent sandbox), then rebuild:
+
+```sh
+Icon/render.sh
+```
+
 ## What the probe showed
 
 Details are in `probe/NOTES.md`. In short:
