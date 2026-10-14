@@ -109,9 +109,9 @@ public extension RowKind {
     var background: NSColor? {
         switch self {
         case .context: nil
-        case .addition: NSColor.systemGreen.withAlphaComponent(0.18)
-        case .deletion: NSColor.systemRed.withAlphaComponent(0.18)
-        case .hunkHeader: NSColor.systemBlue.withAlphaComponent(0.10)
+        case .addition: DiffColors.additionBackground
+        case .deletion: DiffColors.deletionBackground
+        case .hunkHeader: DiffColors.hunkHeaderBackground
         }
     }
 }

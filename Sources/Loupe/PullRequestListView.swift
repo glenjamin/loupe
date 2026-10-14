@@ -1,4 +1,5 @@
 import AppKit
+import LoupeCore
 import LoupeInbox
 import LoupeModel
 import SwiftUI
@@ -200,12 +201,12 @@ struct StateBadge: View {
     var body: some View {
         switch pullRequest.state {
         case .merged: Badge(text: "Merged", tint: .purple)
-        case .closed: Badge(text: "Closed", tint: .red)
+        case .closed: Badge(text: "Closed", tint: .diffDanger)
         case .open, .unknown:
             if pullRequest.isDraft {
                 Badge(text: "Draft", tint: .primary)
             } else if showsOpen {
-                Badge(text: "Open", tint: .green)
+                Badge(text: "Open", tint: .diffSuccess)
             }
         }
     }
@@ -216,8 +217,8 @@ struct ReviewDecisionLabel: View {
 
     var body: some View {
         switch decision {
-        case .approved: Text("Approved").foregroundStyle(.green)
-        case .changesRequested: Text("Changes requested").foregroundStyle(.red)
+        case .approved: Text("Approved").foregroundStyle(.diffSuccess)
+        case .changesRequested: Text("Changes requested").foregroundStyle(.diffDanger)
         case .reviewRequired: Text("Review required")
         case .unknown: EmptyView()
         }
@@ -244,13 +245,18 @@ struct ChecksIcon: View {
     var body: some View {
         switch state {
         case .success:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).help("Checks passed")
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.diffSuccess).help("Checks passed")
         case .failure, .error:
-            Image(systemName: "xmark.circle.fill").foregroundStyle(.red).help("Checks failed")
+            Image(systemName: "xmark.circle.fill").foregroundStyle(.diffDanger).help("Checks failed")
         case .pending, .expected:
             Image(systemName: "clock.fill").foregroundStyle(.orange).help("Checks running")
         case .unknown:
             Image(systemName: "questionmark.circle").help("Unknown check state")
         }
     }
+}
+
+extension ShapeStyle where Self == Color {
+    static var diffSuccess: Color { Color(nsColor: DiffColors.successText) }
+    static var diffDanger: Color { Color(nsColor: DiffColors.dangerText) }
 }
