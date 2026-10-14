@@ -96,7 +96,7 @@ struct PullRequestColumn: View {
                 List(pullRequests, selection: $selection) { pullRequest in
                     let checkout = model.checkout(for: pullRequest.repository)
                     Button { model.open(pullRequest) } label: {
-                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, checkout: checkout)
+                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor)
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -130,7 +130,6 @@ struct PullRequestColumn: View {
 struct PullRequestRow: View {
     let pullRequest: PullRequestSummary
     let showsAuthor: Bool
-    let checkout: CheckoutStatus?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -158,9 +157,6 @@ struct PullRequestRow: View {
                     ChecksIcon(state: checks)
                 }
                 Spacer(minLength: 0)
-                if let checkout {
-                    CheckoutIcon(status: checkout)
-                }
                 Text(pullRequest.updatedAt.formatted(.relative(presentation: .named)))
             }
             .font(.caption)
@@ -219,20 +215,6 @@ struct ReviewDecisionLabel: View {
         case .changesRequested: Text("Changes requested").foregroundStyle(.diffDanger)
         case .reviewRequired: Text("Review required")
         case .unknown: EmptyView()
-        }
-    }
-}
-
-/// Whether the repo is checked out locally; the context menu reveals or locates it.
-struct CheckoutIcon: View {
-    let status: CheckoutStatus
-
-    var body: some View {
-        switch status {
-        case let .found(directory):
-            Image(systemName: "folder").help("Checked out at \(directory.path(percentEncoded: false))")
-        case .notFound:
-            Image(systemName: "folder.badge.questionmark").foregroundStyle(.tertiary).help("No local checkout found")
         }
     }
 }
