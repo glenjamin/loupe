@@ -72,17 +72,30 @@ func saveSnapshotsOfAllWindows(to directory: URL) async throws -> [URL] {
     var written: [URL] = []
     for (index, window) in windows.enumerated() {
         window.tabGroup?.selectedWindow = window
-        window.makeKeyAndOrderFront(nil)
+        bringForward(window)
         try? await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+        window.displayIfNeeded()
         let url = directory.appending(path: "\(index + 1)-\(sanitised(window.title)).png")
         try pngData(snapshot(window: window)).write(to: url)
         written.append(url)
     }
     if let selected {
         selected.tabGroup?.selectedWindow = selected
-        selected.makeKeyAndOrderFront(nil)
+        bringForward(selected)
     }
     return written
+}
+
+/// Shows the window's tab without taking focus during a snapshot run, where the app must stay
+/// behind whatever the user is doing.
+@MainActor
+private func bringForward(_ window: NSWindow) {
+    if SnapshotRun.directory != nil {
+        window.orderBack(nil)
+    } else {
+        window.makeKeyAndOrderFront(nil)
+    }
 }
 
 @MainActor

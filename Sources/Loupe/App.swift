@@ -56,6 +56,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A snapshot run stays out of the way: no Dock tile, and never the active app.
+        guard SnapshotRun.directory == nil else {
+            NSApp.setActivationPolicy(.accessory)
+            return
+        }
         NSApp.setActivationPolicy(.regular)
         applyIcon()
         NSApp.activate(ignoringOtherApps: true)
@@ -63,6 +68,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The Dock tile may not exist yet when launch finishes, so the icon is set again here.
     func applicationDidBecomeActive(_ notification: Notification) {
+        if SnapshotRun.directory != nil {
+            // Opening windows can activate the app anyway; hand focus straight back.
+            NSApp.deactivate()
+            return
+        }
         applyIcon()
     }
 
