@@ -29,8 +29,20 @@ enum Bench {
         let (rendered, renderTime) = measure { RenderedDiff(file: file) }
         print("render attributed string: \(ms(renderTime)) (\(rendered.text.length) UTF-16 units)")
 
+        for wraps in [false, true] {
+            print(wraps ? "-- wrapped" : "-- not wrapped")
+            timeView(rendered, wraps: wraps)
+        }
+
+        let (anchor, lookupTime) = measure { rendered.anchor(at: rendered.text.length / 2) }
+        print("anchor at midpoint: \(anchor.map(String.init(describing:)) ?? "none") in \(ms(lookupTime))")
+    }
+
+    /// Lays out and draws the rendered file in a 1200×900 DiffTextView.
+    private static func timeView(_ rendered: RenderedDiff, wraps: Bool) {
         let viewport = NSRect(x: 0, y: 0, width: 1200, height: 900)
         let textView = DiffTextView.make()
+        textView.wrapsLines = wraps
         textView.frame = viewport
         let (_, showTime) = measure { textView.show(rendered) }
         print("set text storage: \(ms(showTime)), view now \(Int(textView.frame.height))pt tall")
@@ -51,9 +63,6 @@ enum Bench {
         let (_, fullLayout) = measure { layoutManager.ensureLayout(for: container) }
         let height = layoutManager.usedRect(for: container).height
         print("lay out whole file: \(ms(fullLayout)), \(Int(height))pt tall")
-
-        let (anchor, lookupTime) = measure { rendered.anchor(at: rendered.text.length / 2) }
-        print("anchor at midpoint: \(anchor.map(String.init(describing:)) ?? "none") in \(ms(lookupTime))")
     }
 }
 

@@ -65,6 +65,41 @@ struct DiffTextViewTests {
         #expect(deleted.redComponent > deleted.greenComponent)
         #expect(context.redComponent == context.greenComponent)
     }
+
+    @Test func wrappedRowsHangUnderTheCodeAndKeepTheirAnchorAndBackground() throws {
+        let view = DiffTextView.make()
+        view.frame = NSRect(x: 0, y: 0, width: 300, height: 400)
+        let rendered = try RenderedDiff(file: goMod())
+        view.show(rendered)
+        let layoutManager = try #require(view.layoutManager)
+        layoutManager.ensureLayout(for: try #require(view.textContainer))
+        let text = rendered.text.string as NSString
+
+        // The added row's last character sits on a continuation line, below where the row starts.
+        let row = text.lineRange(for: NSRange(location: text.range(of: "transfermanager").location, length: 0))
+        let first = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: row.location), effectiveRange: nil)
+        let lastGlyph = layoutManager.glyphIndexForCharacter(at: NSMaxRange(row) - 2)
+        let continuation = layoutManager.lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: nil)
+        #expect(continuation.minY > first.minY)
+
+        // It starts under the code, past the gutter.
+        var continuationGlyphs = NSRange()
+        _ = layoutManager.lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: &continuationGlyphs)
+        let marker = text.range(of: "+", range: row).location
+        let codeStart = layoutManager.location(forGlyphAt: layoutManager.glyphIndexForCharacter(at: marker + 1)).x
+        #expect(layoutManager.location(forGlyphAt: continuationGlyphs.location).x == codeStart)
+
+        // Clicking it gives the row's anchor, and its background spans the width.
+        let origin = view.textContainerOrigin
+        let point = NSPoint(x: origin.x + continuation.minX + codeStart + 4, y: origin.y + continuation.midY)
+        #expect(rendered.anchor(at: view.characterIndexForInsertion(at: point)) == DiffAnchor(path: "go.mod", side: .right, line: 10))
+
+        let line = continuation.offsetBy(dx: origin.x, dy: origin.y)
+        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: line))
+        view.cacheDisplay(in: line, to: bitmap)
+        let color = try #require(bitmap.colorAt(x: bitmap.pixelsWide - 4, y: bitmap.pixelsHigh / 2))
+        #expect(color.greenComponent > color.redComponent)
+    }
 }
 
 private func goMod() throws -> FileDiff {

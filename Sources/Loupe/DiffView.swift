@@ -6,6 +6,7 @@ import SwiftUI
 struct DiffView: NSViewRepresentable {
     let file: FileDiff
     let onAnchorClick: (DiffAnchor) -> Void
+    @AppStorage(DiffSettings.wrapLinesKey) var wrapLines = DiffSettings.wrapLinesDefault
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
@@ -19,6 +20,8 @@ struct DiffView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.textView.onAnchorClick = onAnchorClick
+        scroll.hasHorizontalScroller = !wrapLines
+        coordinator.textView.wrapsLines = wrapLines
         if coordinator.shownPath != file.path {
             coordinator.shownPath = file.path
             coordinator.textView.show(RenderedDiff(file: file))

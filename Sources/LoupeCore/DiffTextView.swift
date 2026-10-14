@@ -6,6 +6,11 @@ public final class DiffTextView: NSTextView {
     public var rendered: RenderedDiff?
     public var onAnchorClick: ((DiffAnchor) -> Void)?
 
+    /// Soft-wraps long rows at the view's width; off, rows run on and the view scrolls sideways.
+    public var wrapsLines = true {
+        didSet { if wrapsLines != oldValue { applyWrapping() } }
+    }
+
     /// TextKit 1 for its line-fragment APIs, used to paint row backgrounds across the whole width;
     /// non-contiguous layout keeps very long diffs from being laid out in full up front.
     public static func make() -> DiffTextView {
@@ -14,7 +19,6 @@ public final class DiffTextView: NSTextView {
         layout.allowsNonContiguousLayout = true
         storage.addLayoutManager(layout)
         let container = NSTextContainer(size: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
-        container.widthTracksTextView = false
         layout.addTextContainer(container)
 
         let view = DiffTextView(frame: .zero, textContainer: container)
@@ -26,11 +30,10 @@ public final class DiffTextView: NSTextView {
         view.drawsBackground = true
         view.backgroundColor = .textBackgroundColor
         view.textContainerInset = NSSize(width: 0, height: 4)
-        view.isHorizontallyResizable = true
         view.isVerticallyResizable = true
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.minSize = .zero
-        view.autoresizingMask = [.width, .height]
+        view.applyWrapping()
         return view
     }
 
@@ -56,6 +59,25 @@ public final class DiffTextView: NSTextView {
         guard type == .string, let textStorage else { return super.writeSelection(to: pboard, type: type) }
         let text = selectedRanges.map(\.rangeValue).map { withoutGutter(textStorage, in: $0) }.joined(separator: "\n")
         return pboard.setString(text, forType: .string)
+    }
+
+    private func applyWrapping() {
+        guard let textContainer else { return }
+        let unbounded = CGFloat.greatestFiniteMagnitude
+        if wrapsLines {
+            isHorizontallyResizable = false
+            autoresizingMask = [.width]
+            if let clip = enclosingScrollView?.contentView {
+                setFrameSize(NSSize(width: clip.bounds.width, height: frame.height))
+            }
+            textContainer.size = NSSize(width: max(0, bounds.width - textContainerInset.width * 2), height: unbounded)
+            textContainer.widthTracksTextView = true
+        } else {
+            textContainer.widthTracksTextView = false
+            textContainer.size = NSSize(width: unbounded, height: unbounded)
+            isHorizontallyResizable = true
+            autoresizingMask = [.width, .height]
+        }
     }
 }
 

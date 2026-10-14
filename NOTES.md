@@ -121,7 +121,8 @@ Details are in `probe/NOTES.md`. In short:
 
 - `DiffParser` (pure Swift) turns `git diff` output into files → hunks → lines. Each line is `.context(old:new:)`, `.addition(new:)` or `.deletion(old:)`, so line numbers are never optional where they exist. It handles renames, copies (the user's git config has `diff.renames=copies`), deletions, pure renames with no hunks, "\ No newline", and CRLF (it splits on LF bytes, because Swift treats `"\r\n"` as one `Character`). `PathFilter` hides `vendor/`, `node_modules/` and lockfiles, and the sidebar shows how many it hid.
 - `RenderedDiff` turns one file into a single `NSAttributedString`. The gutter (old/new numbers and the `+`/`-` marker) is inline text, tagged with an attribute so copying a selection yields plain code. Each row is tagged with its kind, and an array of row start offsets maps a click to a row (binary search) and from the row to its `DiffAnchor`.
-- `DiffTextView` is an `NSTextView` subclass: non-editable, selectable, with a find bar. It uses TextKit 1 with **non-contiguous layout** and no line wrapping. A small `NSLayoutManager` subclass paints full-width row backgrounds. A single click (not a drag-select) reports the anchor.
+- `DiffTextView` is an `NSTextView` subclass: non-editable, selectable, with a find bar. It uses TextKit 1 with **non-contiguous layout**. A small `NSLayoutManager` subclass paints full-width row backgrounds, once per visual line, so wrapped rows are tinted throughout. A single click (not a drag-select) reports the anchor.
+- Long rows soft-wrap at the view's width by default. Every row's paragraph style has a `headIndent` of the gutter's measured width, so continuation lines start under the code. View ▸ Wrap Lines (⌥⌘W) turns it off; the setting is `wrapLines` in `UserDefaults` and open diffs follow it live. Clicks map by character offset, so continuation lines resolve to their row's anchor.
 - `DiffView` is the `NSViewRepresentable` wrapper; the `App` is a `NavigationSplitView` with the file list on the left.
 
 ### Measured performance
@@ -135,6 +136,17 @@ Release build on an Apple M4, measured with `--bench`:
 | lay out first screen | 1.1ms | 1.2ms | 1.6ms |
 | draw a screen (first / middle) | 6.7 / 5.5ms | 8.8 / 12ms | 9.1 / 38ms |
 | lay out whole file (only on jump-to-end) | ~0 | 53ms | 706ms |
+
+With wrapping on (bench viewport 1200pt wide; `--bench` now times the view both ways, wrapped second):
+
+| | 92 rows | 5,355 rows | 45,919 rows |
+|---|---|---|---|
+| set text storage | 0.2ms | 2.0ms | 8.8ms |
+| lay out first screen | 0.8ms | 1.1ms | 1.2ms |
+| draw a screen (first / middle) | 1.9 / 1.4ms | 1.8 / 5.9ms | 1.9 / 30ms |
+| lay out whole file | ~0 | 54ms | 726ms |
+
+Wrapping costs nothing measurable on open: TextKit lays out only the visible lines either way. The unwrapped figures were unchanged on the same run (13.8ms to set the 46k-row file's storage, 1.5ms first screen); the wrapped run's lower storage time is mostly warm caches from going second.
 
 Parsing the whole 260k-line, 741-file diff took 53ms.
 

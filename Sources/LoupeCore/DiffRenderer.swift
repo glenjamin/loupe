@@ -37,8 +37,9 @@ public struct RenderedDiff {
     public let rowAnchors: [DiffAnchor?]
 
     public init(file: FileDiff, fontSize: CGFloat = 12) {
-        let style = Style(fontSize: fontSize)
         let width = max(4, String(file.maxLineNumber).count)
+        // Two numbers, a space between, two before the marker, and the marker itself.
+        let style = Style(fontSize: fontSize, gutterColumns: width * 2 + 4)
         let out = NSMutableString()
         var rows: [(start: Int, length: Int, gutter: Int, kind: RowKind)] = []
         var anchors: [DiffAnchor?] = []
@@ -121,9 +122,13 @@ private struct Style {
     let gutter: [NSAttributedString.Key: Any]
     let hunkHeader: [NSAttributedString.Key: Any]
 
-    init(fontSize: CGFloat) {
+    init(fontSize: CGFloat, gutterColumns: Int) {
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        base = [.font: font, .foregroundColor: NSColor.textColor]
+        // Wrapped continuation lines hang under the code rather than under the gutter.
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.firstLineHeadIndent = 0
+        paragraph.headIndent = (String(repeating: "0", count: gutterColumns) as NSString).size(withAttributes: [.font: font]).width
+        base = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph]
         gutter = [.foregroundColor: NSColor.tertiaryLabelColor, .diffGutter: true]
         hunkHeader = [
             .foregroundColor: NSColor.secondaryLabelColor,

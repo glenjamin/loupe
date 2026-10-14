@@ -83,6 +83,10 @@ Every window has the tall unified title bar and toolbar, so tabs match in height
 
 Fetches pass `--no-tags` and `--no-write-fetch-head`, so the only things they change are `refs/loupe/pull/<N>/head` and, when the base commit is missing, the base branch's remote-tracking ref. Hidden paths are excluded with pathspecs, `linguist-generated` ones through `:(attr:…)` magic against the checkout's own `.gitattributes`, and a second `--name-only` diff over the same pathspecs lists what was hidden, so the count stays honest. An open tab keeps its PR row stored after the PR leaves both lists, so a tab can always be restored. A list holding rows stored before commit oids were fetched gets a full load rather than an incremental one, which fills them in.
 
+### Long diff rows wrap with a hanging indent
+
+Rows soft-wrap at the view's width by default, with a View menu toggle. Each row's paragraph style indents continuation lines by the gutter's width, so wrapped code lines up under the code rather than under the line numbers, as on GitHub. Wrapping stays within TextKit 1's non-contiguous layout, so opening a large file costs the same either way; row backgrounds are painted per visual line and clicks map by character offset, so neither needed changing.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
