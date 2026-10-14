@@ -30,8 +30,8 @@ final class WindowTabs {
     func attachLists(_ window: NSWindow, openWindow: OpenWindowAction) {
         guard listsWindow !== window else { return }
         listsWindow = window
-        configure(window, representing: Bundle.main.bundleURL)
-        observe(window, pullRequest: nil)
+        configure(window, representing: Bundle.main.bundleURL, frameName: "Lists")
+        observe(window, pullRequest: nil, frameName: "Lists")
         tabs.show = { openWindow(value: $0) }
         guard !hasRestored else { return }
         hasRestored = true
@@ -51,8 +51,8 @@ final class WindowTabs {
     func attach(_ window: NSWindow, pullRequest id: String, url: URL) {
         guard pullRequestWindows[id] !== window else { return }
         pullRequestWindows[id] = window
-        configure(window, representing: url)
-        observe(window, pullRequest: id)
+        configure(window, representing: url, frameName: "Pull Request")
+        observe(window, pullRequest: id, frameName: "Pull Request")
         guard pendingRestore.remove(id) != nil, pendingRestore.isEmpty else { return }
         DispatchQueue.main.async {
             MainActor.assumeIsolated { self.finishRestoring() }
@@ -81,7 +81,11 @@ final class WindowTabs {
         window.makeKeyAndOrderFront(nil)
     }
 
-    private func configure(_ window: NSWindow, representing url: URL) {
+    private func configure(_ window: NSWindow, representing url: URL, frameName: String) {
+        // Where the user last left it, or filling the screen the first time.
+        if !window.setFrameUsingName(frameName), let screen = window.screen ?? NSScreen.main {
+            window.setFrame(screen.visibleFrame, display: true)
+        }
         window.tabbingMode = .preferred
         window.tabbingIdentifier = Self.tabbingIdentifier
         // The store reopens windows at launch; SwiftUI restoring them as well would duplicate them.
@@ -103,11 +107,18 @@ final class WindowTabs {
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// Records which window is frontmost, and forgets a PR when its window closes.
-    private func observe(_ window: NSWindow, pullRequest id: String?) {
+    /// Records which window is frontmost and where it's placed, and forgets a PR when its window
+    /// closes. The frame is saved by hand as an autosave name can be held by only one window, and
+    /// the PR windows share theirs.
+    private func observe(_ window: NSWindow, pullRequest id: String?, frameName: String) {
         let center = NotificationCenter.default
         let key = ObjectIdentifier(window)
+        let saveFrame: @Sendable (Notification) -> Void = { [weak window] _ in
+            MainActor.assumeIsolated { window?.saveFrame(usingName: frameName) }
+        }
         observers[key] = [
+            center.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main, using: saveFrame),
+            center.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main, using: saveFrame),
             center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.tabs.select(id) }
             },
