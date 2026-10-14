@@ -14,7 +14,7 @@ struct PullRequestView: View {
     var body: some View {
         let pullRequest = tab.pullRequest
         VStack(spacing: 0) {
-            PullRequestHeader(pullRequest: pullRequest)
+            PullRequestHeader(pullRequest: pullRequest, tab: tab)
             ReviewSectionPicker(tab: tab)
             Divider()
             if let change = tab.pendingChange {
@@ -106,8 +106,11 @@ struct ReviewSectionPicker: View {
     }
 }
 
+/// The PR's name, state and branches, and on the right, on the viewer's own PRs, its reviewers.
+/// On anyone else's that place is left for the viewer's own review.
 struct PullRequestHeader: View {
     let pullRequest: PullRequestSummary
+    let tab: PullRequestTab
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -144,6 +147,9 @@ struct PullRequestHeader: View {
                 .lineLimit(1)
             }
             Spacer(minLength: 0)
+            if let reviewers = tab.reviewers {
+                ReviewersBlock(tab: tab, reviewers: reviewers)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

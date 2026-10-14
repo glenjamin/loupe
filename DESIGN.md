@@ -185,6 +185,14 @@ A PR's tab now opens on Conversation rather than Files changed, reversing the ea
 
 Each hidden file's additions and deletions come from `git diff --numstat` over the paths hiding them, run beside the main diff, so the hidden section shows `+N -M` like the files to review without producing their diffs. On atrium vendor bumps of 1,000 to 2,400 files it took about 80ms. A row still says added, deleted or renamed, which the counts alone don't, and a binary file says so rather than `+0 -0`.
 
+### Reviewers show in the header on the viewer's own PRs, and more can be asked there
+
+On a PR the viewer wrote, the header's right side lists its reviewers as github.com's sidebar does: everyone asked and not yet answered, then everyone else's latest review (approved, changes requested, commented or dismissed), each with a plain symbol rather than a filled badge so the header stays quiet. Someone asked again after reviewing shows as asked. The author's own reviews, which are their replies to threads, aren't listed, nor is an unsubmitted one. Two columns of up to three rows fit beside the title; beyond that the last place says how many more, with their names in its tooltip. The data comes with the conversation (`reviewRequests` and `latestReviews`), is stored with it and shown from the store at once, so it refreshes when the conversation does: on opening the PR and on Reload.
+
+A button there opens a search of the repo's assignable people and, for an organisation's repo, its teams. They're two queries, so a token that can't read teams still finds people, and that failure isn't shown. Choosing someone calls `requestReviews` with `union: true`, so others already asked stay asked; the reviewer shows as asked straight away, the conversation is fetched again once GitHub agrees, and if it refuses they're taken off and the reason shows in the popover (or, once it's closed, as a warning symbol beside the reviewers). Anyone who has reviewed has a re-request button using the same call, as on github.com. Requests aren't queued or retried: asking someone notifies them, so a failed request is left for the viewer to make again.
+
+Whether the PR is the viewer's is decided by its author's login against the viewer's, which the lists store; a tab looks it up itself if nothing has yet. On anyone else's PR the place is left empty, kept for the approve and request-changes controls that will come with submitting reviews.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
