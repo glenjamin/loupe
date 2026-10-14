@@ -35,6 +35,8 @@ public final class PullRequestTab: Identifiable {
     public private(set) var reviewRequestError: String?
     /// Its markdown files as GitHub renders them, and which are shown so.
     public let markdown: MarkdownPreviews
+    /// The description being edited, shown in place of the conversation, or nil when it isn't.
+    public private(set) var descriptionEditor: DescriptionEditor?
 
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
@@ -304,6 +306,33 @@ public final class PullRequestTab: Identifiable {
             return
         }
         await refreshConversation()
+    }
+
+    /// Whether the viewer can edit the description, which is only offered on their own PRs.
+    public var canEditDescription: Bool {
+        viewerLogin != nil && pullRequest.author == viewerLogin
+    }
+
+    /// Opens the description's editor with the description as it is on GitHub now, unless it's
+    /// already open. Returns once that has arrived or failed.
+    public func editDescription() async {
+        guard canEditDescription, descriptionEditor == nil else { return }
+        let editor = DescriptionEditor(pullRequestId: id, client: client)
+        descriptionEditor = editor
+        await editor.fetch()
+    }
+
+    /// Sends the draft to GitHub, then fetches the conversation again to show GitHub's rendering
+    /// of it and closes the editor. A refused save leaves the editor open with its draft.
+    public func saveDescription() async {
+        guard let editor = descriptionEditor, await editor.save() else { return }
+        await refreshConversation()
+        if descriptionEditor === editor { descriptionEditor = nil }
+    }
+
+    /// Closes the editor, dropping any draft; asking first is the view's job.
+    public func closeDescriptionEditor() {
+        descriptionEditor = nil
     }
 
     /// Whether the conversation has been asked for and has arrived or failed.

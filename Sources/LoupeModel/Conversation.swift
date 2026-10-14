@@ -6,6 +6,8 @@ public struct Conversation: Sendable, Equatable {
     public var author: Participant?
     public var createdAt: Date
     public var bodyHTML: String
+    /// The description as its author wrote it, in GitHub-flavoured markdown.
+    public var body: String
     /// In GitHub's order, oldest first.
     public var items: [TimelineItem]
     /// Every review thread with all its comments, as a review in the timeline holds only the
@@ -17,10 +19,11 @@ public struct Conversation: Sendable, Equatable {
     /// Each reviewer's most recent submitted review, in GitHub's order.
     public var latestReviews: [LatestReview]
 
-    public init(author: Participant?, createdAt: Date, bodyHTML: String, items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext], reviewRequests: [Reviewer] = [], latestReviews: [LatestReview] = []) {
+    public init(author: Participant?, createdAt: Date, bodyHTML: String, body: String = "", items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext], reviewRequests: [Reviewer] = [], latestReviews: [LatestReview] = []) {
         self.author = author
         self.createdAt = createdAt
         self.bodyHTML = bodyHTML
+        self.body = body
         self.items = items
         self.threads = threads
         self.checks = checks

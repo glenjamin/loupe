@@ -19,6 +19,7 @@ extension GitHubClient {
             author: pullRequest.author?.participant,
             createdAt: pullRequest.createdAt,
             bodyHTML: pullRequest.bodyHTML,
+            body: pullRequest.body,
             items: nodes.compactMap(\.timelineItem),
             threads: pullRequest.reviewThreads.nodes.map(\.thread),
             checks: pullRequest.commits.nodes.first?.commit.statusCheckRollup?.contexts.nodes.compactMap(\.check) ?? [],
@@ -32,6 +33,7 @@ extension GitHubClient {
           node(id: $id) {
             ... on PullRequest {
               bodyHTML
+              body
               createdAt
               author { login avatarUrl }
               timelineItems(first: 100, after: $after, itemTypes: \(timelineItemTypes)) { ...TimelinePage }
@@ -116,6 +118,7 @@ private struct ConversationResponse: Decodable {
 
     struct PullRequest: Decodable {
         let bodyHTML: String
+        let body: String
         let createdAt: Date
         let author: Author?
         let timelineItems: Timeline

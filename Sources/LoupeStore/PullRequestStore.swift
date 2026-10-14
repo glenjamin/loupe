@@ -335,6 +335,13 @@ public struct PullRequestStore: Sendable {
                 t.primaryKey(["pullRequestId", "role", "position"])
             }
         }
+        // The description's markdown, which editing it starts from. Empty in a conversation
+        // stored before, until it's next fetched.
+        migrator.registerMigration("Conversation body") { db in
+            try db.alter(table: "conversation") { t in
+                t.add(column: "body", .text).notNull().defaults(to: "")
+            }
+        }
         return migrator
     }
 

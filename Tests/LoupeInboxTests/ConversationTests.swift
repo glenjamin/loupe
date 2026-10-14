@@ -25,6 +25,7 @@ struct ConversationTests {
         #expect(conversation.items.count == expected)
         #expect(conversation.author?.login == "rowan-ashby")
         #expect(conversation.bodyHTML.contains("linked drill-downs"))
+        #expect(conversation.body.hasPrefix("This adds linked drill-downs for reports, building on the query builder changes in #2926."), "the markdown, to edit")
         #expect(conversation.items.last?.event == .comment(bodyHTML: "<p>Comment 90</p>", isMinimized: false))
         let review = try #require(conversation.items.first { if case .review(.commented, _, _) = $0.event { true } else { false } })
         guard case let .review(_, _, comments) = review.event else { return }

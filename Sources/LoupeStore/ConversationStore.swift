@@ -15,6 +15,7 @@ extension PullRequestStore {
                 author: participant(row.authorLogin, row.authorAvatarUrl),
                 createdAt: row.createdAt,
                 bodyHTML: row.bodyHTML,
+                body: row.body,
                 items: try TimelineItemRow.filter(byPR).order(Column("position")).fetchAll(db).compactMap { item in
                     item.timelineItem(comments: comments[item.id] ?? [])
                 },
@@ -42,6 +43,7 @@ extension PullRequestStore {
                 authorAvatarUrl: conversation.author?.avatarURL,
                 createdAt: conversation.createdAt,
                 bodyHTML: conversation.bodyHTML,
+                body: conversation.body,
                 fetchedAt: fetchedAt
             ).upsert(db)
             for (position, item) in conversation.items.enumerated() {
@@ -81,6 +83,7 @@ private struct ConversationRow: Codable, FetchableRecord, PersistableRecord {
     let authorAvatarUrl: String?
     let createdAt: Date
     let bodyHTML: String
+    let body: String
     let fetchedAt: Date
 }
 

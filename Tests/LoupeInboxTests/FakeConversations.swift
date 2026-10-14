@@ -7,19 +7,24 @@ import Testing
 /// asked for, answers a page after the first with the timeline alone, and has no node for a PR it
 /// doesn't know. Its repos' people and teams are those in `probe/reviewer-candidates.json`, which
 /// it searches by login or name; asking them to review adds them to a PR's review requests, and
-/// asking anyone it doesn't know is refused, as GitHub refuses an id it can't resolve. Tests can
-/// add comments and reviews or ask for reviews, as people do on GitHub, hide the teams, as from a
-/// token without access to them, or make every request fail.
+/// asking anyone it doesn't know is refused, as GitHub refuses an id it can't resolve. A PR's
+/// description can be asked for alone and replaced with `updatePullRequest`, which renders it
+/// afresh. Tests can add comments and reviews, ask for reviews or edit a description, as people
+/// do on GitHub, hide the teams, as from a token without access to them, refuse edits, as for a
+/// PR the token can't write to, or make every request fail.
 actor FakeConversations {
     /// Each PR's conversation, less its timeline, in GitHub's JSON shape.
     private var nodes: [String: [String: Any]] = [:]
     private var timelines: [String: [[String: Any]]] = [:]
     private var failing = false
     private var teamsHidden = false
+    private var editsRefused = false
     /// How many timeline pages have been served, first pages included.
     private(set) var pagesServed = 0
     /// The input of every `requestReviews` received, in order.
     private(set) var reviewRequestsReceived: [ReviewRequestInput] = []
+    /// The input of every `updatePullRequest` received, in order.
+    private(set) var updatesReceived: [UpdateInput] = []
     private var users: [[String: Any]] = []
     private var teams: [[String: Any]] = []
 
@@ -28,6 +33,11 @@ actor FakeConversations {
         let userIds: [String]
         let teamIds: [String]
         let union: Bool
+    }
+
+    struct UpdateInput: Equatable {
+        let pullRequestId: String
+        let body: String?
     }
 
     /// Gives the PR with `id` the probe's conversation.
@@ -75,6 +85,19 @@ actor FakeConversations {
 
     func hideTeams() { teamsHidden = true }
 
+    /// Replaces the PR's description, as its author does on github.com.
+    func editBody(_ body: String, on id: String) throws {
+        var node = try #require(nodes[id])
+        setBody(body, on: &node)
+        nodes[id] = node
+    }
+
+    func body(of id: String) -> String? {
+        nodes[id]?["body"] as? String
+    }
+
+    func refuseEdits() { editsRefused = true }
+
     func timelineCount(of id: String) -> Int {
         timelines[id]?.count ?? 0
     }
@@ -94,9 +117,14 @@ actor FakeConversations {
         if query.contains("requestReviews(") { return try requestReviews(variables, url) }
         if query.contains("assignableUsers(") { return try searchUsers(query, variables, url) }
         if query.contains("teams(") { return try searchTeams(variables, url) }
+        if query.contains("updatePullRequest(") { return try updatePullRequest(variables, url) }
         let id = try #require(variables["id"] as? String)
         guard var node = nodes[id], let timeline = timelines[id] else {
             return (try JSONSerialization.data(withJSONObject: ["data": ["node": NSNull()]]), fakeResponse(url, status: 200))
+        }
+        if !query.contains("timelineItems") {
+            #expect(query.contains("PullRequest { body }"), "the only query of a PR without its timeline is for its description")
+            return (try JSONSerialization.data(withJSONObject: ["data": ["node": ["body": node["body"] ?? ""]]]), fakeResponse(url, status: 200))
         }
         let first = try #require(query.firstMatch(of: /timelineItems\(first: (\d+)/).flatMap { Int($0.1) })
         #expect(first <= 100, "GitHub's maximum page size")
@@ -121,20 +149,38 @@ actor FakeConversations {
         let userIds = input["userIds"] as? [String] ?? []
         let teamIds = input["teamIds"] as? [String] ?? []
         reviewRequestsReceived.append(ReviewRequestInput(pullRequestId: id, userIds: userIds, teamIds: teamIds, union: input["union"] as? Bool ?? false))
-        guard nodes[id] != nil else { return try refusal(unresolved: id, url) }
+        guard nodes[id] != nil else { return try refusal(unresolved: id, mutation: "requestReviews", url) }
         var asked: [[String: Any]] = []
         for userId in userIds {
-            guard let user = users.first(where: { $0["id"] as? String == userId }) else { return try refusal(unresolved: userId, url) }
+            guard let user = users.first(where: { $0["id"] as? String == userId }) else { return try refusal(unresolved: userId, mutation: "requestReviews", url) }
             asked.append(user)
         }
         for teamId in teamIds {
-            guard let team = teams.first(where: { $0["id"] as? String == teamId }) else { return try refusal(unresolved: teamId, url) }
+            guard let team = teams.first(where: { $0["id"] as? String == teamId }) else { return try refusal(unresolved: teamId, mutation: "requestReviews", url) }
             asked.append(["__typename": "Team", "id": teamId, "teamName": team["name"] ?? "", "combinedSlug": team["combinedSlug"] ?? ""])
         }
         for reviewer in asked {
             try addRequest(reviewer, on: id)
         }
         return (try JSONSerialization.data(withJSONObject: ["data": ["requestReviews": ["clientMutationId": NSNull()]]]), fakeResponse(url, status: 200))
+    }
+
+    private func updatePullRequest(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
+        let input = try #require(variables["input"] as? [String: Any])
+        let id = try #require(input["pullRequestId"] as? String)
+        let body = input["body"] as? String
+        updatesReceived.append(UpdateInput(pullRequestId: id, body: body))
+        guard var node = nodes[id] else { return try refusal(unresolved: id, mutation: "updatePullRequest", url) }
+        if editsRefused {
+            let refusal: [String: Any] = [
+                "data": ["updatePullRequest": NSNull()],
+                "errors": [["type": "FORBIDDEN", "path": ["updatePullRequest"], "message": "Resource not accessible by personal access token"]],
+            ]
+            return (try JSONSerialization.data(withJSONObject: refusal), fakeResponse(url, status: 200))
+        }
+        if let body { setBody(body, on: &node) }
+        nodes[id] = node
+        return (try JSONSerialization.data(withJSONObject: ["data": ["updatePullRequest": ["pullRequest": ["id": id]]]]), fakeResponse(url, status: 200))
     }
 
     private func searchUsers(_ query: String, _ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
@@ -188,14 +234,21 @@ actor FakeConversations {
         teams = try #require(((repository["owner"] as? [String: Any])?["teams"] as? [String: Any])?["nodes"] as? [[String: Any]])
     }
 
+    /// Sets the description and GitHub's rendering of it, a paragraph per block of lines.
+    private func setBody(_ body: String, on node: inout [String: Any]) {
+        node["body"] = body
+        let escaped = body.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+        node["bodyHTML"] = escaped.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n\n").map { "<p dir=\"auto\">\($0)</p>" }.joined(separator: "\n")
+    }
+
     /// GitHub's shape for a mutation refused over an id it can't resolve, as in
     /// `probe/viewed-mark-error.json`.
-    private func refusal(unresolved id: String, _ url: URL) throws -> (Data, HTTPURLResponse) {
+    private func refusal(unresolved id: String, mutation: String, _ url: URL) throws -> (Data, HTTPURLResponse) {
         let body: [String: Any] = [
-            "data": ["requestReviews": NSNull()],
+            "data": [mutation: NSNull()],
             "errors": [[
                 "type": "NOT_FOUND",
-                "path": ["requestReviews"],
+                "path": [mutation],
                 "locations": [["line": 2, "column": 3]],
                 "message": "Could not resolve to a node with the global id of '\(id)'",
             ]],
@@ -225,7 +278,7 @@ struct FakePullRequestDetails: HTTPTransport {
             let url = try #require(request.url)
             return (try JSONSerialization.data(withJSONObject: ["data": ["viewer": ["login": FakeGitHub.viewer]]]), fakeResponse(url, status: 200))
         }
-        let isConversation = ["timelineItems", "requestReviews(", "assignableUsers(", "teams("].contains { query.contains($0) }
+        let isConversation = ["timelineItems", "requestReviews(", "assignableUsers(", "teams(", "updatePullRequest(", "PullRequest { body }"].contains { query.contains($0) }
         return isConversation ? try await conversations.send(request) : try await viewed.send(request)
     }
 }
