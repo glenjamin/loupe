@@ -91,7 +91,7 @@ sh Scripts/bundle.sh && open .build/Loupe.app   # the two steps separately
 
 The app can draw its own windows to PNGs, title bar, toolbar and tab bar included, without screen-recording permission. The Debug menu has "Save Snapshot of Window…" (⌥⌘S) and "Snapshot All Windows to Desktop".
 
-With `LOUPE_SNAPSHOT_DIR` set, the app waits until the lists have refreshed and each open PR's diff is ready or has failed (at most 20 seconds), writes `<index>-<title>.png` per window into that directory, prints their paths and quits. `LOUPE_DATABASE` points it at another database. `open` doesn't pass the environment on, so run the bundle's executable directly:
+With `LOUPE_SNAPSHOT_DIR` set, the app waits until the lists have refreshed and each open PR's diff is ready or has failed (at most 20 seconds), writes `<index>-<title>.png` per window into that directory, prints their paths and quits. `LOUPE_DATABASE` points it at another database. `LOUPE_SNAPSHOT_FILE=<substring>` shows each PR's first file whose path contains it, rather than its first file. `open` doesn't pass the environment on, so run the bundle's executable directly:
 
 ```sh
 Scripts/snapshot.sh /tmp/loupe-snaps   # builds the bundle, runs it as below

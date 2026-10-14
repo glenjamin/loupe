@@ -44,6 +44,13 @@ enum SnapshotRun {
             // Hidden tabs' views don't load their diffs, so they're asked for here.
             for tab in tabs.tabs { Task { await tab.load() } }
             await wait(until: deadline) { tabs.tabs.allSatisfy(\.phase.isSettled) }
+            // LOUPE_SNAPSHOT_FILE picks the first file whose path contains it, to snapshot a given kind of file.
+            if let wanted = ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_FILE"] {
+                for tab in tabs.tabs {
+                    guard case .ready(let review) = tab.phase, let file = review.files.first(where: { $0.path.contains(wanted) }) else { continue }
+                    tab.selectedFile = file.id
+                }
+            }
             // A moment for the final state to be drawn.
             try? await Task.sleep(for: .milliseconds(500))
             do {
