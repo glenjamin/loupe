@@ -106,9 +106,8 @@ struct FileReview {
 }
 
 /// The diff's text in a scroll view. A PR's file ends in a footer, inside the scrolled content,
-/// whose button marks the file reviewed and moves on. Below the footer is some slack to scroll
-/// into; pulling into it fills the button and does the same once far enough, as a shortcut for
-/// a trackpad.
+/// whose button marks the file reviewed and moves on. Pulling past the footer on a trackpad, like
+/// pull-to-refresh, fills the button and does the same when let go far enough.
 private struct DiffTextScrollView: NSViewRepresentable {
     let file: FileDiff
     let onAnchorClick: (DiffAnchor) -> Void
@@ -121,6 +120,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
+        // The rubber band is the stretch the user sees while pulling, even in a short file.
+        scroll.verticalScrollElasticity = .allowed
         scroll.automaticallyAdjustsContentInsets = false
         scroll.contentView = FooterClipView()
         scroll.documentView = coordinator.textView
@@ -128,7 +129,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
         // with it, clipped like the text.
         scroll.contentView.addSubview(coordinator.footer)
         scroll.contentView.addSubview(coordinator.hint)
-        scroll.onDrag = { [weak coordinator] began in coordinator?.drag(began: began) }
+        scroll.isAtEnd = { [weak coordinator] in coordinator?.isAtEnd ?? false }
+        scroll.onPull = { [weak coordinator] event in coordinator?.pull(event) }
         scroll.contentView.postsBoundsChangedNotifications = true
         coordinator.textView.postsFrameChangedNotifications = true
         coordinator.observe(scroll)
@@ -146,7 +148,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         coordinator.textView.wrapsLines = wrapLines
         if coordinator.shownPath != file.path {
             coordinator.shownPath = file.path
-            coordinator.stopSettling()
+            coordinator.pull(.cancelled)
             coordinator.textView.show(RenderedDiff(file: file))
         }
         coordinator.footer.isHidden = review == nil
@@ -158,8 +160,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
 
     @MainActor
     final class Coordinator {
-        /// Room to scroll past the footer, comfortably more than the pull needs to fire.
-        static let slack: CGFloat = 64
+        /// Room for the hint in the gap the rubber band opens below the footer.
+        static let hintHeight: CGFloat = 36
 
         let textView = DiffTextView.make()
         var shownPath: String?
@@ -172,25 +174,22 @@ private struct DiffTextScrollView: NSViewRepresentable {
             view.sizingOptions = []
             return view
         }()
-        /// Says what the pull will do, in the slack it's revealed by.
+        /// Says what the pull will do, in the gap the rubber band opens below the footer.
         lazy var hint: PullHintView = {
             let view = PullHintView(rootView: PullHint(state: footerState))
             view.sizingOptions = []
             return view
         }()
         private var trigger = OverscrollTrigger()
-        private weak var scroll: OverscrollScrollView?
-        private var fingersDown = false
-        private var isSettling = false
-        private var settleTask: Task<Void, Never>?
+        private weak var scroll: NSScrollView?
         private var observers: [any NSObjectProtocol] = []
 
-        func observe(_ scroll: OverscrollScrollView) {
+        func observe(_ scroll: NSScrollView) {
             self.scroll = scroll
             let center = NotificationCenter.default
             observers = [
                 center.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.scrolled() }
+                    MainActor.assumeIsolated { self?.layoutFooter() }
                 },
                 center.addObserver(forName: NSView.frameDidChangeNotification, object: textView, queue: .main) { [weak self] _ in
                     MainActor.assumeIsolated { self?.layoutFooter() }
@@ -200,12 +199,12 @@ private struct DiffTextScrollView: NSViewRepresentable {
 
         /// Directly below the last row, across the visible width, so a short file has it
         /// straight after its content rather than at the bottom of the view. The content is
-        /// inset at the bottom far enough to scroll the footer into view and then the slack.
+        /// inset at the bottom only as far as the footer needs to be scrolled to.
         func layoutFooter() {
             guard let scroll else { return }
             let clip = scroll.contentView.bounds
-            // At least the view's height, so the inset can't change how tall a short file's
-            // text view stretches.
+            // At least the view's height, so a short file can still be pulled past its end and
+            // the inset can't change how tall its text view stretches.
             if textView.minSize.height != clip.height {
                 textView.minSize.height = clip.height
                 if textView.frame.height < clip.height {
@@ -215,9 +214,9 @@ private struct DiffTextScrollView: NSViewRepresentable {
             let top = contentBottom(clipHeight: clip.height)
             let frame = NSRect(x: clip.minX, y: top, width: clip.width, height: ReviewFooter.height)
             if footer.frame != frame { footer.frame = frame }
-            let slack = NSRect(x: clip.minX, y: restingEnd(clipHeight: clip.height), width: clip.width, height: Self.slack)
-            if hint.frame != slack { hint.frame = slack }
-            let inset = review == nil ? 0 : max(0, restingEnd(clipHeight: clip.height) + Self.slack - textView.frame.maxY)
+            let gap = NSRect(x: clip.minX, y: restingEnd(clipHeight: clip.height), width: clip.width, height: Self.hintHeight)
+            if hint.frame != gap { hint.frame = gap }
+            let inset = review == nil ? 0 : max(0, frame.maxY - textView.frame.maxY)
             if scroll.contentInsets.bottom != inset {
                 scroll.contentInsets.bottom = inset
                 // The scrollers keep to the whole height, over the footer too.
@@ -225,76 +224,29 @@ private struct DiffTextScrollView: NSViewRepresentable {
             }
         }
 
-        /// The fingers touching down to scroll, or lifting.
-        func drag(began: Bool) {
-            fingersDown = began
+        /// Whether the view is scrolled to its end, footer fully shown, or stretched past it.
+        var isAtEnd: Bool {
+            guard let clip = scroll?.contentView.bounds else { return false }
+            return clip.maxY >= restingEnd(clipHeight: clip.height) - 1
+        }
+
+        func pull(_ event: PullEvent) {
             guard review != nil else { return }
-            if began {
+            switch event {
+            case .began:
                 trigger.beginDrag()
-            } else {
-                trigger.endDrag()
-            }
-            show(trigger)
-            settleSoon()
-        }
-
-        /// Stops any glide back from the slack, which would otherwise carry on into the next file.
-        func stopSettling() {
-            settleTask?.cancel()
-            guard isSettling, let clip = scroll?.contentView else { return }
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0
-                clip.animator().setBoundsOrigin(clip.bounds.origin)
-            }
-            isSettling = false
-        }
-
-        private func scrolled() {
-            layoutFooter()
-            guard let scroll, review != nil else { return }
-            if trigger.scroll(overscroll: overscroll(in: scroll)) {
-                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-                // The fingers are likely still moving, and the next file shouldn't scroll with them.
-                scroll.ignoresRestOfGesture = true
-                review?.markViewedAndAdvance()
-            }
-            show(trigger)
-            settleSoon()
-        }
-
-        /// Once scrolling stops with the view in the slack and the fingers lifted, glides it back
-        /// so the footer ends the view again, as a rubber band springs back.
-        private func settleSoon() {
-            settleTask?.cancel()
-            guard let scroll, !fingersDown, !isSettling, overscroll(in: scroll) > 0 else { return }
-            settleTask = Task { [weak self] in
-                guard (try? await Task.sleep(for: .milliseconds(150))) != nil else { return }
-                self?.settle()
-            }
-        }
-
-        private func settle() {
-            guard let scroll, !fingersDown, overscroll(in: scroll) > 0 else { return }
-            let clip = scroll.contentView
-            let origin = NSPoint(x: clip.bounds.minX, y: restingEnd(clipHeight: clip.bounds.height) - clip.bounds.height)
-            isSettling = true
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.25
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                clip.animator().setBoundsOrigin(origin)
-            } completionHandler: { [weak self] in
-                MainActor.assumeIsolated {
-                    self?.isSettling = false
-                    self?.scroll?.reflectScrolledClipView(clip)
+            case .moved(let distance):
+                if trigger.pull(by: distance) {
+                    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
                 }
+            case .ended:
+                if trigger.endDrag() { review?.markViewedAndAdvance() }
+            case .cancelled:
+                trigger.cancelDrag()
             }
-        }
-
-        /// How far the view has scrolled into the slack below the footer, or negative if short
-        /// of it.
-        private func overscroll(in scroll: NSScrollView) -> CGFloat {
-            let clip = scroll.contentView.bounds
-            return clip.maxY - restingEnd(clipHeight: clip.height)
+            footerState.progress = trigger.progress
+            footerState.isArmed = trigger.isArmed
+            footerState.isPulling = trigger.isDragging
         }
 
         /// Where the bottom of the view rests when scrolled to the end, footer included.
@@ -312,28 +264,36 @@ private struct DiffTextScrollView: NSViewRepresentable {
             let used = layout.usedRect(for: container).maxY + textView.textContainerInset.height * 2
             return textView.frame.minY + min(textView.frame.height, used)
         }
-
-        private func show(_ trigger: OverscrollTrigger) {
-            footerState.progress = trigger.progress
-            footerState.hasFired = trigger.hasFired
-            footerState.isPulling = trigger.isDragging
-        }
     }
 }
 
-/// Reports when the fingers touch down on the trackpad to scroll and when they lift, which
-/// momentum scrolling afterwards doesn't count as.
+/// What a live trackpad drag does to the pull. Momentum and mouse wheels have no part in it.
+enum PullEvent {
+    case began
+    /// The fingers moved this far with the view at its end: positive pulls the content further
+    /// past it, negative back.
+    case moved(CGFloat)
+    case ended
+    case cancelled
+}
+
+/// Reports a live trackpad drag's touch down, its travel while the view is at its end, and its
+/// lift, leaving the scrolling and its rubber band to AppKit.
 private final class OverscrollScrollView: NSScrollView {
-    var onDrag: (_ began: Bool) -> Void = { _ in }
-    /// Drops the rest of the current trackpad gesture, momentum included, until the next begins.
-    var ignoresRestOfGesture = false
+    var isAtEnd: () -> Bool = { false }
+    var onPull: (PullEvent) -> Void = { _ in }
 
     override func scrollWheel(with event: NSEvent) {
-        let isGesture = !event.phase.isEmpty || !event.momentumPhase.isEmpty
-        if event.phase.contains(.began) || !isGesture { ignoresRestOfGesture = false }
-        if event.phase.contains(.began) { onDrag(true) }
-        if !ignoresRestOfGesture { super.scrollWheel(with: event) }
-        if !event.phase.isDisjoint(with: [.ended, .cancelled]) { onDrag(false) }
+        let phase = event.phase
+        if phase.contains(.began) { onPull(.began) }
+        // Checked before the event scrolls, so travel spent reaching the end doesn't count. The
+        // delta already follows the content, natural scrolling or not; negative moves it up.
+        if !phase.isDisjoint(with: [.began, .changed]), event.hasPreciseScrollingDeltas, isAtEnd() {
+            onPull(.moved(-event.scrollingDeltaY))
+        }
+        super.scrollWheel(with: event)
+        if phase.contains(.ended) { onPull(.ended) }
+        if phase.contains(.cancelled) { onPull(.cancelled) }
     }
 }
 
@@ -359,8 +319,9 @@ final class PullHintView: NSHostingView<PullHint> {
 @MainActor
 final class ReviewFooterState {
     var progress: CGFloat = 0
-    var hasFired = false
-    /// A live drag is filling the button, as opposed to settling back after one.
+    /// Far enough that letting go now would mark the file reviewed and move on.
+    var isArmed = false
+    /// The fingers are down on the trackpad, so the fill follows them.
     var isPulling = false
     var isViewed = false
     var label = ""
@@ -369,7 +330,7 @@ final class ReviewFooterState {
 
 /// The end of a PR file's diff: a bar like the file's header, with a button that marks the file
 /// reviewed and shows the next. Pulling past the end fills the button from the left, turning it
-/// green as it fires.
+/// green once letting go would do the same, and it empties as the pull is let go.
 struct ReviewFooter: View {
     static let height: CGFloat = 56
 
@@ -380,39 +341,41 @@ struct ReviewFooter: View {
         VStack(spacing: 0) {
             Divider()
             Button(action: action) {
-                Label(state.label, systemImage: state.hasFired ? "checkmark.circle.fill" : state.isViewed ? "arrow.down.circle" : "checkmark.circle")
+                Label(state.label, systemImage: state.isArmed ? "checkmark.circle.fill" : state.isViewed ? "arrow.down.circle" : "checkmark.circle")
             }
-            .buttonStyle(PullFillButtonStyle(progress: state.progress, hasFired: state.hasFired))
+            .buttonStyle(PullFillButtonStyle(progress: state.progress, isArmed: state.isArmed))
             .help("Or pull past the end of the diff (⌘↓)")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(.bar)
-        .animation(.easeOut(duration: 0.12), value: state.hasFired)
+        .animation(.easeOut(duration: 0.12), value: state.isArmed)
+        // Follows the fingers exactly, and empties smoothly as the rubber band springs back.
+        .animation(state.isPulling ? nil : .easeOut(duration: 0.25), value: state.progress)
     }
 }
 
-/// A caption in the slack below the footer, like pull-to-refresh's, fading in as a drag pulls
-/// into the slack and saying what was done as it fires. Nothing shows at rest or while the view
-/// settles back from a pull let go short.
+/// A caption in the rubber band's gap below the footer, like pull-to-refresh's, fading in with
+/// a live drag's progress and saying what letting go will have done once armed. Nothing shows
+/// at rest or once the fingers lift.
 struct PullHint: View {
     let state: ReviewFooterState
 
     var body: some View {
-        Text(state.hasFired ? (state.isViewed ? state.label : "Marked reviewed") : state.pullHint)
+        Text(state.isArmed ? (state.isViewed ? state.label : "Marked reviewed") : state.pullHint)
             .font(.callout)
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .opacity(state.hasFired ? 1 : state.isPulling ? state.progress : 0)
-            .animation(.easeOut(duration: 0.12), value: state.hasFired)
+            .opacity(state.isPulling ? state.progress : 0)
+            .animation(.easeOut(duration: 0.12), value: state.isPulling)
     }
 }
 
 /// A large push button, as AppKit draws one, whose bezel fills from the left with the pull's
-/// progress: accent while filling, green once it fires.
+/// progress: accent while filling, green once letting go would fire it.
 private struct PullFillButtonStyle: ButtonStyle {
     let progress: CGFloat
-    let hasFired: Bool
+    let isArmed: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -425,7 +388,7 @@ private struct PullFillButtonStyle: ButtonStyle {
                     .overlay(alignment: .leading) {
                         GeometryReader { geometry in
                             Rectangle()
-                                .fill((hasFired ? Color.diffSuccess : Color.accentColor).opacity(hasFired ? 0.6 : 0.4))
+                                .fill((isArmed ? Color.diffSuccess : Color.accentColor).opacity(isArmed ? 0.6 : 0.4))
                                 .frame(width: geometry.size.width * progress)
                         }
                     }

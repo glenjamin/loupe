@@ -1,68 +1,64 @@
 import CoreGraphics
 
-/// Turns pulling past the end of a document into a deliberate action, like pull-to-refresh at
-/// the bottom. Only a live drag, fingers still on the trackpad, fills it, and it fires the moment
-/// that drag crosses the threshold. Momentum carrying on past the end never fills or fires it.
-/// Once fired it stays spent until the document settles back to its end.
+/// Turns pulling past the end of a document into a deliberate action, pull-to-refresh at the
+/// bottom. Progress is how far the fingers have travelled since the document reached its end,
+/// not how far the rubber band stretched, which AppKit damps. Crossing the threshold arms it,
+/// pulling back under disarms it, and lifting the fingers while armed fires it. Only a live
+/// drag counts, so momentum carrying on past the end never fills, arms or fires it.
 public struct OverscrollTrigger: Sendable, Equatable {
-    /// How far past the end a drag must go to fire.
-    public let threshold: CGFloat
-    /// How full the indicator is, from 0 to 1.
-    public private(set) var progress: CGFloat = 0
-    private var state = State.idle
+    /// Finger travel past the end that arms it, the usual pull-to-refresh distance.
+    public static let pullDistance: CGFloat = 80
 
-    public init(threshold: CGFloat = 32) {
+    public let threshold: CGFloat
+    /// How far the fingers have pulled past the end in this drag, never below zero.
+    public private(set) var travel: CGFloat = 0
+    /// Whether the fingers are down, scrolling.
+    public private(set) var isDragging = false
+
+    public init(threshold: CGFloat = Self.pullDistance) {
         self.threshold = threshold
     }
 
-    /// Whether it has fired and the document hasn't yet settled back to its end.
-    public var hasFired: Bool {
-        state == .fired
+    /// How full the indicator is, from 0 to 1.
+    public var progress: CGFloat {
+        min(travel / threshold, 1)
     }
 
-    /// Whether a live drag is filling it, rather than it settling back or resting.
-    public var isDragging: Bool {
-        state == .dragging
+    /// Whether lifting the fingers now would fire it.
+    public var isArmed: Bool {
+        isDragging && travel >= threshold
     }
 
     /// The fingers have touched down and started scrolling.
     public mutating func beginDrag() {
-        guard state != .fired else { return }
-        state = .dragging
+        isDragging = true
+        travel = 0
     }
 
-    /// The document has scrolled to `overscroll` points past its end, or before it when not
-    /// positive, by whatever means. Returns true at the moment it fires.
-    public mutating func scroll(overscroll: CGFloat) -> Bool {
-        let fill = min(max(overscroll / threshold, 0), 1)
-        switch state {
-        case .idle:
-            progress = 0
-            return false
-        case .settling, .fired:
-            // Emptying as it settles back, without filling or firing again.
-            progress = min(progress, fill)
-            if overscroll <= 0 { state = .idle }
-            return false
-        case .dragging:
-            progress = fill
-            guard fill >= 1 else { return false }
-            state = .fired
-            return true
-        }
+    /// The fingers moved `distance` points with the document at its end: positive pulls the
+    /// content further past the end, negative pulls it back. Returns true at the moment it arms,
+    /// for a haptic tap.
+    public mutating func pull(by distance: CGFloat) -> Bool {
+        guard isDragging else { return false }
+        let wasArmed = isArmed
+        travel = max(0, travel + distance)
+        return isArmed && !wasArmed
     }
 
-    /// The fingers have lifted, or the gesture was cancelled.
-    public mutating func endDrag() {
-        guard state == .dragging else { return }
-        state = .settling
+    /// The fingers have lifted. Returns true if it was armed, and so fires.
+    public mutating func endDrag() -> Bool {
+        let fires = isArmed
+        reset()
+        return fires
     }
 
-    private enum State: Sendable, Equatable {
-        case idle
-        case dragging
-        /// Let go short of the threshold, and settling back.
-        case settling
-        case fired
+    /// The gesture was cancelled, which never fires.
+    public mutating func cancelDrag() {
+        reset()
+    }
+
+    private mutating func reset() {
+        isDragging = false
+        travel = 0
     }
 }
