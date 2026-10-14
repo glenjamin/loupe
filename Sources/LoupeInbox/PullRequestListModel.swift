@@ -21,6 +21,10 @@ public final class PullRequestListModel {
     /// Open PRs in neither list, as last checked directly.
     private var unlisted: [String: PullRequestSummary] = [:]
     private var checkouts: [String: CheckoutStatus] = [:]
+    /// How far the viewer's review of each PR whose diff has been produced has got, as stored.
+    private var reviewProgress: [String: ReviewProgress] = [:]
+    /// The signed-in user's login, once stored by the lists or a tab.
+    private var viewer: String?
     private let client: GitHubClient
     private let checkoutResolver: CheckoutResolver
     private let store: PullRequestStore
@@ -50,6 +54,30 @@ public final class PullRequestListModel {
         } catch {
             snapshot = PullRequestSnapshot.empty
             self.error = error.localizedDescription
+        }
+        do {
+            reviewProgress = try store.reviewProgress()
+            viewer = try store.viewerLogin()
+        } catch {
+            FileHandle.standardError.write(Data("Couldn't read review progress: \(error)\n".utf8))
+        }
+    }
+
+    /// Whether the PR is the viewer's own and they've marked every file to review in its diff of
+    /// the current head viewed, so it's ready for others to review. Known only for PRs whose diff
+    /// has been produced here.
+    public func isSelfReviewed(_ pullRequest: PullRequestSummary) -> Bool {
+        reviewProgress[pullRequest.id]?.isSelfReviewed(pullRequest, viewer: viewer) ?? false
+    }
+
+    /// Reads the PR's review progress and the viewer's login from the store again, once a tab has
+    /// stored a diff, viewed states or the login.
+    func reviewProgressChanged(of id: String) {
+        do {
+            reviewProgress[id] = try store.reviewProgress(of: id)
+            viewer = try store.viewerLogin()
+        } catch {
+            FileHandle.standardError.write(Data("Couldn't read review progress: \(error)\n".utf8))
         }
     }
 
@@ -163,9 +191,13 @@ public final class PullRequestListModel {
     }
 
     private func viewerLogin() async throws -> String {
-        if let login = try store.viewerLogin() { return login }
+        if let login = try store.viewerLogin() {
+            viewer = login
+            return login
+        }
         let login = try await client.viewerLogin()
         try await store.saveViewerLogin(login)
+        viewer = login
         return login
     }
 

@@ -134,6 +134,7 @@ struct PullRequestHeader: View {
                         .font(.headline.monospacedDigit())
                     StateBadge(pullRequest: pullRequest, showsOpen: true)
                     ConflictsBadge(pullRequest: pullRequest)
+                    SelfReviewedBadge(isSelfReviewed: tab.isSelfReviewed)
                     Text(pullRequest.title)
                         .font(.title3)
                         .lineLimit(2)

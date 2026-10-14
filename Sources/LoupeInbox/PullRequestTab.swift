@@ -169,6 +169,15 @@ public final class PullRequestTab: Identifiable {
         return review.changes.files.allSatisfy { viewedState(of: $0.path).isViewed }
     }
 
+    /// Whether the PR is the viewer's own and every file to review in its diff of the current
+    /// head is viewed, so it's ready for others to review. Follows the viewer's marks as they're
+    /// made; until the diff is ready, it's as stored.
+    public var isSelfReviewed: Bool {
+        guard case let .ready(review) = phase else { return lists.isSelfReviewed(pullRequest) }
+        let progress = ReviewProgress(diffedHeadRefOid: review.headOid, reviewablePaths: review.changes.files.map(\.path), viewedStates: viewedStates)
+        return progress.isSelfReviewed(pullRequest, viewer: viewerLogin)
+    }
+
     /// The changes shown: the whole PR's, or the picked commit's once diffed. Nil until the
     /// PR's diff is ready.
     public var shownChanges: DiffState<ReviewChanges>? {
@@ -251,6 +260,7 @@ public final class PullRequestTab: Identifiable {
         } catch {
             log("Couldn't store the viewed state of \(path): \(error)")
         }
+        lists.reviewProgressChanged(of: id)
     }
 
     public func toggleViewed(path: String) async {
@@ -359,6 +369,7 @@ public final class PullRequestTab: Identifiable {
         } catch {
             log("Couldn't store the viewed files of \(title): \(error)")
         }
+        lists.reviewProgressChanged(of: id)
     }
 
     /// Takes the conversation from GitHub and stores it, keeping what was shown if it fails.
@@ -390,6 +401,7 @@ public final class PullRequestTab: Identifiable {
             let login = try await client.viewerLogin()
             viewerLogin = login
             try await store.saveViewerLogin(login)
+            lists.reviewProgressChanged(of: id)
         } catch {
             log("Couldn't look up the viewer's login: \(error.localizedDescription)")
         }
@@ -434,7 +446,9 @@ public final class PullRequestTab: Identifiable {
             let diff = try await differ.diff(fetched, in: checkout)
             let files = await Task.detached { DiffParser.parse(diff.text) }.value
             // Bookkeeping only; a failure to record mustn't keep the diff from showing.
-            try? await store.recordDiff(DiffRecord(pullRequestId: id, headRefOid: diff.headOid, mergeBase: diff.mergeBase, producedAt: .now))
+            let record = DiffRecord(pullRequestId: id, headRefOid: diff.headOid, mergeBase: diff.mergeBase, producedAt: .now, reviewablePaths: files.map(\.path))
+            try? await store.recordDiff(record)
+            lists.reviewProgressChanged(of: id)
             let review = ReviewDiff(headOid: diff.headOid, mergeBase: diff.mergeBase, commits: diff.commits, changes: ReviewChanges(files: files, hidden: diff.hidden))
             self.checkout = checkout
             shownCommit = nil

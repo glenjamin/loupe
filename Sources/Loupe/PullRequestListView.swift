@@ -96,7 +96,7 @@ struct PullRequestColumn: View {
                 List(pullRequests, selection: $selection) { pullRequest in
                     let checkout = model.checkout(for: pullRequest.repository)
                     Button { model.open(pullRequest) } label: {
-                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor)
+                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, isSelfReviewed: model.isSelfReviewed(pullRequest))
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -130,6 +130,7 @@ struct PullRequestColumn: View {
 struct PullRequestRow: View {
     let pullRequest: PullRequestSummary
     let showsAuthor: Bool
+    let isSelfReviewed: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -141,6 +142,7 @@ struct PullRequestRow: View {
                     .layoutPriority(1)
                 StateBadge(pullRequest: pullRequest, showsOpen: false)
                 ConflictsBadge(pullRequest: pullRequest)
+                SelfReviewedBadge(isSelfReviewed: isSelfReviewed)
                 Text(owner)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -216,6 +218,19 @@ struct ConflictsBadge: View {
         if pullRequest.mergeable == .conflicting {
             Badge(text: "Conflicts", tint: .diffDanger)
                 .help("This branch has conflicts that must be resolved before it can be merged")
+        }
+    }
+}
+
+/// Shown on the viewer's own PR once they've marked every file to review viewed, so it's ready
+/// for others to review. Known only to Loupe; nothing changes on GitHub.
+struct SelfReviewedBadge: View {
+    let isSelfReviewed: Bool
+
+    var body: some View {
+        if isSelfReviewed {
+            Badge(text: "Self-reviewed", tint: .diffSuccess)
+                .help("You've marked every file to review as viewed, so it's ready for others to review")
         }
     }
 }

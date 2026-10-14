@@ -1,0 +1,132 @@
+import Foundation
+import LoupeGitHub
+import LoupeInbox
+import LoupeModel
+import LoupeStore
+import Testing
+
+@MainActor
+struct SelfReviewTests {
+    @Test func markingTheLastFileToReviewOnTheViewersOwnPullRequestMakesItSelfReviewed() async throws {
+        let repo = try await FakeRepository()
+        let app = try await SelfReviewApp()
+        let pullRequest = try await app.push(app.mine[0], changing: ["a.txt", "b.txt", "vendor/lib/lib.go"], in: repo)
+        await app.viewed.add(pullRequest.id, files: [("a.txt", .unviewed), ("b.txt", .dismissed), ("vendor/lib/lib.go", .unviewed)])
+        #expect(!app.lists.isSelfReviewed(pullRequest), "nothing is known of a PR never opened")
+
+        let tab = try await app.open(pullRequest)
+        #expect(!tab.isSelfReviewed)
+        await tab.markViewedAndAdvance()
+        #expect(!tab.isSelfReviewed, "a file changed since it was viewed needs another look")
+        #expect(!app.lists.isSelfReviewed(pullRequest))
+
+        await tab.markViewedAndAdvance()
+        #expect(tab.isSelfReviewed, "the vendored file left unviewed doesn't count")
+        #expect(app.lists.isSelfReviewed(pullRequest))
+
+        await tab.toggleViewed(path: "a.txt")
+        #expect(!tab.isSelfReviewed)
+        #expect(!app.lists.isSelfReviewed(pullRequest))
+        await tab.toggleViewed(path: "a.txt")
+
+        // Next launch shows it from the store, before GitHub is asked anything.
+        let nextRun = try app.relaunch()
+        #expect(nextRun.lists.isSelfReviewed(pullRequest))
+        #expect(try #require(nextRun.tab(id: pullRequest.id)).isSelfReviewed)
+    }
+
+    @Test func aPushClearsItUntilTheNewDiffIsReviewedToo() async throws {
+        let repo = try await FakeRepository()
+        let app = try await SelfReviewApp()
+        let pullRequest = try await app.push(app.mine[0], changing: ["a.txt"], in: repo)
+        await app.viewed.add(pullRequest.id, files: [("a.txt", .unviewed)])
+        let tab = try await app.open(pullRequest)
+        await tab.setViewed(true, path: "a.txt")
+        #expect(tab.isSelfReviewed)
+
+        let pushed = try await app.push(pullRequest, changing: ["c.txt"], in: repo)
+        await app.viewed.add(pullRequest.id, files: [("a.txt", .viewed), ("c.txt", .unviewed)])
+        #expect(!app.lists.isSelfReviewed(pushed))
+        #expect(!tab.isSelfReviewed, "the diff shown is of the old head")
+
+        await tab.reload()
+        #expect(!tab.isSelfReviewed)
+        #expect(!app.lists.isSelfReviewed(pushed))
+        await tab.setViewed(true, path: "c.txt")
+        #expect(tab.isSelfReviewed)
+        #expect(app.lists.isSelfReviewed(pushed))
+    }
+
+    @Test func someoneElsesPullRequestIsNeverSelfReviewed() async throws {
+        let repo = try await FakeRepository()
+        let app = try await SelfReviewApp()
+        let pullRequest = try await app.push(app.toReview[0], changing: ["a.txt"], in: repo)
+        await app.viewed.add(pullRequest.id, files: [("a.txt", .unviewed)])
+        let tab = try await app.open(pullRequest)
+
+        await tab.setViewed(true, path: "a.txt")
+        #expect(tab.allFilesViewed)
+        #expect(!tab.isSelfReviewed)
+        #expect(!app.lists.isSelfReviewed(pullRequest))
+    }
+}
+
+/// The app's models over the PR fixture and an in-memory store, with viewed files, the viewer's
+/// login and conversations served by `FakePullRequestDetails`.
+@MainActor
+private struct SelfReviewApp {
+    let github: FakeGitHub
+    let details = FakePullRequestDetails()
+    let store: PullRequestStore
+    let tabs: TabsModel
+
+    init() async throws {
+        github = try FakeGitHub(fixture: "pr-list.json")
+        store = try PullRequestStore.inMemory()
+        tabs = Self.tabs(github, details, store)
+        await tabs.lists.refresh()
+    }
+
+    var viewed: FakeViewedFiles { details.viewed }
+    var lists: PullRequestListModel { tabs.lists }
+
+    var toReview: [PullRequestSummary] {
+        lists.pullRequests(in: .toReview)
+    }
+
+    /// The viewer's own PRs.
+    var mine: [PullRequestSummary] {
+        lists.pullRequests(in: .mine)
+    }
+
+    func open(_ pullRequest: PullRequestSummary) async throws -> PullRequestTab {
+        tabs.open(pullRequest)
+        let tab = try #require(tabs.tab(id: pullRequest.id))
+        await tab.load()
+        return tab
+    }
+
+    /// Pushes a commit changing `paths` to `listed`'s branch in `repo`, the first time branching
+    /// it from main, and returns the PR as the lists now have it.
+    func push(_ listed: PullRequestSummary, changing paths: [String], in repo: FakeRepository) async throws -> PullRequestSummary {
+        try await store.updateLocalRepos(saving: [LocalRepo(nameWithOwner: listed.repository, path: repo.checkout, verifiedAt: .now)])
+        let branchPoint = try await repo.git(["rev-parse", "main"], in: repo.contributorDirectory)
+        let isNew = try await repo.git(["branch", "--list", "feature"], in: repo.contributorDirectory).isEmpty
+        try await repo.switchTo("feature", creatingFrom: isNew ? "main" : nil)
+        let head = try await repo.commit(Dictionary(uniqueKeysWithValues: paths.map { ($0, "\($0)\n") }), message: "Change files")
+        try await repo.push(asPullRequest: listed.number)
+        try await github.edit(listed.id) { $0.headRefOid = head; $0.baseRefOid = branchPoint }
+        await lists.refresh()
+        return try #require(lists.pullRequest(id: listed.id))
+    }
+
+    /// Fresh models over the same store, as on the next launch.
+    func relaunch() throws -> TabsModel {
+        Self.tabs(github, details, store)
+    }
+
+    private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore) -> TabsModel {
+        let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
+        return TabsModel(lists: lists, store: store, client: details.client(), notifications: github.notifications())
+    }
+}

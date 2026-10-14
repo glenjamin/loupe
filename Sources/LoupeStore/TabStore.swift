@@ -9,18 +9,21 @@ public struct SavedTabs: Sendable, Equatable {
     public let selected: String?
 }
 
-/// When a PR's diff was last produced, and of which head commit.
+/// When a PR's diff was last produced, of which head commit, and which of its files are to
+/// review rather than hidden as vendored, lockfiles or generated.
 public struct DiffRecord: Sendable, Equatable {
     public let pullRequestId: String
     public let headRefOid: String
     public let mergeBase: String
     public let producedAt: Date
+    public let reviewablePaths: [String]
 
-    public init(pullRequestId: String, headRefOid: String, mergeBase: String, producedAt: Date) {
+    public init(pullRequestId: String, headRefOid: String, mergeBase: String, producedAt: Date, reviewablePaths: [String]) {
         self.pullRequestId = pullRequestId
         self.headRefOid = headRefOid
         self.mergeBase = mergeBase
         self.producedAt = producedAt
+        self.reviewablePaths = reviewablePaths
     }
 }
 
@@ -55,12 +58,49 @@ extension PullRequestStore {
         }
     }
 
+    /// Replaces the PR's record, reviewable paths and all.
     public func recordDiff(_ record: DiffRecord) async throws {
-        try await database.write { db in try DiffRecordRow(record).upsert(db) }
+        try await database.write { db in
+            try DiffRecordRow(record).upsert(db)
+            try DiffFileRow.filter(Column("pullRequestId") == record.pullRequestId).deleteAll(db)
+            for path in record.reviewablePaths {
+                try DiffFileRow(pullRequestId: record.pullRequestId, path: path).insert(db)
+            }
+        }
     }
 
     public func diffRecord(for pullRequestId: String) throws -> DiffRecord? {
-        try database.read { db in try DiffRecordRow.fetchOne(db, key: pullRequestId)?.record }
+        try database.read { db in
+            try DiffRecordRow.fetchOne(db, key: pullRequestId)?.record(reviewablePaths: Self.reviewablePaths(of: pullRequestId, db))
+        }
+    }
+
+    /// How far the review of each PR whose diff has been produced has got, by PR id.
+    public func reviewProgress() throws -> [String: ReviewProgress] {
+        try database.read { db in
+            try DiffRecordRow.fetchAll(db).reduce(into: [:]) { progress, row in
+                progress[row.pullRequestId] = try Self.reviewProgress(of: row, db)
+            }
+        }
+    }
+
+    /// Nil until the PR's diff has been produced.
+    public func reviewProgress(of pullRequestId: String) throws -> ReviewProgress? {
+        try database.read { db in
+            try DiffRecordRow.fetchOne(db, key: pullRequestId).map { try Self.reviewProgress(of: $0, db) }
+        }
+    }
+
+    private static func reviewProgress(of row: DiffRecordRow, _ db: Database) throws -> ReviewProgress {
+        ReviewProgress(
+            diffedHeadRefOid: row.headRefOid,
+            reviewablePaths: try reviewablePaths(of: row.pullRequestId, db),
+            viewedStates: try viewedStates(of: row.pullRequestId, db)
+        )
+    }
+
+    private static func reviewablePaths(of pullRequestId: String, _ db: Database) throws -> [String] {
+        try DiffFileRow.filter(Column("pullRequestId") == pullRequestId).fetchAll(db).map(\.path)
     }
 }
 
@@ -83,7 +123,14 @@ private struct DiffRecordRow: Codable, FetchableRecord, PersistableRecord {
         producedAt = record.producedAt
     }
 
-    var record: DiffRecord {
-        DiffRecord(pullRequestId: pullRequestId, headRefOid: headRefOid, mergeBase: mergeBase, producedAt: producedAt)
+    func record(reviewablePaths: [String]) -> DiffRecord {
+        DiffRecord(pullRequestId: pullRequestId, headRefOid: headRefOid, mergeBase: mergeBase, producedAt: producedAt, reviewablePaths: reviewablePaths)
     }
+}
+
+private struct DiffFileRow: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "pullRequestDiffFile"
+
+    let pullRequestId: String
+    let path: String
 }

@@ -211,6 +211,12 @@ On a PR the viewer wrote, decided by login as for reviewers, an "Edit descriptio
 
 The editor starts from the description fetched afresh from GitHub when it opens, not the stored copy, because descriptions are also edited on github.com, where images are uploaded and links added, and saving a stale copy would silently undo that. If that fetch fails the editor says so and offers Retry, rather than falling back to the stored copy. The raw `body` is still fetched and stored with the conversation, so it's at hand, but is never what's edited. Line endings are made newlines when the editor opens, since a description typed in a browser can come back with `\r\n` and would otherwise count as changed before anything was typed. Saving calls `updatePullRequest` with the body alone; a refusal keeps the editor open with its draft and the reason. A change made on github.com while the editor is open is still overwritten by saving; checking for one first was left out until it bites.
 
+### The viewer's own PR shows "Self-reviewed" once every file to review is marked viewed
+
+The author wanted a way to mark their own PR as ready for others to review, and reviewing it themselves in Loupe is that moment. So on a PR the viewer wrote, once every file to review (not the "Vendored, lockfiles and generated" section) is marked Reviewed, a quiet green "Self-reviewed" badge shows beside the state badge, in the lists and in the PR header. A file changed by a later push (`DISMISSED`) counts as not viewed, as when moving on. Whether the PR is the viewer's is decided as for its reviewers, by the author's login against the viewer's.
+
+It's knowledge only Loupe has, derived from GitHub's viewed state plus the local diff: which files are to review comes from the diff, so producing a PR's diff records its reviewable paths beside its head commit, replaced with each diff. The badge needs that head to be the PR's current head, so a push clears it until the new diff is produced and its files reviewed. The lists show it from the store with no network, so a PR never opened in Loupe shows nothing; the header follows the viewer's marks as they're made. It does nothing on GitHub: no draft to ready, no label, no review request. Whether it should is left for later.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

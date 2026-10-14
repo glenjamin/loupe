@@ -6,12 +6,7 @@ extension PullRequestStore {
     /// The stored viewed state of each file in the PR, keyed by path; files never stored are
     /// left out.
     public func viewedStates(of pullRequestId: String) throws -> [String: FileViewedState] {
-        try database.read { db in
-            try ViewedFileRow
-                .filter(Column("pullRequestId") == pullRequestId)
-                .fetchAll(db)
-                .reduce(into: [:]) { $0[$1.path] = FileViewedState(lenientRawValue: $1.state) }
-        }
+        try database.read { db in try Self.viewedStates(of: pullRequestId, db) }
     }
 
     /// Makes the PR's stored states exactly `states`, as GitHub returned them.
@@ -28,6 +23,13 @@ extension PullRequestStore {
         try await database.write { db in
             try ViewedFileRow(pullRequestId: pullRequestId, path: path, state: state.rawValue).upsert(db)
         }
+    }
+
+    static func viewedStates(of pullRequestId: String, _ db: Database) throws -> [String: FileViewedState] {
+        try ViewedFileRow
+            .filter(Column("pullRequestId") == pullRequestId)
+            .fetchAll(db)
+            .reduce(into: [:]) { $0[$1.path] = FileViewedState(lenientRawValue: $1.state) }
     }
 }
 

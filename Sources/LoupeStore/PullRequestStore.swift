@@ -342,6 +342,14 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "body", .text).notNull().defaults(to: "")
             }
         }
+        // The files to review in each PR's last produced diff, replaced with its record.
+        migrator.registerMigration("Diff reviewable files") { db in
+            try db.create(table: "pullRequestDiffFile") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequestDiff", onDelete: .cascade)
+                t.column("path", .text).notNull()
+                t.primaryKey(["pullRequestId", "path"])
+            }
+        }
         return migrator
     }
 
