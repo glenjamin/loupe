@@ -1,0 +1,95 @@
+# Loupe spike: findings
+
+A spike for a native macOS PR-review app. It checks the GitHub GraphQL data shapes we'd need (`probe/`) and prototypes the diff view, the riskiest part (`Sources/`).
+
+## Build and run
+
+Needs Swift 6 (Command Line Tools are enough; no Xcode). All commands run from the project root.
+
+```sh
+swift build                 # debug build
+swift test                  # parser, anchor, copy and background-painting tests (swift-testing)
+swift build -c release      # for meaningful bench numbers
+```
+
+Make a diff to view from PR `<N>` in a local checkout of `<owner>/<repo>`, with vendored code left in (the app hides it itself):
+
+```sh
+git -C <checkout> fetch origin refs/pull/<N>/head
+git -C <checkout> diff \
+  $(git -C <checkout> merge-base <head> <base>) \
+  <head> > fixtures-local/<repo>-<N>-full.diff
+```
+
+(`fixtures-local/` is gitignored. `<head>` and `<base>` are the PR's `headRefOid` and `baseRefOid` from the API.)
+
+Open the GUI. Clicking a diff row prints its anchor to the terminal, e.g. `clicked go.mod RIGHT 10`:
+
+```sh
+swift run Loupe fixtures-local/<repo>-<N>-full.diff
+```
+
+Time the diff view headlessly. This uses the largest file whose path contains the optional substring:
+
+```sh
+swift run -c release Loupe --bench fixtures-local/<repo>-<N>-full.diff types/types.go
+```
+
+I couldn't launch the GUI myself (the sandbox blocks window-server access), so it builds but its on-screen behaviour hasn't been seen: window activation, scrolling, click reporting and the sidebar. Rendering, layout, drawing, anchors and copying *are* exercised headlessly by the tests and the bench, using the same `DiffTextView`.
+
+## What the probe showed
+
+Details are in `probe/NOTES.md`. In short:
+
+- A review thread's `line` + `diffSide` is a **file line number** on the head (RIGHT) or base (LEFT) side, not a diff position. That's the same `(path, side, line)` the diff view reports on click, so comment anchoring lines up. A test checks this against a real `diffHunk`.
+- **Outdated threads have `line: null`**: only `originalLine` is set (10 of 21 recent marmot threads). They need the diff of the original commit, or a separate list.
+- `startLine` is `null` on some single-line comments and equal to `line` on others.
+- **CircleCI reports as legacy `StatusContext`s**, not `CheckRun`s (only Codecov uses check runs). The two have different field names, so CI status has to handle both.
+- **`files` includes vendored code and pages at 100.** On atrium#2912, 98 of the first 100 entries were `vendor/` (741 total); the 4 real files were on later pages.
+- `mergeable` is `UNKNOWN` until GitHub computes it (and always on merged PRs). `viewerViewedState` is there for syncing "viewed".
+- The inbox is a single `search` query; `reviewDecision` and `isDraft` come back inline.
+- Excluding `':!vendor' ':!go.sum'` from `git diff` worked: 741 files went down to 4, removing 736 vendor files and `go.sum`. For merged PRs, use `baseRefOid` for the merge-base, not `origin/master`, or the diff comes out empty. Don't rely on `FETCH_HEAD` in a shared checkout: another fetch overwrote it during the probe.
+
+## Diff view approach
+
+- `DiffParser` (pure Swift) turns `git diff` output into files → hunks → lines. Each line is `.context(old:new:)`, `.addition(new:)` or `.deletion(old:)`, so line numbers are never optional where they exist. It handles renames, copies (the user's git config has `diff.renames=copies`), deletions, pure renames with no hunks, "\ No newline", and CRLF (it splits on LF bytes, because Swift treats `"\r\n"` as one `Character`). `PathFilter` hides `vendor/`, `node_modules/` and lockfiles, and the sidebar shows how many it hid.
+- `RenderedDiff` turns one file into a single `NSAttributedString`. The gutter (old/new numbers and the `+`/`-` marker) is inline text, tagged with an attribute so copying a selection yields plain code. Each row is tagged with its kind, and an array of row start offsets maps a click to a row (binary search) and from the row to its `DiffAnchor`.
+- `DiffTextView` is an `NSTextView` subclass: non-editable, selectable, with a find bar. It uses TextKit 1 with **non-contiguous layout** and no line wrapping. A small `NSLayoutManager` subclass paints full-width row backgrounds. A single click (not a drag-select) reports the anchor.
+- `DiffView` is the `NSViewRepresentable` wrapper; the `App` is a `NavigationSplitView` with the file list on the left.
+
+### Measured performance
+
+Release build on an Apple M4, measured with `--bench`:
+
+| | 92 rows | 5,355 rows | 45,919 rows |
+|---|---|---|---|
+| build attributed string | 0.3ms | 15ms | 128ms |
+| set text storage | 4.6ms | 7.8ms | 13ms |
+| lay out first screen | 1.1ms | 1.2ms | 1.6ms |
+| draw a screen (first / middle) | 6.7 / 5.5ms | 8.8 / 12ms | 9.1 / 38ms |
+| lay out whole file (only on jump-to-end) | ~0 | 53ms | 706ms |
+
+Parsing the whole 260k-line, 741-file diff took 53ms.
+
+So a 5k-line file opens in about 33ms, comfortably fast. A 46k-line file takes about 150ms to open, then is smooth, apart from a one-off ~0.7s if you jump straight to the end.
+
+## What was hard
+
+- **Painting full-width row backgrounds without losing lazy layout.** The obvious place, `NSTextView.drawBackground(in:)` plus `glyphRange(forBoundingRect:)`, silently forced layout of the whole file on first paint: 61ms at 5k rows and 500ms at 46k, against 9ms once fixed. Moving the painting into `NSLayoutManager.drawBackground(forGlyphRange:at:)`, which only sees glyphs already laid out, fixed it. A test samples pixels to check the backgrounds are painted, and fails if they aren't.
+- **Swift 6 concurrency with AppKit.** `NSLayoutManager` isn't `@MainActor`, so its overrides can't touch the view's state. Filling to the graphics context's clip bounds avoided needing the view at all.
+- Merged-PR merge-bases and `FETCH_HEAD` races, covered above.
+
+## What I'd change in the plan
+
+1. **Get the diff and file list from git, not the API.** `files` pages at 100 and is dominated by vendored code, and the API's patch text isn't in GraphQL anyway. Fetch `refs/pull/N/head`, then diff `headRefOid` against the merge-base with `baseRefOid`, in a bare cache clone the app owns rather than the user's working checkouts. Use GraphQL for metadata, threads, CI and the inbox.
+2. **Inline comment rendering is now the riskiest part**, and the next spike. A single `NSTextView` has no natural way to put a block between two rows. Options: a text attachment with a view provider, TextKit 2 custom layout fragments, or a stack of per-hunk text views with comment views between them. The last is simplest, but makes selection across hunks harder.
+3. **Outdated threads need their own path.** Either fetch `originalCommit` and show that diff, or list them separately.
+4. **Build the attributed string off the main thread** (or collapse files over ~10k rows by default), so a huge file doesn't stall the UI for 130ms.
+5. Small things for later: the find bar also matches gutter digits; a "\ No newline" marker isn't drawn yet; quoted paths (filenames with unusual characters) aren't unquoted; there's no toggle to show hidden vendored files.
+
+## Layout
+
+- `Sources/LoupeCore/`: `DiffModel.swift`, `DiffParser.swift`, `DiffRenderer.swift` (attributed string and anchors), `DiffTextView.swift`
+- `Sources/Loupe/`: `Entry.swift` (GUI vs `--bench`), `App.swift`, `DiffView.swift`, `Bench.swift`
+- `Tests/LoupeTests/`: tests, with fixtures from atrium#2912 (the 4-file diff, and edge cases cut from the full diff)
+- `probe/`: GraphQL queries, raw responses and `NOTES.md`
