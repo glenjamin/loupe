@@ -137,20 +137,20 @@ Release build on an Apple M4, measured with `--bench`:
 
 | | 92 rows | 5,355 rows | 45,919 rows |
 |---|---|---|---|
-| build attributed string | 0.3ms | 15ms | 128ms |
-| set text storage | 4.6ms | 7.8ms | 13ms |
-| lay out first screen | 1.1ms | 1.2ms | 1.6ms |
-| draw a screen (first / middle) | 6.7 / 5.5ms | 8.8 / 12ms | 9.1 / 38ms |
-| lay out whole file (only on jump-to-end) | ~0 | 53ms | 706ms |
+| build attributed string (with word-level changes) | 0.5ms | 17ms | 150ms |
+| set text storage | 4.7ms | 6.9ms | 18ms |
+| lay out first screen | 1.3ms | 1.6ms | 2.0ms |
+| draw a screen (first / middle) | 3.0 / 1.9ms | 3.2 / 7.7ms | 3.2 / 43ms |
+| lay out whole file (only on jump-to-end) | ~0 | 66ms | 792ms |
 
 With wrapping on (bench viewport 1200pt wide; `--bench` now times the view both ways, wrapped second):
 
 | | 92 rows | 5,355 rows | 45,919 rows |
 |---|---|---|---|
-| set text storage | 0.2ms | 2.0ms | 8.8ms |
-| lay out first screen | 0.8ms | 1.1ms | 1.2ms |
-| draw a screen (first / middle) | 1.9 / 1.4ms | 1.8 / 5.9ms | 1.9 / 30ms |
-| lay out whole file | ~0 | 54ms | 726ms |
+| set text storage | 0.2ms | 2.6ms | 13ms |
+| lay out first screen | 1.2ms | 1.5ms | 1.7ms |
+| draw a screen (first / middle) | 1.9 / 1.9ms | 2.0 / 7.3ms | 2.5 / 35ms |
+| lay out whole file | ~0 | 66ms | 806ms |
 
 Syntax highlighting, timed separately by `--bench` (the TypeScript files are from marmot, diffed against `/dev/null`):
 
@@ -170,7 +170,9 @@ Wrapping costs nothing measurable on open: TextKit lays out only the visible lin
 
 Parsing the whole 260k-line, 741-file diff took 53ms.
 
-So a 5k-line file opens in about 33ms, comfortably fast. A 46k-line file takes about 150ms to open, then is smooth, apart from a one-off ~0.7s if you jump straight to the end.
+These are with GitHub's spacing (20pt rows), a tinted gutter and word-level highlighting of modified lines. Against the previous layout on the same run, the 46k-row file builds in 150ms rather than 127ms and sets its storage in 18ms rather than 14ms: the gutter is wider and changed rows carry more attribute runs, and the word diffs run in the same pass; how the extra time splits between these wasn't measured. Whole-file layout is slower, with the file a third taller.
+
+So a 5k-line file opens in about 35ms, comfortably fast. A 46k-line file takes about 170ms to open, then is smooth, apart from a one-off ~0.8s if you jump straight to the end.
 
 ## What was hard
 
