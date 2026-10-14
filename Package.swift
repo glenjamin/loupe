@@ -6,7 +6,9 @@ let package = Package(
     platforms: [.macOS(.v14)],
     targets: [
         .target(name: "LoupeCore"),
-        .executableTarget(name: "Loupe", dependencies: ["LoupeCore"]),
+        .target(name: "LoupeGitHub"),
+        .executableTarget(name: "Loupe", dependencies: ["LoupeCore", "LoupeGitHub"]),
         .testTarget(name: "LoupeTests", dependencies: ["LoupeCore"], exclude: ["Fixtures"]),
+        .testTarget(name: "LoupeGitHubTests", dependencies: ["LoupeGitHub"]),
     ]
 )
