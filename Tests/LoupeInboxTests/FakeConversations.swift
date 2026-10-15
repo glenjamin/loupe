@@ -37,6 +37,20 @@ actor FakeConversations {
     private var threadCount = 0
     private var commentCount = 0
     private var threadChangesRefused = false
+    /// Each PR's id by number, for those added with one.
+    private var numbers: [Int: String] = [:]
+    /// Every new comment received, in order.
+    private(set) var commentsReceived: [CommentInput] = []
+
+    struct CommentInput: Equatable {
+        let repository: String
+        let number: Int
+        let body: String
+        let commitId: String
+        let path: String
+        let line: Int
+        let side: String
+    }
     /// Every reply to a thread received, in order.
     private(set) var repliesReceived: [ReplyInput] = []
     /// Every resolve or unresolve received, in order.
@@ -68,8 +82,10 @@ actor FakeConversations {
         let body: String?
     }
 
-    /// Gives the PR with `id` the probe's conversation.
-    func add(_ id: String) throws {
+    /// Gives the PR with `id` the probe's conversation, and with its `number` it can be
+    /// commented on over REST, which names PRs by number.
+    func add(_ id: String, number: Int? = nil) throws {
+        if let number { numbers[number] = id }
         let probe = try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/conversation.json")))
         var node = try #require(((probe as? [String: Any])?["data"] as? [String: Any])?["node"] as? [String: Any])
         let timeline = try #require(node["timelineItems"] as? [String: Any])
@@ -253,6 +269,9 @@ actor FakeConversations {
         let data = try #require(request.httpBody)
         let content = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         if failing { return (Data(), fakeResponse(url, status: 502)) }
+        if let match = url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/comments/) {
+            return try newComment(content, repository: String(match.1), number: try #require(Int(match.2)), url)
+        }
         let match = try #require(url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/comments\/(\d+)\/replies/), "Unexpected REST request: \(url.path())")
         let commentId = try #require(Int(match.3))
         let body = try #require(content["body"] as? String)
@@ -274,6 +293,34 @@ actor FakeConversations {
         rest["node_id"] = comment["id"]
         rest["body"] = body
         rest["in_reply_to_id"] = commentId
+        return (try JSONSerialization.data(withJSONObject: rest), fakeResponse(url, status: 201))
+    }
+
+    /// A new comment on a line, which starts a thread by the viewer at once, answered as
+    /// GitHub does with the comment.
+    private func newComment(_ content: [String: Any], repository: String, number: Int, _ url: URL) throws -> (Data, HTTPURLResponse) {
+        let input = CommentInput(
+            repository: repository, number: number, body: try #require(content["body"] as? String), commitId: try #require(content["commit_id"] as? String),
+            path: try #require(content["path"] as? String), line: try #require(content["line"] as? Int), side: try #require(content["side"] as? String)
+        )
+        commentsReceived.append(input)
+        if threadChangesRefused {
+            return (Data(#"{"message":"Resource not accessible by personal access token","status":"403"}"#.utf8), fakeResponse(url, status: 403))
+        }
+        guard let id = numbers[number] else {
+            return (Data(#"{"message":"Not Found","status":"404"}"#.utf8), fakeResponse(url, status: 404))
+        }
+        try startThread(on: id, path: input.path, line: input.line, side: input.side, body: input.body, by: FakeGitHub.viewer)
+        let comment = try #require(threads(of: id).last.flatMap { (($0["comments"] as? [String: Any])?["nodes"] as? [[String: Any]])?.first })
+        var rest = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/review-comment-rest.json"))) as? [String: Any])
+        rest["id"] = comment["databaseId"]
+        rest["node_id"] = comment["id"]
+        rest["body"] = input.body
+        rest["path"] = input.path
+        rest["line"] = input.line
+        rest["side"] = input.side
+        rest["commit_id"] = input.commitId
+        rest["in_reply_to_id"] = nil
         return (try JSONSerialization.data(withJSONObject: rest), fakeResponse(url, status: 201))
     }
 

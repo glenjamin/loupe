@@ -35,8 +35,18 @@ public final class ThreadActivity {
     public internal(set) var errors: [String: String] = [:]
     /// Threads being resolved or unresolved, by id.
     public internal(set) var resolving: Set<String> = []
+    /// The comment being started on a line, one at a time.
+    public internal(set) var newComment: NewComment?
+    /// Why the last new comment didn't reach GitHub, until it's sent again or dropped.
+    public internal(set) var newCommentError: String?
 
     init() {}
+}
+
+/// A comment being written on a line that has no thread of the viewer's making yet.
+public struct NewComment {
+    public let anchor: DiffAnchor
+    public let draft: CommentDraft
 }
 
 /// A comment being written, as markdown.
@@ -86,6 +96,58 @@ extension PullRequestTab {
     public func unresolvedThreadCount(of path: String) -> Int? {
         guard shownCommit == nil else { return nil }
         return conversation?.threads.count { $0.path == path && !$0.isResolved } ?? 0
+    }
+
+    /// The rows of a file a comment can be started on: the lines of the PR's own diff of it,
+    /// `file` as produced, not those revealed around its hunks, which GitHub won't take. Nil
+    /// when one commit's changes are shown, as comments go on the whole PR's diff.
+    public func commentableAnchors(of file: FileDiff) -> Set<DiffAnchor>? {
+        guard shownCommit == nil else { return nil }
+        return Set(file.hunks.flatMap(\.lines).map { line in
+            switch line.kind {
+            case let .context(_, new), let .addition(new): DiffAnchor(path: file.path, side: .right, line: new)
+            case let .deletion(old): DiffAnchor(path: file.path, side: .left, line: old)
+            }
+        })
+    }
+
+    /// Opens a comment under a row, keeping one already being written there; one elsewhere
+    /// with nothing typed is dropped, and one with text is kept, so it isn't lost.
+    public func startComment(at anchor: DiffAnchor) {
+        if let current = threadActivity.newComment {
+            guard current.anchor != anchor, !current.draft.hasText, !current.draft.isSending else { return }
+        }
+        threadActivity.newComment = NewComment(anchor: anchor, draft: CommentDraft())
+        threadActivity.newCommentError = nil
+    }
+
+    /// Drops the comment being started; asking first is the view's job.
+    public func cancelComment() {
+        guard threadActivity.newComment?.draft.isSending != true else { return }
+        threadActivity.newComment = nil
+        threadActivity.newCommentError = nil
+    }
+
+    /// Posts the new comment at once as a thread on its line, against the head commit the diff
+    /// shows, whose line numbers it uses, then fetches the threads again to show it. A refusal
+    /// keeps the draft open with the reason.
+    public func sendComment() async {
+        guard let comment = threadActivity.newComment, comment.draft.canSend, case let .ready(review) = phase else { return }
+        comment.draft.isSending = true
+        threadActivity.newCommentError = nil
+        defer { comment.draft.isSending = false }
+        let pullRequest = pullRequest
+        do {
+            try await client.addReviewComment(
+                comment.draft.text, path: comment.anchor.path, line: comment.anchor.line, side: comment.anchor.side.rawValue,
+                commitId: review.headOid, inPullRequest: pullRequest.number, of: pullRequest.repository
+            )
+        } catch {
+            threadActivity.newCommentError = "Couldn't comment: \(error.localizedDescription)"
+            return
+        }
+        if threadActivity.newComment?.draft === comment.draft { threadActivity.newComment = nil }
+        await refreshThreads()
     }
 
     /// Opens a reply under the thread, keeping one already being written.

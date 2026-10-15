@@ -8,6 +8,14 @@ extension GitHubClient {
         _ = try await post(path: "/repos/\(repository)/pulls/\(number)/comments/\(commentId)/replies", ReplyRequest(body: body))
     }
 
+    /// Starts a review thread with one comment at once, outside any pending review, on `line`
+    /// of `path` as of `commitId`: the head for side RIGHT, the base for LEFT. REST, as
+    /// GraphQL's mutation for a new thread adds it to a pending review.
+    public func addReviewComment(_ body: String, path: String, line: Int, side: String, commitId: String, inPullRequest number: Int, of repository: String) async throws {
+        let comment = NewCommentRequest(body: body, commit_id: commitId, path: path, line: line, side: side)
+        _ = try await post(path: "/repos/\(repository)/pulls/\(number)/comments", comment)
+    }
+
     /// Marks a review thread resolved, or no longer resolved.
     public func setThreadResolved(_ resolved: Bool, threadId: String) async throws {
         let mutation = resolved ? Self.resolveReviewThreadMutation : Self.unresolveReviewThreadMutation
@@ -29,6 +37,15 @@ extension GitHubClient {
 
 private struct ReplyRequest: Encodable {
     let body: String
+}
+
+/// In the REST API's own field names.
+private struct NewCommentRequest: Encodable {
+    let body: String
+    let commit_id: String
+    let path: String
+    let line: Int
+    let side: String
 }
 
 private struct ThreadVariables: Encodable, Sendable {

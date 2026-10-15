@@ -13,6 +13,17 @@ public final class DiffTextView: NSTextView {
     private var heldRow: (row: HeldRow, offset: CGFloat)?
     /// Views laid over the rows held for blocks, by block id.
     private var blockViews: [String: NSView] = [:]
+    /// The rows a comment can be started on, by anchor; none when nil.
+    public var commentableAnchors: Set<DiffAnchor>? {
+        didSet { if commentableAnchors != oldValue { hoveredAnchor = nil } }
+    }
+    /// Called with the hovered row's anchor when its "+" is clicked.
+    public var onComment: ((DiffAnchor) -> Void)?
+    /// The quiet "+" in the gutter of the hovered row, as on github.com.
+    public let commentButton = CommentButton()
+    private var hoveredAnchor: DiffAnchor? {
+        didSet { commentButton.isHidden = hoveredAnchor == nil }
+    }
 
     /// Soft-wraps long rows at the view's width; off, rows run on and the view scrolls sideways.
     public var wrapsLines = true {
@@ -43,7 +54,43 @@ public final class DiffTextView: NSTextView {
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.minSize = .zero
         view.applyWrapping()
+        view.commentButton.isHidden = true
+        view.commentButton.target = view
+        view.commentButton.action = #selector(commentClicked)
+        view.addSubview(view.commentButton)
+        view.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: view))
         return view
+    }
+
+    /// Shows the "+" on the row under the pointer when a comment can be started there.
+    public override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        showCommentButton(at: convert(event.locationInWindow, from: nil))
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        hoveredAnchor = nil
+    }
+
+    @objc private func commentClicked() {
+        if let hoveredAnchor { onComment?(hoveredAnchor) }
+    }
+
+    private func showCommentButton(at point: NSPoint) {
+        guard let commentableAnchors, let rendered, let layoutManager, let textStorage, textStorage.length > 0 else {
+            return hoveredAnchor = nil
+        }
+        let index = min(characterIndexForInsertion(at: point), textStorage.length - 1)
+        guard let row = rendered.row(at: index), let anchor = rendered.rowAnchors[row], commentableAnchors.contains(anchor) else {
+            return hoveredAnchor = nil
+        }
+        let fragment = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: rendered.rowStarts[row]), effectiveRange: nil)
+        // Over the start of the gutter, a little in from the edge, centred on the row's first line.
+        let size = commentButton.intrinsicContentSize
+        commentButton.frame = NSRect(x: textContainerOrigin.x + 2, y: fragment.minY + textContainerOrigin.y + (fragment.height - size.height) / 2, width: size.width, height: size.height)
+        hoveredAnchor = anchor
+        commentButton.toolTip = "Comment on line \(anchor.line)"
     }
 
     /// Files up to this many rows are highlighted before first paint; larger ones paint plain first.
@@ -59,6 +106,7 @@ public final class DiffTextView: NSTextView {
         let visible = visibleRect
         let held = keepingPlace ? heldRow : nil
         heldRow = nil
+        hoveredAnchor = nil
         self.rendered = rendered
         shownCount += 1
         if let textStorage {
@@ -231,6 +279,30 @@ public final class DiffTextView: NSTextView {
             autoresizingMask = [.width, .height]
         }
     }
+}
+
+/// A small accent "+" that starts a comment on the row it's over.
+public final class CommentButton: NSButton {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        image = NSImage(systemSymbolName: "plus.square.fill", accessibilityDescription: "Add a comment")
+        imageScaling = .scaleProportionallyUpOrDown
+        isBordered = false
+        contentTintColor = .controlAccentColor
+        setAccessibilityLabel("Add a comment")
+    }
+
+    convenience init() {
+        self.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used in nibs") }
+
+    public override var intrinsicContentSize: NSSize { NSSize(width: 18, height: 18) }
+
+    /// Acts on the first click, as the expand arrows do, even in a window not yet active.
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 /// Paints each row's background across the whole visible width, with its gutter a shade darker.

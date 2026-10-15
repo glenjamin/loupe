@@ -15,6 +15,9 @@ struct DiffView: View {
     var expandable: ExpandableContext?
     var onExpand: (ContextExpansion) -> Void = { _ in }
     var blocks: [DiffBlockContent] = []
+    /// The rows that offer a "+" to start a comment on hover; none when nil.
+    var commentable: Set<DiffAnchor>?
+    var onComment: (DiffAnchor) -> Void = { _ in }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,7 +25,10 @@ struct DiffView: View {
             Divider()
             // The rendering covers the diff rather than replacing it, so the diff keeps its place.
             ZStack {
-                DiffTextScrollView(file: file, onAnchorClick: onAnchorClick, review: review, expandable: expandable, onExpand: onExpand, blocks: blocks)
+                DiffTextScrollView(
+                    file: file, onAnchorClick: onAnchorClick, review: review, expandable: expandable, onExpand: onExpand, blocks: blocks,
+                    commentable: commentable, onComment: onComment
+                )
                 if let markdown, markdown.isRendered {
                     RenderedMarkdownView(preview: markdown)
                 }
@@ -123,6 +129,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
     let expandable: ExpandableContext?
     let onExpand: (ContextExpansion) -> Void
     let blocks: [DiffBlockContent]
+    let commentable: Set<DiffAnchor>?
+    let onComment: (DiffAnchor) -> Void
     @AppStorage(DiffSettings.wrapLinesKey) var wrapLines = DiffSettings.wrapLinesDefault
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -156,6 +164,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
         coordinator.footerState.pullHint = review?.pullHint ?? ""
         coordinator.textView.onAnchorClick = onAnchorClick
         coordinator.textView.onExpand = onExpand
+        coordinator.textView.commentableAnchors = commentable
+        coordinator.textView.onComment = onComment
         scroll.hasHorizontalScroller = !wrapLines
         coordinator.textView.wrapsLines = wrapLines
         // The same file shown anew, as when more of it is revealed, keeps the reader's place.

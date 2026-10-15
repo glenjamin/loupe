@@ -287,6 +287,12 @@ Each thread the viewer may reply to has a Reply button that opens a plain-text f
 
 A thread's header has Resolve conversation or Unresolve conversation, whichever GitHub says the viewer may (`viewerCanResolve`, `viewerCanUnresolve`), through `resolveReviewThread` and `unresolveReviewThread`. The change shows at once and is put back with the reason if GitHub refuses, as viewed files are; a thread resolved here folds to its one line, as on github.com. After a reply or a change, only the PR's review threads are fetched again, in one query rather than the conversation's paged timeline, so the thread shows as GitHub has it, and stored. Drafts and errors are kept per thread while the tab lives, so moving to another file and back doesn't lose them.
 
+### New comments start from a "+" in the gutter and post at once
+
+Hovering a row of the PR's own diff shows a small accent "+" over the start of its gutter, as github.com does; clicking it opens a field under the row with the reply's conventions, and posting starts a thread with that one comment at once. Hunk headers, the row after the last hunk and lines revealed around a hunk offer no "+": GitHub only takes comments on lines in the PR's diff, and the revealed ones aren't in it. Unchanged lines in a hunk take comments on the new side, as on github.com. Like the threads, comments are only offered on "All changes". It's single-line only; picking a range of lines is left for later.
+
+It's REST, `POST /repos/{owner}/{repo}/pulls/{number}/comments` with `commit_id`, `path`, `line` and `side`, because GraphQL's `addPullRequestReviewThread` is documented as adding to a pending review. `commit_id` is the head of the diff shown rather than the PR's latest head, as the line numbers are that diff's; when the PR has moved on, the banner already offers a reload. Only one new comment is open at a time: clicking another row's "+" moves an empty one there, but leaves one with text where it is, so nothing typed is lost without asking. After posting, the threads are fetched again, so the comment shows as GitHub has it, under its line. The "+" is an `NSButton` the text view places itself on mouse movement, from a tracking area over its visible rect, so it costs nothing until the pointer moves.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

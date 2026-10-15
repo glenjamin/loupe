@@ -71,4 +71,50 @@ struct DiffBlocksTests {
 
         """)
     }
+
+    @Test func hoveringARowThatTakesACommentShowsAPlusThatStartsOne() throws {
+        let goMod = try fixtureFile("go.mod")
+        let view = DiffTextView.make()
+        view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        view.show(RenderedDiff(file: goMod))
+        view.layoutManager?.ensureLayout(for: try #require(view.textContainer))
+        let added = DiffAnchor(path: "go.mod", side: .right, line: 10)
+        view.commentableAnchors = [added]
+        var asked: [DiffAnchor] = []
+        view.onComment = { asked.append($0) }
+
+        try hover(onRowContaining: "transfermanager", in: view)
+        #expect(!view.commentButton.isHidden)
+        let row = try #require(view.rendered?.row(at: (view.string as NSString).range(of: "transfermanager").location))
+        #expect(view.commentButton.frame.midY > (try top(ofRow: row, in: view)))
+        view.commentButton.performClick(nil)
+        #expect(asked == [added])
+
+        try hover(onRowContaining: "require (", in: view)
+        #expect(view.commentButton.isHidden, "a row it can't take a comment on")
+        try hover(onRowContaining: "@@ -7,7", in: view)
+        #expect(view.commentButton.isHidden, "a hunk header")
+        view.commentableAnchors = nil
+        try hover(onRowContaining: "transfermanager", in: view)
+        #expect(view.commentButton.isHidden, "nothing takes comments")
+    }
+}
+
+/// Sends the mouse moving over the middle of the text on a row, as hovering does.
+@MainActor
+private func hover(onRowContaining needle: String, in view: DiffTextView) throws {
+    let layoutManager = try #require(view.layoutManager)
+    let container = try #require(view.textContainer)
+    let found = (view.string as NSString).range(of: needle)
+    let bounds = layoutManager.boundingRect(forGlyphRange: layoutManager.glyphRange(forCharacterRange: found, actualCharacterRange: nil), in: container)
+    let point = view.convert(NSPoint(x: bounds.midX + view.textContainerOrigin.x, y: bounds.midY + view.textContainerOrigin.y), to: nil)
+    let event = try #require(NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+    view.mouseMoved(with: event)
+}
+
+@MainActor
+private func top(ofRow row: Int, in view: DiffTextView) throws -> CGFloat {
+    let layoutManager = try #require(view.layoutManager)
+    let start = try #require(view.rendered).rowStarts[row]
+    return layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: start), effectiveRange: nil).minY + view.textContainerOrigin.y
 }

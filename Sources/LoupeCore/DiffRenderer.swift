@@ -1,7 +1,7 @@
 import AppKit
 
 /// Where a review comment would attach, in GitHub's terms: RIGHT is the new file, LEFT the old.
-public struct DiffAnchor: Sendable, Equatable, CustomStringConvertible {
+public struct DiffAnchor: Sendable, Hashable, CustomStringConvertible {
     public enum Side: String, Sendable { case left = "LEFT", right = "RIGHT" }
 
     public var path: String

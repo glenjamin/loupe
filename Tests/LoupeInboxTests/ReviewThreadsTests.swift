@@ -10,8 +10,7 @@ import Testing
 struct ReviewThreadsTests {
     @Test func threadsShowUnderTheLinesTheyEndOnAndTheRestAfterTheLastRow() async throws {
         let app = try await ThreadsApp()
-        let repo = try await FakeRepository()
-        let pullRequest = try await app.pushPullRequest(in: repo)
+        let pullRequest = try await app.pushPullRequest()
         let id = pullRequest.id
         // On an added line, twice, one resolved; on a deleted line; outdated; on a line the diff
         // doesn't show; and on a vendored file.
@@ -162,6 +161,71 @@ struct ThreadRepliesTests {
     }
 }
 
+@MainActor
+struct NewCommentTests {
+    @Test func onlyTheLinesOfThePullRequestsOwnDiffTakeAComment() async throws {
+        let (app, tab, _) = try await ThreadsApp.withThread()
+        let file = try #require(tab.file("app.go"))
+        let commentable = try #require(tab.commentableAnchors(of: file))
+        #expect(commentable.contains(DiffAnchor(path: "app.go", side: .right, line: 11)), "an added line")
+        #expect(commentable.contains(DiffAnchor(path: "app.go", side: .left, line: 50)), "a deleted line")
+        #expect(commentable.contains(DiffAnchor(path: "app.go", side: .right, line: 9)), "an unchanged line in a hunk")
+        #expect(!commentable.contains(DiffAnchor(path: "app.go", side: .right, line: 30)), "a line only revealed around a hunk")
+        #expect(!commentable.contains(DiffAnchor(path: "app.go", side: .left, line: 9)), "unchanged lines take comments on the new side")
+
+        await tab.showCommit(try #require(tab.ready?.commits.first).oid)
+        #expect(tab.commentableAnchors(of: try #require(tab.file("app.go"))) == nil, "not on one commit's changes")
+        #expect(await app.conversations.commentsReceived.isEmpty, "nothing is posted until a comment is sent")
+    }
+
+    @Test func aNewCommentPostsAtOnceOnTheHeadCommitAndShowsAsAThread() async throws {
+        let (app, tab, _) = try await ThreadsApp.withThread()
+        let anchor = DiffAnchor(path: "app.go", side: .left, line: 50)
+        tab.startComment(at: anchor)
+        let draft = try #require(tab.threadActivity.newComment?.draft)
+        draft.text = "Is anything still using this?"
+
+        await tab.sendComment()
+
+        let pullRequest = tab.pullRequest
+        let head = try #require(tab.ready?.headOid)
+        #expect(await app.conversations.commentsReceived == [
+            .init(repository: pullRequest.repository, number: pullRequest.number, body: "Is anything still using this?", commitId: head, path: "app.go", line: 50, side: "LEFT"),
+        ])
+        #expect(tab.threadActivity.newComment == nil)
+        #expect(await app.conversations.threadFetches == 1)
+        let file = try #require(tab.file("app.go"))
+        let threads = try #require(tab.threads(on: tab.expandedFile(file)))
+        let posted = try #require(threads.anchored.first { $0.side == .left && $0.line == 50 }?.threads.first)
+        #expect(posted.comments.map(\.author?.login) == [FakeGitHub.viewer])
+        #expect(posted.comments.first?.bodyHTML == "<p dir=\"auto\">Is anything still using this?</p>")
+        #expect(tab.unresolvedThreadCount(of: "app.go") == 2)
+    }
+
+    @Test func aRefusedCommentKeepsTheDraftAndSaysWhy() async throws {
+        let (app, tab, _) = try await ThreadsApp.withThread()
+        await app.conversations.refuseThreadChanges()
+        tab.startComment(at: DiffAnchor(path: "app.go", side: .right, line: 10))
+        let draft = try #require(tab.threadActivity.newComment?.draft)
+        draft.text = "Rename this?"
+
+        await tab.sendComment()
+
+        #expect(tab.threadActivity.newComment?.draft === draft)
+        #expect(draft.text == "Rename this?" && draft.canSend)
+        #expect(tab.threadActivity.newCommentError?.contains("Resource not accessible") == true)
+        #expect(tab.unresolvedThreadCount(of: "app.go") == 1)
+
+        // Another line's "+" doesn't throw away what's written; cancelling does.
+        tab.startComment(at: DiffAnchor(path: "app.go", side: .right, line: 12))
+        #expect(tab.threadActivity.newComment?.anchor.line == 10)
+        tab.cancelComment()
+        #expect(tab.threadActivity.newComment == nil && tab.threadActivity.newCommentError == nil)
+        tab.startComment(at: DiffAnchor(path: "app.go", side: .right, line: 12))
+        #expect(tab.threadActivity.newComment?.anchor.line == 12)
+    }
+}
+
 /// The app's models over the PR fixture and an in-memory store, with a conversation for each
 /// PR from `FakeConversations`.
 @MainActor
@@ -170,10 +234,13 @@ struct ThreadsApp {
     let details = FakePullRequestDetails()
     let store: PullRequestStore
     let tabs: TabsModel
+    /// The PR's repo, kept as long as the app, as diffing a commit later reads its checkout.
+    let repo: FakeRepository
 
     init() async throws {
         github = try FakeGitHub(fixture: "pr-list.json")
         store = try PullRequestStore.inMemory()
+        repo = try await FakeRepository()
         tabs = Self.tabs(github, details, store)
         await tabs.lists.refresh()
     }
@@ -183,8 +250,7 @@ struct ThreadsApp {
     /// A PR open in its tab, with one unresolved thread by someone else on an added line.
     static func withThread() async throws -> (ThreadsApp, PullRequestTab, String) {
         let app = try await ThreadsApp()
-        let repo = try await FakeRepository()
-        let pullRequest = try await app.pushPullRequest(in: repo)
+        let pullRequest = try await app.pushPullRequest()
         let threadId = try await app.conversations.startThread(on: pullRequest.id, path: "app.go", line: 11, body: "Why three?")
         return (app, try await app.open(pullRequest), threadId)
     }
@@ -192,9 +258,9 @@ struct ThreadsApp {
     /// Makes the first to-review PR, with the probe's conversation, change a 60-line `app.go`:
     /// line 10 becomes three (new lines 10 to 12) and line 50 goes. It also adds `new.go` and
     /// changes a vendored file, which is hidden.
-    func pushPullRequest(in repo: FakeRepository) async throws -> PullRequestSummary {
+    func pushPullRequest() async throws -> PullRequestSummary {
         let listed = try #require(tabs.lists.pullRequests(in: .toReview).first)
-        try await conversations.add(listed.id)
+        try await conversations.add(listed.id, number: listed.number)
         try await store.updateLocalRepos(saving: [LocalRepo(nameWithOwner: listed.repository, path: repo.checkout, verifiedAt: .now)])
         let lines = (1...60).map { "\($0) line" }
         let branchPoint = try await repo.commit(["app.go": lines.joined(separator: "\n") + "\n"], message: "Start")

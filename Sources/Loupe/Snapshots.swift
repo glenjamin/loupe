@@ -160,6 +160,20 @@ enum SnapshotRun {
                     tab.startReply(to: thread)
                 }
             }
+            // LOUPE_SNAPSHOT_COMMENT=<line> hovers the row of that new line in each shown diff,
+            // clicks the "+" that shows, as starting a comment would, then hovers it again, so
+            // the snapshot has both. Nothing is typed or sent.
+            if let line = environment["LOUPE_SNAPSHOT_COMMENT"].flatMap(Int.init) {
+                for tab in tabs.tabs {
+                    windows.select(tab.id)
+                    try? await Task.sleep(for: .milliseconds(800))
+                    guard let window = windows.mainWindow, hoverRow(ofNewLine: line, in: window) else { continue }
+                    visibleDiff(in: window)?.commentButton.performClick(nil)
+                    try? await Task.sleep(for: .milliseconds(800))
+                    _ = hoverRow(ofNewLine: line, in: window)
+                }
+                windows.select(tabs.selected)
+            }
             // LOUPE_SNAPSHOT_THREAD=<n> scrolls each shown diff to its nth block of threads (from
             // 1, in the order they come down the diff), once they've measured themselves.
             if let wanted = environment["LOUPE_SNAPSHOT_THREAD"].flatMap(Int.init) {
@@ -297,6 +311,33 @@ enum SnapshotRun {
         layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: NSMaxRange(range)))
         let fragment = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: range.location), effectiveRange: nil)
         textView.scroll(NSPoint(x: 0, y: max(0, fragment.minY + textView.textContainerOrigin.y - 100)))
+    }
+
+    /// Scrolls the shown diff so the row of a new line is a little way down, then moves the
+    /// mouse over it as the pointer would, printing whether its "+" shows.
+    private static func hoverRow(ofNewLine line: Int, in window: NSWindow) -> Bool {
+        guard let textView = visibleDiff(in: window), let rendered = textView.rendered, let layoutManager = textView.layoutManager,
+              let row = rendered.rowAnchors.firstIndex(where: { $0?.side == .right && $0?.line == line })
+        else {
+            print("no row for new line \(line) to hover")
+            return false
+        }
+        let start = rendered.rowStarts[row]
+        layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: start + 1))
+        let fragment = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: start), effectiveRange: nil)
+        let top = fragment.minY + textView.textContainerOrigin.y
+        textView.scroll(NSPoint(x: 0, y: max(0, top - 120)))
+        window.layoutIfNeeded()
+        let point = textView.convert(NSPoint(x: 300, y: top + fragment.height / 2), to: nil)
+        guard let event = NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return false }
+        textView.mouseMoved(with: event)
+        print("hovering new line \(line): the comment button is \(textView.commentButton.isHidden ? "hidden" : "shown")")
+        return !textView.commentButton.isHidden
+    }
+
+    private static func visibleDiff(in window: NSWindow) -> DiffTextView? {
+        guard let root = window.contentView else { return nil }
+        return descendants(of: root).lazy.compactMap { $0 as? DiffTextView }.first { !$0.isHiddenOrHasHiddenAncestor }
     }
 
     /// Reveals every unchanged line of the file, closing each gap from the bottom up.

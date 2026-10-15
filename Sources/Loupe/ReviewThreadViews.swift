@@ -5,9 +5,10 @@ import LoupeModel
 import SwiftUI
 
 /// The blocks a file's diff lays over its rows for its review threads: one under each line
-/// threads end on, and one after the last row for those with nowhere in the diff to go.
+/// threads end on, one after the last row for those with nowhere in the diff to go, and the
+/// comment being started on one of the file's lines, if any.
 @MainActor
-func threadBlocks(for threads: FileThreads, in tab: PullRequestTab) -> [DiffBlockContent] {
+func threadBlocks(for threads: FileThreads, onFileAt path: String, in tab: PullRequestTab) -> [DiffBlockContent] {
     var blocks = threads.anchored.map { line in
         DiffBlockContent(
             id: "threads:\(line.side.rawValue):\(line.line)",
@@ -18,7 +19,51 @@ func threadBlocks(for threads: FileThreads, in tab: PullRequestTab) -> [DiffBloc
     if !threads.elsewhere.isEmpty {
         blocks.append(DiffBlockContent(id: "threads:elsewhere", placement: .end, view: AnyView(ElsewhereThreads(tab: tab, threads: threads.elsewhere))))
     }
+    // A comment being started goes under its line, after any threads already there.
+    if let comment = tab.threadActivity.newComment, comment.anchor.path == path {
+        let anchor = comment.anchor
+        blocks.append(DiffBlockContent(
+            id: "new-comment:\(anchor.side.rawValue):\(anchor.line)",
+            placement: .after(side: anchor.side, line: anchor.line),
+            view: AnyView(NewCommentCard(tab: tab, comment: comment))
+        ))
+    }
     return blocks
+}
+
+/// A comment being started on a line, which posts as a new thread.
+private struct NewCommentCard: View {
+    let tab: PullRequestTab
+    let comment: NewComment
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(verbatim: "Comment on line \(comment.anchor.line)\(comment.anchor.side == .left ? " (old)" : "")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.bar)
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                if let error = tab.threadActivity.newCommentError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.diffDanger)
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                        .help(error)
+                }
+                CommentComposer(draft: comment.draft, sendLabel: "Comment", send: { Task { await tab.sendComment() } }, cancel: { tab.cancelComment() })
+            }
+            .font(.callout)
+            .padding(10)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+        .modifier(BlockInset())
+    }
 }
 
 /// The threads ending on one line, one card each, indented to sit under the code.

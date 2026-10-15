@@ -286,7 +286,8 @@ struct FileBrowser: View {
         return DiffView(
             file: shown, onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file), markdown: tab.markdownPreview(of: file),
             expandable: tab.expandableContext(of: file), onExpand: { expansion in Task { await tab.expandContext(of: file, expansion) } },
-            blocks: tab.threads(on: shown).map { threadBlocks(for: $0, in: tab) } ?? []
+            blocks: tab.threads(on: shown).map { threadBlocks(for: $0, onFileAt: file.path, in: tab) } ?? [],
+            commentable: tab.commentableAnchors(of: file), onComment: { anchor in tab.startComment(at: anchor) }
         )
         // Read when shown, so the lines after the last hunk can be offered as well.
         .task(id: "\(tab.shownCommit ?? "")\0\(file.path)") { await tab.readContext(of: file) }
