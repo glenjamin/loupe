@@ -138,8 +138,10 @@ struct PullRequestHeader: View {
                     SelfReviewedBadge(isSelfReviewed: tab.isSelfReviewed)
                     Text(pullRequest.title)
                         .font(.title3)
-                        .lineLimit(2)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                         .textSelection(.enabled)
+                        .help(pullRequest.title)
                 }
                 HStack(spacing: 10) {
                     if let author = pullRequest.author {
