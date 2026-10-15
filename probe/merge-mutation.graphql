@@ -1,0 +1,5 @@
+# Never run: it merges the PR. Only merge commits are made, so mergeMethod is always MERGE.
+# variables: {"input": {"pullRequestId": "PR_…", "mergeMethod": "MERGE", "expectedHeadOid": "<headRefOid>"}}
+mutation($input: MergePullRequestInput!) {
+  mergePullRequest(input: $input) { pullRequest { id state } }
+}

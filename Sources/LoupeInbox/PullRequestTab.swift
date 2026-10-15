@@ -35,6 +35,10 @@ public final class PullRequestTab: Identifiable {
     public var isPickingCommit = false
     /// Why GitHub refused the last request for a review, until another is made.
     public private(set) var reviewRequestError: String?
+    /// Whether a merge is on its way to GitHub.
+    public private(set) var isMerging = false
+    /// Why GitHub refused the last merge, until another is tried.
+    public private(set) var mergeError: String?
     /// Its markdown files as GitHub renders them, and which are shown so.
     public let markdown: MarkdownPreviews
     /// The description being edited, shown in place of the conversation, or nil when it isn't.
@@ -369,12 +373,40 @@ public final class PullRequestTab: Identifiable {
         await refreshConversation()
     }
 
+    /// Whether the PR can be merged from here, offered only on the viewer's own PRs: nil on
+    /// anyone else's, and once it's merged or closed.
+    public var mergeReadiness: MergeReadiness? {
+        guard isViewersOwn else { return nil }
+        return MergeReadiness(pullRequest)
+    }
+
+    /// Merges the PR with a merge commit, provided its head is still the one last looked up,
+    /// then looks it up again so it shows as merged everywhere. A refusal is kept to show.
+    public func merge() async {
+        let pullRequest = pullRequest
+        guard !isMerging, mergeReadiness == .ready, let head = pullRequest.headRefOid else { return }
+        isMerging = true
+        defer { isMerging = false }
+        mergeError = nil
+        do {
+            try await client.mergePullRequest(id: id, expectedHeadOid: head)
+        } catch {
+            mergeError = "Couldn't merge: \(error.localizedDescription)"
+            return
+        }
+        do {
+            try await lists.checkForChanges(to: [id])
+        } catch {
+            log("Couldn't look up \(title) after merging it: \(error.localizedDescription)")
+        }
+    }
+
     /// The signed-in user's login, once known.
     public var viewer: String? { viewerLogin }
 
     /// Whether the viewer can edit the description, which is only offered on their own PRs.
     public var canEditDescription: Bool {
-        viewerLogin != nil && pullRequest.author == viewerLogin
+        isViewersOwn
     }
 
     /// Opens the description's editor with the description as it is on GitHub now, unless it's
@@ -467,6 +499,10 @@ public final class PullRequestTab: Identifiable {
         } catch {
             log("Couldn't read the viewer's login: \(error)")
         }
+    }
+
+    private var isViewersOwn: Bool {
+        viewerLogin != nil && pullRequest.author == viewerLogin
     }
 
     /// The range of the changes shown, once the PR's diff is ready.

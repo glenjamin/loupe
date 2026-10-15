@@ -25,6 +25,9 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     /// Nil until looked up by id, as asking the searches for it takes them past GitHub's time
     /// limit. `.unknown` while GitHub is still working it out.
     public let mergeable: MergeableState?
+    /// GitHub's verdict on whether the PR can be merged now, as its merge box shows it. Nil
+    /// until looked up by id, as `mergeable` is.
+    public let mergeStateStatus: MergeStateStatus?
     public let updatedAt: Date
     public let headRefName: String
     public let baseRefName: String
@@ -53,6 +56,7 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         checks: CheckState?,
         checkContexts: [CheckContext] = [],
         mergeable: MergeableState? = nil,
+        mergeStateStatus: MergeStateStatus? = nil,
         updatedAt: Date,
         headRefName: String,
         baseRefName: String,
@@ -76,6 +80,7 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.checks = checks
         self.checkContexts = checkContexts
         self.mergeable = mergeable
+        self.mergeStateStatus = mergeStateStatus
         self.updatedAt = updatedAt
         self.headRefName = headRefName
         self.baseRefName = baseRefName
@@ -87,18 +92,23 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     }
 }
 
-/// What a PR's lookup by id says of its head commit: its checks, overall and one by one, and
-/// whether it merges cleanly.
+/// What a PR's lookup by id says of its head commit: its checks, overall and one by one,
+/// whether it merges cleanly, whether it can be merged now and its review decision.
 public struct PullRequestStatus: Sendable, Equatable {
     /// Nil when the head commit has no statuses or check runs.
     public let checks: CheckState?
     public let checkContexts: [CheckContext]
     public let mergeable: MergeableState
+    public let mergeStateStatus: MergeStateStatus
+    /// Nil when the base branch doesn't require reviews.
+    public let reviewDecision: ReviewDecision?
 
-    public init(checks: CheckState?, checkContexts: [CheckContext], mergeable: MergeableState) {
+    public init(checks: CheckState?, checkContexts: [CheckContext], mergeable: MergeableState, mergeStateStatus: MergeStateStatus, reviewDecision: ReviewDecision?) {
         self.checks = checks
         self.checkContexts = checkContexts
         self.mergeable = mergeable
+        self.mergeStateStatus = mergeStateStatus
+        self.reviewDecision = reviewDecision
     }
 }
 
@@ -169,6 +179,24 @@ public enum CheckState: String, Sendable, LenientEnum {
 public enum MergeableState: String, Sendable, LenientEnum {
     case mergeable = "MERGEABLE"
     case conflicting = "CONFLICTING"
+    case unknown = "UNKNOWN"
+}
+
+/// Whether a PR can be merged now and, if not, broadly why: GitHub's own merge-box verdict,
+/// which weighs branch protection, required checks and reviews. Worked out lazily, like
+/// `mergeable`. GitHub no longer answers `DRAFT`, saying `BLOCKED` for a draft.
+public enum MergeStateStatus: String, Sendable, LenientEnum {
+    case clean = "CLEAN"
+    /// Mergeable, with pre-receive hooks to pass.
+    case hasHooks = "HAS_HOOKS"
+    /// Mergeable, though checks that aren't required are failing.
+    case unstable = "UNSTABLE"
+    case blocked = "BLOCKED"
+    /// The head is out of date with its base, which branch protection requires it not to be.
+    case behind = "BEHIND"
+    /// Conflicts with its base.
+    case dirty = "DIRTY"
+    case draft = "DRAFT"
     case unknown = "UNKNOWN"
 }
 

@@ -3,6 +3,8 @@ query($ids: [ID!]!) {
     ... on PullRequest {
       id
       mergeable
+      mergeStateStatus
+      reviewDecision
       commits(last: 1) {
         nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes {
           __typename

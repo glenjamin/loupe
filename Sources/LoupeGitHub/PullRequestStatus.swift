@@ -2,7 +2,8 @@ import Foundation
 import LoupeModel
 
 extension GitHubClient {
-    /// The head commit's checks and whether it merges cleanly, for each PR in `ids`, keyed by id,
+    /// The head commit's checks, whether it merges cleanly, whether it can be merged now and its
+    /// review decision, for each PR in `ids`, keyed by id,
     /// looked up by id in batches small enough to stay well inside GitHub's time limit. PRs
     /// GitHub no longer has (or no longer shows the user) are left out.
     public func statuses(ofPullRequests ids: [String]) async throws -> [String: PullRequestStatus] {
@@ -15,7 +16,9 @@ extension GitHubClient {
                 statuses[node.id] = PullRequestStatus(
                     checks: rollup?.state,
                     checkContexts: rollup?.contexts.nodes.compactMap(\.check) ?? [],
-                    mergeable: node.mergeable
+                    mergeable: node.mergeable,
+                    mergeStateStatus: node.mergeStateStatus,
+                    reviewDecision: node.reviewDecision
                 )
             }
         }
@@ -31,6 +34,8 @@ extension GitHubClient {
             ... on PullRequest {
               id
               mergeable
+              mergeStateStatus
+              reviewDecision
               commits(last: 1) {
                 nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { \(checkContextFields) } } } } }
               }
@@ -81,6 +86,8 @@ private struct StatusResponse: Decodable {
     struct Node: Decodable {
         let id: String
         let mergeable: MergeableState
+        let mergeStateStatus: MergeStateStatus
+        let reviewDecision: ReviewDecision?
         let commits: SearchPageResponse.Connection<CommitNode>
     }
 

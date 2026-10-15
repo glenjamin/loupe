@@ -41,6 +41,8 @@ actor FakeGitHub: HTTPTransport {
     private var notified: [String: Date] = [:]
     /// What `X-Poll-Interval` says, or nil to leave it out.
     private var pollInterval: Int? = 60
+    /// The input of every `mergePullRequest` received, in order.
+    private(set) var mergesReceived: [MergeInput] = []
     /// The status notifications are refused with, as for a token without access to them.
     private var notificationsRefusal: Int?
     /// The status of each notifications poll, in order.
@@ -62,6 +64,7 @@ actor FakeGitHub: HTTPTransport {
             let status = statuses.first { $0?.id == all[index].id } ?? nil
             all[index].checkContexts = status?.commits.nodes.first?.commit.statusCheckRollup?.contexts.nodes ?? []
             all[index].mergeable = status?.mergeable ?? "UNKNOWN"
+            all[index].mergeStateStatus = status?.mergeStateStatus ?? "UNKNOWN"
         }
         pullRequests = reversed ? all.reversed() : all
         self.viewerTeams = viewerTeams
@@ -104,6 +107,19 @@ actor FakeGitHub: HTTPTransport {
         let index = try #require(pullRequests.firstIndex { $0.id == id })
         pullRequests[index].commits.nodes[0].commit.statusCheckRollup = .init(state: state)
         pullRequests[index].checkContexts = contexts
+    }
+
+    /// Sets whether the PR with `id` merges cleanly and can be merged now, which GitHub works
+    /// out in the background and doesn't record as an update to the PR.
+    func setMergeState(of id: String, _ state: String, mergeable: String = "MERGEABLE") throws {
+        let index = try #require(pullRequests.firstIndex { $0.id == id })
+        pullRequests[index].mergeStateStatus = state
+        pullRequests[index].mergeable = mergeable
+    }
+
+    /// The PR's head as GitHub has it now.
+    func head(of id: String) throws -> String {
+        try #require(pullRequests.first { $0.id == id }).headRefOid
     }
 
     func setPollInterval(_ seconds: Int?) {
@@ -154,6 +170,9 @@ actor FakeGitHub: HTTPTransport {
         }
 
         let body = try JSONDecoder().decode(GraphQLRequest.self, from: try #require(request.httpBody))
+        if body.query.contains("mergePullRequest(") {
+            return (try mergePullRequest(try #require(body.variables.input)), httpResponse(url, status: 200))
+        }
         let response: any Encodable = if let ids = body.variables.ids, body.query.contains("contexts") {
             try statuses(ids)
         } else if let ids = body.variables.ids, body.query.contains("reviewRequests") {
@@ -230,9 +249,36 @@ actor FakeGitHub: HTTPTransport {
         return Envelope(data: StatusPayload(nodes: ids.map { id in
             pullRequests.first { $0.id == id }.map { pullRequest in
                 let rollup = pullRequest.commits.nodes.first?.commit.statusCheckRollup.map { StatusPayload.Rollup(state: $0.state, contexts: .init(nodes: pullRequest.checkContexts)) }
-                return StatusPayload.Node(id: id, mergeable: pullRequest.mergeable, commits: .init(nodes: [.init(commit: .init(statusCheckRollup: rollup))]))
+                return StatusPayload.Node(
+                    id: id, mergeable: pullRequest.mergeable, mergeStateStatus: pullRequest.mergeStateStatus, reviewDecision: pullRequest.reviewDecision,
+                    commits: .init(nodes: [.init(commit: .init(statusCheckRollup: rollup))])
+                )
             }
         }))
+    }
+
+    /// Merges the PR as GitHub does, refusing as it does when the head has moved from the one
+    /// expected or GitHub's merge box wouldn't allow it, in the shape of its `UNPROCESSABLE`
+    /// errors.
+    private func mergePullRequest(_ input: MergeInput) throws -> Data {
+        mergesReceived.append(input)
+        func refusal(_ type: String, _ message: String) throws -> Data {
+            try JSONSerialization.data(withJSONObject: [
+                "data": ["mergePullRequest": NSNull()],
+                "errors": [["type": type, "path": ["mergePullRequest"], "locations": [["line": 2, "column": 3]], "message": message]],
+            ])
+        }
+        guard let pullRequest = pullRequests.first(where: { $0.id == input.pullRequestId }) else {
+            return try refusal("NOT_FOUND", "Could not resolve to a node with the global id of '\(input.pullRequestId)'")
+        }
+        if let expected = input.expectedHeadOid, expected != pullRequest.headRefOid {
+            return try refusal("UNPROCESSABLE", "Head branch was modified. Review and try the merge again.")
+        }
+        guard pullRequest.state == "OPEN", ["CLEAN", "HAS_HOOKS", "UNSTABLE"].contains(pullRequest.mergeStateStatus) else {
+            return try refusal("UNPROCESSABLE", "Pull Request is not mergeable")
+        }
+        try merge(input.pullRequestId)
+        return try JSONSerialization.data(withJSONObject: ["data": ["mergePullRequest": ["pullRequest": ["id": input.pullRequestId, "state": "MERGED"]]]])
     }
 
     private func viewer(_ query: String) throws -> Envelope<[String: [String: String]]> {
@@ -300,9 +346,11 @@ struct FakePullRequest: Codable, Sendable {
     var comments: Count
     var reviewThreads: Count
     var requestedReviewers: [Reviewer] = []
-    /// The head commit's checks and whether it merges cleanly, which only a lookup by id asks for.
+    /// The head commit's checks, whether it merges cleanly and whether it can be merged now,
+    /// which only a lookup by id asks for.
     var checkContexts: [FakeCheckContext] = []
     var mergeable = "UNKNOWN"
+    var mergeStateStatus = "UNKNOWN"
 
     enum Reviewer: Sendable {
         case user(String)
@@ -449,9 +497,12 @@ private struct StatusProbe: Decodable {
 private struct StatusPayload: Codable {
     let nodes: [Node?]
 
+    /// The probe predates asking for the merge state and review decision.
     struct Node: Codable {
         let id: String
         let mergeable: String
+        let mergeStateStatus: String?
+        let reviewDecision: String?
         let commits: Connection<CommitNode>
     }
 
@@ -474,7 +525,15 @@ private struct GraphQLRequest: Decodable {
         let first: Int?
         let after: String?
         let ids: [String]?
+        let input: MergeInput?
     }
+}
+
+/// What a `mergePullRequest` asked for.
+struct MergeInput: Codable, Equatable {
+    let pullRequestId: String
+    let mergeMethod: String?
+    let expectedHeadOid: String?
 }
 
 private struct Envelope<Payload: Encodable>: Encodable {
