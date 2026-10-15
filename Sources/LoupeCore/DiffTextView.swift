@@ -11,6 +11,8 @@ public final class DiffTextView: NSTextView {
     /// The row to hold still on screen when the clicked expansion arrives, and how far below
     /// the top of the view it was.
     private var heldRow: (row: HeldRow, offset: CGFloat)?
+    /// Views laid over the rows held for blocks, by block id.
+    private var blockViews: [String: NSView] = [:]
 
     /// Soft-wraps long rows at the view's width; off, rows run on and the view scrolls sideways.
     public var wrapsLines = true {
@@ -69,6 +71,7 @@ public final class DiffTextView: NSTextView {
         } else {
             scroll(keepingPlace ? visible.origin : .zero)
         }
+        layoutBlocks()
         guard let plan = rendered.syntax else { return }
         if rendered.rowStarts.count <= inlineHighlightRows {
             applyHighlights(plan.runs())
@@ -83,6 +86,46 @@ public final class DiffTextView: NSTextView {
         guard let layoutManager else { return }
         for run in runs {
             layoutManager.addTemporaryAttribute(.foregroundColor, value: run.style.color, forCharacterRange: run.range)
+        }
+    }
+
+    /// Lays `views` over the rows the shown diff holds for blocks, by block id, replacing any
+    /// laid there before.
+    public func setBlockViews(_ views: [String: NSView]) {
+        for (id, view) in blockViews where views[id] !== view {
+            view.removeFromSuperview()
+        }
+        for view in views.values where view.superview !== self {
+            addSubview(view)
+        }
+        blockViews = views
+        layoutBlocks()
+    }
+
+    /// Makes a block's row as tall as its view now needs, which moves everything below it.
+    public func setHeight(_ height: CGFloat, ofBlock id: String) {
+        guard let textStorage, let range = rendered?.range(ofBlock: id), NSMaxRange(range) <= textStorage.length else { return }
+        let current = textStorage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+        guard current?.minimumLineHeight != max(1, height) else { return }
+        textStorage.addAttribute(.paragraphStyle, value: RenderedDiff.blockParagraphStyle(height: height), range: range)
+        layoutBlocks()
+    }
+
+    /// Places each block's view over its row, across the visible width so it stays in view when
+    /// rows run on sideways. Everything above a block is laid out to find where it falls.
+    public func layoutBlocks() {
+        guard let layoutManager, let rendered, let textStorage else { return }
+        let visible = visibleRect.width > 0 ? visibleRect : bounds
+        for (id, view) in blockViews {
+            guard let range = rendered.range(ofBlock: id), NSMaxRange(range) <= textStorage.length else {
+                view.isHidden = true
+                continue
+            }
+            layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: NSMaxRange(range)))
+            let fragment = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: range.location), effectiveRange: nil)
+            let frame = NSRect(x: visible.minX, y: fragment.minY + textContainerOrigin.y, width: visible.width, height: fragment.height)
+            view.isHidden = false
+            if view.frame != frame { view.frame = frame }
         }
     }
 

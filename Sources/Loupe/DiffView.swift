@@ -6,6 +6,7 @@ import SwiftUI
 /// reports its comment anchor. A PR's file also has a "Reviewed" checkbox, and ends in a footer
 /// that marks it reviewed and moves on. A PR's markdown file can be shown rendered instead.
 /// With `expandable`, hunk headers have arrows that ask for more of the file around them.
+/// `blocks` are views laid between rows, such as review threads.
 struct DiffView: View {
     let file: FileDiff
     let onAnchorClick: (DiffAnchor) -> Void
@@ -13,6 +14,7 @@ struct DiffView: View {
     var markdown: MarkdownPreview?
     var expandable: ExpandableContext?
     var onExpand: (ContextExpansion) -> Void = { _ in }
+    var blocks: [DiffBlockContent] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,7 +22,7 @@ struct DiffView: View {
             Divider()
             // The rendering covers the diff rather than replacing it, so the diff keeps its place.
             ZStack {
-                DiffTextScrollView(file: file, onAnchorClick: onAnchorClick, review: review, expandable: expandable, onExpand: onExpand)
+                DiffTextScrollView(file: file, onAnchorClick: onAnchorClick, review: review, expandable: expandable, onExpand: onExpand, blocks: blocks)
                 if let markdown, markdown.isRendered {
                     RenderedMarkdownView(preview: markdown)
                 }
@@ -120,6 +122,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
     let review: FileReview?
     let expandable: ExpandableContext?
     let onExpand: (ContextExpansion) -> Void
+    let blocks: [DiffBlockContent]
     @AppStorage(DiffSettings.wrapLinesKey) var wrapLines = DiffSettings.wrapLinesDefault
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -156,13 +159,15 @@ private struct DiffTextScrollView: NSViewRepresentable {
         scroll.hasHorizontalScroller = !wrapLines
         coordinator.textView.wrapsLines = wrapLines
         // The same file shown anew, as when more of it is revealed, keeps the reader's place.
-        let shown = ShownDiff(path: file.path, headers: file.hunks.map(\.header), expandable: expandable)
+        let shown = ShownDiff(path: file.path, headers: file.hunks.map(\.header), expandable: expandable, blocks: blocks.map(\.id))
         if coordinator.shown != shown {
             let isSameFile = coordinator.shown?.path == file.path
             coordinator.shown = shown
             if !isSameFile { coordinator.pull(.cancelled) }
-            coordinator.textView.show(RenderedDiff(file: file, expandable: expandable), keepingPlace: isSameFile)
+            let sized = blocks.map { DiffBlock(id: $0.id, placement: $0.placement, height: coordinator.blockHeights[$0.id] ?? Coordinator.estimatedBlockHeight) }
+            coordinator.textView.show(RenderedDiff(file: file, expandable: expandable, blocks: sized), keepingPlace: isSameFile)
         }
+        coordinator.showBlocks(blocks)
         coordinator.footer.isHidden = review == nil
         coordinator.hint.isHidden = review == nil
         coordinator.layoutFooter()
@@ -192,19 +197,63 @@ private struct DiffTextScrollView: NSViewRepresentable {
             view.sizingOptions = []
             return view
         }()
+        /// How tall a block is taken to be until its view has measured itself.
+        static let estimatedBlockHeight: CGFloat = 80
+
+        /// Each block's height as its view last measured itself, so showing it again starts right.
+        var blockHeights: [String: CGFloat] = [:]
+        private var blockViews: [String: NSHostingView<DiffBlockRoot>] = [:]
         private var trigger = OverscrollTrigger()
         private weak var scroll: NSScrollView?
         private var observers: [any NSObjectProtocol] = []
+
+        /// Lays each block's view over the row held for it, reusing the view a block had, so
+        /// what's open in it stays open.
+        func showBlocks(_ blocks: [DiffBlockContent]) {
+            var views: [String: NSHostingView<DiffBlockRoot>] = [:]
+            for block in blocks {
+                let id = block.id
+                let root = DiffBlockRoot(content: block.view) { [weak self] height in
+                    // Measured while SwiftUI lays the view out, so the row changes after.
+                    DispatchQueue.main.async { self?.blockMeasured(height, id: id) }
+                }
+                if let view = blockViews[id] {
+                    view.rootView = root
+                    views[id] = view
+                } else {
+                    let view = NSHostingView(rootView: root)
+                    view.sizingOptions = []
+                    views[id] = view
+                }
+            }
+            blockViews = views
+            textView.setBlockViews(views)
+            layoutFooter()
+        }
+
+        private func blockMeasured(_ height: CGFloat, id: String) {
+            let height = ceil(height)
+            guard height > 0, blockViews[id] != nil, blockHeights[id] != height else { return }
+            blockHeights[id] = height
+            textView.setHeight(height, ofBlock: id)
+            layoutFooter()
+        }
 
         func observe(_ scroll: NSScrollView) {
             self.scroll = scroll
             let center = NotificationCenter.default
             observers = [
                 center.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.layoutFooter() }
+                    MainActor.assumeIsolated {
+                        self?.textView.layoutBlocks()
+                        self?.layoutFooter()
+                    }
                 },
                 center.addObserver(forName: NSView.frameDidChangeNotification, object: textView, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.layoutFooter() }
+                    MainActor.assumeIsolated {
+                        self?.textView.layoutBlocks()
+                        self?.layoutFooter()
+                    }
                 },
             ]
         }
@@ -422,4 +471,39 @@ private struct ShownDiff: Equatable {
     let path: String
     let headers: [String]
     let expandable: ExpandableContext?
+    /// The ids of the blocks laid between rows, which say where each goes.
+    let blocks: [String]
+}
+
+/// A view to lay between a diff's rows, such as the review threads on a line. Its id names it
+/// across updates and says where it goes, so a block that moves takes a new id.
+struct DiffBlockContent {
+    let id: String
+    let placement: DiffBlock.Placement
+    let view: AnyView
+}
+
+/// A block's view, at its natural height for the width it's given, reporting that height so
+/// the row under it can be made to match.
+struct DiffBlockRoot: View {
+    let content: AnyView
+    let onHeight: (CGFloat) -> Void
+
+    var body: some View {
+        content
+            .fixedSize(horizontal: false, vertical: true)
+            .background(GeometryReader { geometry in
+                Color.clear.preference(key: BlockHeightKey.self, value: geometry.size.height)
+            })
+            .onPreferenceChange(BlockHeightKey.self) { height in onHeight(height) }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct BlockHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
 }

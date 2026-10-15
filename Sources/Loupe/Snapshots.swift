@@ -142,6 +142,24 @@ enum SnapshotRun {
                     print("\(file.path) now shows \(tab.expandedFile(file).hunks.map(\.header).joined(separator: " | "))")
                 }
             }
+            // Review threads come with the conversation, so a diff waits for it to show them.
+            await wait(until: deadline) { tabs.tabs.allSatisfy(\.isConversationSettled) }
+            // LOUPE_SNAPSHOT_OPEN_RESOLVED=1 opens every resolved thread, as clicking each would.
+            if environment["LOUPE_SNAPSHOT_OPEN_RESOLVED"] == "1" {
+                for tab in tabs.tabs {
+                    tab.threadActivity.expanded.formUnion(tab.conversation?.threads.filter(\.isResolved).map(\.id) ?? [])
+                }
+            }
+            // LOUPE_SNAPSHOT_THREAD=<n> scrolls each shown diff to its nth block of threads (from
+            // 1, in the order they come down the diff), once they've measured themselves.
+            if let wanted = environment["LOUPE_SNAPSHOT_THREAD"].flatMap(Int.init) {
+                for tab in tabs.tabs {
+                    windows.select(tab.id)
+                    try? await Task.sleep(for: .milliseconds(800))
+                    if let window = windows.mainWindow { scrollToThreads(wanted - 1, in: window) }
+                }
+                windows.select(tabs.selected)
+            }
             // LOUPE_SNAPSHOT_CLICK_FOOTER=1 clicks the footer's button at the end of each shown
             // diff, to see that a real click on it marks the file reviewed and moves on.
             if ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_CLICK_FOOTER"] == "1" {
@@ -254,6 +272,21 @@ enum SnapshotRun {
         print("clicking \(glyph) on hunk \(hunk + 1)'s header at \(point) in the window hits \(hit.map { String(describing: type(of: $0)) } ?? "nothing")")
         guard let event = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
         window.sendEvent(event)
+    }
+
+    /// Scrolls the shown diff so its nth block of threads is a little way down the view,
+    /// printing where each block's row is.
+    private static func scrollToThreads(_ index: Int, in window: NSWindow) {
+        guard let root = window.contentView,
+              let textView = descendants(of: root).lazy.compactMap({ $0 as? DiffTextView }).first(where: { !$0.isHiddenOrHasHiddenAncestor }),
+              let rendered = textView.rendered, let layoutManager = textView.layoutManager
+        else { return }
+        let blocks = rendered.blockRows.sorted { $0.value < $1.value }
+        print("thread blocks: \(blocks.map { "\($0.key) at row \($0.value)" }.joined(separator: ", "))")
+        guard blocks.indices.contains(index), let range = rendered.range(ofBlock: blocks[index].key) else { return }
+        layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: NSMaxRange(range)))
+        let fragment = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: range.location), effectiveRange: nil)
+        textView.scroll(NSPoint(x: 0, y: max(0, fragment.minY + textView.textContainerOrigin.y - 100)))
     }
 
     /// Reveals every unchanged line of the file, closing each gap from the bottom up.

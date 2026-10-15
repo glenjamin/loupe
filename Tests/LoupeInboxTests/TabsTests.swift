@@ -415,10 +415,6 @@ private final class ShowRecorder {
 }
 
 private extension PullRequestTab {
-    var ready: ReviewDiff? {
-        if case let .ready(diff) = phase { diff } else { nil }
-    }
-
     /// The changes shown, once diffed.
     var shown: ReviewChanges? {
         if case let .ready(changes)? = shownChanges { changes } else { nil }

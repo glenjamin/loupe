@@ -20,7 +20,7 @@ extension PullRequestStore {
                     item.timelineItem(comments: comments[item.id] ?? [])
                 },
                 threads: try ReviewThreadRow.filter(byPR).order(Column("position")).fetchAll(db).map { thread in
-                    ReviewThread(id: thread.id, isResolved: thread.isResolved, isOutdated: thread.isOutdated, path: thread.path, line: thread.line, comments: (threadComments[thread.id] ?? []).map(\.comment))
+                    thread.thread(comments: (threadComments[thread.id] ?? []).map(\.comment))
                 },
                 checks: try CheckContextRow.filter(byPR).order(Column("position")).fetchAll(db).map { check in
                     CheckContext(name: check.name, status: CheckStatus(rawValue: check.status) ?? .neutral, description: check.description, url: check.url)
@@ -53,12 +53,7 @@ extension PullRequestStore {
                     try ReviewCommentRow(comment, reviewId: item.id, pullRequestId: pullRequestId, position: position).insert(db)
                 }
             }
-            for (position, thread) in conversation.threads.enumerated() {
-                try ReviewThreadRow(pullRequestId: pullRequestId, id: thread.id, position: position, isResolved: thread.isResolved, isOutdated: thread.isOutdated, path: thread.path, line: thread.line).insert(db)
-                for (position, comment) in thread.comments.enumerated() {
-                    try ThreadCommentRow(comment, threadId: thread.id, pullRequestId: pullRequestId, position: position).insert(db)
-                }
-            }
+            try insertThreads(conversation.threads, of: pullRequestId, in: db)
             for (position, check) in conversation.checks.enumerated() {
                 try CheckContextRow(pullRequestId: pullRequestId, position: position, name: check.name, status: check.status.rawValue, description: check.description, url: check.url).insert(db)
             }
@@ -71,6 +66,29 @@ extension PullRequestStore {
                 row.submittedAt = review.submittedAt
                 try row.insert(db)
             }
+        }
+    }
+}
+
+extension PullRequestStore {
+    /// Makes the stored conversation's review threads exactly `threads`, as when only they have
+    /// been fetched again. Does nothing if no conversation is stored for the PR.
+    public func replaceThreads(of pullRequestId: String, with threads: [ReviewThread]) async throws {
+        try await database.write { db in
+            guard try ConversationRow.exists(db, key: pullRequestId) else { return }
+            for table in ["reviewThread", "threadComment"] {
+                try db.execute(sql: "DELETE FROM \(table) WHERE pullRequestId = ?", arguments: [pullRequestId])
+            }
+            try insertThreads(threads, of: pullRequestId, in: db)
+        }
+    }
+}
+
+private func insertThreads(_ threads: [ReviewThread], of pullRequestId: String, in db: Database) throws {
+    for (position, thread) in threads.enumerated() {
+        try ReviewThreadRow(thread, pullRequestId: pullRequestId, position: position).insert(db)
+        for (position, comment) in thread.comments.enumerated() {
+            try ThreadCommentRow(comment, threadId: thread.id, pullRequestId: pullRequestId, position: position).insert(db)
         }
     }
 }
@@ -211,6 +229,45 @@ private struct ReviewThreadRow: Codable, FetchableRecord, PersistableRecord {
     let isOutdated: Bool
     let path: String
     let line: Int?
+    let startLine: Int?
+    let side: String
+    let originalLine: Int?
+    let originalStartLine: Int?
+    let isOnFile: Bool
+    let diffHunk: String
+    let resolvedBy: String?
+    let viewerCanReply: Bool
+    let viewerCanResolve: Bool
+    let viewerCanUnresolve: Bool
+
+    init(_ thread: ReviewThread, pullRequestId: String, position: Int) {
+        self.pullRequestId = pullRequestId
+        id = thread.id
+        self.position = position
+        isResolved = thread.isResolved
+        isOutdated = thread.isOutdated
+        path = thread.path
+        line = thread.line
+        startLine = thread.startLine
+        side = thread.side.rawValue
+        originalLine = thread.originalLine
+        originalStartLine = thread.originalStartLine
+        isOnFile = thread.isOnFile
+        diffHunk = thread.diffHunk
+        resolvedBy = thread.resolvedBy
+        viewerCanReply = thread.viewerCanReply
+        viewerCanResolve = thread.viewerCanResolve
+        viewerCanUnresolve = thread.viewerCanUnresolve
+    }
+
+    func thread(comments: [ThreadComment]) -> ReviewThread {
+        ReviewThread(
+            id: id, isResolved: isResolved, isOutdated: isOutdated, path: path, line: line, startLine: startLine,
+            side: ReviewThread.Side(rawValue: side) ?? .right, originalLine: originalLine, originalStartLine: originalStartLine,
+            isOnFile: isOnFile, diffHunk: diffHunk, resolvedBy: resolvedBy, viewerCanReply: viewerCanReply,
+            viewerCanResolve: viewerCanResolve, viewerCanUnresolve: viewerCanUnresolve, comments: comments
+        )
+    }
 }
 
 private struct ThreadCommentRow: Codable, FetchableRecord, PersistableRecord {
@@ -220,26 +277,30 @@ private struct ThreadCommentRow: Codable, FetchableRecord, PersistableRecord {
     let id: String
     let threadId: String
     let position: Int
+    let databaseId: Int?
     let authorLogin: String?
     let authorAvatarUrl: String?
     let createdAt: Date
     let bodyHTML: String
     let isMinimized: Bool
+    let minimizedReason: String?
 
     init(_ comment: ThreadComment, threadId: String, pullRequestId: String, position: Int) {
         self.pullRequestId = pullRequestId
         id = comment.id
         self.threadId = threadId
         self.position = position
+        databaseId = comment.databaseId
         authorLogin = comment.author?.login
         authorAvatarUrl = comment.author?.avatarURL
         createdAt = comment.createdAt
         bodyHTML = comment.bodyHTML
         isMinimized = comment.isMinimized
+        minimizedReason = comment.minimizedReason
     }
 
     var comment: ThreadComment {
-        ThreadComment(id: id, author: participant(authorLogin, authorAvatarUrl), createdAt: createdAt, bodyHTML: bodyHTML, isMinimized: isMinimized)
+        ThreadComment(id: id, databaseId: databaseId, author: participant(authorLogin, authorAvatarUrl), createdAt: createdAt, bodyHTML: bodyHTML, isMinimized: isMinimized, minimizedReason: minimizedReason)
     }
 }
 

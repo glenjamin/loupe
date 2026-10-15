@@ -25,7 +25,7 @@ public final class PullRequestTab: Identifiable {
     /// conversation, which says what it's for before its changes do.
     public var section = ReviewSection.conversation
     /// The PR's conversation: as stored when the tab opened, then as GitHub says once asked.
-    public private(set) var conversation: Conversation?
+    public internal(set) var conversation: Conversation?
     /// Why the conversation couldn't be fetched last time it was asked for.
     public private(set) var conversationError: String?
     public private(set) var isFetchingConversation = false
@@ -41,6 +41,8 @@ public final class PullRequestTab: Identifiable {
     public private(set) var descriptionEditor: DescriptionEditor?
     /// The unchanged lines revealed around each file's hunks.
     public let contextExpansions: ContextExpansions
+    /// What's been opened up among the review threads.
+    public let threadActivity = ThreadActivity()
 
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
@@ -366,6 +368,9 @@ public final class PullRequestTab: Identifiable {
         }
         await refreshConversation()
     }
+
+    /// The signed-in user's login, once known.
+    public var viewer: String? { viewerLogin }
 
     /// Whether the viewer can edit the description, which is only offered on their own PRs.
     public var canEditDescription: Bool {

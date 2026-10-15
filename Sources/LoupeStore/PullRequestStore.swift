@@ -350,6 +350,27 @@ public struct PullRequestStore: Sendable {
                 t.primaryKey(["pullRequestId", "path"])
             }
         }
+        // Where each review thread is in the diff and what the viewer may do with it, and each
+        // thread comment's REST id. A conversation stored before has them empty until it's
+        // next fetched, so its threads stay where they were placed and offer no actions.
+        migrator.registerMigration("Review thread anchoring") { db in
+            try db.alter(table: "reviewThread") { t in
+                t.add(column: "startLine", .integer)
+                t.add(column: "side", .text).notNull().defaults(to: "RIGHT")
+                t.add(column: "originalLine", .integer)
+                t.add(column: "originalStartLine", .integer)
+                t.add(column: "isOnFile", .boolean).notNull().defaults(to: false)
+                t.add(column: "diffHunk", .text).notNull().defaults(to: "")
+                t.add(column: "resolvedBy", .text)
+                t.add(column: "viewerCanReply", .boolean).notNull().defaults(to: false)
+                t.add(column: "viewerCanResolve", .boolean).notNull().defaults(to: false)
+                t.add(column: "viewerCanUnresolve", .boolean).notNull().defaults(to: false)
+            }
+            try db.alter(table: "threadComment") { t in
+                t.add(column: "databaseId", .integer)
+                t.add(column: "minimizedReason", .text)
+            }
+        }
         return migrator
     }
 

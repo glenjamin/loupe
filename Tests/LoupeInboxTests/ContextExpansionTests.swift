@@ -107,14 +107,3 @@ private struct ExpansionApp {
         return tab
     }
 }
-
-private extension PullRequestTab {
-    func file(_ path: String) -> FileDiff? {
-        guard case let .ready(changes)? = shownChanges else { return nil }
-        return changes.files.first { $0.path == path }
-    }
-
-    var ready: ReviewDiff? {
-        if case let .ready(diff) = phase { diff } else { nil }
-    }
-}

@@ -1,0 +1,17 @@
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+      headRefOid
+      reviewThreads(first: 100) { nodes { ...ReviewThread } }
+    }
+  }
+}
+
+fragment ReviewThread on PullRequestReviewThread {
+  id isResolved isOutdated path line startLine diffSide startDiffSide originalLine originalStartLine subjectType
+  viewerCanReply viewerCanResolve viewerCanUnresolve
+  resolvedBy { login }
+  firstComment: comments(first: 1) { nodes { diffHunk } }
+  comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason author { login avatarUrl } } }
+}

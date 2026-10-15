@@ -162,11 +162,13 @@ struct FileRow: View {
     let path: String
     let counts: (additions: Int, deletions: Int)?
     let change: FileDiff.Change
+    var unresolvedThreads = 0
 
-    init(file: FileDiff) {
+    init(file: FileDiff, unresolvedThreads: Int = 0) {
         path = file.path
         counts = (file.additions, file.deletions)
         change = file.change
+        self.unresolvedThreads = unresolvedThreads
     }
 
     init(file: ChangedFile, diff: FileDiff?) {
@@ -177,7 +179,10 @@ struct FileRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(verbatim: (path as NSString).lastPathComponent).lineLimit(1)
+            HStack(spacing: 6) {
+                Text(verbatim: (path as NSString).lastPathComponent).lineLimit(1)
+                UnresolvedThreadCount(count: unresolvedThreads)
+            }
             HStack(spacing: 6) {
                 if let counts {
                     Text(verbatim: "+\(counts.additions)").foregroundStyle(.diffSuccess)

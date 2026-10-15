@@ -28,6 +28,24 @@ extension GitHubClient {
         )
     }
 
+    /// The PR's review threads alone, as after a reply or a change to one, which is much
+    /// cheaper than the whole conversation.
+    public func reviewThreads(ofPullRequest id: String) async throws -> [ReviewThread] {
+        let response: ReviewThreadsResponse = try await query(Self.reviewThreadsQuery, variables: ReviewThreadsVariables(id: id))
+        guard let threads = response.node?.reviewThreads else { throw GitHubError.graphQL(["Pull request \(id) not found"]) }
+        return threads.nodes.map(\.thread)
+    }
+
+    static let reviewThreadsQuery = """
+        query($id: ID!) {
+          node(id: $id) {
+            ... on PullRequest {
+              reviewThreads(first: 100) { nodes { ...ReviewThread } }
+            }
+          }
+        }
+        """ + reviewThreadFragment
+
     static let conversationQuery = """
         query($id: ID!, $after: String) {
           node(id: $id) {
@@ -37,9 +55,7 @@ extension GitHubClient {
               createdAt
               author { login avatarUrl }
               timelineItems(first: 100, after: $after, itemTypes: \(timelineItemTypes)) { ...TimelinePage }
-              reviewThreads(first: 100) {
-                nodes { id isResolved isOutdated path line comments(first: 100) { nodes { id bodyHTML createdAt isMinimized author { login avatarUrl } } } }
-              }
+              reviewThreads(first: 100) { nodes { ...ReviewThread } }
               commits(last: 1) {
                 nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { \(checkContextFields) } } } } }
               }
@@ -48,7 +64,20 @@ extension GitHubClient {
             }
           }
         }
-        """ + timelinePageFragment + reviewerFragment
+        """ + timelinePageFragment + reviewerFragment + reviewThreadFragment
+
+    /// A thread's anchoring, what the viewer may do with it, and its comments. Only the first
+    /// comment's diff hunk is asked for, as replies share it.
+    static let reviewThreadFragment = """
+
+        fragment ReviewThread on PullRequestReviewThread {
+          id isResolved isOutdated path line startLine diffSide startDiffSide originalLine originalStartLine subjectType
+          viewerCanReply viewerCanResolve viewerCanUnresolve
+          resolvedBy { login }
+          firstComment: comments(first: 1) { nodes { diffHunk } }
+          comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason author { login avatarUrl } } }
+        }
+        """
 
     static let timelinePageQuery = """
         query($id: ID!, $after: String) {
@@ -122,7 +151,7 @@ private struct ConversationResponse: Decodable {
         let createdAt: Date
         let author: Author?
         let timelineItems: Timeline
-        let reviewThreads: Connection<Thread>
+        let reviewThreads: Connection<ReviewThreadNode>
         let commits: Connection<CommitNode>
         let reviewRequests: Connection<Request>
         let latestReviews: Connection<Review>
@@ -142,29 +171,6 @@ private struct ConversationResponse: Decodable {
         }
     }
 
-    struct Thread: Decodable {
-        let id: String
-        let isResolved: Bool
-        let isOutdated: Bool
-        let path: String
-        let line: Int?
-        let comments: Connection<Comment>
-
-        var thread: ReviewThread {
-            ReviewThread(id: id, isResolved: isResolved, isOutdated: isOutdated, path: path, line: line, comments: comments.nodes.map {
-                ThreadComment(id: $0.id, author: $0.author?.participant, createdAt: $0.createdAt, bodyHTML: $0.bodyHTML, isMinimized: $0.isMinimized)
-            })
-        }
-    }
-
-    struct Comment: Decodable {
-        let id: String
-        let bodyHTML: String
-        let createdAt: Date
-        let isMinimized: Bool
-        let author: Author?
-    }
-
     struct CommitNode: Decodable {
         let commit: Commit
     }
@@ -175,6 +181,63 @@ private struct ConversationResponse: Decodable {
 
     struct Rollup: Decodable {
         let contexts: Connection<CheckContextNode>
+    }
+}
+
+private struct ReviewThreadsVariables: Encodable, Sendable {
+    let id: String
+}
+
+private struct ReviewThreadsResponse: Decodable {
+    let node: Node?
+
+    struct Node: Decodable {
+        let reviewThreads: Connection<ReviewThreadNode>?
+    }
+}
+
+/// A review thread as the `ReviewThread` fragment returns it.
+private struct ReviewThreadNode: Decodable {
+    let id: String
+    let isResolved: Bool
+    let isOutdated: Bool
+    let path: String
+    let line: Int?
+    let startLine: Int?
+    let diffSide: String?
+    let originalLine: Int?
+    let originalStartLine: Int?
+    let subjectType: String?
+    let viewerCanReply: Bool
+    let viewerCanResolve: Bool
+    let viewerCanUnresolve: Bool
+    let resolvedBy: Login?
+    let firstComment: Connection<Hunk>
+    let comments: Connection<Comment>
+
+    struct Login: Decodable { let login: String }
+    struct Hunk: Decodable { let diffHunk: String }
+
+    struct Comment: Decodable {
+        let id: String
+        let databaseId: Int?
+        let bodyHTML: String
+        let createdAt: Date
+        let isMinimized: Bool
+        let minimizedReason: String?
+        let author: Author?
+    }
+
+    var thread: ReviewThread {
+        ReviewThread(
+            id: id, isResolved: isResolved, isOutdated: isOutdated, path: path, line: line, startLine: startLine,
+            side: diffSide.flatMap(ReviewThread.Side.init) ?? .right, originalLine: originalLine, originalStartLine: originalStartLine,
+            isOnFile: subjectType == "FILE", diffHunk: firstComment.nodes.first?.diffHunk ?? "", resolvedBy: resolvedBy?.login,
+            viewerCanReply: viewerCanReply, viewerCanResolve: viewerCanResolve, viewerCanUnresolve: viewerCanUnresolve,
+            comments: comments.nodes.map {
+                ThreadComment(id: $0.id, databaseId: $0.databaseId, author: $0.author?.participant, createdAt: $0.createdAt, bodyHTML: $0.bodyHTML, isMinimized: $0.isMinimized, minimizedReason: $0.minimizedReason)
+            }
+        )
     }
 }
 

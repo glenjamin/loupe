@@ -282,9 +282,11 @@ struct FileBrowser: View {
     }
 
     private func diffView(_ file: FileDiff) -> some View {
-        DiffView(
-            file: tab.expandedFile(file), onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file), markdown: tab.markdownPreview(of: file),
-            expandable: tab.expandableContext(of: file), onExpand: { expansion in Task { await tab.expandContext(of: file, expansion) } }
+        let shown = tab.expandedFile(file)
+        return DiffView(
+            file: shown, onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file), markdown: tab.markdownPreview(of: file),
+            expandable: tab.expandableContext(of: file), onExpand: { expansion in Task { await tab.expandContext(of: file, expansion) } },
+            blocks: tab.threads(on: shown).map { threadBlocks(for: $0, in: tab) } ?? []
         )
         // Read when shown, so the lines after the last hunk can be offered as well.
         .task(id: "\(tab.shownCommit ?? "")\0\(file.path)") { await tab.readContext(of: file) }
@@ -438,13 +440,13 @@ struct ReviewFileList: View {
             if let changes {
                 Section {
                     ForEach(changes.files) { file in
-                        row(file.path) { FileRow(file: file) }
+                        row(file.path) { FileRow(file: file, unresolvedThreads: tab.unresolvedThreadCount(of: file.path) ?? 0) }
                     }
                 }
                 if !changes.hidden.isEmpty {
                     Section {
                         ForEach(changes.hidden) { file in
-                            row(file.path) { HiddenFileRow(file: file) }
+                            row(file.path) { HiddenFileRow(file: file, unresolvedThreads: tab.unresolvedThreadCount(of: file.path) ?? 0) }
                         }
                     } header: {
                         Text(verbatim: "Vendored, lockfiles and generated (\(changes.hidden.count))")
@@ -483,10 +485,14 @@ struct ReviewFileList: View {
 /// the counts, and its directory, as for the files to review.
 struct HiddenFileRow: View {
     let file: ChangedFile
+    var unresolvedThreads = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(verbatim: (file.path as NSString).lastPathComponent).lineLimit(1)
+            HStack(spacing: 6) {
+                Text(verbatim: (file.path as NSString).lastPathComponent).lineLimit(1)
+                UnresolvedThreadCount(count: unresolvedThreads)
+            }
             HStack(spacing: 6) {
                 if file.isBinary {
                     Text("binary").foregroundStyle(.secondary)
@@ -515,6 +521,23 @@ struct HiddenFileRow: View {
         case .modified: nil
         case .renamed: "renamed"
         case .copied: "copied"
+        }
+    }
+}
+
+/// How many conversations on a file are still open, beside its name; nothing when none are.
+struct UnresolvedThreadCount: View {
+    let count: Int
+
+    var body: some View {
+        if count > 0 {
+            HStack(spacing: 2) {
+                Image(systemName: "bubble.left")
+                Text(verbatim: "\(count)")
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .help(count == 1 ? "1 unresolved conversation" : "\(count) unresolved conversations")
         }
     }
 }

@@ -23,9 +23,7 @@ query($id: ID!, $after: String) {
           ... on ReadyForReviewEvent { id createdAt actor { login avatarUrl } }
         }
       }
-      reviewThreads(first: 100) {
-        nodes { id isResolved isOutdated path line comments(first: 100) { nodes { id bodyHTML createdAt isMinimized author { login avatarUrl } } } }
-      }
+      reviewThreads(first: 100) { nodes { ...ReviewThread } }
       commits(last: 1) {
         nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
           __typename
@@ -44,4 +42,12 @@ fragment Reviewer on Node {
   ... on User { id login name avatarUrl }
   ... on Bot { id login avatarUrl }
   ... on Team { id teamName: name combinedSlug }
+}
+
+fragment ReviewThread on PullRequestReviewThread {
+  id isResolved isOutdated path line startLine diffSide startDiffSide originalLine originalStartLine subjectType
+  viewerCanReply viewerCanResolve viewerCanUnresolve
+  resolvedBy { login }
+  firstComment: comments(first: 1) { nodes { diffHunk } }
+  comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason author { login avatarUrl } } }
 }

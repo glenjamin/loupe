@@ -125,10 +125,3 @@ private struct MarkdownApp {
         return tab
     }
 }
-
-private extension PullRequestTab {
-    func file(_ path: String) -> FileDiff? {
-        guard case let .ready(changes)? = shownChanges else { return nil }
-        return changes.files.first { $0.path == path }
-    }
-}

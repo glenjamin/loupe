@@ -20,6 +20,29 @@ public struct DiffAnchor: Sendable, Equatable, CustomStringConvertible {
 /// What each rendered row is, so the view can paint full-width backgrounds and resolve clicks.
 public enum RowKind: Int, Sendable {
     case context, addition, deletion, hunkHeader
+    /// Empty space held for a view laid over the text, such as a review thread.
+    case block
+}
+
+/// Space in a diff for a view laid over it, such as a review thread under the line it's on.
+public struct DiffBlock: Sendable, Equatable {
+    public enum Placement: Sendable, Equatable {
+        /// Under the row of a line, by its number on one side; LEFT matches a deleted line or
+        /// an unchanged one by its old number. A line not in the diff is placed at the end.
+        case after(side: DiffAnchor.Side, line: Int)
+        /// After the last row.
+        case end
+    }
+
+    public var id: String
+    public var placement: Placement
+    public var height: CGFloat
+
+    public init(id: String, placement: Placement, height: CGFloat) {
+        self.id = id
+        self.placement = placement
+        self.height = height
+    }
 }
 
 public extension NSAttributedString.Key {
@@ -33,6 +56,8 @@ public extension NSAttributedString.Key {
     /// Marks a control in a hunk header's gutter that reveals more of the file, holding the
     /// `ContextExpansion` it asks for.
     static let diffExpansion = NSAttributedString.Key("Loupe.diffExpansion")
+    /// Marks a row held for a `DiffBlock`, holding its id.
+    static let diffBlock = NSAttributedString.Key("Loupe.diffBlock")
 }
 
 /// One file's diff as a single attributed string, with a gutter of old/new line numbers.
@@ -48,10 +73,13 @@ public struct RenderedDiff {
     public let trailingRow: Int?
     /// The file's code, ready to highlight; nil when its language isn't known.
     public let syntax: SyntaxPlan?
+    /// The row held for each block, by the block's id.
+    public let blockRows: [String: Int]
 
     /// With `expandable`, hunk headers carry controls that reveal the unchanged lines around
-    /// them, as GitHub's expand arrows do.
-    public init(file: FileDiff, fontSize: CGFloat = 12, expandable: ExpandableContext? = nil) {
+    /// them, as GitHub's expand arrows do. Each of `blocks` gets an empty row of its height,
+    /// left out of copies, for a view to be laid over.
+    public init(file: FileDiff, fontSize: CGFloat = 12, expandable: ExpandableContext? = nil, blocks: [DiffBlock] = []) {
         let width = max(3, String(file.maxLineNumber).count)
         // Two right-aligned numbers and the marker, two spaces apart, then a tab out to the code.
         let style = Style(fontSize: fontSize, gutterColumns: width * 2 + 5)
@@ -83,12 +111,26 @@ public struct RenderedDiff {
             addRow(gutter: offered.map(\.label).joined() + "\t", body: body, kind: .hunkHeader, anchor: nil)
         }
 
+        var unplaced = BlockQueue(blocks)
+        var blockRows: [String: Int] = [:]
+        var blockHeights: [(range: NSRange, id: String, height: CGFloat)] = []
+        // The whole row, newline included, counts as gutter so a copy leaves it out entirely.
+        func addBlockRow(_ block: DiffBlock) {
+            blockRows[block.id] = rows.count
+            let start = out.length
+            out.append(" \n")
+            rows.append((start, 2, 2, .block))
+            anchors.append(nil)
+            blockHeights.append((NSRange(location: start, length: 2), block.id, block.height))
+        }
+
         var emphasis: [NSRange] = []
 
         for (index, hunk) in file.hunks.enumerated() {
             hunkRows.append(rows.count)
             addHeaderRow(body: hunk.header, controls: expandable == nil ? [] : ExpansionControl.above(hunk: index, in: file))
-            let firstLineRow = rows.count
+            // Blocks can come between lines, so each line's row is kept to pair modified lines.
+            var lineRows: [Int] = []
             var newSide = SyntaxPlan.Side()
             var oldSide = SyntaxPlan.Side()
             for line in hunk.lines {
@@ -102,16 +144,18 @@ public struct RenderedDiff {
                 case .deletion(let old):
                     addRow(gutter: numbers + "-\t", body: body, kind: .deletion, anchor: DiffAnchor(path: file.path, side: .left, line: old))
                 }
+                lineRows.append(rows.count - 1)
                 if syntax != nil, let row = rows.last {
                     let code = (target: row.start + row.gutter, length: row.length - row.gutter - 1)
                     if line.newLine != nil { newSide.append(line.text, mappedTo: code.target, length: code.length) }
                     if line.oldLine != nil { oldSide.append(line.text, mappedTo: line.isDeletion ? code.target : nil, length: code.length) }
                 }
+                for block in unplaced.take(after: line) { addBlockRow(block) }
             }
             syntax?.sides += [newSide, oldSide]
             for (old, new) in modifiedPairs(hunk.lines) {
-                let oldRow = rows[firstLineRow + old]
-                let newRow = rows[firstLineRow + new]
+                let oldRow = rows[lineRows[old]]
+                let newRow = rows[lineRows[new]]
                 guard let changed = changedWords(displayText(hunk.lines[old]), displayText(hunk.lines[new])) else { continue }
                 emphasis += changed.old.map { NSRange(location: oldRow.start + oldRow.gutter + $0.location, length: $0.length) }
                 emphasis += changed.new.map { NSRange(location: newRow.start + newRow.gutter + $0.location, length: $0.length) }
@@ -123,6 +167,7 @@ public struct RenderedDiff {
             trailingRow = rows.count
             addHeaderRow(body: "", controls: [below])
         }
+        for block in unplaced.remaining { addBlockRow(block) }
 
         let attributed = NSMutableAttributedString(string: out as String, attributes: style.base)
         attributed.beginEditing()
@@ -149,6 +194,9 @@ public struct RenderedDiff {
             attributed.addAttributes(style.control, range: range)
             attributed.addAttributes([.diffExpansion: control.expansion, .toolTip: control.help, .cursor: NSCursor.pointingHand], range: range)
         }
+        for block in blockHeights {
+            attributed.addAttributes([.paragraphStyle: Self.blockParagraphStyle(height: block.height), .diffBlock: block.id], range: block.range)
+        }
         attributed.endEditing()
 
         text = attributed
@@ -157,6 +205,22 @@ public struct RenderedDiff {
         rowAnchors = anchors
         self.hunkRows = hunkRows
         self.trailingRow = trailingRow
+        self.blockRows = blockRows
+    }
+
+    /// A block's row is one line exactly as tall as the block.
+    static func blockParagraphStyle(height: CGFloat) -> NSParagraphStyle {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = max(1, height)
+        paragraph.maximumLineHeight = max(1, height)
+        return paragraph
+    }
+
+    /// The UTF-16 range of a block's row, newline included.
+    public func range(ofBlock id: String) -> NSRange? {
+        guard let row = blockRows[id] else { return nil }
+        let end = row + 1 < rowStarts.count ? rowStarts[row + 1] : text.length
+        return NSRange(location: rowStarts[row], length: end - rowStarts[row])
     }
 
     /// The row containing a UTF-16 character offset.
@@ -185,7 +249,7 @@ public struct RenderedDiff {
 public extension RowKind {
     var background: NSColor? {
         switch self {
-        case .context: nil
+        case .context, .block: nil
         case .addition: DiffColors.additionBackground
         case .deletion: DiffColors.deletionBackground
         case .hunkHeader: DiffColors.hunkHeaderBackground
@@ -195,7 +259,7 @@ public extension RowKind {
     /// The gutter's tint, a shade darker than the row's so the numbers read as separate from the code.
     var gutterBackground: NSColor? {
         switch self {
-        case .context: nil
+        case .context, .block: nil
         case .addition: DiffColors.additionGutterBackground
         case .deletion: DiffColors.deletionGutterBackground
         case .hunkHeader: DiffColors.hunkHeaderGutterBackground
@@ -207,7 +271,7 @@ public extension RowKind {
         switch self {
         case .addition: DiffColors.additionWordBackground
         case .deletion: DiffColors.deletionWordBackground
-        case .context, .hunkHeader: nil
+        case .context, .hunkHeader, .block: nil
         }
     }
 }
@@ -280,6 +344,39 @@ private struct ExpansionControl {
     static func belowLastHunk(of file: FileDiff, newLineCount: Int) -> ExpansionControl? {
         guard file.hiddenLinesAfterLastHunk(newLineCount: newLineCount) > 0 else { return nil }
         return ExpansionControl(glyph: "↓", expansion: ContextExpansion(hunk: file.hunks.count - 1, direction: .below), help: "Show \(ContextExpansion.step) more lines below")
+    }
+}
+
+/// The blocks still to place, handed out under the first line each matches.
+private struct BlockQueue {
+    private var right: [Int: [DiffBlock]] = [:]
+    private var left: [Int: [DiffBlock]] = [:]
+    private var order: [DiffBlock]
+    private var placed: Set<String> = []
+
+    init(_ blocks: [DiffBlock]) {
+        order = blocks
+        for block in blocks {
+            guard case let .after(side, line) = block.placement else { continue }
+            switch side {
+            case .right: right[line, default: []].append(block)
+            case .left: left[line, default: []].append(block)
+            }
+        }
+    }
+
+    /// The blocks to go under `line`: those on its new number, then those on its old number.
+    mutating func take(after line: DiffLine) -> [DiffBlock] {
+        var taken: [DiffBlock] = []
+        if let new = line.newLine, let blocks = right.removeValue(forKey: new) { taken += blocks }
+        if let old = line.oldLine, let blocks = left.removeValue(forKey: old) { taken += blocks }
+        placed.formUnion(taken.map(\.id))
+        return taken
+    }
+
+    /// Those for the end and those whose line wasn't found, in the order given.
+    var remaining: [DiffBlock] {
+        order.filter { !placed.contains($0.id) }
     }
 }
 

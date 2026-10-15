@@ -31,6 +31,9 @@ actor FakeConversations {
     private var candidatePageSize = 100
     private var users: [[String: Any]] = []
     private var teams: [[String: Any]] = []
+    /// How many threads and thread comments have been made here, for their ids.
+    private var threadCount = 0
+    private var commentCount = 0
 
     struct ReviewRequestInput: Equatable {
         let pullRequestId: String
@@ -66,6 +69,45 @@ actor FakeConversations {
             "isMinimized": false,
             "author": ["login": login, "avatarUrl": "https://avatars.githubusercontent.com/u/583231?v=4"],
         ])
+    }
+
+    /// Starts a review thread on the PR, as a reviewer does on github.com, in the shape of
+    /// `probe/review-threads.json`, and returns its id. An outdated thread has only its
+    /// original line, as GitHub keeps it; `line: nil` without that is on the whole file.
+    @discardableResult
+    func startThread(on id: String, path: String, line: Int?, side: String = "RIGHT", startLine: Int? = nil, outdated: Bool = false, resolved: Bool = false, body: String, by login: String = "octocat") throws -> String {
+        var node = try #require(nodes[id])
+        var threads = ((node["reviewThreads"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
+        let threadId = "PRRT_fake_\(threadCount)"
+        threadCount += 1
+        let current = outdated ? nil : line
+        threads.append([
+            "id": threadId,
+            "isResolved": resolved,
+            "isOutdated": outdated,
+            "path": path,
+            "line": current as Any? ?? NSNull(),
+            "startLine": (outdated ? nil : startLine ?? line) as Any? ?? NSNull(),
+            "diffSide": side,
+            "startDiffSide": startLine == nil ? NSNull() : side,
+            "originalLine": line as Any? ?? NSNull(),
+            "originalStartLine": startLine as Any? ?? NSNull(),
+            "subjectType": line == nil ? "FILE" : "LINE",
+            "viewerCanReply": true,
+            "viewerCanResolve": !resolved,
+            "viewerCanUnresolve": resolved,
+            "resolvedBy": resolved ? ["login": login] : NSNull(),
+            "firstComment": ["nodes": [["diffHunk": "@@ -1,2 +1,2 @@\n-old \(path)\n+new \(path)"]]],
+            "comments": ["nodes": [threadComment(body, by: login)]],
+        ])
+        node["reviewThreads"] = ["nodes": threads]
+        nodes[id] = node
+        return threadId
+    }
+
+    /// The PR's review threads as GitHub has them now.
+    func threads(of id: String) -> [[String: Any]] {
+        ((nodes[id]?["reviewThreads"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
     }
 
     /// Submits a review of the PR by the user with `login`, which becomes their latest and
@@ -247,11 +289,29 @@ actor FakeConversations {
         teams = try #require(((repository["owner"] as? [String: Any])?["teams"] as? [String: Any])?["nodes"] as? [[String: Any]])
     }
 
+    /// A new thread comment in the review threads query's shape, with GitHub's rendering of
+    /// `body` as one paragraph and the next REST id.
+    private func threadComment(_ body: String, by login: String) -> [String: Any] {
+        commentCount += 1
+        return [
+            "id": "PRRC_fake_\(commentCount)",
+            "databaseId": 900_000 + commentCount,
+            "bodyHTML": "<p dir=\"auto\">\(escaped(body))</p>",
+            "createdAt": Date.now.formatted(.iso8601),
+            "isMinimized": false,
+            "minimizedReason": NSNull(),
+            "author": ["login": login, "avatarUrl": "https://avatars.githubusercontent.com/u/583231?v=4"],
+        ]
+    }
+
     /// Sets the description and GitHub's rendering of it, a paragraph per block of lines.
     private func setBody(_ body: String, on node: inout [String: Any]) {
         node["body"] = body
-        let escaped = body.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
-        node["bodyHTML"] = escaped.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n\n").map { "<p dir=\"auto\">\($0)</p>" }.joined(separator: "\n")
+        node["bodyHTML"] = escaped(body).replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n\n").map { "<p dir=\"auto\">\($0)</p>" }.joined(separator: "\n")
+    }
+
+    private func escaped(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
     }
 
     /// GitHub's shape for a mutation refused over an id it can't resolve, as in

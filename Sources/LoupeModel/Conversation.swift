@@ -160,33 +160,85 @@ public struct ReviewThread: Sendable, Equatable, Identifiable {
     public var isResolved: Bool
     public var isOutdated: Bool
     public var path: String
+    /// The last line the thread is on in the current diff; nil once outdated, or for a thread
+    /// on the whole file.
     public var line: Int?
+    /// The first line of a thread on several; nil or the same as `line` for one line.
+    public var startLine: Int?
+    public var side: Side
+    /// Where the thread was on the commit it was made on, which outlives an outdated thread.
+    public var originalLine: Int?
+    public var originalStartLine: Int?
+    /// On the file as a whole rather than on lines of it.
+    public var isOnFile: Bool
+    /// The diff around the first comment, ending on its line, as GitHub keeps it.
+    public var diffHunk: String
+    /// Who resolved it, if it's resolved and GitHub still knows them.
+    public var resolvedBy: String?
+    public var viewerCanReply: Bool
+    public var viewerCanResolve: Bool
+    public var viewerCanUnresolve: Bool
     /// The first comment, then the replies, oldest first.
     public var comments: [ThreadComment]
 
-    public init(id: String, isResolved: Bool, isOutdated: Bool, path: String, line: Int?, comments: [ThreadComment]) {
+    /// Which version of the file a thread's lines are numbered in: RIGHT is the PR's head,
+    /// LEFT its base, as for a comment on a deleted line.
+    public enum Side: String, Sendable {
+        case left = "LEFT"
+        case right = "RIGHT"
+    }
+
+    public init(
+        id: String, isResolved: Bool, isOutdated: Bool, path: String, line: Int?, startLine: Int? = nil, side: Side = .right,
+        originalLine: Int? = nil, originalStartLine: Int? = nil, isOnFile: Bool = false, diffHunk: String = "", resolvedBy: String? = nil,
+        viewerCanReply: Bool = false, viewerCanResolve: Bool = false, viewerCanUnresolve: Bool = false, comments: [ThreadComment]
+    ) {
         self.id = id
         self.isResolved = isResolved
         self.isOutdated = isOutdated
         self.path = path
         self.line = line
+        self.startLine = startLine
+        self.side = side
+        self.originalLine = originalLine
+        self.originalStartLine = originalStartLine
+        self.isOnFile = isOnFile
+        self.diffHunk = diffHunk
+        self.resolvedBy = resolvedBy
+        self.viewerCanReply = viewerCanReply
+        self.viewerCanResolve = viewerCanResolve
+        self.viewerCanUnresolve = viewerCanUnresolve
         self.comments = comments
+    }
+
+    /// The lines the thread covers, first to last: in the current diff, or where it was made
+    /// once outdated. Nil for a thread on the whole file.
+    public var lines: ClosedRange<Int>? {
+        guard let last = line ?? originalLine else { return nil }
+        let first = (line != nil ? startLine : originalStartLine) ?? last
+        return min(first, last)...last
     }
 }
 
 public struct ThreadComment: Sendable, Equatable, Identifiable {
     public var id: String
+    /// The REST API's id for the comment, which replying to its thread names.
+    public var databaseId: Int?
     public var author: Participant?
     public var createdAt: Date
     public var bodyHTML: String
     public var isMinimized: Bool
+    /// Why it was hidden, in GitHub's words, such as `outdated` or `resolved`.
+    public var minimizedReason: String?
 
-    public init(id: String, author: Participant?, createdAt: Date, bodyHTML: String, isMinimized: Bool) {
+    public init(id: String, databaseId: Int? = nil, author: Participant?, createdAt: Date, bodyHTML: String, isMinimized: Bool, minimizedReason: String? = nil) {
         self.id = id
+        self.databaseId = databaseId
         self.author = author
         self.createdAt = createdAt
         self.bodyHTML = bodyHTML
         self.isMinimized = isMinimized
+        self.minimizedReason = minimizedReason
     }
 }
 
