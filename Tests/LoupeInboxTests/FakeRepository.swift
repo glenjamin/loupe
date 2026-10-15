@@ -5,7 +5,8 @@ import Testing
 /// `refs/pull/<N>/head`, a contributor's clone that pushes to it, and the reviewer's `checkout`,
 /// cloned before any PR existed. The checkout knows origin as `github.com/tamarinworks/app`, which
 /// its config rewrites to the bare repo. Its first commit vendors a dependency, has a `go.sum`,
-/// and marks `gen/` as `linguist-generated`. Deleted when the test ends.
+/// marks `gen/` as `linguist-generated`, and keeps `pinned/` and `vendor/patched/` in review
+/// however they look. Deleted when the test ends.
 final class FakeRepository: Sendable {
     let root: URL
     let origin: URL
@@ -29,7 +30,7 @@ final class FakeRepository: Sendable {
             "go.sum": "example.com/lib v1.0.0 h1:abc\n",
             "vendor/example.com/lib/lib.go": "package lib\n",
             "gen/schema.go": "package gen // generated\n",
-            ".gitattributes": "gen/** linguist-generated=true\nvendor/patched/** linguist-vendored=false\n",
+            ".gitattributes": "gen/** linguist-generated=true\nvendor/patched/** linguist-vendored=false\npinned/** linguist-generated=false\n",
         ], message: "Start the app")
         try await git(["clone", "--quiet", "--bare", contributor.path(percentEncoded: false), origin.path(percentEncoded: false)], in: root)
         try await git(["remote", "add", "origin", origin.path(percentEncoded: false)], in: contributor)

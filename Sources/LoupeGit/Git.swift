@@ -35,7 +35,36 @@ enum Git {
         (try? await run(arguments, in: directory)) != nil
     }
 
+    /// The text of each object named, such as `<commit>:<path>`, up to and including the line
+    /// its `lines` asks for, all read by one `git cat-file --batch`. Only those lines are kept, so
+    /// a large file costs only its passage through the pipe. Nil for a name that isn't a blob, or
+    /// that has a newline, which batch input can't carry.
+    static func firstLines(of objects: [(name: String, lines: Int)], in directory: URL, timeout: Duration = .seconds(30)) async throws -> [String?] {
+        let sendable = objects.filter { !$0.name.contains("\n") }
+        guard !sendable.isEmpty else { return objects.map { _ in nil } }
+        let input = Data(sendable.map { $0.name + "\n" }.joined().utf8)
+        let lines = sendable.map(\.lines)
+        let heads = try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result {
+                    try runBlocking(["cat-file", "--batch"], in: directory, input: input, timeout: timeout) { output in
+                        var reader = BatchReader(lines: lines)
+                        while let chunk = try output.read(upToCount: 1 << 16), !chunk.isEmpty { reader.consume(chunk) }
+                        return reader.heads
+                    }
+                })
+            }
+        }
+        var answers = heads.makeIterator()
+        return objects.map { $0.name.contains("\n") ? nil : answers.next() ?? nil }
+    }
+
     private static func runBlocking(_ arguments: [String], in directory: URL, input: Data?, timeout: Duration) throws -> String {
+        try runBlocking(arguments, in: directory, input: input, timeout: timeout) { String(decoding: $0.readDataToEndOfFile(), as: UTF8.self) }
+    }
+
+    /// Runs git, handing its stdout to `read` as it comes, and returns what that makes of it.
+    private static func runBlocking<Output>(_ arguments: [String], in directory: URL, input: Data?, timeout: Duration, read: (FileHandle) throws -> Output) throws -> Output {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/git")
         process.arguments = ["-C", directory.path(percentEncoded: false)] + arguments
@@ -62,7 +91,14 @@ enum Git {
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) { watchdog.fire() }
         // Both pipes are drained at once, so git never blocks writing to a full one.
         let errorOutput = Drain(stderr.fileHandleForReading)
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
+        let output = Result { try read(stdout.fileHandleForReading) }
+        if case .failure(let error) = output {
+            // Git would otherwise block on a pipe nobody reads.
+            process.terminate()
+            process.waitUntilExit()
+            watchdog.disarm()
+            throw error
+        }
         process.waitUntilExit()
         watchdog.disarm()
 
@@ -73,7 +109,7 @@ enum Git {
         guard process.terminationStatus == 0 else {
             throw GitError(arguments: arguments, status: process.terminationStatus, message: message)
         }
-        return String(decoding: output, as: UTF8.self)
+        return try output.get()
     }
 }
 
@@ -114,6 +150,61 @@ private final class Watchdog: @unchecked Sendable {
     func disarm() {
         lock.withLock { armed = false }
     }
+}
+
+/// Parses `git cat-file --batch` output as it arrives: for each object asked for, a header line,
+/// `<oid> <type> <size>` or `<name> missing`, then for one found its content and a newline. Keeps
+/// each blob's text up to its wanted number of lines and drops the rest as it passes.
+private struct BatchReader {
+    private(set) var heads: [String?] = []
+    private let lines: [Int]
+    private var pending = Data()
+    /// The current object's content: how much is still to come, and the part being kept.
+    private var body: (remaining: Int, kept: Data, newlines: Int, isBlob: Bool)?
+
+    init(lines: [Int]) {
+        self.lines = lines
+    }
+
+    mutating func consume(_ chunk: Data) {
+        pending.append(chunk)
+        while true {
+            if var current = body {
+                let part = pending.prefix(current.remaining)
+                if current.isBlob {
+                    // Kept through the wanted line's newline, and no further.
+                    var end = part.startIndex
+                    while end < part.endIndex, current.newlines < wanted {
+                        if part[end] == UInt8(ascii: "\n") { current.newlines += 1 }
+                        end += 1
+                    }
+                    current.kept.append(part[part.startIndex..<end])
+                }
+                current.remaining -= part.count
+                pending.removeFirst(part.count)
+                // The content is followed by a newline of its own.
+                guard current.remaining == 0, !pending.isEmpty else {
+                    body = current
+                    return
+                }
+                pending.removeFirst()
+                heads.append(current.isBlob ? String(decoding: current.kept, as: UTF8.self) : nil)
+                body = nil
+            } else {
+                guard let newline = pending.firstIndex(of: UInt8(ascii: "\n")) else { return }
+                let header = pending[pending.startIndex..<newline].split(separator: UInt8(ascii: " "))
+                pending.removeSubrange(pending.startIndex...newline)
+                if header.count == 3, let size = Int(String(decoding: header[2], as: UTF8.self)) {
+                    body = (size, Data(), 0, header[1].elementsEqual("blob".utf8))
+                } else {
+                    heads.append(nil)
+                }
+            }
+        }
+    }
+
+    /// How many lines of the current object to keep.
+    private var wanted: Int { heads.count < lines.count ? lines[heads.count] : 0 }
 }
 
 /// Reads a pipe to its end on another thread.

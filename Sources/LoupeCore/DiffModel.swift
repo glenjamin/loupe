@@ -136,9 +136,10 @@ public struct DiffLine: Sendable, Equatable {
 }
 
 /// Splits files into those to review and those hidden by default: third-party code and built
-/// bundles as Linguist's vendor list names them (and, if asked, documentation), lockfiles, and
-/// whatever the repository's `.gitattributes` marks generated or vendored. An attribute set to
-/// false keeps a path that would otherwise be hidden.
+/// bundles as Linguist's vendor list names them (and, if asked, documentation), lockfiles, code
+/// whose first lines Linguist takes for generated, and whatever the repository's `.gitattributes`
+/// marks generated or vendored. An attribute set to false keeps a path that would otherwise be
+/// hidden.
 public struct PathFilter: Sendable {
     public var hidesDocumentation: Bool
 
@@ -165,11 +166,20 @@ public struct PathFilter: Sendable {
     /// Every pattern in Linguist's vendor list, for checking the keep-list against it.
     public static var linguistVendorPatterns: [String] { Linguist.vendorPatterns }
 
-    public func excludes(_ path: String, attributes: LinguistAttributes = LinguistAttributes()) -> Bool {
+    /// Whether `path` is hidden, given its attributes and, if read, its first lines as
+    /// `linesNeeded(toDecide:attributes:)` asks for them. Without them, its content counts for nothing.
+    public func excludes(_ path: String, attributes: LinguistAttributes = LinguistAttributes(), head: String? = nil) -> Bool {
         let name = path.split(separator: "/").last.map(String.init) ?? path
-        if attributes.generated ?? Self.lockfiles.contains(name) { return true }
+        if attributes.generated ?? (Self.lockfiles.contains(name) || head.map { GeneratedCode.isGenerated(path: path, head: $0) } ?? false) { return true }
         if attributes.vendored ?? Linguist.vendored.matches(path) { return true }
         return hidesDocumentation && (attributes.documentation ?? Linguist.documentation.matches(path))
+    }
+
+    /// How many of its first lines must be read to decide whether `path` is hidden, or nil when
+    /// its name and attributes decide it already, so most files are never read.
+    public func linesNeeded(toDecide path: String, attributes: LinguistAttributes = LinguistAttributes()) -> Int? {
+        guard attributes.generated == nil, !excludes(path, attributes: attributes) else { return nil }
+        return GeneratedCode.linesNeeded(forPath: path)
     }
 
     public func partition(_ files: [FileDiff]) -> (included: [FileDiff], excluded: [FileDiff]) {

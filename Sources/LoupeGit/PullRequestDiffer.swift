@@ -49,8 +49,8 @@ public struct PullRequestDiffer: Sendable {
     /// listed but not diffed, as a vendored tree can be enormous.
     public func diff(_ range: DiffRange, in checkout: URL) async throws -> RangeDiff {
         let changed = try await changedFiles(in: range, checkout: checkout)
-        let attributes = try await linguistAttributes(of: changed.map(\.path), in: checkout)
-        var hidden = changed.filter { filter.excludes($0.path, attributes: attributes[$0.path] ?? LinguistAttributes()) }
+        let hiding = try await hiddenPaths(changedIn: [range: changed.map(\.path)], checkout: checkout)[range] ?? []
+        var hidden = changed.filter { hiding.contains($0.path) }
         let covering = coveringPaths(hiding: hidden.map(\.path), keeping: changed.map(\.path))
         let excludes = covering.map { ":(exclude,top,literal)\($0)" }
         async let text = git(["diff", "--no-color", "--no-ext-diff", "-M", range.base, range.head, "--", "."] + excludes, in: checkout)
@@ -81,10 +81,11 @@ public struct PullRequestDiffer: Sendable {
             }
             return counts
         }
-        let attributes = try await linguistAttributes(of: Set(counts.values.flatMap(\.keys)).sorted(), in: checkout)
-        return counts.mapValues { counts in
-            let reviewed = counts.filter { !filter.excludes($0.key, attributes: attributes[$0.key] ?? LinguistAttributes()) }.values
-            return DiffStat(files: reviewed.count, additions: reviewed.reduce(0) { $0 + $1.additions }, deletions: reviewed.reduce(0) { $0 + $1.deletions })
+        let hidden = try await hiddenPaths(changedIn: counts.mapValues { Array($0.keys) }, checkout: checkout)
+        return counts.reduce(into: [:]) { stats, entry in
+            let hiding = hidden[entry.key] ?? []
+            let reviewed = entry.value.filter { !hiding.contains($0.key) }.values
+            stats[entry.key] = DiffStat(files: reviewed.count, additions: reviewed.reduce(0) { $0 + $1.additions }, deletions: reviewed.reduce(0) { $0 + $1.deletions })
         }
     }
 
@@ -188,6 +189,37 @@ public struct PullRequestDiffer: Sendable {
             counts[path] = LineCount(additions: additions ?? 0, deletions: deletions ?? 0, isBinary: additions == nil && deletions == nil)
         }
         return counts
+    }
+
+    /// Which of the paths changed in each range `filter` hides: by path and attributes, and for a
+    /// path only its content can decide, by its first lines. Those are read from git as the range
+    /// leaves the file, or for a deleted one as it was before, all in one run however many ranges.
+    private func hiddenPaths(changedIn changes: [DiffRange: [String]], checkout: URL) async throws -> [DiffRange: Set<String>] {
+        let attributes = try await linguistAttributes(of: Set(changes.values.joined()).sorted(), in: checkout)
+        var hidden: [DiffRange: Set<String>] = [:]
+        var undecided: [(range: DiffRange, path: String, lines: Int)] = []
+        for (range, paths) in changes {
+            for path in paths {
+                let given = attributes[path] ?? LinguistAttributes()
+                if filter.excludes(path, attributes: given) {
+                    hidden[range, default: []].insert(path)
+                } else if let lines = filter.linesNeeded(toDecide: path, attributes: given) {
+                    undecided.append((range, path, lines))
+                }
+            }
+        }
+        guard !undecided.isEmpty else { return hidden }
+        var heads = try await Git.firstLines(of: undecided.map { ("\($0.range.head):\($0.path)", $0.lines) }, in: checkout, timeout: localTimeout)
+        // Missing at the range's head means deleted in it.
+        let deleted = heads.indices.filter { heads[$0] == nil }
+        if !deleted.isEmpty {
+            let before = try await Git.firstLines(of: deleted.map { ("\(undecided[$0].range.base):\(undecided[$0].path)", undecided[$0].lines) }, in: checkout, timeout: localTimeout)
+            for (index, head) in zip(deleted, before) { heads[index] = head }
+        }
+        for (file, head) in zip(undecided, heads) where filter.excludes(file.path, attributes: attributes[file.path] ?? LinguistAttributes(), head: head) {
+            hidden[file.range, default: []].insert(file.path)
+        }
+        return hidden
     }
 
     /// The `linguist-*` attributes the checkout's `.gitattributes` gives each path.
