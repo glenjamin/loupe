@@ -52,6 +52,9 @@ public struct SyntaxPlan: Sendable {
     }
 
     struct Side: Sendable {
+        /// The line git names as enclosing the hunk, such as the declaration it starts inside,
+        /// whose fields would otherwise parse as statements. It's parsed but not shown.
+        var context: String?
         var text = ""
         var utf16Count = 0
         /// Lines to colour from this side, ascending by source offset.
@@ -74,16 +77,27 @@ public struct SyntaxPlan: Sendable {
 
     /// Parses each side and maps the highlight query's captures onto the rendered rows.
     /// Snippets that don't parse cleanly still highlight, through tree-sitter's error recovery.
+    /// A side with an enclosing line is parsed led by it, which puts a hunk that starts inside a
+    /// declaration back in it, if that colours at least as much of the side's first lines as
+    /// parsing them alone: the line misleads when the declaration closed before the hunk.
     public func runs() -> [SyntaxRun] {
         guard let grammar = Grammar.load(language) else { return [] }
         let parser = Parser()
         guard (try? parser.setLanguage(grammar.language)) != nil else { return [] }
         var runs: [SyntaxRun] = []
         for side in sides where !side.lines.isEmpty {
-            guard let tree = parser.parse(side.text) else { continue }
-            let captures = highlightCaptures(grammar.query, in: tree, text: side.text, laterPatternsWin: grammar.laterPatternsWin)
-            for capture in captures {
-                map(capture.range, through: side.lines) { runs.append(SyntaxRun(range: $0, style: capture.style)) }
+            guard let context = side.context else {
+                runs += side.highlight(side.text, parsedBy: parser, grammar: grammar)
+                continue
+            }
+            let opening = side.opening
+            let led = opening.highlight(context + "\n" + opening.text, parsedBy: parser, grammar: grammar)
+            let plain = opening.highlight(opening.text, parsedBy: parser, grammar: grammar)
+            let leads = coverage(of: led) >= coverage(of: plain)
+            if opening.utf16Count == side.utf16Count {
+                runs += leads ? led : plain
+            } else {
+                runs += side.highlight(leads ? context + "\n" + side.text : side.text, parsedBy: parser, grammar: grammar)
             }
         }
         return runs
@@ -316,5 +330,39 @@ private func map(_ range: NSRange, through lines: [SyntaxPlan.Line], _ emit: (NS
         let stop = min(end, line.source + line.length)
         if stop > start { emit(NSRange(location: line.target + start - line.source, length: stop - start)) }
         index += 1
+    }
+}
+
+/// How many characters of code some runs colour, each counted once however many runs cover it.
+private func coverage(of runs: [SyntaxRun]) -> Int {
+    var covered = IndexSet()
+    for run in runs { covered.insert(integersIn: run.range.location..<NSMaxRange(run.range)) }
+    return covered.count
+}
+
+private extension SyntaxPlan.Side {
+    /// The colours for this side's lines from parsing `text`, which ends with the side's own.
+    func highlight(_ text: String, parsedBy parser: Parser, grammar: Grammar) -> [SyntaxRun] {
+        guard let tree = parser.parse(text) else { return [] }
+        let codeStart = text.utf16.count - utf16Count
+        var runs: [SyntaxRun] = []
+        for capture in highlightCaptures(grammar.query, in: tree, text: text, laterPatternsWin: grammar.laterPatternsWin) {
+            let range = NSRange(location: capture.range.location - codeStart, length: capture.range.length)
+            map(range, through: lines) { runs.append(SyntaxRun(range: $0, style: capture.style)) }
+        }
+        return runs
+    }
+
+    /// The side's first lines, enough to tell whether its enclosing line helps, so a long
+    /// side is parsed in full only once.
+    var opening: Self {
+        var end = text.startIndex
+        for _ in 0..<20 {
+            guard let newline = text.utf8[end...].firstIndex(of: UInt8(ascii: "\n")) else { return self }
+            end = text.utf8.index(after: newline)
+        }
+        let first = String(text[..<end])
+        let length = first.utf16.count
+        return Self(context: context, text: first, utf16Count: length, lines: lines.filter { $0.source < length })
     }
 }

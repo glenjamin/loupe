@@ -113,6 +113,76 @@ struct SyntaxHighlightingTests {
         #expect(colors(of: "2;", in: rendered, length: 1) == [DiffColors.syntaxConstant])
     }
 
+    @Test func aHunkStartingInsideADeclarationIsColouredAsPartOfIt() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/client.go b/client.go
+        --- a/client.go
+        +++ b/client.go
+        @@ -25,5 +25,7 @@ type Client struct {
+         \tCreateFn     func(*pb.CreateRequest) (*pb.CreateResponse, error)
+         \tCreateCalled int64
+        +
+        +\tUpdateFn     func(*pb.UpdateRequest) (*pb.UpdateResponse, error)
+        +\tUpdateCalled int64
+         }
+
+        """).files.first)
+        let rendered = showing(file)
+
+        // Alone, the fields would parse as statements and miss most of their colours.
+        #expect(colors(of: "func(*pb.Create", in: rendered, length: 4) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "func(*pb.Update", in: rendered, length: 4) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "UpdateCalled", in: rendered) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "int64", in: rendered) == [DiffColors.syntaxEntity])
+        // The header itself isn't coloured as code.
+        #expect(colors(of: "type Client", in: rendered) == [NSColor.textColor])
+    }
+
+    @Test func aHunkAfterItsHeadersDeclarationHasClosedIsColouredOnItsOwn() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/request.pb.go b/request.pb.go
+        --- a/request.pb.go
+        +++ b/request.pb.go
+        @@ -1262,7 +1262,7 @@ func (x *Request) String() string {
+         func (*Request) ProtoMessage() {}
+
+         func (x *Request) ProtoReflect() protoreflect.Message {
+        -\tmi := &file_proto_msgTypes[17]
+        +\tmi := &file_proto_msgTypes[19]
+         \tif protoimpl.UnsafeEnabled && x != nil {
+         \t\tms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+         \t\tif ms.LoadMessageInfo() == nil {
+
+        """).files.first)
+        let rendered = showing(file)
+
+        // Led by the header's line, the methods would parse as nested in String's body.
+        #expect(colors(of: "func (*Request)", in: rendered, length: 4) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "if protoimpl", in: rendered, length: 2) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "if ms", in: rendered, length: 2) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "LoadMessageInfo", in: rendered) == [DiffColors.syntaxEntity])
+    }
+
+    @Test func aHunkHeaderCutShortIsNotTakenAsItsDeclaration() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/cmd.go b/cmd.go
+        --- a/cmd.go
+        +++ b/cmd.go
+        @@ -54,3 +57,5 @@ func NewClientWithKeyring(keyringClient keyring.EncryptionProvider) (*consulate.Client,
+
+         \treturn consulate.NewClient(consulateServiceClient, keyringClient), nil
+         }
+        +
+        +func TracingExtra() {}
+
+        """).files.first)
+        let rendered = showing(file)
+
+        // Led by half a signature, the body's first lines would parse as its parameters.
+        #expect(colors(of: "return", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "keyringClient), nil", in: rendered, length: 13) == [NSColor.textColor])
+    }
+
     @Test func leavesAFileInAnUnknownLanguageUncoloured() throws {
         let plain = try showing(greet(path: "greet.unknown"))
 

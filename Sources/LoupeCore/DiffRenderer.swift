@@ -131,8 +131,9 @@ public struct RenderedDiff {
             addHeaderRow(body: hunk.header, controls: expandable == nil ? [] : ExpansionControl.above(hunk: index, in: file))
             // Blocks can come between lines, so each line's row is kept to pair modified lines.
             var lineRows: [Int] = []
-            var newSide = SyntaxPlan.Side()
-            var oldSide = SyntaxPlan.Side()
+            let enclosing = syntax == nil ? nil : enclosingLine(of: hunk)
+            var newSide = SyntaxPlan.Side(context: enclosing)
+            var oldSide = SyntaxPlan.Side(context: enclosing)
             for line in hunk.lines {
                 let numbers = pad(line.oldLine, width) + "  " + pad(line.newLine, width) + "  "
                 let body = displayText(line)
@@ -493,3 +494,14 @@ private func tokenKind(_ unit: UInt16) -> TokenKind {
 }
 
 private func isSpace(_ unit: UInt16) -> Bool { tokenKind(unit) == .space }
+
+/// The line git names in the hunk header as the one enclosing the hunk, unless the hunk
+/// already shows it, as once the lines above it are revealed, or git cut it short: it keeps
+/// 80 bytes of the line, less any space left at the cut, and half a signature misleads.
+private func enclosingLine(of hunk: Hunk) -> String? {
+    let heading = String(hunk.section.dropFirst())
+    guard !heading.trimmingCharacters(in: .whitespaces).isEmpty, heading.utf8.count < 79,
+          !hunk.lines.contains(where: { $0.text.hasPrefix(heading) })
+    else { return nil }
+    return heading
+}

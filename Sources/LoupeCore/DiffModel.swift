@@ -97,6 +97,12 @@ public struct Hunk: Sendable {
         self.newStart = newStart
         self.lines = lines
     }
+
+    /// What follows the header's ranges: a space and the function context, or nothing.
+    var section: Substring {
+        guard header.hasPrefix("@@"), let close = header.dropFirst(2).range(of: "@@") else { return "" }
+        return header[close.upperBound...]
+    }
 }
 
 public struct DiffLine: Sendable, Equatable {

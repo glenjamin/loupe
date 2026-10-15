@@ -141,10 +141,4 @@ private extension Hunk {
         func range(_ start: Int, _ count: Int) -> String { count == 1 ? "\(start)" : "\(start),\(count)" }
         header = "@@ -\(range(oldStart, old.count)) +\(range(newStart, new.count)) @@" + section
     }
-
-    /// What follows the header's ranges: a space and the function context, or nothing.
-    var section: Substring {
-        guard header.hasPrefix("@@"), let close = header.dropFirst(2).range(of: "@@") else { return "" }
-        return header[close.upperBound...]
-    }
 }
