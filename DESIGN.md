@@ -321,6 +321,12 @@ The title in the PR header is one line, cut at the tail with an ellipsis, rather
 
 When the head commit's checks have failed, the PR header lists the failed checks' names after the cross, in red caption text on one line, truncating first when the row is narrow; the popover still has the full list. The cross alone doesn't say which job to look at. Each name drops its integration's prefix (`ci/circleci: build` reads `build`, `Terraform Cloud/tamarinworks/sandbox` reads `tamarinworks/sandbox`), and Codecov's checks are left out, as coverage failures are noise Glen never acts on from the header. The list rows keep the bare glyph.
 
+### The PR view is one pane, with Conversation at the top of the sidebar
+
+A PR no longer has Conversation and Files changed tabs. Its sidebar is always there, with a Conversation row at the top above the commit picker and file list, and the pane beside it shows the conversation or the selected file's diff. This reverses the tabs of "The conversation tab is a web view of GitHub's own HTML", and moves the "Edit description" button of "The viewer's own PR descriptions are edited as markdown" to a pencil at the trailing end of the Conversation row. One pane keeps the file list and commit picker in reach while reading the conversation, and switching is one click in the same place as the files.
+
+The Conversation row is drawn as a selected list row (accent background, white text) while the conversation is shown, rather than as a push button, so it reads as part of the same navigation as the files. It sits outside the file list's `List`, so the list shows no selected row meanwhile; its selection is kept, and picking any file shows the files again. The sidebar is there before the diff is ready, with only the Conversation row until the commit picker and files can be listed. PRs still open on the conversation, ⌃1 and ⌃2 still switch, and each PR's choice is kept as before. The "Files changed (N)" count went with the tabs; the commit picker's "All changes" row already counts the files.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

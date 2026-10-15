@@ -5,8 +5,8 @@ import LoupeInbox
 import LoupeModel
 import SwiftUI
 
-/// One PR's tab: its header, then GitHub-style tabs for its conversation and for its diff, once
-/// produced from the local checkout.
+/// One PR's tab: its header, then a sidebar of the conversation, commit picker and files beside
+/// whichever of them is chosen, the files once their diff is produced from the local checkout.
 struct PullRequestView: View {
     @Bindable var tab: PullRequestTab
     let checkoutSearchRoots: [URL]
@@ -15,7 +15,6 @@ struct PullRequestView: View {
         let pullRequest = tab.pullRequest
         VStack(spacing: 0) {
             PullRequestHeader(pullRequest: pullRequest, tab: tab)
-            ReviewSectionPicker(tab: tab)
             Divider()
             if let change = tab.pendingChange {
                 PendingChangeBanner(change: change) {
@@ -25,23 +24,28 @@ struct PullRequestView: View {
                 }
                 Divider()
             }
-            // Both stay once made, so switching keeps each one's place.
-            ZStack {
-                let showsFiles = tab.section == .files
-                content(pullRequest)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .opacity(showsFiles ? 1 : 0)
-                    .allowsHitTesting(showsFiles)
-                    .accessibilityHidden(!showsFiles)
-                // The description's editor takes the conversation's place while open; the web
-                // view stays behind it, keeping its place.
-                let editor = showsFiles ? nil : tab.descriptionEditor
-                if let page = showsFiles ? ConversationPage.existingPage(for: tab) : ConversationPage.page(for: tab) {
-                    ConversationView(page: page, conversation: tab.conversation, error: tab.conversationError, isShown: !showsFiles && editor == nil)
+            HSplitView {
+                ReviewSidebar(tab: tab)
+                    .frame(minWidth: 200, idealWidth: 300, maxWidth: 500)
+                // Both stay once made, so switching keeps each one's place.
+                ZStack {
+                    let showsFiles = tab.section == .files
+                    content(pullRequest)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .opacity(showsFiles ? 1 : 0)
+                        .allowsHitTesting(showsFiles)
+                        .accessibilityHidden(!showsFiles)
+                    // The description's editor takes the conversation's place while open; the web
+                    // view stays behind it, keeping its place.
+                    let editor = showsFiles ? nil : tab.descriptionEditor
+                    if let page = showsFiles ? ConversationPage.existingPage(for: tab) : ConversationPage.page(for: tab) {
+                        ConversationView(page: page, conversation: tab.conversation, error: tab.conversationError, isShown: !showsFiles && editor == nil)
+                    }
+                    if let editor {
+                        DescriptionEditorView(editor: editor, tab: tab)
+                    }
                 }
-                if let editor {
-                    DescriptionEditorView(editor: editor, tab: tab)
-                }
+                .frame(minWidth: 400)
             }
         }
         // Showing the tab produces the diff if it isn't already in memory. Changes on GitHub
@@ -71,7 +75,7 @@ struct PullRequestView: View {
         case .diffing:
             ProgressView("Diffing…")
         case let .ready(diff):
-            FileBrowser(tab: tab, commits: diff.commits)
+            FileDetail(tab: tab)
                 // A new head can change a file under the same path.
                 .id(diff.headOid)
         case let .failed(message):
@@ -86,37 +90,75 @@ struct PullRequestView: View {
     }
 }
 
-/// Conversation and Files changed, as on github.com, and on the viewer's own PRs a button to
-/// edit the description while the conversation is shown.
-struct ReviewSectionPicker: View {
+/// The PR's navigation: its conversation at the top, then once the diff is ready the commit
+/// picker and the files of the shown changes.
+struct ReviewSidebar: View {
     @Bindable var tab: PullRequestTab
 
     var body: some View {
-        HStack {
-            Picker("Show", selection: $tab.section) {
-                Text("Conversation").tag(ReviewSection.conversation)
-                Text(filesLabel).tag(ReviewSection.files)
+        VStack(spacing: 0) {
+            ConversationRow(tab: tab)
+            Divider()
+            if case let .ready(diff) = tab.phase {
+                CommitPicker(tab: tab, commits: diff.commits)
+                Divider()
+                ReviewFileList(tab: tab, changes: shownChanges, selection: fileSelection)
+                    .id(diff.headOid)
+            } else {
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .help("⌃1 Conversation, ⌃2 Files changed")
-            Spacer(minLength: 0)
-            if tab.section == .conversation, tab.canEditDescription {
+        }
+    }
+
+    private var shownChanges: ReviewChanges? {
+        if case let .ready(changes)? = tab.shownChanges { changes } else { nil }
+    }
+
+    /// No file reads as selected while the conversation is shown, and picking one shows the
+    /// files; the selected file is kept meanwhile, so going back shows it again.
+    private var fileSelection: Binding<FileDiff.ID?> {
+        Binding {
+            tab.section == .files ? tab.selectedFile : nil
+        } set: { file in
+            tab.selectedFile = file
+            if file != nil { tab.section = .files }
+        }
+    }
+}
+
+/// The sidebar's first row, showing the conversation in place of the diff, highlighted as a
+/// selected list row while it's shown. On the viewer's own PRs it then offers to edit the
+/// description.
+struct ConversationRow: View {
+    @Bindable var tab: PullRequestTab
+
+    var body: some View {
+        let isShown = tab.section == .conversation
+        HStack(spacing: 4) {
+            Button { tab.section = .conversation } label: {
+                Label("Conversation", systemImage: "bubble.left.and.bubble.right")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Show the conversation (⌃1)")
+            .accessibilityAddTraits(isShown ? .isSelected : [])
+            .background(ConversationRowMarker())
+            if isShown, tab.canEditDescription {
                 Button("Edit description", systemImage: "pencil") {
                     Task { await tab.editDescription() }
                 }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
                 .disabled(tab.descriptionEditor != nil)
                 .help("Edit this PR's description, starting from it as it is on GitHub now")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
-    }
-
-    private var filesLabel: String {
-        guard case let .ready(review) = tab.phase else { return "Files changed" }
-        return "Files changed (\(review.changes.files.count))"
+        .foregroundStyle(isShown ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(isShown ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 5))
+        .padding(8)
     }
 }
 
@@ -230,41 +272,31 @@ struct PendingChangeBanner: View {
     }
 }
 
-/// The changed files, of the whole PR or one of its commits, beside the selected file's diff.
-struct FileBrowser: View {
+/// The selected file's diff, of the whole PR or one of its commits.
+struct FileDetail: View {
     @Bindable var tab: PullRequestTab
-    let commits: [PullRequestCommit]
     /// Says so for a moment when the last file not viewed is marked viewed.
     @State private var showsAllViewed = false
 
     var body: some View {
-        HSplitView {
-            VStack(spacing: 0) {
-                CommitPicker(tab: tab, commits: commits)
-                Divider()
-                ReviewFileList(tab: tab, changes: shownChanges)
-            }
-            .frame(minWidth: 200, idealWidth: 300, maxWidth: 500)
-            detail
-                .frame(minWidth: 400)
-                .overlay(alignment: .bottom) {
-                    if showsAllViewed {
-                        Label("All files reviewed", systemImage: "checkmark.circle.fill")
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(.regularMaterial, in: Capsule())
-                            .padding(.bottom, 24)
-                            .transition(.opacity)
-                    }
+        detail
+            .overlay(alignment: .bottom) {
+                if showsAllViewed {
+                    Label("All files reviewed", systemImage: "checkmark.circle.fill")
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.bottom, 24)
+                        .transition(.opacity)
                 }
-        }
-        .onChange(of: tab.allFilesViewed) { _, allViewed in
-            withAnimation { showsAllViewed = allViewed }
-        }
-        .task(id: showsAllViewed) {
-            guard showsAllViewed, (try? await Task.sleep(for: .seconds(2))) != nil else { return }
-            withAnimation { showsAllViewed = false }
-        }
+            }
+            .onChange(of: tab.allFilesViewed) { _, allViewed in
+                withAnimation { showsAllViewed = allViewed }
+            }
+            .task(id: showsAllViewed) {
+                guard showsAllViewed, (try? await Task.sleep(for: .seconds(2))) != nil else { return }
+                withAnimation { showsAllViewed = false }
+            }
     }
 
     @ViewBuilder
@@ -323,10 +355,6 @@ struct FileBrowser: View {
         )
         // Read when shown, so the lines after the last hunk can be offered as well.
         .task(id: "\(tab.shownCommit ?? "")\0\(file.path)") { await tab.readContext(of: file) }
-    }
-
-    private var shownChanges: ReviewChanges? {
-        if case let .ready(changes)? = tab.shownChanges { changes } else { nil }
     }
 
     private func review(of file: FileDiff) -> FileReview {
@@ -467,9 +495,10 @@ struct ReviewFileList: View {
     @Bindable var tab: PullRequestTab
     /// Nil while being diffed.
     let changes: ReviewChanges?
+    let selection: Binding<FileDiff.ID?>
 
     var body: some View {
-        List(selection: $tab.selectedFile) {
+        List(selection: selection) {
             if let changes {
                 Section {
                     ForEach(changes.files) { file in
@@ -650,6 +679,14 @@ private func describe(_ stat: DiffStat) -> String {
 
 /// An empty view behind the commit picker's button, so a snapshot run can find where it is.
 struct CommitPickerMarker: NSViewRepresentable {
+    final class Marker: NSView {}
+
+    func makeNSView(context: Context) -> Marker { Marker() }
+    func updateNSView(_ view: Marker, context: Context) {}
+}
+
+/// An empty view behind the Conversation row, so a snapshot run can find where it is.
+struct ConversationRowMarker: NSViewRepresentable {
     final class Marker: NSView {}
 
     func makeNSView(context: Context) -> Marker { Marker() }

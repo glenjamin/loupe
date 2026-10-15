@@ -205,6 +205,11 @@ enum SnapshotRun {
                 if let wanted = environment["LOUPE_SNAPSHOT_CLICK_TAB"] {
                     print(try await saveSnapshotAfterClicking(wanted, in: windows, to: directory).path(percentEncoded: false))
                 }
+                // LOUPE_SNAPSHOT_CLICK_CONVERSATION=1 shows each PR's files, clicks its sidebar's
+                // Conversation row and snapshots the result, to show that the row takes clicks.
+                if environment["LOUPE_SNAPSHOT_CLICK_CONVERSATION"] == "1" {
+                    for url in try await saveSnapshotsAfterClickingConversation(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_OPEN_COMMITS=1 opens each PR's list of commits to pick from, once
                 // they're counted, and snapshots it.
                 if environment["LOUPE_SNAPSHOT_OPEN_COMMITS"] == "1" {
@@ -393,6 +398,41 @@ private func saveSnapshotAfterClicking(_ wanted: String, in windows: WindowManag
     let url = directory.appending(path: "clicked-\(sanitised(windows.title(of: windows.tabs.selected))).png")
     try await saveSnapshot(of: window, to: url)
     return url
+}
+
+/// Shows each PR's files, then clicks its Conversation row through the window as the mouse
+/// would, printing the section before and after, and writes `conversation-<title>.png`.
+@MainActor
+private func saveSnapshotsAfterClickingConversation(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs {
+        tab.section = .files
+        windows.select(tab.id)
+        try? await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+        guard let root = window.contentView,
+              let row = descendants(of: root).first(where: { $0 is ConversationRowMarker.Marker && !$0.isHiddenOrHasHiddenAncestor })
+        else { continue }
+        let point = row.convert(NSPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil)
+        let before = tab.section
+        // The mouse-up is queued first, so a tracking loop started by the mouse-down finds it.
+        let events = [NSEvent.EventType.leftMouseUp, .leftMouseDown].compactMap { type in
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+        }
+        guard events.count == 2 else { continue }
+        NSApp.postEvent(events[0], atStart: false)
+        window.sendEvent(events[1])
+        try? await Task.sleep(for: .milliseconds(300))
+        print("clicking Conversation at \(point) switched \(windows.title(of: tab.id)) from \(before) to \(tab.section)")
+        let url = directory.appending(path: "conversation-\(sanitised(windows.title(of: tab.id))).png")
+        try await saveSnapshot(of: window, to: url)
+        written.append(url)
+    }
+    windows.select(selected)
+    return written
 }
 
 /// Opens each diffed PR's list of commits to pick from, once they're counted, and writes the
