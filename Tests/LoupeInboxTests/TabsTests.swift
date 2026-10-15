@@ -180,6 +180,38 @@ struct TabsTests {
         #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
     }
 
+    @Test func eachChoiceOfChangesSaysHowMuchItChangesTheFilesToReview() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
+        let second = try await app.pushCommit(["README": "An app\nthat says hi.\n"], to: pullRequest, in: repo)
+        await app.tabs.lists.refresh()
+        await tab.reload()
+
+        // The vendored file and the lockfile aren't counted, as they aren't reviewed.
+        #expect(tab.diffStat(ofCommit: nil) == DiffStat(files: 2, additions: 3, deletions: 2))
+        #expect(tab.diffStat(ofCommit: first) == nil, "commits are counted when asked")
+
+        await tab.countCommitChanges()
+        #expect(tab.diffStat(ofCommit: first) == DiffStat(files: 1, additions: 1, deletions: 1))
+        #expect(tab.diffStat(ofCommit: second) == DiffStat(files: 1, additions: 2, deletions: 1))
+
+        // Counted once: asking again needs no git.
+        let moved = repo.root.appending(path: "moved")
+        try FileManager.default.moveItem(at: repo.checkout, to: moved)
+        await tab.countCommitChanges()
+        #expect(tab.diffStat(ofCommit: second) == DiffStat(files: 1, additions: 2, deletions: 1))
+        try FileManager.default.moveItem(at: moved, to: repo.checkout)
+
+        let third = try await app.pushCommit(["app.go": "package app\n"], to: pullRequest, in: repo)
+        await app.tabs.lists.refresh()
+        await tab.reload()
+        #expect(tab.diffStat(ofCommit: third) == nil, "reloading starts the counts afresh")
+        await tab.countCommitChanges()
+        #expect(tab.diffStat(ofCommit: third) == DiffStat(files: 1, additions: 0, deletions: 2))
+        #expect(tab.diffStat(ofCommit: first) == DiffStat(files: 1, additions: 1, deletions: 1))
+    }
+
     @Test func hiddenFilesAreListedAndDiffedOnlyWhenAskedFor() async throws {
         let repo = try await FakeRepository()
         let app = try await App()

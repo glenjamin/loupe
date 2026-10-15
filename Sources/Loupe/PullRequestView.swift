@@ -320,25 +320,109 @@ struct FileBrowser: View {
     }
 }
 
-/// Picks whether the files show the whole PR's changes or one commit's, as on github.com.
+/// Picks whether the files show the whole PR's changes or one commit's, as on github.com: a
+/// button naming what's shown opens a list of the choices, each with its whole first line and
+/// how much it changes.
 struct CommitPicker: View {
     @Bindable var tab: PullRequestTab
     let commits: [PullRequestCommit]
 
     var body: some View {
-        Picker("Changes from", selection: Binding(get: { tab.shownCommit }, set: { oid in Task { await tab.showCommit(oid) } })) {
-            Text("All changes").tag(String?.none)
-            Divider()
-            ForEach(commits) { commit in
-                (Text(verbatim: String(commit.oid.prefix(7))).monospaced() + Text(verbatim: "  \(commit.headline)"))
-                    .tag(Optional(commit.oid))
+        Button { tab.isPickingCommit = true } label: {
+            HStack(spacing: 6) {
+                shownLabel
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .imageScale(.small)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .help("Show the changes of the whole PR or of one commit")
+        .background(CommitPickerMarker())
+        .popover(isPresented: $tab.isPickingCommit, arrowEdge: .bottom) {
+            CommitList(tab: tab, commits: commits)
+        }
+        // Counted as soon as the commits are shown, so the list opens complete; it's cheap.
+        .task(id: commits.map(\.oid)) { await tab.countCommitChanges() }
+        .padding(8)
+    }
+
+    private var shownLabel: Text {
+        guard let commit = commits.first(where: { $0.oid == tab.shownCommit }) else { return Text("All changes") }
+        return Text(verbatim: String(commit.oid.prefix(7))).monospaced() + Text(verbatim: "  \(commit.headline)")
+    }
+}
+
+/// The choices of changes to show, each with its diff-stat, the shown one ticked. A click picks
+/// one; the arrow keys move between them and Return picks.
+struct CommitList: View {
+    @Bindable var tab: PullRequestTab
+    let commits: [PullRequestCommit]
+    @State private var highlighted: CommitChoice?
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        List(selection: $highlighted) {
+            row(.all, title: "All changes", oid: nil)
+            Section("Commits") {
+                ForEach(commits) { commit in
+                    row(.commit(commit.oid), title: commit.headline, oid: commit.oid)
+                }
             }
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .frame(maxWidth: .infinity)
-        .help("Show the changes of the whole PR or of one commit")
-        .padding(8)
+        .contextMenu(forSelectionType: CommitChoice.self) { _ in } primaryAction: { choices in
+            if let choice = choices.first { pick(choice) }
+        }
+        .focused($isFocused)
+        // Wide enough that most first lines fit whole; longer ones wrap.
+        .frame(width: 480, height: min(CGFloat(commits.count + 1) * 60 + 50, 480))
+        .onAppear {
+            highlighted = shown
+            isFocused = true
+        }
+    }
+
+    private var shown: CommitChoice {
+        tab.shownCommit.map(CommitChoice.commit) ?? .all
+    }
+
+    private func row(_ choice: CommitChoice, title: String, oid: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "checkmark")
+                .font(.caption.bold())
+                .opacity(choice == shown ? 1 : 0)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(verbatim: title)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Text(verbatim: tab.diffStat(ofCommit: oid).map(describe) ?? " ")
+                    Spacer(minLength: 0)
+                    if let oid {
+                        Text(verbatim: String(oid.prefix(7)))
+                            .monospaced()
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .onTapGesture { pick(choice) }
+        .tag(choice)
+    }
+
+    private func pick(_ choice: CommitChoice) {
+        tab.isPickingCommit = false
+        let oid: String? = switch choice {
+        case .all: nil
+        case let .commit(oid): oid
+        }
+        Task { await tab.showCommit(oid) }
     }
 }
 
@@ -503,4 +587,23 @@ func locateCheckout(of repository: String, startingAt directory: URL?, locate: @
 /// The repo's name without its owner.
 func repositoryName(_ pullRequest: PullRequestSummary) -> String {
     pullRequest.repository.split(separator: "/").last.map(String.init) ?? pullRequest.repository
+}
+
+/// One of the changes a `CommitList` offers, as a list needs a selection that isn't nil.
+private enum CommitChoice: Hashable {
+    case all
+    case commit(String)
+}
+
+/// `3 files  +42 −7`, as github.com counts them, with no thousands separators.
+private func describe(_ stat: DiffStat) -> String {
+    "\(stat.files) \(stat.files == 1 ? "file" : "files")  +\(stat.additions) \u{2212}\(stat.deletions)"
+}
+
+/// An empty view behind the commit picker's button, so a snapshot run can find where it is.
+struct CommitPickerMarker: NSViewRepresentable {
+    final class Marker: NSView {}
+
+    func makeNSView(context: Context) -> Marker { Marker() }
+    func updateNSView(_ view: Marker, context: Context) {}
 }

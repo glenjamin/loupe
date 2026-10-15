@@ -64,6 +64,30 @@ public struct PullRequestDiffer: Sendable {
         return RangeDiff(text: try await text, hidden: hidden)
     }
 
+    /// How much each range changes the files to review, leaving out those `PathFilter` hides as
+    /// the diff does. Each range is counted by a git run of its own, a few at a time.
+    public func stats(of ranges: [DiffRange], in checkout: URL) async throws -> [DiffRange: DiffStat] {
+        let counts = try await withThrowingTaskGroup(of: (DiffRange, [String: LineCount]).self) { group in
+            var counts: [DiffRange: [String: LineCount]] = [:]
+            var pending = ranges[...]
+            func startNext() {
+                guard let range = pending.popFirst() else { return }
+                group.addTask { (range, try await lineCounts(in: range, checkout: checkout)) }
+            }
+            for _ in 0..<Self.concurrentRuns { startNext() }
+            while let (range, count) = try await group.next() {
+                counts[range] = count
+                startNext()
+            }
+            return counts
+        }
+        let attributes = try await linguistAttributes(of: Set(counts.values.flatMap(\.keys)).sorted(), in: checkout)
+        return counts.mapValues { counts in
+            let reviewed = counts.filter { !filter.excludes($0.key, attributes: attributes[$0.key] ?? LinguistAttributes()) }.values
+            return DiffStat(files: reviewed.count, additions: reviewed.reduce(0) { $0 + $1.additions }, deletions: reviewed.reduce(0) { $0 + $1.deletions })
+        }
+    }
+
     /// One file's diff over `range`, such as a hidden file's once it's asked for. A rename's
     /// old path is included so git still sees the rename.
     public func diff(of file: ChangedFile, in range: DiffRange, checkout: URL) async throws -> String {
@@ -133,7 +157,11 @@ public struct PullRequestDiffer: Sendable {
     /// the rename.
     private func lineCounts(in range: DiffRange, under paths: [String], checkout: URL) async throws -> [String: LineCount] {
         guard !paths.isEmpty else { return [:] }
-        let pathspecs = paths.map { ":(top,literal)\($0)" }
+        return try await lineCounts(in: range, checkout: checkout, pathspecs: paths.map { ":(top,literal)\($0)" })
+    }
+
+    /// Lines added and deleted in each path changed in `range`, or only under `pathspecs`.
+    private func lineCounts(in range: DiffRange, checkout: URL, pathspecs: [String] = []) async throws -> [String: LineCount] {
         let fields = try await git(["diff", "--numstat", "-z", "--no-ext-diff", "-M", range.base, range.head, "--"] + pathspecs, in: checkout)
             .split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
         var counts: [String: LineCount] = [:]
@@ -184,6 +212,10 @@ public struct PullRequestDiffer: Sendable {
         }
         return attributes
     }
+
+    /// How many ranges `stats` counts at once: enough to use the cores, without a git process
+    /// for every commit of a long PR at the same time.
+    private static let concurrentRuns = 8
 
     @discardableResult
     private func git(_ arguments: [String], in checkout: URL, input: Data? = nil, timeout: Duration? = nil) async throws -> String {
@@ -242,7 +274,7 @@ public struct PullRequestCommit: Sendable, Equatable, Identifiable {
     public var id: String { oid }
 }
 
-private struct LineCount {
+private struct LineCount: Sendable {
     let additions: Int
     let deletions: Int
     let isBinary: Bool

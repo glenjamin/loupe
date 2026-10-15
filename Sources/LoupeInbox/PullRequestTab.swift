@@ -31,6 +31,8 @@ public final class PullRequestTab: Identifiable {
     public private(set) var isFetchingConversation = false
     /// Which commit's changes are shown, by oid, or nil for the whole PR's.
     public private(set) var shownCommit: String?
+    /// Whether the list of commits to pick from is open, kept while switching between tabs.
+    public var isPickingCommit = false
     /// Why GitHub refused the last request for a review, until another is made.
     public private(set) var reviewRequestError: String?
     /// Its markdown files as GitHub renders them, and which are shown so.
@@ -62,6 +64,9 @@ public final class PullRequestTab: Identifiable {
     private(set) var checkout: URL?
     /// Each commit's changes once asked for. A range names its commits, so these never go stale.
     private var commitChanges: [DiffRange: DiffState<ReviewChanges>] = [:]
+    /// Each commit's diff-stat once counted, which like its changes never goes stale.
+    private var commitStats: [DiffRange: DiffStat] = [:]
+    private var countingCommits: Task<Void, Never>?
     /// Each hidden file's diff once asked for, by range and path.
     private var hiddenFileDiffs: [HiddenFileKey: DiffState<FileDiff>] = [:]
 
@@ -214,6 +219,37 @@ public final class PullRequestTab: Identifiable {
         }
         commitChanges[range] = state
         if case let .ready(changes) = state, shownCommit == oid { keepSelection(in: changes) }
+    }
+
+    /// How much a commit, by oid, or the whole PR for nil, changes the files to review: the
+    /// whole PR's from its diff, a commit's once counted. Hidden files aren't counted, as in the
+    /// count of files reviewed.
+    public func diffStat(ofCommit oid: String?) -> DiffStat? {
+        guard case let .ready(review) = phase else { return nil }
+        guard let oid else { return DiffStat(review.changes.files) }
+        return review.commits.first { $0.oid == oid }.flatMap { commitStats[$0.range] }
+    }
+
+    /// Counts each commit's changes with git, unless already counted. A failure leaves them
+    /// uncounted, to be tried again when next asked.
+    public func countCommitChanges() async {
+        if let countingCommits {
+            await countingCommits.value
+            return await countCommitChanges()
+        }
+        guard case let .ready(review) = phase, let checkout else { return }
+        let ranges = review.commits.map(\.range).filter { commitStats[$0] == nil }
+        guard !ranges.isEmpty else { return }
+        let task = Task {
+            do {
+                commitStats.merge(try await differ.stats(of: ranges, in: checkout)) { $1 }
+            } catch {
+                log("Couldn't count the changes of \(title)'s commits: \(error.localizedDescription)")
+            }
+            countingCommits = nil
+        }
+        countingCommits = task
+        await task.value
     }
 
     /// A hidden file's diff in the shown changes, once asked for.
@@ -466,6 +502,7 @@ public final class PullRequestTab: Identifiable {
             self.checkout = checkout
             shownCommit = nil
             commitChanges = [:]
+            commitStats = [:]
             hiddenFileDiffs = [:]
             contextExpansions.reset()
             keepSelection(in: review.changes)

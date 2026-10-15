@@ -75,6 +75,33 @@ struct PullRequestDifferTests {
         #expect(three.hidden.isEmpty)
     }
 
+    @Test func countsEachCommitsChangesToTheFilesToReview() async throws {
+        let repo = try await FakeRepository()
+        try await repo.switchTo("feature", creatingFrom: "main")
+        try await repo.commit([
+            "app.go": "package app\n\nfunc Hello() string { return \"hi\" }\n",
+            "go.sum": "example.com/lib v1.1.0 h1:def\n",
+            "gen/schema.go": "package gen // regenerated\n",
+            "vendor/example.com/lib/lib.go": "package lib // bumped\n",
+            "vendor/patched/fix.go": "package patched\n\nfunc Fix() {}\n",
+        ], message: "Say hi")
+        try await repo.commit(["logo.png": "PNG\u{0}\u{1}\u{2}"], message: "Add a logo")
+        try await repo.rename("README", to: "README.md", message: "Rename the readme")
+        try await repo.push(asPullRequest: 6)
+
+        let differ = PullRequestDiffer()
+        let fetched = try await differ.fetch(number: 6, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout)
+        let diff = try await differ.diff(fetched, in: repo.checkout)
+        let stats = try await differ.stats(of: diff.commits.map(\.range), in: repo.checkout)
+
+        #expect(diff.commits.map { stats[$0.range] } == [
+            // app.go, and the vendored path `.gitattributes` keeps in review.
+            DiffStat(files: 2, additions: 4, deletions: 1),
+            DiffStat(files: 1, additions: 0, deletions: 0),
+            DiffStat(files: 1, additions: 0, deletions: 0),
+        ])
+    }
+
     @Test func aRootCommitIsDiffedFromNothing() async throws {
         let repo = try await FakeRepository()
         // A history started afresh then merged with its base, so its first commit has no parent.

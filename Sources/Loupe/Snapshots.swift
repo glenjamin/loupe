@@ -15,6 +15,7 @@ func snapshot(window: NSWindow) async -> NSImage {
     for case let view? in [window.contentView?.superview, window.contentView] {
         guard let rep = render(view) else { continue }
         await drawWebViews(in: view, onto: rep)
+        drawChildWindows(of: window, onto: rep)
         image.addRepresentation(rep)
         break
     }
@@ -62,7 +63,7 @@ enum SnapshotRun {
             for tab in tabs.tabs { Task { await tab.load() } }
             await wait(until: deadline) { tabs.tabs.allSatisfy(\.phase.isSettled) }
             // LOUPE_SNAPSHOT_TAB picks each PR's section; a commit or file to show needs the files.
-            if environment["LOUPE_SNAPSHOT_COMMIT"] != nil || environment["LOUPE_SNAPSHOT_FILE"] != nil {
+            if environment["LOUPE_SNAPSHOT_COMMIT"] != nil || environment["LOUPE_SNAPSHOT_FILE"] != nil || environment["LOUPE_SNAPSHOT_OPEN_COMMITS"] == "1" {
                 for tab in tabs.tabs { tab.section = .files }
             } else if let section = environment["LOUPE_SNAPSHOT_TAB"].flatMap(ReviewSection.init(named:)) {
                 for tab in tabs.tabs { tab.section = section }
@@ -161,6 +162,11 @@ enum SnapshotRun {
                 // snapshots the result, to show that the strip takes clicks.
                 if let wanted = environment["LOUPE_SNAPSHOT_CLICK_TAB"] {
                     print(try await saveSnapshotAfterClicking(wanted, in: windows, to: directory).path(percentEncoded: false))
+                }
+                // LOUPE_SNAPSHOT_OPEN_COMMITS=1 opens each PR's list of commits to pick from, once
+                // they're counted, and snapshots it.
+                if environment["LOUPE_SNAPSHOT_OPEN_COMMITS"] == "1" {
+                    for url in try await saveSnapshotsOfCommitLists(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
                 for url in try await saveSnapshotsOfAllTabs(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
             } catch {
@@ -300,6 +306,31 @@ private func saveSnapshotAfterClicking(_ wanted: String, in windows: WindowManag
     return url
 }
 
+/// Opens each diffed PR's list of commits to pick from, once they're counted, and writes the
+/// window with it open as `commits-<title>.png`.
+@MainActor
+private func saveSnapshotsOfCommitLists(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs {
+        guard case .ready = tab.phase else { continue }
+        await tab.countCommitChanges()
+        windows.select(tab.id)
+        try? await Task.sleep(for: .milliseconds(300))
+        tab.isPickingCommit = true
+        try? await Task.sleep(for: .milliseconds(300))
+        placePopoverUnderCommitPicker(in: window)
+        let url = directory.appending(path: "commits-\(sanitised(windows.title(of: tab.id))).png")
+        try await saveSnapshot(of: window, to: url)
+        tab.isPickingCommit = false
+        written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
 /// Lets the window settle and draw, then writes it to `url`.
 @MainActor
 private func saveSnapshot(of window: NSWindow, to url: URL) async throws {
@@ -364,6 +395,40 @@ private func drawWebViews(in root: NSView, onto rep: NSBitmapImageRep) async {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         image.draw(in: rect)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+}
+
+/// Moves the open popover to just under the commit picker, as on screen. The window is off every
+/// screen during a snapshot run, so AppKit has moved the popover onto one, away from it.
+@MainActor
+private func placePopoverUnderCommitPicker(in window: NSWindow) {
+    guard let root = window.contentView,
+          let picker = descendants(of: root).first(where: { $0 is CommitPickerMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }),
+          let popover = window.childWindows?.first(where: \.isVisible)
+    else { return }
+    let anchor = picker.convert(picker.bounds, to: nil)
+    let x = min(max(anchor.midX - popover.frame.width / 2, 0), window.frame.width - popover.frame.width)
+    popover.setFrameTopLeftPoint(NSPoint(x: window.frame.minX + x, y: window.frame.minY + anchor.minY))
+}
+
+/// Draws the content of `window`'s visible child windows, such as an open popover, over where
+/// they sit on it onto `rep`, which holds the window as drawn. A popover's frame is a material
+/// that doesn't draw off screen, so a plain rounded panel stands in for it.
+@MainActor
+private func drawChildWindows(of window: NSWindow, onto rep: NSBitmapImageRep) {
+    for child in window.childWindows ?? [] where child.isVisible {
+        guard let view = child.contentView, let image = render(view) else { continue }
+        let inChild = view.convert(view.bounds, to: nil)
+        let rect = inChild.offsetBy(dx: child.frame.minX - window.frame.minX, dy: child.frame.minY - window.frame.minY)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        let panel = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
+        NSColor.windowBackgroundColor.setFill()
+        panel.fill()
+        NSColor.separatorColor.setStroke()
+        panel.stroke()
+        image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         NSGraphicsContext.restoreGraphicsState()
     }
 }

@@ -66,6 +66,24 @@ public struct ChangedFile: Sendable, Equatable, Identifiable {
     }
 }
 
+/// How much some changes touch: the files changed and the lines added and deleted in them. A
+/// binary file counts as a file with no lines.
+public struct DiffStat: Sendable, Equatable {
+    public var files: Int
+    public var additions: Int
+    public var deletions: Int
+
+    public init(files: Int, additions: Int, deletions: Int) {
+        self.files = files
+        self.additions = additions
+        self.deletions = deletions
+    }
+
+    public init(_ files: [FileDiff]) {
+        self.init(files: files.count, additions: files.reduce(0) { $0 + $1.additions }, deletions: files.reduce(0) { $0 + $1.deletions })
+    }
+}
+
 public struct Hunk: Sendable {
     /// The full `@@ -a,b +c,d @@ section` line.
     public var header: String
