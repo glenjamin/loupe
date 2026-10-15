@@ -1,47 +1,79 @@
 import CoreGraphics
+import Foundation
 
 /// Turns pulling past the end of a document into a deliberate action, pull-to-refresh at the
-/// bottom. Progress is how far the fingers have travelled since the document reached its end,
-/// not how far the rubber band stretched, which AppKit damps. Crossing the threshold arms it,
+/// bottom. Progress is how far the fingers have travelled past the end, not how far the rubber
+/// band stretched, which AppKit damps. The start of each pull is free: travel counts only once
+/// the fingers have been past the end for a while and beyond a lead-in, so a scroll that runs
+/// into the end and spends its remaining travel there never arms. Crossing the target arms it,
 /// pulling back under disarms it, and lifting the fingers while armed fires it. Only a live
 /// drag counts, so momentum carrying on past the end never fills, arms or fires it.
 public struct OverscrollTrigger: Sendable, Equatable {
-    /// Finger travel past the end that arms it, the usual pull-to-refresh distance.
-    public static let pullDistance: CGFloat = 80
+    /// How long the fingers must have been past the end, within one drag, before any travel
+    /// counts. Longer than the tail of a scroll that runs into the end.
+    public static let dwell: TimeInterval = 0.2
+    /// Finger travel past the end that never counts, like a touch slop.
+    public static let leadIn: CGFloat = 40
+    /// How much of the counted finger travel goes towards the target, as SwipeRefreshLayout's
+    /// `DRAG_RATE`, so the fill keeps to about the pace of the damped rubber band.
+    public static let dragRate: CGFloat = 0.5
+    /// The counted distance that arms it, SwipeRefreshLayout's default; at `dragRate` that takes
+    /// twice as much finger travel.
+    public static let target: CGFloat = 64
 
-    public let threshold: CGFloat
-    /// How far the fingers have pulled past the end in this drag, never below zero.
-    public private(set) var travel: CGFloat = 0
     /// Whether the fingers are down, scrolling.
     public private(set) var isDragging = false
+    /// How far the fingers have pulled past the end in this drag, never below zero.
+    private var travel: CGFloat = 0
+    /// When this drag's fingers went past the end, while they're still past it.
+    private var pastEndSince: TimeInterval?
+    /// The travel from which pulling counts, once the dwell has passed.
+    private var countsFrom: CGFloat?
 
-    public init(threshold: CGFloat = Self.pullDistance) {
-        self.threshold = threshold
+    public init() {}
+
+    /// The distance counted towards the target, after the dwell and lead-in and at the drag rate.
+    public var pulled: CGFloat {
+        guard let countsFrom else { return 0 }
+        return max(0, travel - countsFrom) * Self.dragRate
     }
 
-    /// How full the indicator is, from 0 to 1.
+    /// How full the indicator is, from 0 to 1; empty through the dwell and lead-in.
     public var progress: CGFloat {
-        min(travel / threshold, 1)
+        min(pulled / Self.target, 1)
     }
 
     /// Whether lifting the fingers now would fire it.
     public var isArmed: Bool {
-        isDragging && travel >= threshold
+        isDragging && pulled >= Self.target
     }
 
     /// The fingers have touched down and started scrolling.
     public mutating func beginDrag() {
+        reset()
         isDragging = true
-        travel = 0
     }
 
-    /// The fingers moved `distance` points with the document at its end: positive pulls the
-    /// content further past the end, negative pulls it back. Returns true at the moment it arms,
-    /// for a haptic tap.
-    public mutating func pull(by distance: CGFloat) -> Bool {
+    /// The fingers moved `distance` points at `time` with the document at its end: positive pulls
+    /// the content further past the end, negative pulls it back. Returns true at the moment it
+    /// arms, for a haptic tap.
+    public mutating func pull(by distance: CGFloat, at time: TimeInterval) -> Bool {
         guard isDragging else { return false }
         let wasArmed = isArmed
+        if let since = pastEndSince {
+            // Whatever was travelled during the dwell is spent, so it can't count later.
+            if countsFrom == nil, time - since >= Self.dwell {
+                countsFrom = max(Self.leadIn, travel)
+            }
+        } else {
+            pastEndSince = time
+        }
         travel = max(0, travel + distance)
+        // Back at the end, the next pull past it has to dwell again.
+        if travel == 0 {
+            pastEndSince = nil
+            countsFrom = nil
+        }
         return isArmed && !wasArmed
     }
 
@@ -60,5 +92,7 @@ public struct OverscrollTrigger: Sendable, Equatable {
     private mutating func reset() {
         isDragging = false
         travel = 0
+        pastEndSince = nil
+        countsFrom = nil
     }
 }

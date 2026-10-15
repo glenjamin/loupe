@@ -244,8 +244,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
             switch event {
             case .began:
                 trigger.beginDrag()
-            case .moved(let distance):
-                if trigger.pull(by: distance) {
+            case .moved(let distance, let time):
+                if trigger.pull(by: distance, at: time) {
                     NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
                 }
             case .ended:
@@ -280,8 +280,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
 enum PullEvent {
     case began
     /// The fingers moved this far with the view at its end: positive pulls the content further
-    /// past it, negative back.
-    case moved(CGFloat)
+    /// past it, negative back, at the event's timestamp.
+    case moved(CGFloat, at: TimeInterval)
     case ended
     case cancelled
 }
@@ -298,7 +298,7 @@ private final class OverscrollScrollView: NSScrollView {
         // Checked before the event scrolls, so travel spent reaching the end doesn't count. The
         // delta already follows the content, natural scrolling or not; negative moves it up.
         if !phase.isDisjoint(with: [.began, .changed]), event.hasPreciseScrollingDeltas, isAtEnd() {
-            onPull(.moved(-event.scrollingDeltaY))
+            onPull(.moved(-event.scrollingDeltaY, at: event.timestamp))
         }
         super.scrollWheel(with: event)
         if phase.contains(.ended) { onPull(.ended) }
