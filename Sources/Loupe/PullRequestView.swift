@@ -98,7 +98,6 @@ struct ReviewSidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             ConversationRow(tab: tab)
-            Divider()
             if case let .ready(diff) = tab.phase {
                 CommitPicker(tab: tab, commits: diff.commits)
                 Divider()
@@ -385,24 +384,30 @@ struct FileDetail: View {
 
 /// Picks whether the files show the whole PR's changes or one commit's, as on github.com: a
 /// button naming what's shown opens a list of the choices, each with its whole first line and
-/// how much it changes.
+/// how much it changes. It's drawn as a sidebar row like Conversation's, but never as selected,
+/// being a choice of what the files show rather than a place to go.
 struct CommitPicker: View {
     @Bindable var tab: PullRequestTab
     let commits: [PullRequestCommit]
+    @State private var isHovered = false
 
     var body: some View {
         Button { tab.isPickingCommit = true } label: {
-            HStack(spacing: 6) {
-                shownLabel
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            HStack(spacing: 4) {
+                Label { shownLabel.lineLimit(1).truncationMode(.tail) } icon: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.up.chevron.down")
+                Image(systemName: "chevron.down")
                     .imageScale(.small)
                     .foregroundStyle(.secondary)
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
             .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .help("Show the changes of the whole PR or of one commit")
         .background(CommitPickerMarker())
         .popover(isPresented: $tab.isPickingCommit, arrowEdge: .bottom) {
@@ -410,7 +415,13 @@ struct CommitPicker: View {
         }
         // Counted as soon as the commits are shown, so the list opens complete; it's cheap.
         .task(id: commits.map(\.oid)) { await tab.countCommitChanges() }
-        .padding(8)
+        .background(
+            isHovered || tab.isPickingCommit ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
+            in: RoundedRectangle(cornerRadius: 5)
+        )
+        .onHover { isHovered = $0 }
+        // Sits right under the Conversation row, whose own padding spaces them.
+        .padding([.horizontal, .bottom], 8)
     }
 
     private var shownLabel: Text {
