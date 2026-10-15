@@ -247,6 +247,10 @@ This revises "A commit picker shows one commit's changes" as far as its popup me
 
 The stats count only the files to review, as the "N of M reviewed" count does: hidden vendored, lockfile and generated files are left out. The whole PR's comes from its parsed diff at no cost. Each commit's comes from `git diff --numstat` over its range (first parent, or the empty tree for a root commit), so it matches the diff that commit shows, a few runs at a time, with one `git check-attr` over all their paths to decide what's hidden. They're counted when the commits are first shown on the Files tab rather than when the popover opens, so it opens complete: over 30 commits of this repo it took about 165ms, in the background. They're kept per tab by range, like commits' diffs, and dropped when the diff is produced again. A binary file counts as a file with no lines.
 
+### The file list has no checkbox, only the tick
+
+A file's row in the list no longer shows a checkbox on hover to mark it reviewed. A control that appears on hover in a row that is also a selectable, dimmable list item read as odd. The row keeps the tick for a viewed file in its fixed slot, left empty otherwise, so names stay aligned whether or not a file is viewed. Marking stays with ⇧V, the diff header's checkbox, the footer's button and pulling past the footer.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.

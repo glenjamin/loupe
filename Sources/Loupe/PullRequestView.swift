@@ -474,10 +474,8 @@ struct ReviewFileList: View {
     }
 
     private func row(_ path: String, @ViewBuilder content: () -> some View) -> some View {
-        ReviewFileRow(row: content(), state: tab.viewedState(of: path)) {
-            Task { await tab.toggleViewed(path: path) }
-        }
-        .tag(Optional(path))
+        ReviewFileRow(row: content(), state: tab.viewedState(of: path))
+            .tag(Optional(path))
     }
 }
 
@@ -521,29 +519,24 @@ struct HiddenFileRow: View {
     }
 }
 
-/// A file in the list: checked and dimmed once viewed, flagged when it has changed since, and
-/// with a checkbox on hover to mark it either way.
+/// A file in the list: ticked and dimmed once viewed, and flagged when it has changed since.
+/// The tick's slot is kept when there's no tick, so names line up down the list.
 struct ReviewFileRow<Row: View>: View {
     let row: Row
     let state: FileViewedState
-    let toggle: () -> Void
-    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 6) {
-            Group {
-                if hovering {
-                    Toggle("Reviewed", isOn: Binding(get: { state.isViewed }, set: { _ in toggle() }))
-                        .toggleStyle(.checkbox)
-                        .labelsHidden()
-                        .help(state.isViewed ? "Mark not reviewed (⇧V)" : "Mark reviewed (⇧V)")
-                } else if state.isViewed {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.diffSuccess)
+            // A clear view holds the slot, as an empty one takes no room in a stack.
+            Color.clear
+                .frame(width: 14, height: 14)
+                .overlay {
+                    if state.isViewed {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.diffSuccess)
+                    }
                 }
-            }
-            .frame(width: 14)
             row
                 .opacity(state.isViewed ? 0.5 : 1)
             if state == .dismissed {
@@ -557,7 +550,6 @@ struct ReviewFileRow<Row: View>: View {
                     .help("Changed since you reviewed it")
             }
         }
-        .onHover { hovering = $0 }
     }
 }
 
