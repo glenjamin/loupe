@@ -3,7 +3,7 @@ import LoupeModel
 import SwiftUI
 
 /// GitHub's merge box in miniature, on the viewer's own open PRs: a Merge button, green when
-/// it can be merged and red when it can't, with the first reason why beside it. Only merge
+/// it can be merged and red when it can't, with the first reason why beneath it. Only merge
 /// commits are made. Merging asks first and names the branches; GitHub's refusal is shown by
 /// `MergeErrorLabel`.
 struct MergeBox: View {
@@ -13,16 +13,9 @@ struct MergeBox: View {
 
     var body: some View {
         let pullRequest = tab.pullRequest
-        // The reason goes under the button only when there's no room beside it.
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                reason
-                button(pullRequest)
-            }
-            VStack(alignment: .trailing, spacing: 2) {
-                button(pullRequest)
-                reason
-            }
+        VStack(spacing: 2) {
+            button(pullRequest)
+            reason
         }
         .alert(Text(verbatim: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName)?"), isPresented: $confirming) {
             Button("Merge") { Task { await tab.merge() } }
@@ -75,7 +68,7 @@ struct MergeBox: View {
     }
 }
 
-/// GitHub's refusal of a merge, under the header's right side as it's rare.
+/// GitHub's refusal of a merge, under the Merge button, wrapping within the merge section.
 struct MergeErrorLabel: View {
     let error: String
 
@@ -84,8 +77,7 @@ struct MergeErrorLabel: View {
             .font(.caption)
             .foregroundStyle(.diffDanger)
             .lineLimit(3)
-            .multilineTextAlignment(.trailing)
+            .multilineTextAlignment(.center)
             .textSelection(.enabled)
-            .frame(maxWidth: 280, alignment: .trailing)
     }
 }

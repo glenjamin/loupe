@@ -120,15 +120,15 @@ struct ReviewSectionPicker: View {
     }
 }
 
-/// The PR's name, state and branches, and on the right, on the viewer's own PRs, its reviewers
-/// and, while it's open, a Merge button to their left. On anyone else's that place is left for the viewer's
-/// own review.
+/// Three sections on one row: the PR's name, state and branches; on the viewer's own PRs, while
+/// it's open, a Merge button about 70% across; and their reviewers at the right. On anyone else's
+/// PR those places are left for the viewer's own review.
 struct PullRequestHeader: View {
     let pullRequest: PullRequestSummary
     let tab: PullRequestTab
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HeaderLayout(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(verbatim: "\(repositoryName(pullRequest)) #\(pullRequest.number)")
@@ -162,19 +162,18 @@ struct PullRequestHeader: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
-            Spacer(minLength: 0)
-            VStack(alignment: .trailing, spacing: 4) {
-                // Beside the reviewers rather than under them, so the header is no taller.
-                HStack(alignment: .top, spacing: 16) {
-                    if let readiness = tab.mergeReadiness {
-                        MergeBox(tab: tab, readiness: readiness)
-                    }
-                    if let reviewers = tab.reviewers {
-                        ReviewersBlock(tab: tab, reviewers: reviewers)
-                    }
+            // Each section is always there, empty when it has nothing, so the layout sees three.
+            VStack(spacing: 2) {
+                if let readiness = tab.mergeReadiness {
+                    MergeBox(tab: tab, readiness: readiness)
                 }
                 if let error = tab.mergeError {
                     MergeErrorLabel(error: error)
+                }
+            }
+            VStack {
+                if let reviewers = tab.reviewers {
+                    ReviewersBlock(tab: tab, reviewers: reviewers)
                 }
             }
         }
@@ -634,4 +633,47 @@ struct CommitPickerMarker: NSViewRepresentable {
 
     func makeNSView(context: Context) -> Marker { Marker() }
     func updateNSView(_ view: Marker, context: Context) {}
+}
+
+/// The header's info, merge and reviews sections, top-aligned on one row. The merge section is
+/// centred about 70% across whatever else is there, moving left only to clear the reviewers,
+/// and the info section is given what's left before it, so a long title truncates instead.
+private struct HeaderLayout: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil }
+            ?? subviews.reduce(0) { $0 + $1.sizeThatFits(.unspecified).width } + 2 * spacing
+        let height = frames(width: width, subviews: subviews).map(\.maxY).max() ?? 0
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (subview, frame) in zip(subviews, frames(width: bounds.width, subviews: subviews)) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func frames(width: CGFloat, subviews: Subviews) -> [CGRect] {
+        guard subviews.count == 3 else { return subviews.map { _ in .zero } }
+        let (info, merge, reviews) = (subviews[0], subviews[1], subviews[2])
+        let reviewsSize = reviews.sizeThatFits(.unspecified)
+        let reviewsX = width - reviewsSize.width
+        // The space left of the reviewers, less a gap when they're there.
+        let end = reviewsSize.width > 0 ? reviewsX - spacing : width
+        let centre = width * Self.mergeCentre
+        let mergeSize = merge.sizeThatFits(ProposedViewSize(width: max(0, min(Self.mergeMaxWidth, 2 * (end - centre))), height: nil))
+        let mergeX = min(centre - mergeSize.width / 2, end - mergeSize.width)
+        let infoWidth = max(0, mergeSize.width > 0 ? mergeX - spacing : end)
+        let infoSize = info.sizeThatFits(ProposedViewSize(width: infoWidth, height: nil))
+        return [
+            CGRect(x: 0, y: 0, width: infoWidth, height: infoSize.height),
+            CGRect(origin: CGPoint(x: mergeX, y: 0), size: mergeSize),
+            CGRect(origin: CGPoint(x: reviewsX, y: 0), size: reviewsSize),
+        ]
+    }
+
+    private static let mergeCentre: CGFloat = 0.7
+    /// How wide a refused merge's message may grow before it wraps.
+    private static let mergeMaxWidth: CGFloat = 240
 }

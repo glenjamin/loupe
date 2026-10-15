@@ -309,6 +309,10 @@ Each PR's tab reads e.g. `gazette #273 Merged`: the list rows' state word (Open,
 
 The Merge button sits to the left of the reviewers block, on the same row and right-aligned with it, rather than under it, so the header is no taller than the reviewers already make it; with no reviewers it takes their place. When blocked, the reason is plain red caption text to the button's left, with no symbol, dropping under the button only if there's no room beside it. GitHub's refusal of a merge, being rare, goes under the row.
 
+### The header is three sections: info, merge, reviews
+
+The PR header is one top-aligned row of three sections. The PR's name, badges, title and branches are at the left, the Merge button is centred about 70% across, and the reviewers are right-aligned at the right. A custom `Layout` keeps the button in that place whether or not there are reviewers and however long the title is. The button only moves left if the reviewers would otherwise overlap it, and the info section takes the space before the button, so a long title wraps and truncates before it reaches the button. The reason a merge is blocked is red caption text centred beneath the button, and a refused merge's message goes there too, wrapping within the section. The reason fits within the height that two rows of reviewers already give the header.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.
