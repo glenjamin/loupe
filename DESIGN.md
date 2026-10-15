@@ -255,11 +255,6 @@ A file's row in the list no longer shows a checkbox on hover to mark it reviewed
 
 Checking the diff header's Reviewed box marks the file viewed and shows the next file not viewed, as the footer's button, pulling past the footer, ⌘↓ and `]` do. Ticking it is the same act as finishing the file, so it moves on like the other ways of marking rather than leaving the reviewer to move on by hand. Unchecking it stays on the file, since taking a mark back means there's more to look at there. ⇧V still only toggles the shown file, for marking or unmarking without moving.
 
-## Not yet decided
-
-- How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
-- Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.
-
 ### The checks glyph opens a popover after a short rest, not a tooltip
 
 This supersedes the tooltip part of "Checks show as a bare glyph, and hovering lists each check". A native tooltip takes about a second to appear and is plain text, so a reviewer scanning the lists waited on it and couldn't follow a check to its page. Resting the pointer on the glyph for 200ms now opens a popover like github.com's: the same summary line, then a row per check in the same order (failing, then pending, then the rest), each with its coloured status glyph, its name, and its description in secondary caption type, where Codecov puts its coverage. A row with a link opens it in the browser and shows a pointing hand. Until the contexts have been looked up it names only the overall state. The summary and ordering stay pure functions in `LoupeModel`, tested without a UI.
@@ -267,3 +262,8 @@ This supersedes the tooltip part of "Checks show as a bare glyph, and hovering l
 200ms is well under a tooltip's delay but long enough that sweeping across rows doesn't open one; if the glyph has moved by the end of the wait, it was scrolled under a resting pointer, and the wait starts again. The popover stays while the pointer is over it, so its links can be clicked, and goes 300ms after the pointer has left both glyph and popover, long enough to cross the gap between them, or on a click elsewhere or once a link is opened.
 
 It's an `NSPopover` from an `NSViewRepresentable` anchor behind the glyph rather than SwiftUI's `.popover`, so the anchor's own tracking area times the rest and the window it was shown from is made key again if the popover took it: hovering must not move the keyboard from the list or diff. Whether either kind of popover takes key couldn't be seen in a snapshot run, which is never active, so the anchor restores it either way. The rows aren't focusable, so none shows a focus ring.
+
+## Not yet decided
+
+- How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
+- Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.
