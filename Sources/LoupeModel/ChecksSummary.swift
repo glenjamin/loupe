@@ -19,8 +19,28 @@ extension [CheckContext] {
         filter { $0.status == .failure } + filter { $0.status == .pending }
             + filter { $0.status != .failure && $0.status != .pending }
     }
+
+    /// The failed checks' names without their integration's prefix ("build" for
+    /// "ci/circleci: build"), so the header says which job to look at, which the glyph alone
+    /// doesn't. Codecov's are left out: coverage failures are noise nobody acts on from there.
+    public var failedCheckNames: [String] {
+        filter { $0.status == .failure && !$0.name.lowercased().hasPrefix("codecov/") }
+            .map { shortName($0.name) }
+    }
 }
 
 private func checks(_ count: Int) -> String {
     count == 1 ? "1 check" : "\(count) checks"
+}
+
+/// What follows an integration's prefix: after the first ": ", else after the first "/".
+private func shortName(_ name: String) -> String {
+    let short = if let range = name.range(of: ": ") {
+        name[range.upperBound...]
+    } else if let slash = name.firstIndex(of: "/") {
+        name[name.index(after: slash)...]
+    } else {
+        Substring(name)
+    }
+    return short.trimmingCharacters(in: .whitespaces)
 }

@@ -152,6 +152,7 @@ struct PullRequestHeader: View {
                         .textSelection(.enabled)
                     if let checks = pullRequest.checks {
                         ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
+                        FailedCheckNames(state: checks, contexts: pullRequest.checkContexts)
                     }
                     if let decision = pullRequest.reviewDecision {
                         ReviewDecisionLabel(decision: decision)
@@ -181,6 +182,24 @@ struct PullRequestHeader: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+}
+
+/// The failed checks' names beside the header's checks glyph, cut short on one line; the
+/// glyph's popover has the full list.
+struct FailedCheckNames: View {
+    let state: CheckState
+    let contexts: [CheckContext]
+
+    var body: some View {
+        let names = contexts.failedCheckNames
+        if state == .failure || state == .error, !names.isEmpty {
+            Text(names.joined(separator: ", "))
+                .foregroundStyle(.diffDanger)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(-1)
+        }
     }
 }
 

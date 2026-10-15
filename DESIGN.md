@@ -317,6 +317,10 @@ The PR header is one top-aligned row of three sections. The PR's name, badges, t
 
 The title in the PR header is one line, cut at the tail with an ellipsis, rather than wrapping to a second line. This keeps the header the same height whatever the title, so the diff below doesn't shift between PRs. Hovering the title shows it whole. This supersedes the wrapping described under "The header is three sections".
 
+### The header names the failed checks beside the glyph
+
+When the head commit's checks have failed, the PR header lists the failed checks' names after the cross, in red caption text on one line, truncating first when the row is narrow; the popover still has the full list. The cross alone doesn't say which job to look at. Each name drops its integration's prefix (`ci/circleci: build` reads `build`, `Terraform Cloud/tamarinworks/sandbox` reads `tamarinworks/sandbox`), and Codecov's checks are left out, as coverage failures are noise Glen never acts on from the header. The list rows keep the bare glyph.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.
