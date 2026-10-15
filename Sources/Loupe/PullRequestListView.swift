@@ -248,16 +248,17 @@ struct ReviewDecisionLabel: View {
     }
 }
 
-/// The head commit's overall check state as a bare glyph; hovering lists each check.
+/// The head commit's overall check state as a bare glyph; resting the pointer on it opens a
+/// popover listing each check, as github.com's does.
 struct ChecksIcon: View {
     let state: CheckState
-    /// Empty until looked up, when the tooltip only names the overall state.
+    /// Empty until looked up, when the popover only names the overall state.
     let contexts: [CheckContext]
 
     var body: some View {
         glyph
             .fontWeight(.semibold)
-            .help(contexts.tooltip ?? fallbackHelp)
+            .background(ChecksPopoverAnchor(content: ChecksPopoverContent(state: state, contexts: contexts)))
     }
 
     @ViewBuilder private var glyph: some View {
@@ -266,15 +267,6 @@ struct ChecksIcon: View {
         case .failure, .error: Image(systemName: "xmark").foregroundStyle(.diffDanger)
         case .pending, .expected: Image(systemName: "clock").foregroundStyle(.orange)
         case .unknown: Image(systemName: "questionmark").foregroundStyle(.secondary)
-        }
-    }
-
-    private var fallbackHelp: String {
-        switch state {
-        case .success: "Checks passed"
-        case .failure, .error: "Checks failed"
-        case .pending, .expected: "Checks running"
-        case .unknown: "Unknown check state"
         }
     }
 }

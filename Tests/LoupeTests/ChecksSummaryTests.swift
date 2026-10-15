@@ -1,7 +1,7 @@
 import LoupeModel
 import Testing
 
-struct ChecksTooltipTests {
+struct ChecksSummaryTests {
     @Test(arguments: [
         ([CheckStatus.success, .success, .success], "All 3 checks passed"),
         ([.success], "1 check passed"),
@@ -13,10 +13,18 @@ struct ChecksTooltipTests {
     ])
     func summarisesHowTheChecksWent(statuses: [CheckStatus], summary: String) {
         let checks = statuses.enumerated().map { CheckContext(name: "check \($0.offset)", status: $0.element, description: nil, url: nil) }
-        #expect(checks.tooltip?.split(separator: "\n").first.map(String.init) == summary)
+        #expect(checks.summary == summary)
     }
 
-    @Test func listsNothingWithoutChecks() {
-        #expect([CheckContext]().tooltip == nil)
+    @Test func listsFailingThenPendingThenTheRestInTheirOrder() {
+        let checks = [
+            ("lint", CheckStatus.success), ("build", .pending), ("coverage", .failure),
+            ("deploy", .neutral), ("test", .pending), ("patch", .failure),
+        ].map { CheckContext(name: $0.0, status: $0.1, description: nil, url: nil) }
+        #expect(checks.failingFirst.map(\.name) == ["coverage", "patch", "build", "test", "lint", "deploy"])
+    }
+
+    @Test func summarisesNothingWithoutChecks() {
+        #expect([CheckContext]().summary == nil)
     }
 }

@@ -73,7 +73,7 @@ struct PullRequestListTests {
         let mine = model.pullRequests(in: .mine)
         let failing = try #require(mine.first { $0.repository == "tamarinworks/gatehouse" && $0.number == 172 })
         #expect(failing.checks == .failure)
-        #expect(failing.checkContexts.tooltip == """
+        #expect(failing.checkContexts.listed == """
             2 of 5 checks failed
             ✗ codecov/patch — 76.92% of diff hit (target 98.23%)
             ✗ codecov/project — 96.01% (-2.22%) compared to 8b4635f
@@ -82,7 +82,7 @@ struct PullRequestListTests {
             ✓ ci/circleci: test — Your tests passed on CircleCI!
             """)
         let unchecked = try #require(mine.first { $0.repository == "tamarinworks/hadley" && $0.number == 1 })
-        #expect(unchecked.checkContexts.tooltip == nil)
+        #expect(unchecked.checkContexts.summary == nil)
 
         // Every open PR's checks are asked for once, in batches GitHub answers well in time.
         let lookups = await github.statusLookups
@@ -130,7 +130,7 @@ struct PullRequestListTests {
         let after = try #require(model.pullRequests(in: .toReview).first { $0.id == before.id })
         #expect(after.updatedAt == before.updatedAt)
         #expect(after.checks == .failure)
-        #expect(after.checkContexts.tooltip == """
+        #expect(after.checkContexts.listed == """
             1 of 4 checks failed
             ✗ codecov/patch — 80.00% of diff hit (target 90.00%)
             ● ci/circleci: test — CircleCI is running your tests
@@ -446,5 +446,27 @@ private final class ManualClock {
         guard let sleeper else { return }
         self.sleeper = nil
         if let error { sleeper.resume(throwing: error) } else { sleeper.resume() }
+    }
+}
+
+private extension [CheckContext] {
+    /// The summary over a line per check in the order they're listed, to compare at a glance.
+    var listed: String {
+        ([summary ?? ""] + failingFirst.map { check in
+            let line = "\(check.status.glyph) \(check.name)"
+            guard let description = check.description, !description.isEmpty else { return line }
+            return "\(line) — \(description)"
+        }).joined(separator: "\n")
+    }
+}
+
+private extension CheckStatus {
+    var glyph: String {
+        switch self {
+        case .success: "✓"
+        case .failure: "✗"
+        case .pending: "●"
+        case .neutral: "–"
+        }
     }
 }

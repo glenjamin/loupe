@@ -168,6 +168,11 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_OPEN_COMMITS"] == "1" {
                     for url in try await saveSnapshotsOfCommitLists(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_SHOW_CHECKS=1 opens the checks popover on the lists' first glyph
+                // and each PR's header, and snapshots it.
+                if environment["LOUPE_SNAPSHOT_SHOW_CHECKS"] == "1" {
+                    for url in try await saveSnapshotsOfChecks(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 for url in try await saveSnapshotsOfAllTabs(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
             } catch {
                 FileHandle.standardError.write(Data("Couldn't write snapshots: \(error)\n".utf8))
@@ -321,10 +326,45 @@ private func saveSnapshotsOfCommitLists(in windows: WindowManager, to directory:
         try? await Task.sleep(for: .milliseconds(300))
         tab.isPickingCommit = true
         try? await Task.sleep(for: .milliseconds(300))
-        placePopoverUnderCommitPicker(in: window)
+        if let root = window.contentView,
+           let picker = descendants(of: root).first(where: { $0 is CommitPickerMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }) {
+            placePopover(under: picker, in: window)
+        }
         let url = directory.appending(path: "commits-\(sanitised(windows.title(of: tab.id))).png")
         try await saveSnapshot(of: window, to: url)
         tab.isPickingCommit = false
+        written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
+/// Opens the checks popover on the topmost checks glyph of the lists and of each PR, and writes
+/// the window with it open as `checks-<title>.png`.
+@MainActor
+private func saveSnapshotsOfChecks(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for id in [nil] + windows.tabs.tabs.map(\.id) {
+        windows.select(id)
+        try? await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+        guard let root = window.contentView,
+              let anchor = descendants(of: root).lazy.compactMap({ $0 as? ChecksPopoverAnchor.AnchorView })
+                  .filter({ !$0.isHiddenOrHasHiddenAncestor })
+                  .min(by: { readsBefore($0, $1) })
+        else {
+            print("\(windows.title(of: id)) shows no checks glyph")
+            continue
+        }
+        anchor.showPopover()
+        try? await Task.sleep(for: .milliseconds(300))
+        placePopover(under: anchor, in: window)
+        let url = directory.appending(path: "checks-\(sanitised(windows.title(of: id))).png")
+        try await saveSnapshot(of: window, to: url)
+        anchor.closePopover()
         written.append(url)
     }
     windows.select(selected)
@@ -399,15 +439,12 @@ private func drawWebViews(in root: NSView, onto rep: NSBitmapImageRep) async {
     }
 }
 
-/// Moves the open popover to just under the commit picker, as on screen. The window is off every
-/// screen during a snapshot run, so AppKit has moved the popover onto one, away from it.
+/// Moves the open popover to just under `view`, as on screen. The window is off every screen
+/// during a snapshot run, so AppKit has moved the popover onto one, away from it.
 @MainActor
-private func placePopoverUnderCommitPicker(in window: NSWindow) {
-    guard let root = window.contentView,
-          let picker = descendants(of: root).first(where: { $0 is CommitPickerMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }),
-          let popover = window.childWindows?.first(where: \.isVisible)
-    else { return }
-    let anchor = picker.convert(picker.bounds, to: nil)
+private func placePopover(under view: NSView, in window: NSWindow) {
+    guard let popover = window.childWindows?.first(where: \.isVisible) else { return }
+    let anchor = view.convert(view.bounds, to: nil)
     let x = min(max(anchor.midX - popover.frame.width / 2, 0), window.frame.width - popover.frame.width)
     popover.setFrameTopLeftPoint(NSPoint(x: window.frame.minX + x, y: window.frame.minY + anchor.minY))
 }
@@ -431,6 +468,13 @@ private func drawChildWindows(of window: NSWindow, onto rep: NSBitmapImageRep) {
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         NSGraphicsContext.restoreGraphicsState()
     }
+}
+
+/// Whether `view` reads before `other`: higher in the window, or level with it and to its left.
+@MainActor
+private func readsBefore(_ view: NSView, _ other: NSView) -> Bool {
+    let (a, b) = (view.convert(view.bounds, to: nil), other.convert(other.bounds, to: nil))
+    return abs(a.maxY - b.maxY) < 20 ? a.minX < b.minX : a.maxY > b.maxY
 }
 
 @MainActor
