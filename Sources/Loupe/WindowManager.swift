@@ -105,7 +105,7 @@ final class WindowManager {
     private func render() {
         let selected = tabs.selected.flatMap(tabs.tab(id:))
         content.strip.update(
-            tabs: tabs.tabs.map { TabStripItem(id: $0.id, title: $0.title, subtitle: $0.pullRequest.title) },
+            tabs: tabs.tabs.map { TabStripItem(id: $0.id, title: $0.title, status: TabStatus($0.pullRequest), subtitle: $0.pullRequest.title) },
             selected: selected?.id
         )
         content.discard(keeping: Set(tabs.tabs.map(\.id)))

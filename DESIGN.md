@@ -301,6 +301,10 @@ Whether it can be merged is GitHub's own merge-box verdict, `mergeStateStatus`, 
 
 Clicking asks first, naming the branches ("Merge grpc-cache-status into master?"), then calls `mergePullRequest` with `mergeMethod: MERGE` and `expectedHeadOid` set to the head last looked up, so a push between that lookup and the click is refused by GitHub rather than merged unseen. A spinner shows while it runs. Once merged the PR is looked up again by id, so the header's badge says Merged, the lists update and the button goes; a refusal shows GitHub's message under the button. The head branch isn't deleted: GitHub's "Automatically delete head branches" repo setting does that where a repo wants it, and Loupe doesn't second-guess it.
 
+### Tabs carry the PR's state after its number
+
+Each PR's tab reads e.g. `gazette #273 Merged`: the list rows' state word (Open, Draft, Merged, Closed) in the badge's colour and regular weight, after the bold name. The strip is where a reviewer sees which open tabs are already merged or closed without opening them, so the word stays whole and the name truncates first when a tab is narrow. It follows the PR's stored row, so a merge or close found by a refresh or the change watcher redraws the tab.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.
