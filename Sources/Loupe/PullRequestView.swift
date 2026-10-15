@@ -121,7 +121,7 @@ struct ReviewSectionPicker: View {
 }
 
 /// The PR's name, state and branches, and on the right, on the viewer's own PRs, its reviewers
-/// and, while it's open, a Merge button. On anyone else's that place is left for the viewer's
+/// and, while it's open, a Merge button to their left. On anyone else's that place is left for the viewer's
 /// own review.
 struct PullRequestHeader: View {
     let pullRequest: PullRequestSummary
@@ -163,12 +163,18 @@ struct PullRequestHeader: View {
                 .lineLimit(1)
             }
             Spacer(minLength: 0)
-            VStack(alignment: .trailing, spacing: 8) {
-                if let reviewers = tab.reviewers {
-                    ReviewersBlock(tab: tab, reviewers: reviewers)
+            VStack(alignment: .trailing, spacing: 4) {
+                // Beside the reviewers rather than under them, so the header is no taller.
+                HStack(alignment: .top, spacing: 16) {
+                    if let readiness = tab.mergeReadiness {
+                        MergeBox(tab: tab, readiness: readiness)
+                    }
+                    if let reviewers = tab.reviewers {
+                        ReviewersBlock(tab: tab, reviewers: reviewers)
+                    }
                 }
-                if let readiness = tab.mergeReadiness {
-                    MergeBox(tab: tab, readiness: readiness)
+                if let error = tab.mergeError {
+                    MergeErrorLabel(error: error)
                 }
             }
         }

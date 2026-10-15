@@ -305,6 +305,10 @@ Clicking asks first, naming the branches ("Merge grpc-cache-status into master?"
 
 Each PR's tab reads e.g. `gazette #273 Merged`: the list rows' state word (Open, Draft, Merged, Closed) in the badge's colour and regular weight, after the bold name. The strip is where a reviewer sees which open tabs are already merged or closed without opening them, so the word stays whole and the name truncates first when a tab is narrow. It follows the PR's stored row, so a merge or close found by a refresh or the change watcher redraws the tab.
 
+### The merge box sits beside the reviewers
+
+The Merge button sits to the left of the reviewers block, on the same row and right-aligned with it, rather than under it, so the header is no taller than the reviewers already make it; with no reviewers it takes their place. When blocked, the reason is plain red caption text to the button's left, with no symbol, dropping under the button only if there's no room beside it. GitHub's refusal of a merge, being rare, goes under the row.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.
