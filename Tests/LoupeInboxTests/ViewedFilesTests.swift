@@ -104,7 +104,11 @@ struct ViewedFilesTests {
         await tab.markViewedAndAdvance()
         #expect(tab.selectedFile == "c.txt", "none left, so it stays")
         #expect(tab.allFilesViewed)
-        #expect(await app.viewed.mutations == [.mark("d.txt"), .mark("a.txt"), .mark("c.txt")])
+
+        await tab.toggleViewed(path: "c.txt")
+        #expect(tab.selectedFile == "c.txt", "unmarking stays on the file")
+        #expect(!tab.allFilesViewed)
+        #expect(await app.viewed.mutations == [.mark("d.txt"), .mark("a.txt"), .mark("c.txt"), .unmark("c.txt")])
     }
 
     @Test func movingOnPassesOverHiddenFilesWhichCanStillBeMarkedReviewed() async throws {

@@ -68,9 +68,12 @@ private struct FileHeader: View {
                 .help("Show the diff, or the file as GitHub renders it")
             }
             if let review {
-                Toggle("Reviewed", isOn: Binding(get: { review.isViewed }, set: { _ in review.toggleViewed() }))
+                // Checking it is finishing the file, so it moves on like the footer; unchecking stays.
+                Toggle("Reviewed", isOn: Binding(get: { review.isViewed }, set: { viewed in
+                    if viewed { review.markViewedAndAdvance() } else { review.toggleViewed() }
+                }))
                     .toggleStyle(.checkbox)
-                    .help("Mark this file reviewed on GitHub (⇧V)")
+                    .help("Mark this file reviewed on GitHub and show the next unreviewed file (⇧V toggles it without moving on)")
             }
         }
         .font(.system(size: 12))

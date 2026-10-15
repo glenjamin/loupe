@@ -251,6 +251,10 @@ The stats count only the files to review, as the "N of M reviewed" count does: h
 
 A file's row in the list no longer shows a checkbox on hover to mark it reviewed. A control that appears on hover in a row that is also a selectable, dimmable list item read as odd. The row keeps the tick for a viewed file in its fixed slot, left empty otherwise, so names stay aligned whether or not a file is viewed. Marking stays with ⇧V, the diff header's checkbox, the footer's button and pulling past the footer.
 
+### Checking the header's Reviewed box moves on
+
+Checking the diff header's Reviewed box marks the file viewed and shows the next file not viewed, as the footer's button, pulling past the footer, ⌘↓ and `]` do. Ticking it is the same act as finishing the file, so it moves on like the other ways of marking rather than leaving the reviewer to move on by hand. Unchecking it stays on the file, since taking a mark back means there's more to look at there. ⇧V still only toggles the shown file, for marking or unmarking without moving.
+
 ## Not yet decided
 
 - How review threads and comments render inline in the diff, and how outdated threads (no current line) are shown. The next spike.
