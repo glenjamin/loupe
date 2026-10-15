@@ -83,6 +83,85 @@ struct ReviewThreadsTests {
     }
 }
 
+@MainActor
+struct ThreadRepliesTests {
+    @Test func aReplyPostsAtOnceAndTheThreadsAreFetchedAgain() async throws {
+        let (app, tab, threadId) = try await ThreadsApp.withThread()
+        let thread = try #require(tab.thread(threadId))
+        let pullRequest = tab.pullRequest
+
+        tab.startReply(to: thread)
+        let draft = try #require(tab.threadActivity.replies[threadId])
+        draft.text = "  \n"
+        #expect(!draft.canSend, "nothing to send")
+        await tab.sendReply(to: thread)
+        #expect(await app.conversations.repliesReceived.isEmpty)
+
+        draft.text = "Good point, fixed in the next commit"
+        await tab.sendReply(to: thread)
+
+        let started = try #require(thread.comments.first?.databaseId)
+        #expect(await app.conversations.repliesReceived == [.init(repository: pullRequest.repository, number: pullRequest.number, commentId: started, body: "Good point, fixed in the next commit")])
+        #expect(tab.threadActivity.replies[threadId] == nil, "closed once posted")
+        #expect(await app.conversations.threadFetches == 1, "only the threads, not the whole conversation")
+        let replied = try #require(tab.thread(threadId))
+        #expect(replied.comments.map(\.author?.login) == ["octocat", FakeGitHub.viewer])
+        #expect(replied.comments.last?.bodyHTML == "<p dir=\"auto\">Good point, fixed in the next commit</p>")
+        #expect(try app.store.conversation(of: pullRequest.id)?.threads == tab.conversation?.threads)
+    }
+
+    @Test func aRefusedReplyKeepsTheDraftAndSaysWhy() async throws {
+        let (app, tab, threadId) = try await ThreadsApp.withThread()
+        let thread = try #require(tab.thread(threadId))
+        await app.conversations.refuseThreadChanges()
+        tab.startReply(to: thread)
+        let draft = try #require(tab.threadActivity.replies[threadId])
+        draft.text = "A careful answer"
+
+        await tab.sendReply(to: thread)
+
+        #expect(tab.threadActivity.replies[threadId] === draft, "still open")
+        #expect(draft.text == "A careful answer")
+        #expect(draft.canSend, "so it can be sent again")
+        #expect(tab.threadActivity.errors[threadId]?.contains("Resource not accessible") == true)
+        #expect(tab.thread(threadId)?.comments.count == 1)
+
+        tab.cancelReply(to: thread)
+        #expect(tab.threadActivity.replies[threadId] == nil)
+        #expect(tab.threadActivity.errors[threadId] == nil)
+    }
+
+    @Test func resolvingFoldsTheThreadAwayAndUnresolvingBringsItBack() async throws {
+        let (app, tab, threadId) = try await ThreadsApp.withThread()
+        #expect(tab.unresolvedThreadCount(of: "app.go") == 1)
+
+        await tab.setResolved(true, thread: try #require(tab.thread(threadId)))
+        let resolved = try #require(tab.thread(threadId))
+        #expect(resolved.isResolved)
+        #expect(resolved.resolvedBy == FakeGitHub.viewer, "as GitHub has it, fetched again")
+        #expect(resolved.viewerCanUnresolve && !resolved.viewerCanResolve)
+        #expect(!tab.threadActivity.expanded.contains(threadId))
+        #expect(tab.unresolvedThreadCount(of: "app.go") == 0)
+
+        await tab.setResolved(false, thread: resolved)
+        #expect(tab.thread(threadId)?.isResolved == false)
+        #expect(await app.conversations.resolutionsReceived == [.init(threadId: threadId, resolved: true), .init(threadId: threadId, resolved: false)])
+        #expect(try app.store.conversation(of: tab.id)?.threads == tab.conversation?.threads)
+    }
+
+    @Test func aRefusedResolveIsPutBackAndSaysWhy() async throws {
+        let (app, tab, threadId) = try await ThreadsApp.withThread()
+        await app.conversations.refuseThreadChanges()
+
+        await tab.setResolved(true, thread: try #require(tab.thread(threadId)))
+
+        #expect(tab.thread(threadId)?.isResolved == false)
+        #expect(tab.threadActivity.errors[threadId]?.contains("Couldn't resolve") == true)
+        #expect(tab.threadActivity.resolving.isEmpty)
+        #expect(await app.conversations.threadFetches == 0)
+    }
+}
+
 /// The app's models over the PR fixture and an in-memory store, with a conversation for each
 /// PR from `FakeConversations`.
 @MainActor
@@ -100,6 +179,15 @@ struct ThreadsApp {
     }
 
     var conversations: FakeConversations { details.conversations }
+
+    /// A PR open in its tab, with one unresolved thread by someone else on an added line.
+    static func withThread() async throws -> (ThreadsApp, PullRequestTab, String) {
+        let app = try await ThreadsApp()
+        let repo = try await FakeRepository()
+        let pullRequest = try await app.pushPullRequest(in: repo)
+        let threadId = try await app.conversations.startThread(on: pullRequest.id, path: "app.go", line: 11, body: "Why three?")
+        return (app, try await app.open(pullRequest), threadId)
+    }
 
     /// Makes the first to-review PR, with the probe's conversation, change a 60-line `app.go`:
     /// line 10 becomes three (new lines 10 to 12) and line 50 goes. It also adds `new.go` and
@@ -150,6 +238,10 @@ extension PullRequestTab {
 
     var ready: ReviewDiff? {
         if case let .ready(diff) = phase { diff } else { nil }
+    }
+
+    func thread(_ id: String) -> ReviewThread? {
+        conversation?.threads.first { $0.id == id }
     }
 }
 

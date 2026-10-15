@@ -102,6 +102,7 @@ struct MarkdownTextView: NSViewRepresentable {
     let isEditable: Bool
     let save: () -> Void
     let cancel: () -> Void
+    var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -113,6 +114,7 @@ struct MarkdownTextView: NSViewRepresentable {
         scrollView.drawsBackground = false
         let textView = MarkdownEditingTextView(frame: NSRect(origin: .zero, size: scrollView.contentSize))
         textView.configureForMarkdown()
+        textView.font = font
         textView.string = text
         textView.delegate = context.coordinator
         scrollView.documentView = textView

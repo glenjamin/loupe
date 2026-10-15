@@ -320,20 +320,27 @@ extension GitHubClient {
     /// `text` rendered to HTML by GitHub, as GitHub Flavored Markdown with references resolved
     /// against `repository` (`owner/name`). REST, as GraphQL has no way to render a file.
     public func renderMarkdown(_ text: String, in repository: String) async throws -> String {
-        var request = URLRequest(url: URL(string: "https://api.github.com/markdown")!)
+        let body = try await post(path: "/markdown", MarkdownRequest(text: text, mode: "gfm", context: repository))
+        return String(decoding: body, as: UTF8.self)
+    }
+
+    /// POSTs `content` as JSON to a REST endpoint and returns the response's body, throwing
+    /// GitHub's message for anything but success.
+    func post(path: String, _ content: some Encodable) async throws -> Data {
+        var request = URLRequest(url: URL(string: "https://api.github.com" + path)!)
         request.httpMethod = "POST"
         request.setValue("bearer \(try await token())", forHTTPHeaderField: "Authorization")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(MarkdownRequest(text: text, mode: "gfm", context: repository))
+        request.httpBody = try JSONEncoder().encode(content)
 
         let (body, response) = try await transport.send(request)
-        guard response.statusCode == 200 else {
+        guard (200..<300).contains(response.statusCode) else {
             let message = (try? JSONDecoder().decode(ErrorBody.self, from: body))?.message
             throw GitHubError.http(status: response.statusCode, message: message)
         }
-        return String(decoding: body, as: UTF8.self)
+        return body
     }
 }
 

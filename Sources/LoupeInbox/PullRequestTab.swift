@@ -47,9 +47,9 @@ public final class PullRequestTab: Identifiable {
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
     private let lists: PullRequestListModel
-    private let store: PullRequestStore
+    let store: PullRequestStore
     private let differ: PullRequestDiffer
-    private let client: GitHubClient
+    let client: GitHubClient
     /// Who could review in each repo, shared with the other tabs.
     private let candidates: ReviewerCandidates
     /// The signed-in user's login, which decides whether the PR is theirs. Read from the store,

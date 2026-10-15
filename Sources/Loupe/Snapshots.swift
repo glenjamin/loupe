@@ -150,6 +150,16 @@ enum SnapshotRun {
                     tab.threadActivity.expanded.formUnion(tab.conversation?.threads.filter(\.isResolved).map(\.id) ?? [])
                 }
             }
+            // LOUPE_SNAPSHOT_REPLY=1 opens a reply on the first unresolved thread of each shown
+            // file, as its Reply button would; nothing is typed or sent.
+            if environment["LOUPE_SNAPSHOT_REPLY"] == "1" {
+                for tab in tabs.tabs {
+                    guard let file = tab.shownFile, let threads = tab.threads(on: tab.expandedFile(file)),
+                          let thread = threads.anchored.flatMap(\.threads).first(where: { !$0.isResolved })
+                    else { continue }
+                    tab.startReply(to: thread)
+                }
+            }
             // LOUPE_SNAPSHOT_THREAD=<n> scrolls each shown diff to its nth block of threads (from
             // 1, in the order they come down the diff), once they've measured themselves.
             if let wanted = environment["LOUPE_SNAPSHOT_THREAD"].flatMap(Int.init) {

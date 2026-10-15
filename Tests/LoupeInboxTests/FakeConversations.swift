@@ -9,10 +9,12 @@ import Testing
 /// it pages with cursors as GitHub does; asking them to review adds them to a PR's review
 /// requests, and asking anyone it doesn't know is refused, as GitHub refuses an id it can't
 /// resolve. A PR's description can be asked for alone and replaced with `updatePullRequest`,
-/// which renders it afresh. Tests can add comments and reviews, ask for reviews or edit a
-/// description, as people do on GitHub, hide the teams, as from a token without access to
-/// them, shrink the pages of people and teams, refuse edits, as for a PR the token can't
-/// write to, or make every request fail.
+/// which renders it afresh. A PR's review threads can be asked for alone, replied to over
+/// REST, which adds the viewer's comment, and resolved or unresolved. Tests can add comments,
+/// reviews and review threads, ask for reviews or edit a description, as people do on GitHub,
+/// hide the teams, as from a token without access to them, shrink the pages of people and
+/// teams, refuse edits or changes to threads, as for a PR the token can't write to, or make
+/// every request fail.
 actor FakeConversations {
     /// Each PR's conversation, less its timeline, in GitHub's JSON shape.
     private var nodes: [String: [String: Any]] = [:]
@@ -34,6 +36,25 @@ actor FakeConversations {
     /// How many threads and thread comments have been made here, for their ids.
     private var threadCount = 0
     private var commentCount = 0
+    private var threadChangesRefused = false
+    /// Every reply to a thread received, in order.
+    private(set) var repliesReceived: [ReplyInput] = []
+    /// Every resolve or unresolve received, in order.
+    private(set) var resolutionsReceived: [ResolutionInput] = []
+    /// How many times the review threads have been asked for on their own.
+    private(set) var threadFetches = 0
+
+    struct ReplyInput: Equatable {
+        let repository: String
+        let number: Int
+        let commentId: Int
+        let body: String
+    }
+
+    struct ResolutionInput: Equatable {
+        let threadId: String
+        let resolved: Bool
+    }
 
     struct ReviewRequestInput: Equatable {
         let pullRequestId: String
@@ -168,9 +189,15 @@ actor FakeConversations {
         if query.contains("assignableUsers(") { return try usersPage(variables, url) }
         if query.contains("teams(") { return try teamsPage(variables, url) }
         if query.contains("updatePullRequest(") { return try updatePullRequest(variables, url) }
+        if query.contains("resolveReviewThread(") { return try setResolved(query.contains("unresolveReviewThread("), variables, url) }
         let id = try #require(variables["id"] as? String)
         guard var node = nodes[id], let timeline = timelines[id] else {
             return (try JSONSerialization.data(withJSONObject: ["data": ["node": NSNull()]]), fakeResponse(url, status: 200))
+        }
+        if query.contains("reviewThreads"), !query.contains("timelineItems") {
+            threadFetches += 1
+            let threads = node["reviewThreads"] ?? ["nodes": []]
+            return (try JSONSerialization.data(withJSONObject: ["data": ["node": ["reviewThreads": threads]]]), fakeResponse(url, status: 200))
         }
         if !query.contains("timelineItems") {
             #expect(query.contains("PullRequest { body }"), "the only query of a PR without its timeline is for its description")
@@ -213,6 +240,85 @@ actor FakeConversations {
             try addRequest(reviewer, on: id)
         }
         return (try JSONSerialization.data(withJSONObject: ["data": ["requestReviews": ["clientMutationId": NSNull()]]]), fakeResponse(url, status: 200))
+    }
+
+    /// A REST request: a reply to a review thread, at
+    /// `/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies`. Like GitHub, it
+    /// takes only the REST id of a thread's first comment, as replies to replies aren't
+    /// supported, and answers 201 with the new comment in `probe/review-comment-rest.json`'s shape.
+    func sendREST(_ request: URLRequest) throws -> (Data, HTTPURLResponse) {
+        let url = try #require(request.url)
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
+        let data = try #require(request.httpBody)
+        let content = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        if failing { return (Data(), fakeResponse(url, status: 502)) }
+        let match = try #require(url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/comments\/(\d+)\/replies/), "Unexpected REST request: \(url.path())")
+        let commentId = try #require(Int(match.3))
+        let body = try #require(content["body"] as? String)
+        repliesReceived.append(ReplyInput(repository: String(match.1), number: try #require(Int(match.2)), commentId: commentId, body: body))
+        if threadChangesRefused {
+            return (Data(#"{"message":"Resource not accessible by personal access token","status":"403"}"#.utf8), fakeResponse(url, status: 403))
+        }
+        guard let (id, index) = threadStarted(by: commentId) else {
+            return (Data(#"{"message":"Not Found","status":"404"}"#.utf8), fakeResponse(url, status: 404))
+        }
+        var threads = self.threads(of: id)
+        var comments = ((threads[index]["comments"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
+        let comment = threadComment(body, by: FakeGitHub.viewer)
+        comments.append(comment)
+        threads[index]["comments"] = ["nodes": comments]
+        setThreads(threads, of: id)
+        var rest = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/review-comment-rest.json"))) as? [String: Any])
+        rest["id"] = comment["databaseId"]
+        rest["node_id"] = comment["id"]
+        rest["body"] = body
+        rest["in_reply_to_id"] = commentId
+        return (try JSONSerialization.data(withJSONObject: rest), fakeResponse(url, status: 201))
+    }
+
+    /// Refuses replies and resolving, as for a PR the token can't write to.
+    func refuseThreadChanges() { threadChangesRefused = true }
+
+    private func setResolved(_ unresolve: Bool, _ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
+        let mutation = unresolve ? "unresolveReviewThread" : "resolveReviewThread"
+        let threadId = try #require(variables["threadId"] as? String)
+        resolutionsReceived.append(ResolutionInput(threadId: threadId, resolved: !unresolve))
+        if threadChangesRefused {
+            let refusal: [String: Any] = [
+                "data": [mutation: NSNull()],
+                "errors": [["type": "FORBIDDEN", "path": [mutation], "message": "Resource not accessible by personal access token"]],
+            ]
+            return (try JSONSerialization.data(withJSONObject: refusal), fakeResponse(url, status: 200))
+        }
+        guard let id = nodes.keys.first(where: { threads(of: $0).contains { $0["id"] as? String == threadId } }) else {
+            return try refusal(unresolved: threadId, mutation: mutation, url)
+        }
+        var list = threads(of: id)
+        let index = try #require(list.firstIndex { $0["id"] as? String == threadId })
+        list[index]["isResolved"] = !unresolve
+        list[index]["viewerCanResolve"] = unresolve
+        list[index]["viewerCanUnresolve"] = !unresolve
+        list[index]["resolvedBy"] = unresolve ? NSNull() as Any : ["login": FakeGitHub.viewer]
+        setThreads(list, of: id)
+        let payload: [String: Any] = [mutation: ["thread": ["id": threadId, "isResolved": !unresolve]]]
+        return (try JSONSerialization.data(withJSONObject: ["data": payload]), fakeResponse(url, status: 200))
+    }
+
+    /// The PR and index of the thread whose first comment has REST id `commentId`.
+    private func threadStarted(by commentId: Int) -> (String, Int)? {
+        for id in nodes.keys {
+            if let index = threads(of: id).firstIndex(where: { thread in
+                (((thread["comments"] as? [String: Any])?["nodes"] as? [[String: Any]])?.first?["databaseId"] as? Int) == commentId
+            }) {
+                return (id, index)
+            }
+        }
+        return nil
+    }
+
+    private func setThreads(_ threads: [[String: Any]], of id: String) {
+        nodes[id]?["reviewThreads"] = ["nodes": threads]
     }
 
     private func updatePullRequest(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
@@ -344,6 +450,7 @@ struct FakePullRequestDetails: HTTPTransport {
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         if request.url?.path() == "/markdown" { return try await markdown.send(request) }
+        if request.url?.path().hasPrefix("/repos/") == true { return try await conversations.sendREST(request) }
         let data = try #require(request.httpBody)
         let body = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let query = try #require(body["query"] as? String)
@@ -351,7 +458,7 @@ struct FakePullRequestDetails: HTTPTransport {
             let url = try #require(request.url)
             return (try JSONSerialization.data(withJSONObject: ["data": ["viewer": ["login": FakeGitHub.viewer]]]), fakeResponse(url, status: 200))
         }
-        let isConversation = ["timelineItems", "requestReviews(", "assignableUsers(", "teams(", "updatePullRequest(", "PullRequest { body }"].contains { query.contains($0) }
+        let isConversation = ["timelineItems", "reviewThreads", "resolveReviewThread(", "requestReviews(", "assignableUsers(", "teams(", "updatePullRequest(", "PullRequest { body }"].contains { query.contains($0) }
         return isConversation ? try await conversations.send(request) : try await viewed.send(request)
     }
 }

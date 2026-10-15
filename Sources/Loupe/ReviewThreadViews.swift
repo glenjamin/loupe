@@ -91,6 +91,10 @@ private struct ThreadCard: View {
                     Divider()
                     CommentView(comment: comment, viewer: tab.viewer, activity: activity)
                 }
+                if thread.viewerCanReply || activity.errors[thread.id] != nil {
+                    Divider()
+                    footer(activity)
+                }
             }
             .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -123,12 +127,54 @@ private struct ThreadCard: View {
                     .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.5)))
             }
             Spacer(minLength: 0)
+            resolveButton
         }
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.bar)
+    }
+
+    /// Resolves the thread, or unresolves a resolved one, when the viewer may.
+    @ViewBuilder
+    private var resolveButton: some View {
+        let resolve = !thread.isResolved
+        if resolve ? thread.viewerCanResolve : thread.viewerCanUnresolve {
+            if tab.threadActivity.resolving.contains(thread.id) {
+                ProgressView().controlSize(.mini)
+            }
+            Button(resolve ? "Resolve conversation" : "Unresolve conversation") {
+                Task { await tab.setResolved(resolve, thread: thread) }
+            }
+            .controlSize(.small)
+            .disabled(tab.threadActivity.resolving.contains(thread.id))
+        }
+    }
+
+    /// Why the last change didn't reach GitHub, then the reply being written or a button to
+    /// start one.
+    @ViewBuilder
+    private func footer(_ activity: ThreadActivity) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let error = activity.errors[thread.id] {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.diffDanger)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                    .help(error)
+            }
+            if let draft = activity.replies[thread.id] {
+                CommentComposer(draft: draft, sendLabel: "Reply", send: { Task { await tab.sendReply(to: thread) } }, cancel: { tab.cancelReply(to: thread) })
+            } else if thread.viewerCanReply {
+                Button("Reply…") { tab.startReply(to: thread) }
+                    .controlSize(.small)
+                    .help("Reply to this conversation; it posts at once, not as part of a review")
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 
     /// Which lines it's on, where it was made for an outdated thread.
@@ -191,6 +237,60 @@ private struct CommentView: View {
     private var hiddenSummary: String {
         let reason = comment.minimizedReason.map { " as \($0.lowercased().replacingOccurrences(of: "_", with: " "))" } ?? ""
         return "\(comment.author?.login ?? "ghost")'s comment was hidden\(reason)"
+    }
+}
+
+/// A plain-text field for a comment in markdown, as the description's editor is: ⌘↩ sends,
+/// Esc cancels, asking first if anything has been typed.
+struct CommentComposer: View {
+    @Bindable var draft: CommentDraft
+    let sendLabel: String
+    let send: () -> Void
+    let cancel: () -> Void
+    @State private var confirmsDiscard = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            MarkdownTextView(text: $draft.text, isEditable: !draft.isSending, save: sendIfReady, cancel: cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize))
+                .frame(height: 96)
+                .background(Color(nsColor: .textBackgroundColor))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))
+            HStack(spacing: 8) {
+                Text("Markdown. Posts at once, not as part of a review.")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if draft.isSending {
+                    ProgressView().controlSize(.small)
+                }
+                Button("Cancel", action: cancelAsking)
+                    .disabled(draft.isSending)
+                Button(sendLabel, action: sendIfReady)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!draft.canSend)
+                    .help("\(sendLabel) (⌘↩)")
+            }
+            .controlSize(.small)
+        }
+        .alert("Discard this comment?", isPresented: $confirmsDiscard) {
+            Button("Discard", role: .destructive, action: cancel)
+            Button("Keep Writing", role: .cancel) {}
+        } message: {
+            Text("It hasn't been posted to GitHub.")
+        }
+    }
+
+    private func sendIfReady() {
+        if draft.canSend { send() }
+    }
+
+    private func cancelAsking() {
+        guard !draft.isSending else { return }
+        if draft.hasText {
+            confirmsDiscard = true
+        } else {
+            cancel()
+        }
     }
 }
 
