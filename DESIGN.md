@@ -377,6 +377,12 @@ The strip is as tall as the trigger's lead-in, 40pt, one constant: the lead-in's
 
 Scrolling back up the document after the button has filled cancels the pull: a live drag that moves with the view away from its end now undoes the pull, so letting go there never fires, and coming back to the end dwells again.
 
+### The file list is a tree of directories, as on github.com
+
+The sidebar's files are a tree, as github.com's "Files changed" tree is: directories as disclosure rows with a folder symbol, open to start with, files under them with a document symbol, and a run of directories each holding only one directory shown as one row named `a/b/c`. Each directory lists its subdirectories before its files, each alphabetically, ignoring case and taking numbers by value. The flat list repeated a long directory path under every file; a tree shows the structure once, and each file is one line with its `+A −D` at the trailing end, where the counts line up down the list. A file with no lines counted says added, deleted, renamed or binary there instead. The tick's slot, the unresolved-thread count and the "changed" capsule stay beside the name, and directories can't be selected, so the arrow keys move between files. Folded directories are remembered while the PR's view lives.
+
+The "Vendored, lockfiles and generated" section is a second tree under its own header, so a generated `.pb.go` still sits under its directory; its rows say added, deleted, renamed or copied before their counts at the trailing end. Moving on to the next file not viewed, and the file a PR opens on, follow the tree's order rather than git's, so they go down the list as shown; git sorts `a/b.txt` before `a/c/d.txt`, the tree the other way round. The diff file mode (`swift run Loupe <diff>`) uses the same tree.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

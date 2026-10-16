@@ -325,11 +325,12 @@ public final class PullRequestTab: Identifiable {
         await setViewed(true, path: current)
     }
 
-    /// The first file after `id` in the shown changes that isn't viewed as it is now, wrapping
-    /// round to the top; never `id` itself. Hidden files are passed over.
+    /// The first file after `id` in the shown changes, in the file list's tree order, that isn't
+    /// viewed as it is now, wrapping round to the top; never `id` itself. Hidden files are
+    /// passed over.
     public func nextUnviewedFile(after id: FileDiff.ID) -> FileDiff.ID? {
         guard case let .ready(changes)? = shownChanges else { return nil }
-        let files = changes.files.map(\.id)
+        let files = FileTree(paths: changes.files.map(\.path)).files
         let start = files.firstIndex(of: id).map { $0 + 1 } ?? 0
         return (files[start...] + files[..<start]).first { $0 != id && !viewedState(of: $0).isViewed }
     }
@@ -536,10 +537,11 @@ public final class PullRequestTab: Identifiable {
         review.commits.first { $0.oid == shownCommit }?.range
     }
 
-    /// Keeps the shown file if `changes` has it, hidden or not, else shows their first file.
+    /// Keeps the shown file if `changes` has it, hidden or not, else shows the first file the
+    /// list shows.
     private func keepSelection(in changes: ReviewChanges) {
         if changes.files.contains(where: { $0.id == selectedFile }) || changes.hidden.contains(where: { $0.id == selectedFile }) { return }
-        selectedFile = changes.files.first?.id ?? changes.hidden.first?.id
+        selectedFile = FileTree(paths: changes.files.map(\.path)).files.first ?? FileTree(paths: changes.hidden.map(\.path)).files.first
     }
 
     private func produce(_ pullRequest: PullRequestSummary) async {

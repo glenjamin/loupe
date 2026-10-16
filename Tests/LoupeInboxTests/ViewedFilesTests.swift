@@ -111,6 +111,20 @@ struct ViewedFilesTests {
         #expect(await app.viewed.mutations == [.mark("d.txt"), .mark("a.txt"), .mark("c.txt"), .unmark("c.txt")])
     }
 
+    @Test func movingOnFollowsTheFileListsTreeWithDirectoriesBeforeFiles() async throws {
+        let repo = try await FakeRepository()
+        let app = try await ViewedApp()
+        let pullRequest = try await app.pushPullRequest(changing: ["a.txt", "lib/b.txt", "lib/sub/c.txt"], in: repo)
+        await app.viewed.add(pullRequest.id, files: [("a.txt", .unviewed), ("lib/b.txt", .unviewed), ("lib/sub/c.txt", .unviewed)])
+        let tab = try await app.open(pullRequest)
+        #expect(tab.selectedFile == "lib/sub/c.txt", "opens on the first file the list shows")
+
+        await tab.markViewedAndAdvance()
+        #expect(tab.selectedFile == "lib/b.txt")
+        await tab.markViewedAndAdvance()
+        #expect(tab.selectedFile == "a.txt")
+    }
+
     @Test func movingOnPassesOverHiddenFilesWhichCanStillBeMarkedReviewed() async throws {
         let repo = try await FakeRepository()
         let app = try await ViewedApp()

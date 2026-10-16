@@ -1,6 +1,7 @@
 import AppKit
 import LoupeCore
 import LoupeInbox
+import LoupeModel
 import LoupeStore
 import SwiftUI
 
@@ -101,7 +102,7 @@ final class ReviewModel {
         self.title = title
         self.files = files
         self.excludedCount = excludedCount
-        self.selection = files.first?.id
+        self.selection = FileTree(paths: files.map(\.path)).files.first
         self.error = error
     }
 
@@ -136,15 +137,23 @@ struct ContentView: View {
     }
 }
 
-/// The files to review, with a count of those hidden as vendored, lockfiles or generated.
+/// The files to review as a tree of their directories, with a count of those hidden as
+/// vendored, lockfiles or generated.
 struct FileList: View {
     let files: [FileDiff]
     let hiddenCount: Int
     @Binding var selection: FileDiff.ID?
+    /// Directories folded shut; every one starts open.
+    @State private var collapsed: Set<String> = []
 
     var body: some View {
-        List(files, selection: $selection) { file in
-            FileRow(file: file)
+        let byPath = Dictionary(files.map { ($0.path, $0) }) { first, _ in first }
+        List(selection: $selection) {
+            FileTreeRows(nodes: FileTree(paths: byPath.keys).nodes, tree: "files", collapsed: $collapsed) { path in
+                if let file = byPath[path] {
+                    FileRow(file: file).tag(Optional(path))
+                }
+            }
         }
         .safeAreaInset(edge: .bottom) {
             Text("\(files.count) files · \(hiddenCount) vendored, lockfile or generated hidden")
@@ -156,52 +165,53 @@ struct FileList: View {
     }
 }
 
-/// A file's name over its line counts and directory. A file not yet diffed says what happened
-/// to it in place of the counts.
+/// A file on one line: its name, then its line counts at the end, or what happened to it where
+/// no lines were counted.
 struct FileRow: View {
-    let path: String
-    let counts: (additions: Int, deletions: Int)?
-    let change: FileDiff.Change
-    var unresolvedThreads = 0
-
-    init(file: FileDiff, unresolvedThreads: Int = 0) {
-        path = file.path
-        counts = (file.additions, file.deletions)
-        change = file.change
-        self.unresolvedThreads = unresolvedThreads
-    }
-
-    init(file: ChangedFile, diff: FileDiff?) {
-        path = file.path
-        counts = diff.map { ($0.additions, $0.deletions) }
-        change = file.change
-    }
+    let file: FileDiff
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(verbatim: (path as NSString).lastPathComponent).lineLimit(1)
-                UnresolvedThreadCount(count: unresolvedThreads)
-            }
-            HStack(spacing: 6) {
-                if let counts {
-                    Text(verbatim: "+\(counts.additions)").foregroundStyle(.diffSuccess)
-                    Text(verbatim: "-\(counts.deletions)").foregroundStyle(.diffDanger)
-                } else {
-                    Text(changeDescription).foregroundStyle(.secondary)
-                }
-                Text(verbatim: (path as NSString).deletingLastPathComponent)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-            }
-            .font(.caption.monospacedDigit())
+        HStack(spacing: 6) {
+            FileName(path: file.path)
+            Spacer(minLength: 4)
+            ReviewLineCounts(file: file).fixedSize()
         }
-        .help(path)
+        .help(file.path)
     }
+}
 
-    private var changeDescription: String {
-        switch change {
+/// A file's document symbol and name, on one line, cut short at the end when there isn't room.
+struct FileName: View {
+    let path: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "doc").foregroundStyle(.secondary)
+            Text(verbatim: (path as NSString).lastPathComponent)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+    }
+}
+
+/// `+A −D` in monospaced digits, additions green and deletions red.
+struct LineCounts: View {
+    let additions: Int
+    let deletions: Int
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(verbatim: "+\(additions)").foregroundStyle(.diffSuccess)
+            Text(verbatim: "\u{2212}\(deletions)").foregroundStyle(.diffDanger)
+        }
+        .font(.caption.monospacedDigit())
+    }
+}
+
+extension FileDiff.Change {
+    /// What happened to the file, in a word.
+    var summary: String {
+        switch self {
         case .added: "added"
         case .deleted: "deleted"
         case .modified: "modified"

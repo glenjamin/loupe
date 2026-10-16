@@ -501,26 +501,35 @@ struct CommitList: View {
     }
 }
 
-/// The files to review, each with its viewed state, then those hidden as vendored, lockfiles or
-/// generated, which can be shown and marked reviewed too but are passed over when moving on.
+/// The files to review as a tree of their directories, each file with its viewed state, then
+/// those hidden as vendored, lockfiles or generated as a second tree, which can be shown and
+/// marked reviewed too but are passed over when moving on.
 struct ReviewFileList: View {
     @Bindable var tab: PullRequestTab
     /// Nil while being diffed.
     let changes: ReviewChanges?
     let selection: Binding<FileDiff.ID?>
+    /// Directories folded shut, by tree; every one starts open.
+    @State private var collapsed: Set<String> = []
 
     var body: some View {
         List(selection: selection) {
             if let changes {
+                let files = Dictionary(changes.files.map { ($0.path, $0) }) { first, _ in first }
                 Section {
-                    ForEach(changes.files) { file in
-                        row(file.path) { FileRow(file: file, unresolvedThreads: tab.unresolvedThreadCount(of: file.path) ?? 0) }
+                    FileTreeRows(nodes: FileTree(paths: files.keys).nodes, tree: "review", collapsed: $collapsed) { path in
+                        if let file = files[path] {
+                            row(path) { ReviewLineCounts(file: file) }
+                        }
                     }
                 }
                 if !changes.hidden.isEmpty {
+                    let hidden = Dictionary(changes.hidden.map { ($0.path, $0) }) { first, _ in first }
                     Section {
-                        ForEach(changes.hidden) { file in
-                            row(file.path) { HiddenFileRow(file: file, unresolvedThreads: tab.unresolvedThreadCount(of: file.path) ?? 0) }
+                        FileTreeRows(nodes: FileTree(paths: hidden.keys).nodes, tree: "hidden", collapsed: $collapsed) { path in
+                            if let file = hidden[path] {
+                                row(path, help: file.renamedFrom.map { "\($0) → \(file.path)" }) { HiddenFileChange(file: file) }
+                            }
                         }
                     } header: {
                         Text(verbatim: "Vendored, lockfiles and generated (\(changes.hidden.count))")
@@ -549,53 +558,130 @@ struct ReviewFileList: View {
         }
     }
 
-    private func row(_ path: String, @ViewBuilder content: () -> some View) -> some View {
-        ReviewFileRow(row: content(), state: tab.viewedState(of: path))
+    private func row(_ path: String, help: String? = nil, @ViewBuilder trailing: () -> some View) -> some View {
+        ReviewFileRow(path: path, unresolvedThreads: tab.unresolvedThreadCount(of: path) ?? 0, state: tab.viewedState(of: path), trailing: trailing())
+            .help(help ?? path)
             .tag(Optional(path))
     }
 }
 
-/// A hidden file's name over its line counts, what happened to it where that says more than
-/// the counts, and its directory, as for the files to review.
-struct HiddenFileRow: View {
-    let file: ChangedFile
-    var unresolvedThreads = 0
+/// A tree's nodes as list rows: each directory a disclosure row, open unless folded shut, and
+/// each file the row `file` makes for its path. Directories take no tag, so only files can be
+/// selected.
+struct FileTreeRows<FileRow: View>: View {
+    let nodes: [FileTree.Node]
+    /// Tells apart the folded directories of trees sharing `collapsed`.
+    let tree: String
+    @Binding var collapsed: Set<String>
+    @ViewBuilder let file: (String) -> FileRow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(verbatim: (file.path as NSString).lastPathComponent).lineLimit(1)
-                UnresolvedThreadCount(count: unresolvedThreads)
-            }
-            HStack(spacing: 6) {
-                if file.isBinary {
-                    Text("binary").foregroundStyle(.secondary)
-                } else {
-                    Text(verbatim: "+\(file.additions)").foregroundStyle(.diffSuccess)
-                    Text(verbatim: "-\(file.deletions)").foregroundStyle(.diffDanger)
+        ForEach(nodes) { node in
+            switch node {
+            case let .directory(directory):
+                DisclosureGroup(isExpanded: isExpanded(directory.path)) {
+                    FileTreeRows(nodes: directory.children, tree: tree, collapsed: $collapsed, file: file)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder").foregroundStyle(.secondary)
+                        Text(verbatim: directory.name)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .help(directory.path)
                 }
-                if let change {
-                    Text(change).foregroundStyle(.secondary)
-                }
-                Text(verbatim: (file.path as NSString).deletingLastPathComponent)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
+            case let .file(path):
+                file(path)
             }
-            .font(.caption.monospacedDigit())
         }
-        .help(file.renamedFrom.map { "\($0) → \(file.path)" } ?? file.path)
     }
 
-    /// Nil for a modification, which the counts already say.
-    private var change: String? {
-        switch file.change {
-        case .added: "added"
-        case .deleted: "deleted"
-        case .modified: nil
-        case .renamed: "renamed"
-        case .copied: "copied"
+    private func isExpanded(_ path: String) -> Binding<Bool> {
+        let key = "\(tree):\(path)"
+        return Binding {
+            !collapsed.contains(key)
+        } set: { expanded in
+            if expanded { collapsed.remove(key) } else { collapsed.insert(key) }
         }
+    }
+}
+
+/// A file in the list on one line: ticked and dimmed once viewed, its name and open
+/// conversations, flagged when it has changed since being viewed, and `trailing` at the end.
+/// The tick's slot is kept when there's no tick, so names line up down the list.
+struct ReviewFileRow<Trailing: View>: View {
+    let path: String
+    let unresolvedThreads: Int
+    let state: FileViewedState
+    let trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 6) {
+            // A clear view holds the slot, as an empty one takes no room in a stack.
+            Color.clear
+                .frame(width: 14, height: 14)
+                .overlay {
+                    if state.isViewed {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.diffSuccess)
+                    }
+                }
+            HStack(spacing: 6) {
+                FileName(path: path)
+                UnresolvedThreadCount(count: unresolvedThreads)
+            }
+            .opacity(state.isViewed ? 0.5 : 1)
+            if state == .dismissed {
+                Text("changed")
+                    .font(.caption2)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .foregroundStyle(.secondary)
+                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.5)))
+                    .help("Changed since you reviewed it")
+                    .fixedSize()
+            }
+            Spacer(minLength: 4)
+            trailing
+                .fixedSize()
+                .opacity(state.isViewed ? 0.5 : 1)
+        }
+    }
+}
+
+/// A file to review's line counts, or for one with no lines counted, what happened to it.
+struct ReviewLineCounts: View {
+    let file: FileDiff
+
+    var body: some View {
+        if file.additions == 0 && file.deletions == 0 {
+            Text(file.isBinary ? "binary" : file.change.summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            LineCounts(additions: file.additions, deletions: file.deletions)
+        }
+    }
+}
+
+/// What happened to a hidden file where that says more than its counts, then its counts, or
+/// that it's binary.
+struct HiddenFileChange: View {
+    let file: ChangedFile
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if file.change != .modified {
+                Text(file.change.summary).foregroundStyle(.secondary)
+            }
+            if file.isBinary {
+                Text("binary").foregroundStyle(.secondary)
+            } else {
+                LineCounts(additions: file.additions, deletions: file.deletions)
+            }
+        }
+        .font(.caption)
     }
 }
 
@@ -611,41 +697,8 @@ struct UnresolvedThreadCount: View {
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
+            .fixedSize()
             .help(count == 1 ? "1 unresolved conversation" : "\(count) unresolved conversations")
-        }
-    }
-}
-
-/// A file in the list: ticked and dimmed once viewed, and flagged when it has changed since.
-/// The tick's slot is kept when there's no tick, so names line up down the list.
-struct ReviewFileRow<Row: View>: View {
-    let row: Row
-    let state: FileViewedState
-
-    var body: some View {
-        HStack(spacing: 6) {
-            // A clear view holds the slot, as an empty one takes no room in a stack.
-            Color.clear
-                .frame(width: 14, height: 14)
-                .overlay {
-                    if state.isViewed {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.diffSuccess)
-                    }
-                }
-            row
-                .opacity(state.isViewed ? 0.5 : 1)
-            if state == .dismissed {
-                Spacer(minLength: 0)
-                Text("changed")
-                    .font(.caption2)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .foregroundStyle(.secondary)
-                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.5)))
-                    .help("Changed since you reviewed it")
-            }
         }
     }
 }
