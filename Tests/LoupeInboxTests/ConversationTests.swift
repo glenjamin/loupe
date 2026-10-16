@@ -124,12 +124,14 @@ struct ConversationApp {
     let tabs: TabsModel
     /// What tabs wait on before fetching changes, which only end when the test says.
     let delay = ManualDelay()
+    /// What the shown PR waits on before it's checked, likewise.
+    let showDelay = ManualDelay()
 
     /// Over `store`, or an in-memory one.
     init(store: PullRequestStore? = nil) async throws {
         github = try FakeGitHub(fixture: "pr-list.json")
         self.store = try store ?? PullRequestStore.inMemory()
-        tabs = Self.tabs(github, details, self.store, delay)
+        tabs = Self.tabs(github, details, self.store, delay, showDelay)
         await tabs.lists.refresh()
     }
 
@@ -146,12 +148,12 @@ struct ConversationApp {
 
     /// Fresh models over the same store, as on the next launch.
     func relaunch() throws -> TabsModel {
-        Self.tabs(github, details, store, delay)
+        Self.tabs(github, details, store, delay, showDelay)
     }
 
-    private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore, _ delay: ManualDelay) -> TabsModel {
+    private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore, _ delay: ManualDelay, _ showDelay: ManualDelay) -> TabsModel {
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
-        return TabsModel(lists: lists, store: store, client: details.client(), notifications: github.notifications(), sleep: { await delay.sleep(for: $0) })
+        return TabsModel(lists: lists, store: store, client: details.client(), notifications: github.notifications(), sleep: { await delay.sleep(for: $0) }, showDelay: { await showDelay.sleep(for: $0) })
     }
 }
 

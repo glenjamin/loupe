@@ -497,6 +497,12 @@ The searches only ever key on the author and the requested reviewers, and a view
 
 Nothing is taken out of a list this way; the refresh's check of fulfilled requests still does that. A refresh doesn't undo the addition before a search has seen the PR: one asking for changes only adds and updates what its search returns, leaving other rows alone, so the PR stays until a search reports it or the to-review check finds its request gone. Only a full load, before a list has ever loaded or while its rows predate commit oids, replaces the list wholesale, and its search asks for every open PR in the list, which a freshly requested PR is among. A request of a team the viewer isn't in never shows in the search, but stays, as the to-review check keeps any team's request.
 
+### Showing a PR checks it on GitHub straight away
+
+Whenever a PR's tab becomes the shown one, however it got there (the strip, ⌘1–⌘9, ⌃Tab, opening from a list or a link, or closing the tab before it), and whenever the app or its window comes back to the front with a PR shown, that PR is looked up by id and its checks and merge state are looked up after, the same pair a notification about it runs. A reviewer coming back to a PR wants its merge box right then, not within the minute a notification takes or the three minutes of the lists' refresh, and GitHub doesn't count a change of merge state as an update, so no notification would bring it anyway. The rest follows as for any stored change: activity in the row sets the tab fetching its conversation and threads in the background.
+
+The check waits 300ms for the selection to settle and is replaced by the next selection change, so flicking through tabs checks only the one landed on. A PR checked in the last 10 seconds, by this or by a notification or the fallback timer, isn't checked again, so going back and forth between two tabs, or switching apps, doesn't ask GitHub each time. A failed check is logged and ignored, as the others are. The lists' own refresh keeps its timing.
+
 ## Not yet decided
 
 Nothing is pending.

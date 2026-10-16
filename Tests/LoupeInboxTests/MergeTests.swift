@@ -252,8 +252,8 @@ private struct MergeApp {
     private static func tabs(_ app: ConversationApp) -> TabsModel {
         let lists = PullRequestListModel(client: app.github.client(), store: app.store, checkoutSearchRoots: [], onOpen: { _ in })
         let transport = MergeTransport(github: app.github, details: app.details)
-        let delay = app.delay
-        return TabsModel(lists: lists, store: app.store, client: GitHubClient(token: { FakeGitHub.validToken }, transport: transport), notifications: app.github.notifications(), sleep: { await delay.sleep(for: $0) })
+        let (delay, showDelay) = (app.delay, app.showDelay)
+        return TabsModel(lists: lists, store: app.store, client: GitHubClient(token: { FakeGitHub.validToken }, transport: transport), notifications: app.github.notifications(), sleep: { await delay.sleep(for: $0) }, showDelay: { await showDelay.sleep(for: $0) })
     }
 }
 

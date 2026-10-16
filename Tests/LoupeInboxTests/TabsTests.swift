@@ -592,6 +592,90 @@ struct TabsTests {
         #expect(tab.pendingChange == .newCommits)
     }
 
+    @Test func showingAPullRequestChecksItAndItsMergeStateOnceTheSelectionSettles() async throws {
+        let app = try await App()
+        let pullRequest = app.toReview[0]
+        let (lookups, statuses) = (await app.github.pullRequestLookups.count, await app.github.statusLookups.count)
+
+        app.tabs.lists.open(pullRequest)
+        try await app.showDelay.untilWaiting()
+        #expect(await app.github.pullRequestLookups.count == lookups, "not until the selection settles")
+        app.showDelay.elapse()
+        try await app.untilStatusLookups(reach: statuses + 1)
+
+        #expect(await app.github.pullRequestLookups.dropFirst(lookups) == [[pullRequest.id]])
+        #expect(await app.github.statusLookups.dropFirst(statuses) == [[pullRequest.id]])
+        #expect(app.showDelay.sleeps == [.milliseconds(300)])
+
+        app.tabs.select(nil)
+        #expect(app.showDelay.sleeps.count == 1, "the lists aren't a PR to check")
+    }
+
+    @Test func flickingThroughTabsChecksOnlyTheOneLandedOn() async throws {
+        let app = try await App()
+        let (first, second, third) = (app.toReview[0], app.toReview[1], app.toReview[2])
+        let (lookups, statuses) = (await app.github.pullRequestLookups.count, await app.github.statusLookups.count)
+
+        for pullRequest in [first, second, third] { app.tabs.open(pullRequest) }
+        try await until { app.showDelay.sleeps.count == 3 }
+        app.showDelay.elapse()
+        try await app.untilStatusLookups(reach: statuses + 1)
+
+        #expect(await app.github.pullRequestLookups.dropFirst(lookups) == [[third.id]])
+        #expect(await app.github.statusLookups.dropFirst(statuses) == [[third.id]])
+    }
+
+    @Test func showingAPullRequestAgainSoonAfterItWasCheckedDoesntAskGitHubAgain() async throws {
+        let app = try await App()
+        let (first, second) = (app.toReview[0], app.toReview[1])
+        let (lookups, statuses) = (await app.github.pullRequestLookups.count, await app.github.statusLookups.count)
+        app.tabs.open(first)
+        try await app.showDelay.untilWaiting()
+        app.showDelay.elapse()
+        try await app.untilStatusLookups(reach: statuses + 1)
+
+        // Back to it from the lists, then the app comes to the front.
+        app.tabs.select(nil)
+        app.tabs.select(first.id)
+        app.tabs.checkShownForChanges()
+        try await until { app.showDelay.sleeps.count == 3 }
+        app.showDelay.elapse()
+
+        app.tabs.open(second)
+        try await until { app.showDelay.sleeps.count == 4 }
+        app.showDelay.elapse()
+        try await app.untilStatusLookups(reach: statuses + 2)
+
+        #expect(await app.github.pullRequestLookups.dropFirst(lookups) == [[first.id], [second.id]])
+        #expect(await app.github.statusLookups.dropFirst(statuses) == [[first.id], [second.id]])
+    }
+
+    @Test func showingAPullRequestBringsItsMergeStateWithoutWaitingForTheLists() async throws {
+        let app = try await App()
+        let pullRequest = try #require(app.mine.first { $0.repository == "tamarinworks/gazette" && $0.number == 272 })
+        try await app.github.edit(pullRequest.id) { $0.reviewDecision = "REVIEW_REQUIRED" }
+        try await app.github.setMergeState(of: pullRequest.id, "BLOCKED")
+        try await app.github.setChecks(of: pullRequest.id, state: "SUCCESS", [])
+        await app.tabs.lists.refresh()
+        try await app.conversations.add(pullRequest.id)
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        await tab.load()
+        #expect(tab.mergeReadiness == .blocked(.notApproved))
+        app.tabs.select(nil)
+
+        // Approved while the reviewer was elsewhere; GitHub doesn't count the unblocking as an
+        // update, so no notification would bring it.
+        try await app.github.edit(pullRequest.id) { $0.reviewDecision = "APPROVED" }
+        try await app.github.setMergeState(of: pullRequest.id, "CLEAN")
+        app.tabs.select(pullRequest.id)
+        try await until { app.showDelay.sleeps.count == 2 }
+        app.showDelay.elapse()
+
+        try await until { tab.mergeReadiness == .ready }
+        #expect(await app.github.statusLookups.last == [pullRequest.id], "only the shown PR, not the lists")
+    }
+
     @Test func aTabWithoutACheckoutSaysSoAndAGitFailureShowsGitsMessage() async throws {
         let repo = try await FakeRepository()
         let app = try await App()
@@ -654,13 +738,15 @@ private struct App {
     let tabs: TabsModel
     /// What tabs wait on before fetching changes, which only end when the test says.
     let delay = ManualDelay()
+    /// What the shown PR waits on before it's checked, likewise.
+    let showDelay = ManualDelay()
     /// The PRs whose tabs the app was asked to show, in order.
     private let showRecorder = ShowRecorder()
 
     init() async throws {
         github = try FakeGitHub(fixture: "pr-list.json")
         store = try PullRequestStore.inMemory()
-        tabs = Self.tabs(github, details, store, delay)
+        tabs = Self.tabs(github, details, store, delay, showDelay)
         tabs.show = { [showRecorder] in showRecorder.ids.append($0) }
         await tabs.lists.refresh()
     }
@@ -673,6 +759,20 @@ private struct App {
 
     var toReview: [PullRequestSummary] {
         tabs.lists.pullRequests(in: .toReview)
+    }
+
+    var mine: [PullRequestSummary] {
+        tabs.lists.pullRequests(in: .mine)
+    }
+
+    /// Waits for GitHub to have answered `count` status lookups in all, as the shown PR is
+    /// checked in the background.
+    func untilStatusLookups(reach count: Int) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while await github.statusLookups.count < count {
+            try #require(ContinuousClock.now < deadline, "waited too long")
+            try await Task.sleep(for: .milliseconds(1))
+        }
     }
 
     /// Opens the first to-review PR, pushed to `repo` with one commit, once its diff is ready.
@@ -709,12 +809,12 @@ private struct App {
 
     /// Fresh models over the same store, as on the next launch.
     func relaunch() throws -> TabsModel {
-        Self.tabs(github, details, store, delay)
+        Self.tabs(github, details, store, delay, showDelay)
     }
 
-    private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore, _ delay: ManualDelay) -> TabsModel {
+    private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore, _ delay: ManualDelay, _ showDelay: ManualDelay) -> TabsModel {
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
-        return TabsModel(lists: lists, store: store, client: details.client(), notifications: github.notifications(), fallbackInterval: fallbackInterval, sleep: { await delay.sleep(for: $0) })
+        return TabsModel(lists: lists, store: store, client: details.client(), notifications: github.notifications(), fallbackInterval: fallbackInterval, sleep: { await delay.sleep(for: $0) }, showDelay: { await showDelay.sleep(for: $0) })
     }
 
     /// Distinct from GitHub's poll intervals, to tell which one a round waits for.

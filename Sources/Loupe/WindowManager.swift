@@ -187,7 +187,8 @@ final class WindowManager {
     }
 
     /// Keeps the lists refreshed, and watches open PRs for changes unless this is a snapshot run,
-    /// which shouldn't wait on GitHub's notifications.
+    /// which shouldn't wait on GitHub's notifications. Coming back to the app or its window also
+    /// checks the shown PR.
     private func startRefreshing() {
         Task { await tabs.lists.keepRefreshed() }
         if SnapshotRun.directory == nil { Task { await tabs.keepWatchingForChanges() } }
@@ -195,7 +196,11 @@ final class WindowManager {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 Task { await self.tabs.lists.refreshIfStale() }
+                self.tabs.checkShownForChanges()
             }
+        }
+        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tabs.checkShownForChanges() }
         }
     }
 }

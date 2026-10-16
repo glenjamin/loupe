@@ -31,6 +31,14 @@ public final class TabsModel {
     private var notificationsModified: String?
     /// How the tabs wait for a burst of changes to settle; tests pass one they control.
     private let sleep: @Sendable (Duration) async throws -> Void
+    /// How the shown PR waits for the selection to settle before it's checked; tests pass one
+    /// they control.
+    private let showDelay: @Sendable (Duration) async throws -> Void
+    /// The pending check of the shown PR, replaced whenever the selection changes.
+    private var shownCheck: Task<Void, Never>?
+    /// When each open PR was last checked for changes, so showing it again soon after doesn't
+    /// ask GitHub again.
+    private var lastChecked: [String: ContinuousClock.Instant] = [:]
 
     /// Restores the PRs stored by the previous run, and makes choosing a PR in `lists` open it.
     /// `fallbackInterval` is how often open PRs are checked when notifications can't say.
@@ -41,7 +49,8 @@ public final class TabsModel {
         client: GitHubClient = GitHubClient(),
         notifications: GitHubNotifications = GitHubNotifications(),
         fallbackInterval: Duration = .seconds(60),
-        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+        showDelay: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.lists = lists
         self.store = store
@@ -51,6 +60,7 @@ public final class TabsModel {
         self.notifications = notifications
         self.fallbackInterval = fallbackInterval
         self.sleep = sleep
+        self.showDelay = showDelay
         do {
             let saved = try store.openTabs()
             tabs = saved.pullRequests.map(makeTab)
@@ -73,6 +83,7 @@ public final class TabsModel {
         selected = pullRequest.id
         save()
         show(pullRequest.id)
+        checkShownForChanges()
     }
 
     /// Opens the PR a link names, or focuses its tab: at once when it's stored, otherwise once
@@ -105,6 +116,21 @@ public final class TabsModel {
         guard id.map({ tab(id: $0) != nil }) ?? true, id != selected else { return }
         selected = id
         save()
+        checkShownForChanges()
+    }
+
+    /// Checks the shown PR and its merge state on GitHub once the selection settles, unless it
+    /// was checked moments ago; run whenever a PR is shown and when the app comes to the front.
+    public func checkShownForChanges() {
+        shownCheck?.cancel()
+        shownCheck = nil
+        guard let id = selected else { return }
+        shownCheck = Task { [weak self, showDelay] in
+            do { try await showDelay(Self.showSettle) } catch { return }
+            guard let self, !Task.isCancelled, selected == id, let tab = tab(id: id) else { return }
+            if let last = lastChecked[id], ContinuousClock.now - last < Self.recheckInterval { return }
+            await checkForChanges(to: [tab])
+        }
     }
 
     /// Shows the item `offset` places along from the shown one, the lists coming before the first
@@ -120,7 +146,10 @@ public final class TabsModel {
     public func close(_ id: String) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         tabs.remove(at: index)
-        if selected == id { selected = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id }
+        if selected == id {
+            selected = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id
+            checkShownForChanges()
+        }
         save()
     }
 
@@ -129,6 +158,7 @@ public final class TabsModel {
         tabs = []
         selected = nil
         save()
+        checkShownForChanges()
     }
 
     /// One round of watching the open PRs for changes on GitHub: polls notifications and checks
@@ -167,6 +197,8 @@ public final class TabsModel {
     /// Looks up the PRs, then their checks and merge state, which the lookup leaves out and
     /// which an approval or a push can change, so the merge box doesn't wait for the lists.
     private func checkForChanges(to tabs: [PullRequestTab]) async {
+        let checked = ContinuousClock.now
+        for tab in tabs { lastChecked[tab.id] = checked }
         do {
             let ids = tabs.map(\.id)
             try await lists.checkForChanges(to: ids)
@@ -175,6 +207,12 @@ public final class TabsModel {
             log("Couldn't check open PRs for changes: \(error.localizedDescription)")
         }
     }
+
+    /// How long the selection must stay put before the shown PR is checked, so flicking through
+    /// tabs checks only the one landed on.
+    private static let showSettle = Duration.milliseconds(300)
+    /// How soon a PR checked once can be checked again on being shown.
+    private static let recheckInterval = Duration.seconds(10)
 
     private func makeTab(_ pullRequest: PullRequestSummary) -> PullRequestTab {
         let tab = PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ, client: client, candidates: candidates, sleep: sleep)
