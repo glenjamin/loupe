@@ -196,8 +196,12 @@ private struct DiffTextScrollView: NSViewRepresentable {
 
     @MainActor
     final class Coordinator {
-        /// Room for the hint in the gap the rubber band opens below the footer.
+        /// Room for the hint in the gap the rubber band opens below the end.
         static let hintHeight: CGFloat = 36
+        /// The share of the view's height that can always be scrolled past the footer, or past
+        /// the view's own height in a short file, so the end of a diff is somewhere to scroll
+        /// to, not only to stretch past.
+        static let gutterShare: CGFloat = 0.5
 
         let textView = DiffTextView.make()
         var shown: ShownDiff?
@@ -210,7 +214,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
             view.sizingOptions = []
             return view
         }()
-        /// Says what the pull will do, in the gap the rubber band opens below the footer.
+        /// Says what the pull will do, in the gap the rubber band opens below the end.
         lazy var hint: PullHintView = {
             let view = PullHintView(rootView: PullHint(state: footerState))
             view.sizingOptions = []
@@ -279,7 +283,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
 
         /// Directly below the last row, across the visible width, so a short file has it
         /// straight after its content rather than at the bottom of the view. The content is
-        /// inset at the bottom only as far as the footer needs to be scrolled to.
+        /// inset at the bottom as far as the footer and the gutter below it need.
         func layoutFooter() {
             guard let scroll else { return }
             let clip = scroll.contentView.bounds
@@ -296,7 +300,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
             if footer.frame != frame { footer.frame = frame }
             let gap = NSRect(x: clip.minX, y: restingEnd(clipHeight: clip.height), width: clip.width, height: Self.hintHeight)
             if hint.frame != gap { hint.frame = gap }
-            let inset = review == nil ? 0 : max(0, frame.maxY - textView.frame.maxY)
+            let inset = review == nil ? 0 : max(0, restingEnd(clipHeight: clip.height) - textView.frame.maxY)
             if scroll.contentInsets.bottom != inset {
                 scroll.contentInsets.bottom = inset
                 // The scrollers keep to the whole height, over the footer too.
@@ -304,7 +308,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
             }
         }
 
-        /// Whether the view is scrolled to its end, footer fully shown, or stretched past it.
+        /// Whether the view is scrolled to its end, past the footer's gutter, or stretched past it.
         var isAtEnd: Bool {
             guard let clip = scroll?.contentView.bounds else { return false }
             return clip.maxY >= restingEnd(clipHeight: clip.height) - 1
@@ -313,8 +317,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
         func pull(_ event: PullEvent) {
             guard review != nil else { return }
             switch event {
-            case .began:
-                trigger.beginDrag()
+            case .began(let atEnd):
+                trigger.beginDrag(atEnd: atEnd)
             case .moved(let distance, let time):
                 if trigger.pull(by: distance, at: time) {
                     NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
@@ -329,9 +333,14 @@ private struct DiffTextScrollView: NSViewRepresentable {
             footerState.isPulling = trigger.isDragging
         }
 
-        /// Where the bottom of the view rests when scrolled to the end, footer included.
+        /// Where the bottom of the view rests when scrolled to the end, footer and gutter included.
+        /// A short file scrolls no further than brings its footer to the top, so the footer still
+        /// shows the pull's progress.
         private func restingEnd(clipHeight: CGFloat) -> CGFloat {
-            max(footer.frame.maxY, textView.frame.minY + clipHeight)
+            let unscrolled = textView.frame.minY + clipHeight
+            guard review != nil else { return max(textView.frame.maxY, unscrolled) }
+            let gutter = (clipHeight * Self.gutterShare).rounded()
+            return min(max(footer.frame.maxY, unscrolled) + gutter, max(footer.frame.minY + clipHeight, unscrolled))
         }
 
         /// Where the last row ends. A text view stretches to fill the view, so a file shorter
@@ -349,7 +358,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
 
 /// What a live trackpad drag does to the pull. Momentum and mouse wheels have no part in it.
 enum PullEvent {
-    case began
+    /// The fingers touched down, with the view at its end or not.
+    case began(atEnd: Bool)
     /// The fingers moved this far with the view at its end: positive pulls the content further
     /// past it, negative back, at the event's timestamp.
     case moved(CGFloat, at: TimeInterval)
@@ -365,7 +375,7 @@ private final class OverscrollScrollView: NSScrollView {
 
     override func scrollWheel(with event: NSEvent) {
         let phase = event.phase
-        if phase.contains(.began) { onPull(.began) }
+        if phase.contains(.began) { onPull(.began(atEnd: isAtEnd())) }
         // Checked before the event scrolls, so travel spent reaching the end doesn't count. The
         // delta already follows the content, natural scrolling or not; negative moves it up.
         if !phase.isDisjoint(with: [.began, .changed]), event.hasPreciseScrollingDeltas, isAtEnd() {

@@ -357,6 +357,12 @@ This revises "New comments start from a "+" in the gutter and post at once" wher
 
 Double-clicking anywhere on a row that offers the "+", its gutter or its code, starts a comment there as the "+" does, so a reviewer needn't aim for a small target at the row's edge. The double-click is taken before the text view's own handling, so it selects no word on those rows; on rows that take no comment (hunk headers, the rows held for threads, one commit's changes) it selects a word as before. Selecting a word to copy from a commentable row now needs a drag; a triple-click still selects the row. The "+"'s tooltip mentions it. It uses the same row lookup as the "+", so the two can't disagree about which rows take comments.
 
+### The pull skips its dwell when a drag begins at the end, and the diff ends in a scroll gutter
+
+The user found marking reviewed by pulling worked less well in a file shorter than the view. Such a file is at its end from the start, so every drag began there and its first 200ms of travel was spent in the dwell, which for a quick deliberate pull is most of it. The dwell is there for a scroll that runs into the end mid-drag; a drag that begins at the end has no scroll behind it to guard against, so `OverscrollTrigger` now skips the dwell then and counts from the 40pt lead-in straight away. The scroll view says whether the view was at its end as the fingers touch down. The same makes pulling immediate in a long file already scrolled to the bottom, lifted and then pulled. A drag that reaches the end while scrolling still dwells, and so does one that began at the end, went back into the document and came down again.
+
+The user also asked for room to scroll past the end. The diff now ends in a gutter of half the view's height, as a bottom content inset below the footer, so a long file's end has its footer about mid-view, and the pull counts only once the view is scrolled to the gutter's end. A file shorter than the view can scroll the gutter too, past the view's own height, but no further than brings its footer to the top, so the footer still shows the pull's progress; a very short file scrolls only that far. The footer stays directly under the last row, and the hint stays in the rubber band's gap below the end.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

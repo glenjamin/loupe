@@ -22,6 +22,50 @@ struct OverscrollTriggerTests {
         #expect(fingers.taps == 0)
     }
 
+    @Test func aQuickPullFromRestAtTheEndArmsWithoutTheDwell() {
+        // As in a file shorter than the view, or one already scrolled to the bottom: no scroll
+        // runs into the end, so the pull counts from the lead-in straight away.
+        var fingers = Fingers()
+        fingers.touchDown(atEnd: true)
+        fingers.pull(OverscrollTrigger.leadIn, over: Self.dwell / 4)
+        #expect(fingers.trigger.progress == 0, "the lead-in still never counts")
+        fingers.pull(Self.countedTravel - 2, over: Self.dwell / 4)
+        #expect(!fingers.trigger.isArmed, "just short of the lead-in plus the target")
+        #expect(fingers.trigger.progress > 0.9)
+        fingers.pull(4, over: 0.02)
+        #expect(fingers.trigger.isArmed, "well within what would have been the dwell")
+        #expect(fingers.taps == 1)
+        #expect(fingers.lift() == true)
+    }
+
+    @Test func theSamePullReachingTheEndMidScrollStillDwells() {
+        var fingers = Fingers()
+        fingers.touchDown()
+        fingers.pull(Self.armingTravel + 2, over: Self.dwell / 2)
+        #expect(fingers.trigger.progress == 0)
+        #expect(!fingers.trigger.isArmed)
+        #expect(fingers.lift() == false)
+    }
+
+    @Test func aPullFromRestAtTheEndStillDisarmsAndThenDwellsOnceBackAtTheEnd() {
+        var fingers = Fingers()
+        fingers.touchDown(atEnd: true)
+        fingers.pull(Self.armingTravel + 10, over: 0.1)
+        #expect(fingers.trigger.isArmed)
+        fingers.pull(-30, over: 0.1)
+        #expect(!fingers.trigger.isArmed, "pulling back under the target disarms")
+        #expect(fingers.trigger.progress > 0 && fingers.trigger.progress < 1)
+        fingers.pull(30, over: 0.05)
+        #expect(fingers.trigger.isArmed)
+
+        // Back into the document and down again is a scroll running into the end.
+        fingers.pull(-1000, over: 0.2)
+        #expect(fingers.trigger.progress == 0)
+        fingers.pull(Self.armingTravel * 2, over: Self.dwell * 0.75)
+        #expect(!fingers.trigger.isArmed)
+        #expect(fingers.lift() == false)
+    }
+
     @Test func travelDuringTheDwellIsSpent() {
         var fingers = Fingers()
         fingers.touchDown()
@@ -159,8 +203,9 @@ private struct Fingers {
     /// Haptic taps so far.
     var taps = 0
 
-    mutating func touchDown() {
-        trigger.beginDrag()
+    /// Touches down mid-document unless `atEnd`, already scrolled to the end, at rest.
+    mutating func touchDown(atEnd: Bool = false) {
+        trigger.beginDrag(atEnd: atEnd)
     }
 
     mutating func pull(_ distance: CGFloat, over duration: TimeInterval) {

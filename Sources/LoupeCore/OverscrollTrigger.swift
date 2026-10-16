@@ -5,12 +5,15 @@ import Foundation
 /// bottom. Progress is how far the fingers have travelled past the end, not how far the rubber
 /// band stretched, which AppKit damps. The start of each pull is free: travel counts only once
 /// the fingers have been past the end for a while and beyond a lead-in, so a scroll that runs
-/// into the end and spends its remaining travel there never arms. Crossing the target arms it,
+/// into the end and spends its remaining travel there never arms. A drag that begins with the
+/// view already at its end has no such scroll behind it, so only the lead-in applies, and a quick
+/// deliberate pull from rest counts straight away. Crossing the target arms it,
 /// pulling back under disarms it, and lifting the fingers while armed fires it. Only a live
 /// drag counts, so momentum carrying on past the end never fills, arms or fires it.
 public struct OverscrollTrigger: Sendable, Equatable {
-    /// How long the fingers must have been past the end, within one drag, before any travel
-    /// counts. Longer than the tail of a scroll that runs into the end.
+    /// How long the fingers must have been past the end, within one drag that reached it while
+    /// scrolling, before any travel counts. Longer than the tail of a scroll that runs into the
+    /// end.
     public static let dwell: TimeInterval = 0.2
     /// Finger travel past the end that never counts, like a touch slop.
     public static let leadIn: CGFloat = 40
@@ -29,6 +32,8 @@ public struct OverscrollTrigger: Sendable, Equatable {
     private var pastEndSince: TimeInterval?
     /// The travel from which pulling counts, once the dwell has passed.
     private var countsFrom: CGFloat?
+    /// Whether this drag began at the end and hasn't since gone back from it, so it needn't dwell.
+    private var beganAtEnd = false
 
     public init() {}
 
@@ -48,10 +53,11 @@ public struct OverscrollTrigger: Sendable, Equatable {
         isDragging && pulled >= Self.target
     }
 
-    /// The fingers have touched down and started scrolling.
-    public mutating func beginDrag() {
+    /// The fingers have touched down and started scrolling, with the document `atEnd` or not.
+    public mutating func beginDrag(atEnd: Bool) {
         reset()
         isDragging = true
+        beganAtEnd = atEnd
     }
 
     /// The fingers moved `distance` points at `time` with the document at its end: positive pulls
@@ -60,7 +66,9 @@ public struct OverscrollTrigger: Sendable, Equatable {
     public mutating func pull(by distance: CGFloat, at time: TimeInterval) -> Bool {
         guard isDragging else { return false }
         let wasArmed = isArmed
-        if let since = pastEndSince {
+        if beganAtEnd {
+            countsFrom = countsFrom ?? Self.leadIn
+        } else if let since = pastEndSince {
             // Whatever was travelled during the dwell is spent, so it can't count later.
             if countsFrom == nil, time - since >= Self.dwell {
                 countsFrom = max(Self.leadIn, travel)
@@ -73,6 +81,7 @@ public struct OverscrollTrigger: Sendable, Equatable {
         if travel == 0 {
             pastEndSince = nil
             countsFrom = nil
+            if distance < 0 { beganAtEnd = false }
         }
         return isArmed && !wasArmed
     }
@@ -94,5 +103,6 @@ public struct OverscrollTrigger: Sendable, Equatable {
         travel = 0
         pastEndSince = nil
         countsFrom = nil
+        beganAtEnd = false
     }
 }
