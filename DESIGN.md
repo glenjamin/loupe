@@ -613,6 +613,12 @@ Fetches landing meanwhile don't undo or double a change. The tab keeps each chan
 
 A mini spinner sits after the header's "updated …" while GitHub is being asked for anything that will update this PR's row or conversation: a refresh of the lists while the PR is in one of them (the searches, the review-request check and the status lookups), a lookup of it by id (the check when its tab is shown or returned to, a notification naming it, the timer fallback, and the lookups after merging or marking it ready), and a fetch of its conversation. The tab exposes it as one flag, `isCheckingGitHub`, from the conversation fetch and the lists' per-PR count of lookups by id underway, so overlapping checks don't clear it early. It doesn't spin for git work, which has the commit picker's spinner, for the viewer's own writes, which have their sending states, or for the reviewer picker's candidates and suggestions, which only fill that picker. The selection settling before a shown PR is checked isn't a fetch, so it doesn't spin either. It's `DelayedSpinner`, as on the commit picker, so a check GitHub answers quickly shows nothing and the caption doesn't flicker; it takes no width while hidden, and it's the caption's last item, so nothing moves when it appears.
 
+### The commit picker shows the picked choice's diff-stat, with coloured line counts
+
+The collapsed picker now ends with the shown choice's diff-stat (`15 files  +259 −70`), between its name and the chevron, so how big a commit or the whole PR is shows without opening the list. It's the same stat the list gives that choice, so it shows nothing until counted, and nothing while the diff isn't ready, rather than a placeholder that jumps. The stat is kept whole and the name truncates first; in a narrow sidebar the file count drops, leaving `+259 −70`, and the name keeps room for at least a short oid.
+
+In the picker and its list the `+A` and `−D` are now green and red, as each file's counts are in the file list, so the size and kind of a change read at a glance and look the same wherever lines are counted. The file count stays secondary text, being context rather than a change.
+
 ## Not yet decided
 
 Nothing is pending.

@@ -453,9 +453,9 @@ struct FileDetail: View {
 }
 
 /// Picks whether the files show the whole PR's changes or one commit's, as on github.com: a
-/// button naming what's shown opens a list of the choices, each with its whole first line and
-/// how much it changes. It's drawn as a sidebar row like Conversation's, but never as selected,
-/// being a choice of what the files show rather than a place to go.
+/// button naming what's shown and how much it changes opens a list of the choices, each with its
+/// whole first line and how much it changes. It's drawn as a sidebar row like Conversation's, but
+/// never as selected, being a choice of what the files show rather than a place to go.
 struct CommitPicker: View {
     @Bindable var tab: PullRequestTab
     let commits: [PullRequestCommit]
@@ -467,7 +467,17 @@ struct CommitPicker: View {
                 Label { shownLabel.lineLimit(1).truncationMode(.tail) } icon: {
                     Image(systemName: "clock.arrow.circlepath")
                 }
-                Spacer(minLength: 0)
+                // Room for a commit's short oid at least, however narrow the sidebar.
+                .frame(minWidth: 90, maxWidth: .infinity, alignment: .leading)
+                .padding(.trailing, 4)
+                // Kept whole, truncating the name instead; when narrow, the line counts alone.
+                if let stat = tab.diffStat(ofCommit: tab.pendingCommit ?? tab.shownCommit) {
+                    ViewThatFits(in: .horizontal) {
+                        DiffStatLabel(stat: stat).fixedSize()
+                        LineCounts(additions: stat.additions, deletions: stat.deletions).fixedSize()
+                    }
+                    .layoutPriority(1)
+                }
                 DelayedSpinner(isActive: tab.isReplacingShownChanges)
                     .help(tab.reloading == nil ? "Diffing…" : "Reloading the diff…")
                 Image(systemName: "chevron.down")
@@ -546,7 +556,12 @@ struct CommitList: View {
                 Text(verbatim: title)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
-                    Text(verbatim: tab.diffStat(ofCommit: oid).map(describe) ?? " ")
+                    if let stat = tab.diffStat(ofCommit: oid) {
+                        DiffStatLabel(stat: stat)
+                    } else {
+                        // Holds the row's height until the commit's counted.
+                        Text(verbatim: " ")
+                    }
                     Spacer(minLength: 0)
                     if let oid {
                         Text(verbatim: String(oid.prefix(7)))
@@ -829,9 +844,19 @@ private enum CommitChoice: Hashable {
     case commit(String)
 }
 
-/// `3 files  +42 −7`, as github.com counts them, with no thousands separators.
-private func describe(_ stat: DiffStat) -> String {
-    "\(stat.files) \(stat.files == 1 ? "file" : "files")  +\(stat.additions) \u{2212}\(stat.deletions)"
+/// `3 files  +42 −7`, as github.com counts them, with no thousands separators: the lines coloured
+/// as in the file rows, so the size of a change reads at a glance, and the file count secondary.
+private struct DiffStatLabel: View {
+    let stat: DiffStat
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(verbatim: "\(stat.files) \(stat.files == 1 ? "file" : "files")")
+                .foregroundStyle(.secondary)
+            LineCounts(additions: stat.additions, deletions: stat.deletions)
+        }
+        .font(.caption.monospacedDigit())
+    }
 }
 
 /// An empty view behind the commit picker's button, so a snapshot run can find where it is.
