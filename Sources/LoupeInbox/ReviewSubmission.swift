@@ -89,28 +89,32 @@ extension PullRequestTab {
     }
 
     /// Adds the comment being started to the viewer's pending review, starting the review with
-    /// it if they have none, then fetches the threads again to show it pending. A refusal keeps
-    /// the draft open with the reason, and the threads are fetched anyway, so a review started
-    /// or submitted elsewhere since is known when it's sent again.
+    /// it if they have none. It shows pending on its line and in the conversation straight
+    /// away, marked as sending until GitHub answers with its copy; then the threads are fetched
+    /// again. A refusal takes it away and opens the draft again with the reason, and the
+    /// threads are fetched anyway, so a review started or submitted elsewhere since is known
+    /// when it's sent again.
     public func sendReviewComment() async {
         guard canReview, let comment = threadActivity.newComment, comment.draft.canSend, case let .ready(review) = phase else { return }
-        comment.draft.isSending = true
         threadActivity.newCommentError = nil
-        defer { comment.draft.isSending = false }
         let anchor = comment.anchor
-        let thread = DraftThread(path: anchor.path, line: anchor.line, side: anchor.side.rawValue, body: comment.draft.text)
+        let text = comment.draft.text
+        let sending = sendingComment(text, isPending: true)
+        threadActivity.newComment = nil
+        let change = make(.comment(sending, thread: sendingThread(at: anchor, in: review), startsThread: true, reviewId: pendingReview?.id))
+        await storeOwnChanges()
+        let added: (comment: ThreadComment, threadId: String?, reviewId: String)
         do {
-            if let pendingReview {
-                try await client.addThread(thread, toReview: pendingReview.id)
-            } else {
-                try await client.addReview(toPullRequest: id, commitId: review.headOid, body: nil, event: nil, threads: [thread])
-            }
+            added = try await addToReview(DraftThread(path: anchor.path, line: anchor.line, side: anchor.side.rawValue, body: text), of: review.headOid)
         } catch {
-            threadActivity.newCommentError = "Couldn't add to your review: \(error.localizedDescription)"
+            undo(change)
+            reopen(comment, because: "Couldn't add to your review: \(error.localizedDescription)")
+            await storeOwnChanges()
             await refreshThreads { $0.isPending }
             return
         }
-        if threadActivity.newComment?.draft === comment.draft { threadActivity.newComment = nil }
+        confirm(change, comment: sending.id, as: added.comment, threadId: added.threadId, reviewId: added.reviewId)
+        await storeOwnChanges()
         await refreshThreads { $0.isPending }
     }
 
@@ -139,30 +143,42 @@ extension PullRequestTab {
     }
 
     /// Submits the viewer's review with the summary and `event`: the pending review if there is
-    /// one, else a new review at once. Then the conversation and the PR's status are fetched
-    /// again, so the review shows and the review decision follows it. A refusal is kept to show,
-    /// with the draft as it was.
+    /// one, else a new review at once. It shows in the conversation straight away, its comments
+    /// no longer pending, marked as sending until GitHub answers; then the conversation and the
+    /// PR's status are fetched again, so the review decision follows it. A refusal puts the
+    /// review back as it was, with the draft, and says why.
     public func submitReview(as event: ReviewEvent) async {
         let draft = reviewDraft
         guard canSubmitReview(as: event) else { return }
         let summary = reviewSummary
         let reviewed = Set(placedThreads.filter(\.isPending).map(\.id))
+        let pendingId = pendingReview?.id
+        let saved = draft.saved
         draft.isSubmitting = true
         draft.error = nil
         defer { draft.isSubmitting = false }
+        let sending = sendingReview(ReviewState(event), summary: summary, replacing: pendingId)
+        draft.reset()
+        let change = make(.submitted(sending))
+        await storeOwnChanges()
+        let posted: PostedReview
         do {
-            if let pendingReview {
-                try await client.submitReview(pendingReview.id, event: event, body: summary)
+            if let pendingId {
+                posted = try await client.submitReview(pendingId, event: event, body: summary)
             } else {
                 let head = if case let .ready(review) = phase { review.headOid } else { pullRequest.headRefOid }
-                try await client.addReview(toPullRequest: id, commitId: head, body: summary.isEmpty ? nil : summary, event: event, threads: [])
+                posted = try await client.addReview(toPullRequest: id, commitId: head, body: summary.isEmpty ? nil : summary, event: event, threads: [])
             }
         } catch {
+            undo(change)
+            draft.restore(saved)
             draft.error = "Couldn't submit your review: \(error.localizedDescription)"
+            await storeOwnChanges()
             await refreshThreads { $0.isPending }
             return
         }
-        draft.reset()
+        confirm(change, review: sending.id, as: posted)
+        await storeOwnChanges()
         await refreshConversation()
         // The review's comments are the viewer's own, so they show as submitted at once even
         // while new commits wait for a reload.
@@ -174,50 +190,123 @@ extension PullRequestTab {
         }
     }
 
-    /// Deletes the viewer's pending review and its comments, then fetches the threads again so
-    /// they go. Asking first is the view's job.
+    /// Deletes the viewer's pending review and its comments. They go at once, and come back,
+    /// with the summary, if GitHub refuses; then the threads are fetched again. Asking first is
+    /// the view's job.
     public func discardReview() async {
         let draft = reviewDraft
         guard let pendingReview, !draft.isSubmitting else { return }
+        let saved = draft.saved
         draft.isSubmitting = true
         draft.error = nil
         defer { draft.isSubmitting = false }
+        draft.reset()
+        let change = make(.discarded(reviewId: pendingReview.id))
+        await storeOwnChanges()
         do {
             try await client.deleteReview(pendingReview.id)
         } catch {
+            undo(change)
+            draft.restore(saved)
             draft.error = "Couldn't discard your review: \(error.localizedDescription)"
+            await storeOwnChanges()
             return
         }
-        draft.reset()
+        confirm(change)
         await refreshThreads { $0.isPending }
     }
 
     /// Deletes one of the viewer's pending comments, and its thread with it if it was the only
-    /// comment, then fetches the threads again so it goes. GitHub keeps a pending review left
-    /// with no comments, which would still show as pending, so one with no summary saved
-    /// either is deleted too; a summary being written here is kept. A refusal shows on the
-    /// thread, with the comment left as it was.
+    /// comment. It goes at once, and comes back if GitHub refuses, saying why on the thread;
+    /// then the threads are fetched again. GitHub keeps a pending review left with no comments,
+    /// which would still show as pending, so one with no summary saved either is deleted too; a
+    /// summary being written here is kept.
     public func deletePendingComment(_ comment: ThreadComment, in thread: ReviewThread) async {
-        guard comment.isPending, !threadActivity.deleting.contains(comment.id) else { return }
+        guard comment.isPending, !comment.isSending, !threadActivity.deleting.contains(comment.id) else { return }
         threadActivity.deleting.insert(comment.id)
         threadActivity.errors[thread.id] = nil
         defer { threadActivity.deleting.remove(comment.id) }
+        let change = make(.deleted(commentId: comment.id))
+        await storeOwnChanges()
         do {
             try await client.deleteReviewComment(comment.id)
         } catch {
+            undo(change)
             threadActivity.errors[thread.id] = "Couldn't delete your comment: \(error.localizedDescription)"
+            await storeOwnChanges()
             return
         }
+        confirm(change)
         await refreshThreads { $0.isPending || $0.id == thread.id }
         guard let pendingReview, pendingReview.commentCount == 0, pendingReview.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !reviewDraft.isSubmitting else { return }
+        let emptied = make(.discarded(reviewId: pendingReview.id))
+        await storeOwnChanges()
         do {
             try await client.deleteReview(pendingReview.id)
         } catch {
+            undo(emptied)
+            await storeOwnChanges()
             log("Couldn't delete the emptied pending review of \(title): \(error.localizedDescription)")
             return
         }
+        confirm(emptied)
         await refreshThreads { $0.isPending }
+    }
+}
+
+private extension PullRequestTab {
+    /// Adds the thread to the viewer's pending review, or starts one with it, waiting for one
+    /// already being started rather than starting another. Returns the comment, its thread's id
+    /// where GitHub gave it, and the review's id.
+    func addToReview(_ thread: DraftThread, of head: String) async throws -> (comment: ThreadComment, threadId: String?, reviewId: String) {
+        if let reviewId = pendingReview?.id {
+            let posted = try await client.addThread(thread, toReview: reviewId)
+            return (posted.comment, posted.id, reviewId)
+        }
+        if let reviewStart {
+            let reviewId = try await reviewStart.value.id
+            let posted = try await client.addThread(thread, toReview: reviewId)
+            return (posted.comment, posted.id, reviewId)
+        }
+        let (client, id) = (client, id)
+        let start = Task { try await client.addReview(toPullRequest: id, commitId: head, body: nil, event: nil, threads: [thread]) }
+        reviewStart = start
+        defer { if reviewStart == start { reviewStart = nil } }
+        let started = try await start.value
+        guard let comment = started.comments.first else { throw GitHubError.graphQL(["GitHub didn't return the comment"]) }
+        return (comment, nil, started.id)
+    }
+}
+
+private extension ReviewDraft {
+    /// The summary and what's open, to put back if a submission is refused.
+    struct Saved {
+        let body: String
+        let isWritingSummary: Bool
+        let isListingPending: Bool
+        let hasStarted: Bool
+    }
+
+    var saved: Saved {
+        Saved(body: body, isWritingSummary: isWritingSummary, isListingPending: isListingPending, hasStarted: hasStarted)
+    }
+
+    func restore(_ saved: Saved) {
+        body = saved.body
+        isWritingSummary = saved.isWritingSummary
+        isListingPending = saved.isListingPending
+        hasStarted = saved.hasStarted
+    }
+}
+
+private extension ReviewState {
+    init(_ event: ReviewEvent) {
+        self = switch event {
+        case .approve: .approved
+        case .requestChanges: .changesRequested
+        case .comment: .commented
+        }
     }
 }
 

@@ -22,6 +22,10 @@ mutation($threadId: ID!) {
 #   { "body": "...", "commit_id": "<head oid>", "path": "...", "line": 42, "side": "RIGHT" }
 #   line is a file line number on side, which must be in the PR's diff at commit_id.
 #
+# Both are sent with `Accept: application/vnd.github.full+json`, GitHub's documented media type
+# that adds `body_html` (and `body_text`) beside `body`, so the comment GitHub returns can take
+# the place of the one shown while it was sent. The answer names no thread.
+#
 # GraphQL's addPullRequestReviewThread "Adds a new thread to a pending Pull Request Review",
 # and addPullRequestReviewThreadReply's only review argument is "the pending review to which
 # the reply will belong", so neither is documented as posting outside a review.

@@ -431,21 +431,32 @@ private struct CommentView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(verbatim: author).fontWeight(.semibold)
-                    TimelineView(.everyMinute) { _ in
-                        Text(verbatim: comment.createdAt.formatted(.relative(presentation: .named)))
+                    if comment.isSending {
+                        ProgressView().controlSize(.mini)
+                        Text("Sending…")
                             .foregroundStyle(.secondary)
+                            .help("On its way to GitHub")
+                    } else {
+                        TimelineView(.everyMinute) { _ in
+                            Text(verbatim: comment.createdAt.formatted(.relative(presentation: .named)))
+                                .foregroundStyle(.secondary)
+                        }
+                        .help(comment.createdAt.formatted(date: .abbreviated, time: .shortened))
                     }
-                    .help(comment.createdAt.formatted(date: .abbreviated, time: .shortened))
                     if comment.isPending {
                         PendingBadge()
                         Spacer(minLength: 0)
-                        DeletePendingCommentButton(tab: tab, thread: thread, comment: comment)
+                        // GitHub has to know of it before it can be deleted.
+                        if !comment.isSending {
+                            DeletePendingCommentButton(tab: tab, thread: thread, comment: comment)
+                        }
                     }
                 }
                 .font(.callout)
                 CommentBody(blocks: commentBlocks(comment.bodyHTML))
-                // A pending comment can't be reacted to until its review is submitted.
-                if !comment.isPending {
+                // A pending comment can't be reacted to until its review is submitted, nor one
+                // GitHub doesn't have yet.
+                if !comment.isPending, !comment.isSending {
                     ReactionsRow(tab: tab, subjectId: comment.id, groups: comment.reactions)
                 }
             }
@@ -513,7 +524,7 @@ struct CommentComposer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            MarkdownTextView(text: $draft.text, isEditable: !draft.isSending, save: { send(actions.first) }, cancel: escape ?? cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize))
+            MarkdownTextView(text: $draft.text, isEditable: true, save: { send(actions.first) }, cancel: escape ?? cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize))
                 .frame(height: 96)
                 .background(Color(nsColor: .textBackgroundColor))
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))
@@ -523,11 +534,7 @@ struct CommentComposer: View {
                     .lineLimit(1)
                     .help(caption)
                 Spacer(minLength: 0)
-                if draft.isSending {
-                    ProgressView().controlSize(.small)
-                }
                 Button("Cancel", action: cancelAsking)
-                    .disabled(draft.isSending)
                 // The default sits last, at the trailing edge, as in a dialog.
                 ForEach(Array(actions.enumerated().reversed()), id: \.offset) { index, action in
                     if index == 0 {
@@ -557,7 +564,6 @@ struct CommentComposer: View {
     }
 
     private func cancelAsking() {
-        guard !draft.isSending else { return }
         if draft.hasText {
             confirmsDiscard = true
         } else {

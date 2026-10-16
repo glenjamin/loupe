@@ -468,6 +468,15 @@ public struct PullRequestStore: Sendable {
                 t.primaryKey(["pullRequestId", "subjectId", "content"])
             }
         }
+        // The viewer's comments and reviews shown before GitHub has answered for them.
+        migrator.registerMigration("Comments being sent") { db in
+            try db.alter(table: "threadComment") { t in
+                t.add(column: "isSending", .boolean).notNull().defaults(to: false)
+            }
+            try db.alter(table: "timelineItem") { t in
+                t.add(column: "isSending", .boolean).notNull().defaults(to: false)
+            }
+        }
         return migrator
     }
 

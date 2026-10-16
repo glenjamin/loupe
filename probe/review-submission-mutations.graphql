@@ -1,5 +1,7 @@
 # Starting, adding to, submitting and abandoning a review. Never run: each changes the PR,
-# and submitting notifies people. Inputs from introspection, 2026-10-16.
+# and submitting notifies people. Inputs from introspection, 2026-10-16. Each asks for what it
+# made, to take the place of what's shown while it's sent; `add-review-thread.json` and
+# `submit-review.json` are their answers written by hand in the schema's shape.
 
 # Starts the viewer's pending review (no `event`), or submits a review at once (with `event`:
 # COMMENT, APPROVE or REQUEST_CHANGES). `threads` are DraftPullRequestReviewThread:
@@ -9,25 +11,36 @@
 # variables: {"input": {"pullRequestId": "PR_…", "commitOID": "…", "body": "…", "event": "APPROVE",
 #   "threads": [{"path": "app.go", "line": 11, "side": "RIGHT", "body": "…"}]}}
 mutation($input: AddPullRequestReviewInput!) {
-  addPullRequestReview(input: $input) { pullRequestReview { id state } }
+  addPullRequestReview(input: $input) { pullRequestReview { ...PostedReview } }
 }
 
 # "Adds a new thread to a pending Pull Request Review": a comment on a line, into the review.
 # The input also takes `pullRequestId`, `startLine`, `startSide` and `subjectType` (LINE or FILE).
 # variables: {"input": {"pullRequestReviewId": "PRR_…", "path": "app.go", "line": 11, "side": "RIGHT", "body": "…"}}
 mutation($input: AddPullRequestReviewThreadInput!) {
-  addPullRequestReviewThread(input: $input) { thread { id } }
+  addPullRequestReviewThread(input: $input) { thread { id comments(first: 1) { nodes { ...PostedComment } } } }
 }
 
 # Submits the pending review. `event` is required: COMMENT, APPROVE or REQUEST_CHANGES
 # (DISMISS also exists); `body` replaces the review's summary.
 # variables: {"input": {"pullRequestReviewId": "PRR_…", "event": "APPROVE", "body": "…"}}
 mutation($input: SubmitPullRequestReviewInput!) {
-  submitPullRequestReview(input: $input) { pullRequestReview { id state } }
+  submitPullRequestReview(input: $input) { pullRequestReview { ...PostedReview } }
 }
 
 # Abandons the pending review and its comments.
 # variables: {"input": {"pullRequestReviewId": "PRR_…"}}
 mutation($input: DeletePullRequestReviewInput!) {
   deletePullRequestReview(input: $input) { pullRequestReview { id } }
+}
+
+# A review as the timeline shows it, and the comment a review was started holding.
+fragment PostedReview on PullRequestReview {
+  id state bodyHTML createdAt submittedAt author { login avatarUrl }
+  comments(first: 1) { nodes { ...PostedComment } }
+}
+
+# A comment as a thread shows it; `state` is PENDING while its review is.
+fragment PostedComment on PullRequestReviewComment {
+  id databaseId bodyHTML createdAt state author { login avatarUrl }
 }

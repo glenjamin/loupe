@@ -86,18 +86,18 @@ public struct NewComment {
     public let draft: CommentDraft
 }
 
-/// A comment being written, as markdown.
+/// A comment being written, as markdown. It closes as it's sent, the comment showing in its
+/// thread at once, and opens again as it was if GitHub refuses it.
 @Observable
 @MainActor
 public final class CommentDraft {
     public var text = ""
-    public internal(set) var isSending = false
 
     init() {}
 
     /// Whether there's anything to send.
     public var canSend: Bool {
-        !isSending && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        hasText
     }
 
     /// Whether closing it would lose something typed.
@@ -197,7 +197,7 @@ extension PullRequestTab {
     /// with nothing typed is dropped, and one with text is kept, so it isn't lost.
     public func startComment(at anchor: DiffAnchor) {
         if let current = threadActivity.newComment {
-            guard current.anchor != anchor, !current.draft.hasText, !current.draft.isSending else { return }
+            guard current.anchor != anchor, !current.draft.hasText else { return }
         }
         threadActivity.newComment = NewComment(anchor: anchor, draft: CommentDraft())
         threadActivity.newCommentError = nil
@@ -205,31 +205,39 @@ extension PullRequestTab {
 
     /// Drops the comment being started; asking first is the view's job.
     public func cancelComment() {
-        guard threadActivity.newComment?.draft.isSending != true else { return }
         threadActivity.newComment = nil
         threadActivity.newCommentError = nil
     }
 
     /// Posts the new comment at once as a thread on its line, against the head commit the diff
-    /// shows, whose line numbers it uses, then fetches the threads again to show it. A refusal
-    /// keeps the draft open with the reason.
+    /// shows, whose line numbers it uses. It shows there and in the conversation straight away,
+    /// marked as sending until GitHub answers with its copy; then the threads are fetched again
+    /// in case of anything else new. A refusal takes it away and opens the draft again with
+    /// the reason.
     public func sendComment() async {
         guard let comment = threadActivity.newComment, comment.draft.canSend, case let .ready(review) = phase else { return }
-        comment.draft.isSending = true
         threadActivity.newCommentError = nil
-        defer { comment.draft.isSending = false }
         let pullRequest = pullRequest
         let known = Set((conversation?.threads ?? []).map(\.id) + threadsOfShownDiff.map(\.id))
+        let text = comment.draft.text
+        let sending = sendingComment(text, isPending: false)
+        threadActivity.newComment = nil
+        let change = make(.comment(sending, thread: sendingThread(at: comment.anchor, in: review), startsThread: true, reviewId: nil))
+        await storeOwnChanges()
+        let posted: ThreadComment
         do {
-            try await client.addReviewComment(
-                comment.draft.text, path: comment.anchor.path, line: comment.anchor.line, side: comment.anchor.side.rawValue,
+            posted = try await client.addReviewComment(
+                text, path: comment.anchor.path, line: comment.anchor.line, side: comment.anchor.side.rawValue,
                 commitId: review.headOid, inPullRequest: pullRequest.number, of: pullRequest.repository
             )
         } catch {
-            threadActivity.newCommentError = "Couldn't comment: \(error.localizedDescription)"
+            undo(change)
+            reopen(comment, because: "Couldn't comment: \(error.localizedDescription)")
+            await storeOwnChanges()
             return
         }
-        if threadActivity.newComment?.draft === comment.draft { threadActivity.newComment = nil }
+        confirm(change, comment: sending.id, as: posted, threadId: nil, reviewId: nil)
+        await storeOwnChanges()
         let viewer = viewer
         await refreshThreads { !known.contains($0.id) && $0.comments.first?.author?.login == viewer }
     }
@@ -242,34 +250,42 @@ extension PullRequestTab {
 
     /// Closes the thread's reply, dropping its draft; asking first is the view's job.
     public func cancelReply(to thread: ReviewThread) {
-        guard threadActivity.replies[thread.id]?.isSending != true else { return }
         threadActivity.replies[thread.id] = nil
         threadActivity.errors[thread.id] = nil
         if threadActivity.replyingInConversation == thread.id { threadActivity.closeConversationReply() }
     }
 
-    /// Posts the thread's reply at once, then fetches the threads again to show it as GitHub
-    /// has it. A refusal keeps the draft open with the reason.
+    /// Posts the thread's reply at once. It shows in the thread straight away, marked as sending
+    /// until GitHub answers with its copy; then the threads are fetched again in case of
+    /// anything else new. A refusal takes it away and opens the draft again with the reason,
+    /// over the conversation too if that's where it was written.
     public func sendReply(to thread: ReviewThread) async {
         guard let draft = threadActivity.replies[thread.id], draft.canSend else { return }
         guard let first = thread.comments.first?.databaseId else {
             threadActivity.errors[thread.id] = "Couldn't reply: GitHub hasn't said which comment started this thread. Reload and try again."
             return
         }
-        draft.isSending = true
         threadActivity.errors[thread.id] = nil
-        defer { draft.isSending = false }
         let pullRequest = pullRequest
+        let text = draft.text
+        let wasInConversation = threadActivity.replyingInConversation == thread.id
+        let sending = sendingComment(text, isPending: false)
+        threadActivity.replies[thread.id] = nil
+        if wasInConversation { threadActivity.closeConversationReply() }
+        let change = make(.comment(sending, thread: thread, startsThread: false, reviewId: nil))
+        await storeOwnChanges()
+        let posted: ThreadComment
         do {
-            try await client.replyToThread(startedBy: first, body: draft.text, inPullRequest: pullRequest.number, of: pullRequest.repository)
+            posted = try await client.replyToThread(startedBy: first, body: text, inPullRequest: pullRequest.number, of: pullRequest.repository)
         } catch {
+            undo(change)
+            reopen(draft, replyingTo: thread.id, inConversation: wasInConversation)
             threadActivity.errors[thread.id] = "Couldn't reply: \(error.localizedDescription)"
+            await storeOwnChanges()
             return
         }
-        if threadActivity.replies[thread.id] === draft {
-            threadActivity.replies[thread.id] = nil
-            if threadActivity.replyingInConversation == thread.id { threadActivity.closeConversationReply() }
-        }
+        confirm(change, comment: sending.id, as: posted, threadId: nil, reviewId: nil)
+        await storeOwnChanges()
         await refreshThreads { $0.id == thread.id }
     }
 
@@ -280,24 +296,30 @@ extension PullRequestTab {
         threadActivity.resolving.insert(thread.id)
         threadActivity.errors[thread.id] = nil
         defer { threadActivity.resolving.remove(thread.id) }
-        updateThread(thread.id) { $0.isResolved = resolved }
+        let change = make(.resolved(threadId: thread.id, resolved, by: viewer))
         if resolved { threadActivity.expanded.remove(thread.id) }
+        await storeOwnChanges()
         do {
             try await client.setThreadResolved(resolved, threadId: thread.id)
         } catch {
-            updateThread(thread.id) { $0.isResolved = !resolved }
+            undo(change)
             threadActivity.errors[thread.id] = "Couldn't \(resolved ? "resolve" : "unresolve") this conversation: \(error.localizedDescription)"
             if resolved { threadActivity.expanded.insert(thread.id) }
+            await storeOwnChanges()
             return
         }
+        confirm(change)
         await refreshThreads { $0.id == thread.id }
     }
 
     /// Takes the PR's review threads and the viewer's pending review from GitHub alone, which is
-    /// much cheaper than the whole conversation, and stores them. A failure keeps what's shown.
-    /// While new commits wait for a reload, only the threads the viewer just acted on change on
-    /// the diff shown.
+    /// much cheaper than the whole conversation, and stores them, with any of the viewer's
+    /// changes GitHub hadn't answered for when they were asked for made again over them. A
+    /// failure keeps what's shown. While new commits wait for a reload, only the threads the
+    /// viewer just acted on change on the diff shown.
     func refreshThreads(placing actedOn: (ReviewThread) -> Bool) async {
+        let started = startFetch()
+        defer { endFetch(started) }
         let fetched: ReviewThreads
         do {
             fetched = try await client.reviewThreads(ofPullRequest: id, viewer: viewer)
@@ -305,19 +327,20 @@ extension PullRequestTab {
             log("Couldn't get the review threads of \(title): \(error.localizedDescription)")
             return
         }
-        conversation?.threads = fetched.threads
-        conversation?.pendingReview = fetched.pendingReview
-        placeThreads(actedOn)
-        do {
-            try await store.replaceThreads(of: id, with: fetched.threads, pendingReview: fetched.pendingReview)
-        } catch {
-            log("Couldn't store the review threads of \(title): \(error)")
+        if var updated = conversation {
+            updated.threads = fetched.threads
+            updated.pendingReview = fetched.pendingReview
+            remakeOwnChanges(over: &updated, fetchedFrom: started)
+            conversation = updated
         }
+        placeThreads(actedOn)
+        await storeOwnChanges()
     }
 
     /// Puts the conversation's threads, as just fetched, on the diff shown: all of them while
     /// it's of the PR's head. While new commits wait for a reload, only those the viewer acted
-    /// on, and their pending ones GitHub no longer has, such as an abandoned review's, go.
+    /// on, and their own GitHub no longer has, go: an abandoned review's, or one shown while it
+    /// was sent that GitHub now has under its own id.
     func placeThreads(_ actedOn: (ReviewThread) -> Bool) {
         guard pendingChange != nil else { return followPlacedThreads() }
         let threads = conversation?.threads ?? []
@@ -325,15 +348,7 @@ extension PullRequestTab {
             threadsOfShownDiff.replaceOrAppend(thread)
         }
         let fetched = Set(threads.map(\.id))
-        threadsOfShownDiff.removeAll { $0.isPending && !fetched.contains($0.id) }
-    }
-
-    /// Changes the thread wherever it's shown: in the conversation and placed on the diff.
-    private func updateThread(_ id: String, _ change: (inout ReviewThread) -> Void) {
-        if let index = threadsOfShownDiff.firstIndex(where: { $0.id == id }) { change(&threadsOfShownDiff[index]) }
-        guard var conversation, let index = conversation.threads.firstIndex(where: { $0.id == id }) else { return }
-        change(&conversation.threads[index])
-        self.conversation = conversation
+        threadsOfShownDiff.removeAll { ($0.isPending || OwnChange.isProvisional($0.id)) && !fetched.contains($0.id) }
     }
 }
 
@@ -356,6 +371,31 @@ private extension PullRequestTab {
     func isInChanges(_ path: String) -> Bool {
         guard case let .ready(review) = phase else { return false }
         return review.changes.files.contains { $0.path == path } || review.changes.hidden.contains { $0.path == path }
+    }
+}
+
+extension PullRequestTab {
+    /// Opens a refused new comment again as it was, saying why, unless another with something
+    /// typed has been started since; that's kept, and the refused text is quoted with the
+    /// reason so it isn't lost.
+    func reopen(_ comment: NewComment, because reason: String) {
+        if let current = threadActivity.newComment, current.draft.hasText {
+            threadActivity.newCommentError = "\(reason)\n\nWhat wasn't sent: \(comment.draft.text)"
+            return
+        }
+        threadActivity.newComment = comment
+        threadActivity.newCommentError = reason
+    }
+
+    /// Opens a refused reply again as it was, over the conversation if it was written there. A
+    /// reply to the thread started since keeps what's typed in it, after the refused text.
+    func reopen(_ draft: CommentDraft, replyingTo threadId: String, inConversation: Bool) {
+        if let current = threadActivity.replies[threadId], current.hasText {
+            current.text = draft.text + "\n\n" + current.text
+        } else {
+            threadActivity.replies[threadId] = draft
+        }
+        if inConversation, threadActivity.replyingInConversation == nil { threadActivity.replyingInConversation = threadId }
     }
 }
 

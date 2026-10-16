@@ -1,0 +1,32 @@
+{
+    "data": {
+        "submitPullRequestReview": {
+            "pullRequestReview": {
+                "id": "PRR_kwDOCPShyc8AAAABR1WcfQ",
+                "state": "APPROVED",
+                "bodyHTML": "<p dir=\"auto\">Looks good</p>",
+                "createdAt": "2026-10-16T10:48:12Z",
+                "submittedAt": "2026-10-16T11:05:30Z",
+                "author": {
+                    "login": "glenjamin",
+                    "avatarUrl": "https://avatars.githubusercontent.com/u/151272?v=4"
+                },
+                "comments": {
+                    "nodes": [
+                        {
+                            "id": "PRRC_kwDOCPShyc6oX0Zz",
+                            "databaseId": 4269511234,
+                            "bodyHTML": "<p dir=\"auto\">Nit: rename</p>",
+                            "createdAt": "2026-10-16T10:48:12Z",
+                            "state": "SUBMITTED",
+                            "author": {
+                                "login": "glenjamin",
+                                "avatarUrl": "https://avatars.githubusercontent.com/u/151272?v=4"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    }
+}

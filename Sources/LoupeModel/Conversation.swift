@@ -128,13 +128,16 @@ public struct TimelineItem: Sendable, Equatable, Identifiable {
     public var event: TimelineEvent
     /// The reactions to a comment or a review's body; none for any other event.
     public var reactions: [ReactionGroup]
+    /// The viewer's own, shown before GitHub has answered for it.
+    public var isSending: Bool
 
-    public init(id: String, date: Date, actor: Participant?, event: TimelineEvent, reactions: [ReactionGroup] = []) {
+    public init(id: String, date: Date, actor: Participant?, event: TimelineEvent, reactions: [ReactionGroup] = [], isSending: Bool = false) {
         self.id = id
         self.date = date
         self.actor = actor
         self.event = event
         self.reactions = reactions
+        self.isSending = isSending
     }
 }
 
@@ -272,8 +275,11 @@ public struct ThreadComment: Sendable, Equatable, Identifiable {
     /// Part of the viewer's pending review, not yet submitted.
     public var isPending: Bool
     public var reactions: [ReactionGroup]
+    /// The viewer's own, shown before GitHub has answered for it, with a provisional id and
+    /// its text as a plain paragraph until GitHub renders it.
+    public var isSending: Bool
 
-    public init(id: String, databaseId: Int? = nil, author: Participant?, createdAt: Date, bodyHTML: String, isMinimized: Bool, minimizedReason: String? = nil, isPending: Bool = false, reactions: [ReactionGroup] = []) {
+    public init(id: String, databaseId: Int? = nil, author: Participant?, createdAt: Date, bodyHTML: String, isMinimized: Bool, minimizedReason: String? = nil, isPending: Bool = false, reactions: [ReactionGroup] = [], isSending: Bool = false) {
         self.id = id
         self.databaseId = databaseId
         self.author = author
@@ -283,6 +289,7 @@ public struct ThreadComment: Sendable, Equatable, Identifiable {
         self.minimizedReason = minimizedReason
         self.isPending = isPending
         self.reactions = reactions
+        self.isSending = isSending
     }
 }
 

@@ -371,12 +371,12 @@ extension GitHubClient {
     }
 
     /// POSTs `content` as JSON to a REST endpoint and returns the response's body, throwing
-    /// GitHub's message for anything but success.
-    func post(path: String, _ content: some Encodable) async throws -> Data {
+    /// GitHub's message for anything but success. `accept` picks the media type answered with.
+    func post(path: String, _ content: some Encodable, accept: String = "application/vnd.github+json") async throws -> Data {
         var request = URLRequest(url: URL(string: "https://api.github.com" + path)!)
         request.httpMethod = "POST"
         request.setValue("bearer \(try await token())", forHTTPHeaderField: "Authorization")
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(content)

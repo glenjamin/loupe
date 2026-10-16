@@ -62,14 +62,7 @@ extension PullRequestStore {
                 pendingReviewCommentCount: conversation.pendingReview?.commentCount
             ).upsert(db)
             try insertReactions(conversation.reactions, of: pullRequestId, in: pullRequestId, db)
-            for (position, item) in conversation.items.enumerated() {
-                try TimelineItemRow(item, pullRequestId: pullRequestId, position: position).insert(db)
-                try insertReactions(item.reactions, of: item.id, in: pullRequestId, db)
-                guard case let .review(_, _, comments) = item.event else { continue }
-                for (position, comment) in comments.enumerated() {
-                    try ReviewCommentRow(comment, reviewId: item.id, pullRequestId: pullRequestId, position: position).insert(db)
-                }
-            }
+            try insertTimeline(conversation.items, of: pullRequestId, in: db)
             try insertThreads(conversation.threads, of: pullRequestId, in: db)
             for (position, check) in conversation.checks.enumerated() {
                 try CheckContextRow(pullRequestId: pullRequestId, position: position, name: check.name, status: check.status.rawValue, description: check.description, url: check.url).insert(db)
@@ -106,6 +99,37 @@ extension PullRequestStore {
             row.pendingReviewBody = pendingReview?.body
             row.pendingReviewCommentCount = pendingReview?.commentCount
             try row.update(db)
+        }
+    }
+
+    /// Stores the viewer's own changes to the conversation, made before GitHub has answered for
+    /// them: `conversation`'s timeline, review threads and pending review replace those stored,
+    /// and the rest is left as last fetched. Does nothing if no conversation is stored for the PR.
+    public func saveViewersChanges(of pullRequestId: String, in conversation: Conversation) async throws {
+        try await database.write { db in
+            guard var row = try ConversationRow.fetchOne(db, key: pullRequestId) else { return }
+            // Every reaction but the description's is on a timeline item or thread comment.
+            try db.execute(sql: "DELETE FROM reaction WHERE pullRequestId = ? AND subjectId != ?", arguments: [pullRequestId, pullRequestId])
+            for table in ["timelineItem", "reviewComment", "reviewThread", "threadComment"] {
+                try db.execute(sql: "DELETE FROM \(table) WHERE pullRequestId = ?", arguments: [pullRequestId])
+            }
+            try insertTimeline(conversation.items, of: pullRequestId, in: db)
+            try insertThreads(conversation.threads, of: pullRequestId, in: db)
+            row.pendingReviewId = conversation.pendingReview?.id
+            row.pendingReviewBody = conversation.pendingReview?.body
+            row.pendingReviewCommentCount = conversation.pendingReview?.commentCount
+            try row.update(db)
+        }
+    }
+}
+
+private func insertTimeline(_ items: [TimelineItem], of pullRequestId: String, in db: Database) throws {
+    for (position, item) in items.enumerated() {
+        try TimelineItemRow(item, pullRequestId: pullRequestId, position: position).insert(db)
+        try insertReactions(item.reactions, of: item.id, in: pullRequestId, db)
+        guard case let .review(_, _, comments) = item.event else { continue }
+        for (position, comment) in comments.enumerated() {
+            try ReviewCommentRow(comment, reviewId: item.id, pullRequestId: pullRequestId, position: position).insert(db)
         }
     }
 }
@@ -175,11 +199,13 @@ private struct TimelineItemRow: Codable, FetchableRecord, PersistableRecord {
     var previousOid: String?
     /// A commit's headline, the branch merged into, or the reviewer asked.
     var detail: String?
+    let isSending: Bool
 
     init(_ item: TimelineItem, pullRequestId: String, position: Int) {
         self.pullRequestId = pullRequestId
         id = item.id
         self.position = position
+        isSending = item.isSending
         date = item.date
         actorLogin = item.actor?.login
         actorAvatarUrl = item.actor?.avatarURL
@@ -231,7 +257,7 @@ private struct TimelineItemRow: Codable, FetchableRecord, PersistableRecord {
         case "reviewRequested": event = .reviewRequested(reviewer: detail)
         default: return nil
         }
-        return TimelineItem(id: id, date: date, actor: participant(actorLogin, actorAvatarUrl), event: event)
+        return TimelineItem(id: id, date: date, actor: participant(actorLogin, actorAvatarUrl), event: event, isSending: isSending)
     }
 }
 
@@ -337,6 +363,7 @@ private struct ThreadCommentRow: Codable, FetchableRecord, PersistableRecord {
     let isMinimized: Bool
     let minimizedReason: String?
     let isPending: Bool
+    let isSending: Bool
 
     init(_ comment: ThreadComment, threadId: String, pullRequestId: String, position: Int) {
         self.pullRequestId = pullRequestId
@@ -351,10 +378,11 @@ private struct ThreadCommentRow: Codable, FetchableRecord, PersistableRecord {
         isMinimized = comment.isMinimized
         minimizedReason = comment.minimizedReason
         isPending = comment.isPending
+        isSending = comment.isSending
     }
 
     var comment: ThreadComment {
-        ThreadComment(id: id, databaseId: databaseId, author: participant(authorLogin, authorAvatarUrl), createdAt: createdAt, bodyHTML: bodyHTML, isMinimized: isMinimized, minimizedReason: minimizedReason, isPending: isPending)
+        ThreadComment(id: id, databaseId: databaseId, author: participant(authorLogin, authorAvatarUrl), createdAt: createdAt, bodyHTML: bodyHTML, isMinimized: isMinimized, minimizedReason: minimizedReason, isPending: isPending, isSending: isSending)
     }
 }
 

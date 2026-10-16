@@ -68,6 +68,16 @@ public final class PullRequestTab: Identifiable {
     var threadsOfShownDiff: [ReviewThread] = []
     /// The viewer's review being finished.
     public let reviewDraft = ReviewDraft()
+    /// The viewer's changes to the conversation that a fetch landing may not have yet.
+    @ObservationIgnored var ownChanges: [OwnChange] = []
+    @ObservationIgnored var nextOwnChange = 0
+    /// How many fetches of the conversation or its threads have started, and which of them
+    /// haven't landed or failed yet.
+    @ObservationIgnored var fetchesStarted = 0
+    @ObservationIgnored var fetchesUnderway: Set<Int> = []
+    /// The viewer's pending review being started, which a second comment waits for rather than
+    /// starting another, as GitHub allows one per viewer per PR.
+    @ObservationIgnored var reviewStart: Task<PostedReview, any Error>?
 
     /// Awaited as each step of git work starts; a snapshot run holds one there to draw it.
     @ObservationIgnored public var beforeStep: @MainActor (DiffStep) async -> Void = { _ in }
@@ -616,7 +626,9 @@ public final class PullRequestTab: Identifiable {
     func refreshConversation() async {
         isFetchingConversation = true
         defer { isFetchingConversation = false }
-        let fetched: Conversation
+        let started = startFetch()
+        defer { endFetch(started) }
+        var fetched: Conversation
         do {
             fetched = try await client.conversation(ofPullRequest: id)
         } catch {
@@ -624,6 +636,7 @@ public final class PullRequestTab: Identifiable {
             log("Couldn't get the conversation of \(title): \(error.localizedDescription)")
             return
         }
+        remakeOwnChanges(over: &fetched, fetchedFrom: started)
         conversation = fetched
         conversationError = nil
         followPlacedThreads()
@@ -689,7 +702,7 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// Whether the threads stay as placed for the diff shown, which is of an older head.
-    private var holdsPlacedThreads: Bool {
+    var holdsPlacedThreads: Bool {
         hasNewCommits || reloading != nil
     }
 
@@ -702,8 +715,10 @@ public final class PullRequestTab: Identifiable {
     /// Whether a comment with something typed, or on its way, is open on a line of the diff,
     /// which a reload could put on a different line.
     private var isWritingOnLine: Bool {
-        guard let draft = threadActivity.newComment?.draft else { return false }
-        return draft.hasText || draft.isSending
+        let isSendingOnLine = ownChanges.contains { change in
+            if case .comment(_, _, startsThread: true, _) = change.kind { change.answeredBefore == nil } else { false }
+        }
+        return isSendingOnLine || threadActivity.newComment?.draft.hasText == true
     }
 
     /// The lists may have stored the login since the tab opened; if not, GitHub is asked.

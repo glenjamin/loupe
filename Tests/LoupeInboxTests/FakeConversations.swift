@@ -19,9 +19,11 @@ import Testing
 /// give a PR the suggested reviewers in `probe/suggested-reviewers.json` or make asking for
 /// them fail, hide the teams, as from a token without access to them, shrink the pages of people and
 /// teams, refuse edits or changes to threads and reviews, as for a PR the token can't write to,
-/// or make every request fail. The description, comments, reviews and thread comments carry
-/// GitHub's eight reaction groups; tests can react as others do, and the viewer's reactions are
-/// added and taken away with `addReaction` and `removeReaction`, or refused.
+/// hold a kind of write unanswered until they release it, as over a slow network, or make every
+/// request fail. Writes answer with what they made, in the shapes the app asks for. The
+/// description, comments, reviews and thread comments carry GitHub's eight reaction groups;
+/// tests can react as others do, and the viewer's reactions are added and taken away with
+/// `addReaction` and `removeReaction`, or refused.
 actor FakeConversations {
     /// Each PR's conversation, less its timeline, in GitHub's JSON shape.
     private var nodes: [String: [String: Any]] = [:]
@@ -52,6 +54,18 @@ actor FakeConversations {
         let side: String
         let body: String
     }
+
+    /// The kinds of write a test can hold, as over a slow network, and the conversation's first
+    /// page, held once answered, so it lands with what GitHub had when it was asked for.
+    enum Gate: Hashable {
+        case comment, reply, resolve, addToReview, submit, discard, deleteComment
+        case conversation
+    }
+
+    /// Kinds of request held until released.
+    private var held: Set<Gate> = []
+    /// The requests waiting at the gate, by kind.
+    private var waiting: [Gate: [CheckedContinuation<Void, Never>]] = [:]
     private var timelines: [String: [[String: Any]]] = [:]
     private var failing = false
     private var teamsHidden = false
@@ -267,6 +281,29 @@ actor FakeConversations {
     func fail() { failing = true }
     func recover() { failing = false }
 
+    /// Holds requests of this kind as they arrive until released: a write unanswered and not
+    /// yet made, or the conversation as it was when asked for.
+    func hold(_ gate: Gate) {
+        held.insert(gate)
+    }
+
+    /// Lets the held requests of this kind through, and those after them.
+    func release(_ gate: Gate) {
+        held.remove(gate)
+        for waiter in waiting.removeValue(forKey: gate) ?? [] { waiter.resume() }
+    }
+
+    /// Returns once a request of this kind is held at the gate.
+    func arrival(of gate: Gate) async {
+        while waiting[gate]?.isEmpty ?? true { await Task.yield() }
+    }
+
+    /// Waits while requests of this kind are held.
+    private func pass(_ gate: Gate) async {
+        guard held.contains(gate) else { return }
+        await withCheckedContinuation { waiting[gate, default: []].append($0) }
+    }
+
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let url = try #require(request.url)
         #expect(url.absoluteString == "https://api.github.com/graphql")
@@ -281,13 +318,32 @@ actor FakeConversations {
         if query.contains("assignableUsers(") { return try usersPage(variables, url) }
         if query.contains("teams(") { return try teamsPage(variables, url) }
         if query.contains("updatePullRequest(") { return try updatePullRequest(variables, url) }
-        if query.contains("resolveReviewThread(") { return try setResolved(query.contains("unresolveReviewThread("), variables, url) }
-        if query.contains("addPullRequestReviewThread(") { return try addReviewThread(variables, url) }
-        if query.contains("addPullRequestReview(") { return try await addReview(variables, url) }
-        if query.contains("submitPullRequestReview(") { return try await submitReview(variables, url) }
-        if query.contains("deletePullRequestReviewComment(") { return try deleteReviewComment(variables, url) }
-        if query.contains("deletePullRequestReview(") { return try deleteReview(variables, url) }
         if query.contains("addReaction(") || query.contains("removeReaction(") { return try await setReaction(added: query.contains("addReaction("), variables, url) }
+        if query.contains("resolveReviewThread(") {
+            await pass(.resolve)
+            return try setResolved(query.contains("unresolveReviewThread("), variables, url)
+        }
+        if query.contains("addPullRequestReviewThread(") {
+            await pass(.addToReview)
+            return try addReviewThread(variables, url)
+        }
+        if query.contains("addPullRequestReview(") {
+            let input = variables["input"] as? [String: Any]
+            await pass(input?["event"] == nil ? .addToReview : .submit)
+            return try await addReview(variables, url)
+        }
+        if query.contains("submitPullRequestReview(") {
+            await pass(.submit)
+            return try await submitReview(variables, url)
+        }
+        if query.contains("deletePullRequestReviewComment(") {
+            await pass(.deleteComment)
+            return try deleteReviewComment(variables, url)
+        }
+        if query.contains("deletePullRequestReview(") {
+            await pass(.discard)
+            return try deleteReview(variables, url)
+        }
         if query.contains("suggestedReviewers") { return try suggestedReviewers(variables, url) }
         let id = try #require(variables["id"] as? String)
         guard var node = nodes[id], let timeline = timelines[id] else {
@@ -321,7 +377,9 @@ actor FakeConversations {
         } else {
             node = ["timelineItems": page]
         }
-        return (try JSONSerialization.data(withJSONObject: ["data": ["node": node]]), fakeResponse(url, status: 200))
+        let answer = try JSONSerialization.data(withJSONObject: ["data": ["node": node]])
+        if start == 0 { await pass(.conversation) }
+        return (answer, fakeResponse(url, status: 200))
     }
 
     private func requestReviews(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
@@ -349,17 +407,21 @@ actor FakeConversations {
     /// A REST request: a reply to a review thread, at
     /// `/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies`. Like GitHub, it
     /// takes only the REST id of a thread's first comment, as replies to replies aren't
-    /// supported, and answers 201 with the new comment in `probe/review-comment-rest.json`'s shape.
-    func sendREST(_ request: URLRequest) throws -> (Data, HTTPURLResponse) {
+    /// supported, and answers 201 with the new comment in `probe/review-comment-rest.json`'s
+    /// shape, its `body_html` included as the `full` media type asks.
+    func sendREST(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let url = try #require(request.url)
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
+        #expect(request.value(forHTTPHeaderField: "Accept") == "application/vnd.github.full+json", "so the comment comes back rendered")
         let data = try #require(request.httpBody)
         let content = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         if failing { return (Data(), fakeResponse(url, status: 502)) }
         if let match = url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/comments/) {
+            await pass(.comment)
             return try newComment(content, repository: String(match.1), number: try #require(Int(match.2)), url)
         }
+        await pass(.reply)
         let match = try #require(url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/comments\/(\d+)\/replies/), "Unexpected REST request: \(url.path())")
         let commentId = try #require(Int(match.3))
         let body = try #require(content["body"] as? String)
@@ -376,10 +438,7 @@ actor FakeConversations {
         comments.append(comment)
         threads[index]["comments"] = ["nodes": comments]
         setThreads(threads, of: id)
-        var rest = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/review-comment-rest.json"))) as? [String: Any])
-        rest["id"] = comment["databaseId"]
-        rest["node_id"] = comment["id"]
-        rest["body"] = body
+        var rest = try restComment(comment, body: body)
         rest["in_reply_to_id"] = commentId
         return (try JSONSerialization.data(withJSONObject: rest), fakeResponse(url, status: 201))
     }
@@ -400,10 +459,7 @@ actor FakeConversations {
         }
         try startThread(on: id, path: input.path, line: input.line, side: input.side, body: input.body, by: FakeGitHub.viewer)
         let comment = try #require(threads(of: id).last.flatMap { (($0["comments"] as? [String: Any])?["nodes"] as? [[String: Any]])?.first })
-        var rest = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/review-comment-rest.json"))) as? [String: Any])
-        rest["id"] = comment["databaseId"]
-        rest["node_id"] = comment["id"]
-        rest["body"] = input.body
+        var rest = try restComment(comment, body: input.body)
         rest["path"] = input.path
         rest["line"] = input.line
         rest["side"] = input.side
@@ -497,15 +553,19 @@ actor FakeConversations {
             return try unprocessable("addPullRequestReview", "Review body is required for \(event)", url)
         }
         let reviewId = newReviewId()
+        var comments: [[String: Any]] = []
         for thread in threads {
-            try startThread(on: id, path: thread.path, line: thread.line, side: thread.side, pending: event == nil, body: thread.body, by: FakeGitHub.viewer)
+            let threadId = try startThread(on: id, path: thread.path, line: thread.line, side: thread.side, pending: event == nil, body: thread.body, by: FakeGitHub.viewer)
+            comments += self.threads(of: id).filter { $0["id"] as? String == threadId }.flatMap { self.comments(of: $0) }
         }
+        let state: String
         if let event {
-            try await recordReview(event, body: body ?? "", on: id)
+            state = try await recordReview(event, body: body ?? "", on: id)
         } else {
+            state = "PENDING"
             pendingReviews[id] = PendingReviewState(id: reviewId, body: body ?? "")
         }
-        let payload: [String: Any] = ["addPullRequestReview": ["pullRequestReview": ["id": reviewId, "state": event == nil ? "PENDING" : "SUBMITTED"]]]
+        let payload: [String: Any] = ["addPullRequestReview": ["pullRequestReview": try postedReview(reviewId, state: state, body: body ?? "", comments: comments)]]
         return (try JSONSerialization.data(withJSONObject: ["data": payload]), fakeResponse(url, status: 200))
     }
 
@@ -517,7 +577,14 @@ actor FakeConversations {
         if let refusal = try refusalOfReviewChanges("addPullRequestReviewThread", url) { return refusal }
         guard let id = pullRequest(withPendingReview: reviewId) else { return try refusal(unresolved: reviewId, mutation: "addPullRequestReviewThread", url) }
         let threadId = try startThread(on: id, path: thread.path, line: thread.line, side: thread.side, pending: true, body: thread.body, by: FakeGitHub.viewer)
-        return (try JSONSerialization.data(withJSONObject: ["data": ["addPullRequestReviewThread": ["thread": ["id": threadId]]]]), fakeResponse(url, status: 200))
+        let comments = threads(of: id).filter { $0["id"] as? String == threadId }.flatMap { self.comments(of: $0) }
+        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/add-review-thread.json"))) as? [String: Any])
+        var payload = try #require((probe["data"] as? [String: Any])?["addPullRequestReviewThread"] as? [String: Any])
+        var posted = try #require(payload["thread"] as? [String: Any])
+        posted["id"] = threadId
+        posted["comments"] = ["nodes": comments]
+        payload["thread"] = posted
+        return (try JSONSerialization.data(withJSONObject: ["data": ["addPullRequestReviewThread": payload]]), fakeResponse(url, status: 200))
     }
 
     private func submitReview(_ variables: [String: Any], _ url: URL) async throws -> (Data, HTTPURLResponse) {
@@ -540,8 +607,9 @@ actor FakeConversations {
             thread["comments"] = ["nodes": comments.map { $0.merging(["state": "SUBMITTED"]) { $1 } }]
             return thread
         }, of: id)
-        try await recordReview(event, body: body ?? "", on: id)
-        return (try JSONSerialization.data(withJSONObject: ["data": ["submitPullRequestReview": ["pullRequestReview": ["id": reviewId, "state": "SUBMITTED"]]]]), fakeResponse(url, status: 200))
+        let state = try await recordReview(event, body: body ?? "", on: id, as: reviewId)
+        let payload: [String: Any] = ["submitPullRequestReview": ["pullRequestReview": try postedReview(reviewId, state: state, body: body ?? "", comments: [])]]
+        return (try JSONSerialization.data(withJSONObject: ["data": payload]), fakeResponse(url, status: 200))
     }
 
     private func deleteReview(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
@@ -589,14 +657,15 @@ actor FakeConversations {
     }
 
     /// The viewer's submitted review: their latest, in the timeline, and the PR's review
-    /// decision where it decides one.
-    private func recordReview(_ event: String, body: String, on id: String) async throws {
+    /// decision where it decides one. Returns its state.
+    @discardableResult
+    private func recordReview(_ event: String, body: String, on id: String, as reviewId: String? = nil) async throws -> String {
         let state = ["APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED"][event] ?? "COMMENTED"
         try review(state, by: FakeGitHub.viewer, on: id)
         let index = timelines[id, default: []].count
         timelines[id, default: []].append([
             "__typename": "PullRequestReview",
-            "id": "PRR_fake_timeline_\(index)",
+            "id": reviewId ?? "PRR_fake_timeline_\(index)",
             "state": state,
             "bodyHTML": body.isEmpty ? "" : "<p dir=\"auto\">\(escaped(body))</p>",
             "createdAt": Date.now.formatted(.iso8601),
@@ -605,8 +674,37 @@ actor FakeConversations {
             "comments": ["nodes": []],
             "reactionGroups": noReactions,
         ])
-        guard let github, state != "COMMENTED" else { return }
+        guard let github, state != "COMMENTED" else { return state }
         try await github.edit(id) { $0.reviewDecision = state }
+        return state
+    }
+
+    /// A review by the viewer in `probe/submit-review.json`'s shape, as the `PostedReview`
+    /// fragment asks for it.
+    private func postedReview(_ id: String, state: String, body: String, comments: [[String: Any]]) throws -> [String: Any] {
+        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/submit-review.json"))) as? [String: Any])
+        var review = try #require(((probe["data"] as? [String: Any])?["submitPullRequestReview"] as? [String: Any])?["pullRequestReview"] as? [String: Any])
+        review["id"] = id
+        review["state"] = state
+        review["bodyHTML"] = body.isEmpty ? "" : "<p dir=\"auto\">\(escaped(body))</p>"
+        review["createdAt"] = Date.now.formatted(.iso8601)
+        review["submittedAt"] = state == "PENDING" ? NSNull() as Any : Date.now.formatted(.iso8601)
+        review["comments"] = ["nodes": comments]
+        return review
+    }
+
+    /// The thread comment in REST's shape, as `probe/review-comment-rest.json` has it, with
+    /// its markdown as written.
+    private func restComment(_ comment: [String: Any], body: String) throws -> [String: Any] {
+        var rest = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/review-comment-rest.json"))) as? [String: Any])
+        let author = comment["author"] as? [String: Any]
+        rest["id"] = comment["databaseId"]
+        rest["node_id"] = comment["id"]
+        rest["body"] = body
+        rest["body_html"] = comment["bodyHTML"]
+        rest["created_at"] = comment["createdAt"]
+        rest["user"] = ["login": author?["login"] ?? FakeGitHub.viewer, "avatar_url": author?["avatarUrl"] ?? NSNull()]
+        return rest
     }
 
     private func pullRequest(withPendingReview reviewId: String) -> String? {

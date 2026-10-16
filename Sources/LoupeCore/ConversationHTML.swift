@@ -64,10 +64,10 @@ public enum ConversationHTML {
             let started = comments.filter { $0.replyTo == nil }
             if bodyHTML.isEmpty, started.isEmpty, state == .commented { return "" }
             // A review's own reactions are to its summary, so they go under it, before its threads;
-            // the viewer's pending review takes none until it's submitted.
-            let summaryReactions = bodyHTML.isEmpty || state == .pending ? "" : reactions(item.reactions, to: item.id)
+            // the viewer's pending review takes none until it's submitted, nor one on its way.
+            let summaryReactions = bodyHTML.isEmpty || state == .pending || item.isSending ? "" : reactions(item.reactions, to: item.id)
             let body = (bodyHTML.isEmpty ? "" : bodyHTML + summaryReactions) + started.map { thread(for: $0, in: threads[$0.id], reviewer: item.actor, date: item.date, now: now) }.joined()
-            return card(author: item.actor, action: reviewAction(state), date: item.date, now: now, badge: reviewBadge(state), body: body, kind: "review")
+            return card(author: item.actor, action: reviewAction(state), date: item.date, now: now, isSending: item.isSending, badge: reviewBadge(state), body: body, kind: "review")
         case .commit:
             return ""
         case let .forcePushed(before, after):
@@ -86,10 +86,10 @@ public enum ConversationHTML {
         }
     }
 
-    private static func card(author: Participant?, action: String, date: Date, now: Date, badge: String = "", body: String, kind: String = "comment", reactions: String = "") -> String {
+    private static func card(author: Participant?, action: String, date: Date, now: Date, isSending: Bool = false, badge: String = "", body: String, kind: String = "comment", reactions: String = "") -> String {
         """
         <article class="item \(kind)">\(avatar(author, size: 40))<div class="card">\
-        <header>\(login(author)) \(escape(action))\(badge) \(time(date, now: now))</header>\
+        <header>\(login(author)) \(escape(action))\(badge) \(isSending ? sending : time(date, now: now))</header>\
         \(body.isEmpty ? "" : #"<div class="body">\#(body)</div>"#)\(reactions)</div></article>
 
         """
@@ -117,7 +117,7 @@ public enum ConversationHTML {
         if isResolved { badges += #" <span class="badge resolved">Resolved</span>"# }
         let comments = thread?.comments ?? [ThreadComment(id: comment.id, author: reviewer, createdAt: date, bodyHTML: comment.bodyHTML, isMinimized: comment.isMinimized)]
         let replies = comments.map { reply in
-            #"<div class="thread-comment">\#(avatar(reply.author, size: 24))<div><header>\#(login(reply.author)) \#(time(reply.createdAt, now: now))</header><div class="body">\#(minimizable(reply.bodyHTML, isMinimized: reply.isMinimized))</div>\#(reply.isPending ? "" : reactions(reply.reactions, to: reply.id))</div></div>"#
+            #"<div class="thread-comment">\#(avatar(reply.author, size: 24))<div><header>\#(login(reply.author)) \#(reply.isSending ? sending : time(reply.createdAt, now: now))</header><div class="body">\#(minimizable(reply.bodyHTML, isMinimized: reply.isMinimized))</div>\#(reply.isPending || reply.isSending ? "" : reactions(reply.reactions, to: reply.id))</div></div>"#
         }.joined()
         let classes = ["thread", isResolved ? "resolved" : nil, isOutdated ? "outdated" : nil].compactMap { $0 }.joined(separator: " ")
         // The app finds the thread by its id, to put a reply to it beside it.
@@ -212,6 +212,9 @@ public enum ConversationHTML {
     private static func login(_ participant: Participant?) -> String {
         "<strong>\(escape(participant?.login ?? "ghost"))</strong>"
     }
+
+    /// In place of the time of the viewer's comment or review on its way to GitHub.
+    private static let sending = #"<span class="muted sending">Sending…</span>"#
 
     private static func time(_ date: Date, now: Date) -> String {
         let relative = date.formatted(.relative(presentation: .named).locale(Locale(identifier: "en_US")))
