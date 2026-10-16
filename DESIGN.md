@@ -463,6 +463,10 @@ A request nobody acted on for two weeks is stale noise in a list meant for what 
 
 "Show Pull Requests" is ⌘§ rather than ⌘T. The lists are tab 0 beside ⌘1–⌘9 for the PR tabs, and on the UK layout § is the key left of 1, so ⌘§ reads as "tab 0"; ⌘T means "new tab" everywhere else, which showing the lists isn't. ⌘T isn't kept alongside, as SwiftUI's menu commands can't carry a second key without a second, visible menu item.
 
+### A PR's toolbar can copy its GitHub link
+
+Beside "Open on GitHub" the PR's toolbar has "Copy Link", ⇧⌘C, which puts the PR's github.com URL on the pasteboard, both as plain text and as a URL, so it pastes as a link in Slack or mail and as text in a terminal. Sharing a PR with someone else is the common reason to want its link, and going through the browser to get it leaves the review. The key belongs to the toolbar button, as "Open on GitHub" has no menu item either, so it works only while a PR tab is shown.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

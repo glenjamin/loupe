@@ -226,6 +226,9 @@ private struct WindowChrome: View {
                         let url = tab.pullRequest.url
                         Button("Open on GitHub", systemImage: "safari") { NSWorkspace.shared.open(url) }
                             .help("Open on GitHub")
+                        Button("Copy Link", systemImage: "link") { copyLink(url) }
+                            .keyboardShortcut("c", modifiers: [.command, .shift])
+                            .help("Copy the PR's GitHub link")
                     } else {
                         listsItems
                     }
@@ -347,3 +350,12 @@ private let tabKeyCode: UInt16 = 48
 /// The app icon at full size, scaled to fit where it's shown.
 @MainActor
 private let appIcon = AppDelegate.iconURL.flatMap(NSImage.init(contentsOf:))
+
+/// Puts a link on the pasteboard as text and as a URL, so it pastes as either.
+@MainActor
+private func copyLink(_ url: URL) {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(url.absoluteString, forType: .string)
+    pasteboard.writeObjects([url as NSURL])
+}
