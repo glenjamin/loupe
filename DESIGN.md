@@ -389,6 +389,14 @@ This supersedes the checkout's own `.gitattributes` in "Languages and hidden fil
 
 `git check-attr --source=<commit>` would do this directly, but needs git 2.40, and Loupe runs `/usr/bin/git`, which Command Line Tools ships as 2.39. So the `.gitattributes` blobs that could apply (one in each changed path's directory and above) are found with one `git cat-file --batch-check` for every head at once, written into a throwaway index file in the temporary directory (`GIT_INDEX_FILE`, `update-index --index-info`), and read with `check-attr --cached`, which ignores the working tree. The checkout's index, working tree and refs are untouched; `$GIT_DIR/info/attributes` and the user's global attributes still apply, as they did. Each head costs two short git runs, a few at a time across the commit picker's commits.
 
+### Homebrew's git is preferred to Apple's
+
+Loupe runs the first of `/opt/homebrew/bin/git` (Homebrew on Apple silicon), `/usr/local/bin/git` (Homebrew on Intel) and `/usr/bin/git` that exists and can be run, chosen once at first use and logged with its `git --version`. Apple's git, from Command Line Tools, lags upstream (2.39 here, against Homebrew's 2.49). Homebrew's is the one Glen's shell runs, so Loupe's diffs match what he sees in the terminal, and newer flags become available. Both read the same global config and credential helpers, so nothing else changes, and with no Homebrew git Loupe behaves exactly as before.
+
+`PATH` isn't consulted: an app launched from Finder or the Dock doesn't get the shell's `PATH`, and recovering it by running a login shell would be slow and fragile. The fixed list covers both Homebrew prefixes. A `LOUPE_GIT` environment variable naming a path wins outright, for testing against a particular git.
+
+Homebrew's git is new enough for `check-attr --source`, but the throwaway-index reading of `.gitattributes` stays, so Apple's git and Homebrew's behave alike and a machine without Homebrew needs nothing else.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

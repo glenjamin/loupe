@@ -1,9 +1,27 @@
 import Foundation
+import os
 
 /// Runs git against a checkout. The checkouts are the user's working copies, so nothing here
 /// touches branches, the index or the working tree; the only ref written is Loupe's own
 /// `refs/loupe/` namespace.
 enum Git {
+    /// The git Loupe runs: `LOUPE_GIT` if set, else Homebrew's (Apple silicon, then Intel), else
+    /// Apple's. Homebrew's is newer and is the one the shell finds, so diffs match the terminal's.
+    /// `PATH` isn't consulted, as an app launched from Finder doesn't have the shell's.
+    static let executable: URL = {
+        let url = executable(environment: ProcessInfo.processInfo.environment)
+        logger.info("Using \(url.path(percentEncoded: false), privacy: .public): \(version(of: url), privacy: .public)")
+        return url
+    }()
+
+    static let preferredExecutables = ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"]
+
+    /// `LOUPE_GIT` outright when set, else the first of `candidates` that can be run.
+    static func executable(environment: [String: String], candidates: [String] = preferredExecutables) -> URL {
+        if let path = environment["LOUPE_GIT"], !path.isEmpty { return URL(filePath: path) }
+        return URL(filePath: candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/usr/bin/git")
+    }
+
     /// The checkout's remotes in config order, with their URLs as configured rather than as any
     /// `insteadOf` rewrites them, since those name the repo. Empty when there are none.
     static func remotes(of directory: URL) async -> [Remote] {
@@ -66,7 +84,7 @@ enum Git {
     /// Runs git, handing its stdout to `read` as it comes, and returns what that makes of it.
     private static func runBlocking<Output>(_ arguments: [String], in directory: URL, input: Data?, environment extra: [String: String] = [:], timeout: Duration, read: (FileHandle) throws -> Output) throws -> Output {
         let process = Process()
-        process.executableURL = URL(filePath: "/usr/bin/git")
+        process.executableURL = executable
         process.arguments = ["-C", directory.path(percentEncoded: false)] + arguments
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
@@ -232,4 +250,20 @@ extension Duration {
         let (seconds, attoseconds) = components
         return TimeInterval(seconds) + TimeInterval(attoseconds) / 1e18
     }
+}
+
+private let logger = Logger(subsystem: "com.glenmailer.Loupe", category: "git")
+
+/// What `git --version` says, for the log; run directly, as `Git.run` needs the executable chosen.
+private func version(of executable: URL) -> String {
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = ["--version"]
+    let stdout = Pipe()
+    process.standardOutput = stdout
+    process.standardError = FileHandle.nullDevice
+    do { try process.run() } catch { return "can't run: \(error.localizedDescription)" }
+    let output = stdout.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
 }
