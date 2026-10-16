@@ -675,6 +675,10 @@ Comments are mostly about code, and they're written by people whose hands know a
 
 It's ⌘ rather than ⌥ because ⌘ is the key that was asked for and these boxes are short: going to a line's ends is rarely needed in a comment, while ⌥← and ⌥→ keep AppKit's own word movement for anyone who wants natural-language words. It's taken in the text view's `keyDown`, beside ⌘↩, rather than by overriding `moveToLeftEndOfLine:` and the rest, so a key binding that maps something else to those actions keeps doing what it says. Plain arrows and everything else are the text view's own.
 
+### ⌥← and ⌥→ move by code words, and ⌘← and ⌘→ go to the line's ends again
+
+This reverses "⌘← and ⌘→ move by code words in comment boxes": asking for ⌘ there was a misstatement, and ⌥ is the key macOS gives word movement everywhere else, so that's where hands already reach for it. In every box behind `MarkdownTextView`, ⌥← and ⌥→ now move by the same code-word stops, and ⌥⇧← and ⌥⇧→ extend the selection by them, keeping its other end fixed; ⌘← and ⌘→, with or without ⇧, are AppKit's own again, going to the line's start and end. AppKit's natural-language word movement isn't offered on any other key. ⌥⌫ and ⌥⌦ still delete by AppKit's words, as they were never taken. The keys are still caught in the text view's `keyDown` beside ⌘↩, for the same reason as before.
+
 ## Not yet decided
 
 Nothing is pending.

@@ -155,8 +155,8 @@ struct MarkdownTextView: NSViewRepresentable {
 }
 
 /// Takes ⌘↩, ⌘⇧↩ when given something to do with it, and Esc itself while it has focus, as a
-/// text view would otherwise insert a newline or offer completions. ⌘← and ⌘→ move by code words
-/// rather than to the line's ends, as comments are mostly about code; with ⇧ they select.
+/// text view would otherwise insert a newline or offer completions. ⌥← and ⌥→ move by code words
+/// rather than natural-language ones, as comments are mostly about code; with ⇧ they select.
 final class MarkdownEditingTextView: NSTextView {
     var onSave: () -> Void = {}
     var onAlternateSave: (() -> Void)?
@@ -177,7 +177,7 @@ final class MarkdownEditingTextView: NSTextView {
             onSave()
         } else if isReturn, modifiers == [.command, .shift], let onAlternateSave {
             onAlternateSave()
-        } else if let arrow, arrowModifiers == .command || arrowModifiers == [.command, .shift] {
+        } else if let arrow, arrowModifiers == .option || arrowModifiers == [.option, .shift] {
             moveByCodeWord(arrow, extendingSelection: arrowModifiers.contains(.shift))
         } else {
             super.keyDown(with: event)
