@@ -299,6 +299,11 @@ enum SnapshotRun {
                 if let wanted = environment["LOUPE_SNAPSHOT_SHOW_THREAD"] {
                     for url in try await saveSnapshotsOfShownThreads(replying: wanted == "reply", in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_REACTIONS=1 scrolls each conversation to its first reaction and
+                // opens the picker beside it, and snapshots it. Nothing is clicked or sent.
+                if environment["LOUPE_SNAPSHOT_REACTIONS"] == "1" {
+                    for url in try await saveSnapshotsOfReactions(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_PULL_EVENTS=<points> pulls each shown diff that far past its end
                 // with synthesised trackpad scroll events, and snapshots it halfway and at the end;
                 // LOUPE_SNAPSHOT_PULL_BACK=<points> then scrolls back that far before letting go.
@@ -789,6 +794,36 @@ private func saveSnapshotsOfShownThreads(replying: Bool, in windows: WindowManag
         page.closeReply()
         activity.closeConversationReply()
         written += [conversation, shown]
+    }
+    windows.select(selected)
+    return written
+}
+
+/// On each PR's conversation, scrolls its first reaction pill into the middle of the view, or
+/// the first comment's reactions if no one has reacted, its thread unfolded, opens the picker
+/// beside it, and writes
+/// `reactions-<title>.png`.
+@MainActor
+private func saveSnapshotsOfReactions(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs where tab.conversation != nil {
+        tab.section = .conversation
+        windows.select(tab.id)
+        let page = ConversationPage.page(for: tab)
+        let deadline = Date.now.addingTimeInterval(10)
+        while Date.now < deadline, !page.isLoaded { try? await Task.sleep(for: .milliseconds(100)) }
+        let found = try? await page.webView.evaluateJavaScript(
+            "(() => { const pill = document.querySelector('a.reaction'); const row = pill ? pill.closest('.reactions') : document.querySelector('.reactions'); if (!row) return 'none'; for (let thread = row.closest('details'); thread; thread = thread.parentElement.closest('details')) thread.open = true; row.scrollIntoView({ block: 'center' }); row.querySelector('details').open = true; return pill ? 'pills' : 'no pills' })()",
+            in: nil, contentWorld: .defaultClient
+        )
+        print("\(tab.title): reactions \(found as? String ?? "unknown")")
+        try? await Task.sleep(for: .milliseconds(500))
+        let url = directory.appending(path: "reactions-\(sanitised(windows.title(of: tab.id))).png")
+        try await saveSnapshot(of: window, to: url)
+        written.append(url)
     }
     windows.select(selected)
     return written

@@ -101,6 +101,7 @@ final class ConversationPage: GitHubWebPage {
         page.tab = tab
         page.openPullRequestLink = { [weak tab] in await tab?.open($0) ?? false }
         page.openThreadLink = { [weak tab] link in Task { await tab?.follow(link) } }
+        page.openReactionLink = { [weak tab] link in Task { await tab?.react(link) } }
         pages.setObject(page, forKey: tab)
         return page
     }

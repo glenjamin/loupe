@@ -455,6 +455,19 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "requestedReviewers", .text)
             }
         }
+        // The reactions anyone has made to the description, comments, reviews and thread
+        // comments of a stored conversation, by what they're on. A conversation stored before
+        // has none until it's next fetched.
+        migrator.registerMigration("Conversation reactions") { db in
+            try db.create(table: "reaction") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequest", onDelete: .cascade)
+                t.column("subjectId", .text).notNull()
+                t.column("content", .text).notNull()
+                t.column("count", .integer).notNull()
+                t.column("viewerHasReacted", .boolean).notNull()
+                t.primaryKey(["pullRequestId", "subjectId", "content"])
+            }
+        }
         return migrator
     }
 

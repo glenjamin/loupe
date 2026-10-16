@@ -14,6 +14,8 @@ class GitHubWebPage: NSObject {
     var openPullRequestLink: @MainActor (PullRequestLink) async -> Bool = { _ in false }
     /// Acts on a link to one of the page's review threads; set by whoever makes the page.
     var openThreadLink: @MainActor (ThreadLink) -> Void = { _ in }
+    /// Adds or takes away the viewer's reaction a link names; set by whoever makes the page.
+    var openReactionLink: @MainActor (ReactionLink) -> Void = { _ in }
     /// Whether the latest page has finished loading, images included.
     private(set) var isLoaded = false
     /// What relative links in the page are relative to.
@@ -80,6 +82,7 @@ extension GitHubWebPage: WKNavigationDelegate, WKUIDelegate {
     /// for a PR. A thread's links act in the app however they're clicked, as no browser could.
     private func follow(_ action: WKNavigationAction) {
         if let url = action.request.url, let link = ThreadLink(url: url) { return openThreadLink(link) }
+        if let url = action.request.url, let link = ReactionLink(url: url) { return openReactionLink(link) }
         let inBrowserTab = action.modifierFlags.contains(.command) || action.buttonNumber == middleMouseButton
         followLink(action.request.url, inBrowserTab: inBrowserTab, openPullRequest: openPullRequestLink)
     }

@@ -3,11 +3,15 @@ import Foundation
 /// A PR's conversation as github.com shows it: the description, then what happened in order,
 /// its review threads and its head commit's CI. Bodies are GitHub's own rendered HTML.
 public struct Conversation: Sendable, Equatable {
+    /// The PR's node id, which reactions to its description name.
+    public var id: String
     public var author: Participant?
     public var createdAt: Date
     public var bodyHTML: String
     /// The description as its author wrote it, in GitHub-flavoured markdown.
     public var body: String
+    /// The reactions to the description.
+    public var reactions: [ReactionGroup]
     /// In GitHub's order, oldest first.
     public var items: [TimelineItem]
     /// Every review thread with all its comments, as a review in the timeline holds only the
@@ -21,11 +25,13 @@ public struct Conversation: Sendable, Equatable {
     /// The viewer's review not yet submitted, if they have one; only they can see it.
     public var pendingReview: PendingReview?
 
-    public init(author: Participant?, createdAt: Date, bodyHTML: String, body: String = "", items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext], reviewRequests: [Reviewer] = [], latestReviews: [LatestReview] = [], pendingReview: PendingReview? = nil) {
+    public init(id: String, author: Participant?, createdAt: Date, bodyHTML: String, body: String = "", reactions: [ReactionGroup] = [], items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext], reviewRequests: [Reviewer] = [], latestReviews: [LatestReview] = [], pendingReview: PendingReview? = nil) {
+        self.id = id
         self.author = author
         self.createdAt = createdAt
         self.bodyHTML = bodyHTML
         self.body = body
+        self.reactions = reactions
         self.items = items
         self.threads = threads
         self.checks = checks
@@ -120,12 +126,15 @@ public struct TimelineItem: Sendable, Equatable, Identifiable {
     /// Who did it: the commenter, reviewer, pusher or commit author.
     public var actor: Participant?
     public var event: TimelineEvent
+    /// The reactions to a comment or a review's body; none for any other event.
+    public var reactions: [ReactionGroup]
 
-    public init(id: String, date: Date, actor: Participant?, event: TimelineEvent) {
+    public init(id: String, date: Date, actor: Participant?, event: TimelineEvent, reactions: [ReactionGroup] = []) {
         self.id = id
         self.date = date
         self.actor = actor
         self.event = event
+        self.reactions = reactions
     }
 }
 
@@ -262,8 +271,9 @@ public struct ThreadComment: Sendable, Equatable, Identifiable {
     public var minimizedReason: String?
     /// Part of the viewer's pending review, not yet submitted.
     public var isPending: Bool
+    public var reactions: [ReactionGroup]
 
-    public init(id: String, databaseId: Int? = nil, author: Participant?, createdAt: Date, bodyHTML: String, isMinimized: Bool, minimizedReason: String? = nil, isPending: Bool = false) {
+    public init(id: String, databaseId: Int? = nil, author: Participant?, createdAt: Date, bodyHTML: String, isMinimized: Bool, minimizedReason: String? = nil, isPending: Bool = false, reactions: [ReactionGroup] = []) {
         self.id = id
         self.databaseId = databaseId
         self.author = author
@@ -272,6 +282,7 @@ public struct ThreadComment: Sendable, Equatable, Identifiable {
         self.isMinimized = isMinimized
         self.minimizedReason = minimizedReason
         self.isPending = isPending
+        self.reactions = reactions
     }
 }
 

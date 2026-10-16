@@ -444,6 +444,10 @@ private struct CommentView: View {
                 }
                 .font(.callout)
                 CommentBody(blocks: commentBlocks(comment.bodyHTML))
+                // A pending comment can't be reacted to until its review is submitted.
+                if !comment.isPending {
+                    ReactionsRow(tab: tab, subjectId: comment.id, groups: comment.reactions)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)

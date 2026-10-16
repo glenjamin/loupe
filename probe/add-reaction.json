@@ -1,0 +1,18 @@
+{
+    "data": {
+        "addReaction": {
+            "subject": {
+                "reactionGroups": [
+                    { "content": "THUMBS_UP", "viewerHasReacted": true, "reactors": { "totalCount": 2 } },
+                    { "content": "THUMBS_DOWN", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                    { "content": "LAUGH", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                    { "content": "HOORAY", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                    { "content": "CONFUSED", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                    { "content": "HEART", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                    { "content": "ROCKET", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                    { "content": "EYES", "viewerHasReacted": false, "reactors": { "totalCount": 0 } }
+                ]
+            }
+        }
+    }
+}

@@ -19,7 +19,9 @@ import Testing
 /// give a PR the suggested reviewers in `probe/suggested-reviewers.json` or make asking for
 /// them fail, hide the teams, as from a token without access to them, shrink the pages of people and
 /// teams, refuse edits or changes to threads and reviews, as for a PR the token can't write to,
-/// or make every request fail.
+/// or make every request fail. The description, comments, reviews and thread comments carry
+/// GitHub's eight reaction groups; tests can react as others do, and the viewer's reactions are
+/// added and taken away with `addReaction` and `removeReaction`, or refused.
 actor FakeConversations {
     /// Each PR's conversation, less its timeline, in GitHub's JSON shape.
     private var nodes: [String: [String: Any]] = [:]
@@ -92,6 +94,17 @@ actor FakeConversations {
     private(set) var repliesReceived: [ReplyInput] = []
     /// Every resolve or unresolve received, in order.
     private(set) var resolutionsReceived: [ResolutionInput] = []
+    /// Every reaction added or taken away, in order.
+    private(set) var reactionsReceived: [ReactionInput] = []
+    private var reactionsRefused = false
+    /// Reactions waiting to be answered while they're held.
+    private var heldReactions: [CheckedContinuation<Void, Never>]?
+
+    struct ReactionInput: Equatable {
+        let subjectId: String
+        let content: String
+        let added: Bool
+    }
     /// How many times the review threads have been asked for on their own.
     private(set) var threadFetches = 0
 
@@ -142,7 +155,32 @@ actor FakeConversations {
             "createdAt": Date.now.formatted(.iso8601),
             "isMinimized": false,
             "author": ["login": login, "avatarUrl": "https://avatars.githubusercontent.com/u/583231?v=4"],
+            "reactionGroups": noReactions,
         ])
+    }
+
+    /// Reacts with `content` to the description, comment, review or thread comment with
+    /// `subjectId`, as `login` does on github.com.
+    func react(_ content: String, to subjectId: String, by login: String = "octocat") throws {
+        try #require(changeReactions(of: subjectId) { setReaction(content, added: true, by: login, in: &$0) } != nil, "Nothing to react to with id \(subjectId)")
+    }
+
+    /// The reactions to whatever has `subjectId`, as GitHub has them now.
+    func reactions(to subjectId: String) -> [[String: Any]]? {
+        changeReactions(of: subjectId) { _ in }
+    }
+
+    /// Refuses the viewer's reactions, as GitHub does on a locked conversation.
+    func refuseReactions() { reactionsRefused = true }
+
+    /// Keeps the viewer's reactions from being answered until `releaseReactions()`, as on a
+    /// slow connection.
+    func holdReactions() { heldReactions = [] }
+
+    func releaseReactions() {
+        let held = heldReactions ?? []
+        heldReactions = nil
+        for reaction in held { reaction.resume() }
     }
 
     /// Starts a review thread on the PR, as a reviewer does on github.com, in the shape of
@@ -249,6 +287,7 @@ actor FakeConversations {
         if query.contains("submitPullRequestReview(") { return try await submitReview(variables, url) }
         if query.contains("deletePullRequestReviewComment(") { return try deleteReviewComment(variables, url) }
         if query.contains("deletePullRequestReview(") { return try deleteReview(variables, url) }
+        if query.contains("addReaction(") || query.contains("removeReaction(") { return try await setReaction(added: query.contains("addReaction("), variables, url) }
         if query.contains("suggestedReviewers") { return try suggestedReviewers(variables, url) }
         let id = try #require(variables["id"] as? String)
         guard var node = nodes[id], let timeline = timelines[id] else {
@@ -564,6 +603,7 @@ actor FakeConversations {
             "submittedAt": Date.now.formatted(.iso8601),
             "author": ["login": FakeGitHub.viewer, "avatarUrl": "https://avatars.githubusercontent.com/u/151272?v=4"],
             "comments": ["nodes": []],
+            "reactionGroups": noReactions,
         ])
         guard let github, state != "COMMENTED" else { return }
         try await github.edit(id) { $0.reviewDecision = state }
@@ -738,7 +778,76 @@ actor FakeConversations {
             "minimizedReason": NSNull(),
             "state": pending ? "PENDING" : "SUBMITTED",
             "author": ["login": login, "avatarUrl": "https://avatars.githubusercontent.com/u/583231?v=4"],
+            "reactionGroups": noReactions,
         ]
+    }
+
+    /// The viewer's reaction, added or taken away as GitHub does: asking for what's already so
+    /// changes nothing. Answers in `probe/add-reaction.json`'s shape with the subject's groups.
+    private func setReaction(added: Bool, _ variables: [String: Any], _ url: URL) async throws -> (Data, HTTPURLResponse) {
+        let mutation = added ? "addReaction" : "removeReaction"
+        let subjectId = try #require(variables["subjectId"] as? String)
+        let content = try #require(variables["content"] as? String)
+        reactionsReceived.append(ReactionInput(subjectId: subjectId, content: content, added: added))
+        if heldReactions != nil { await withCheckedContinuation { heldReactions?.append($0) } }
+        if reactionsRefused {
+            let refusal: [String: Any] = [
+                "data": [mutation: NSNull()],
+                "errors": [["type": "FORBIDDEN", "path": [mutation], "message": "Unable to react to a locked conversation"]],
+            ]
+            return (try JSONSerialization.data(withJSONObject: refusal), fakeResponse(url, status: 200))
+        }
+        guard let groups = changeReactions(of: subjectId, { setReaction(content, added: added, by: FakeGitHub.viewer, in: &$0) }) else {
+            return try refusal(unresolved: subjectId, mutation: mutation, url)
+        }
+        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/add-reaction.json"))) as? [String: Any])
+        var payload = try #require((probe["data"] as? [String: Any])?["addReaction"] as? [String: Any])
+        payload["subject"] = ["reactionGroups": groups]
+        return (try JSONSerialization.data(withJSONObject: ["data": [mutation: payload]]), fakeResponse(url, status: 200))
+    }
+
+    /// Changes the reaction groups of whatever has `subjectId`, wherever it is, returning them
+    /// as changed; nil if nothing has that id.
+    @discardableResult
+    private func changeReactions(of subjectId: String, _ change: (inout [[String: Any]]) -> Void) -> [[String: Any]]? {
+        if var node = nodes[subjectId] {
+            var groups = node["reactionGroups"] as? [[String: Any]] ?? noReactions
+            change(&groups)
+            node["reactionGroups"] = groups
+            nodes[subjectId] = node
+            return groups
+        }
+        for (id, timeline) in timelines {
+            guard let index = timeline.firstIndex(where: { $0["id"] as? String == subjectId }) else { continue }
+            var groups = timeline[index]["reactionGroups"] as? [[String: Any]] ?? noReactions
+            change(&groups)
+            timelines[id]?[index]["reactionGroups"] = groups
+            return groups
+        }
+        for id in nodes.keys {
+            var threads = threads(of: id)
+            for threadIndex in threads.indices {
+                var comments = comments(of: threads[threadIndex])
+                guard let index = comments.firstIndex(where: { $0["id"] as? String == subjectId }) else { continue }
+                var groups = comments[index]["reactionGroups"] as? [[String: Any]] ?? noReactions
+                change(&groups)
+                comments[index]["reactionGroups"] = groups
+                threads[threadIndex]["comments"] = ["nodes": comments]
+                setThreads(threads, of: id)
+                return groups
+            }
+        }
+        return nil
+    }
+
+    /// One more or one fewer of `content`, as `login` reacts or stops.
+    private func setReaction(_ content: String, added: Bool, by login: String, in groups: inout [[String: Any]]) {
+        guard let index = groups.firstIndex(where: { $0["content"] as? String == content }) else { return }
+        let isViewer = login == FakeGitHub.viewer
+        if isViewer, groups[index]["viewerHasReacted"] as? Bool == added { return }
+        let count = ((groups[index]["reactors"] as? [String: Any])?["totalCount"] as? Int) ?? 0
+        groups[index]["reactors"] = ["totalCount": max(0, count + (added ? 1 : -1))]
+        if isViewer { groups[index]["viewerHasReacted"] = added }
     }
 
     /// Sets the description and GitHub's rendering of it, a paragraph per block of lines.
@@ -792,6 +901,7 @@ struct FakePullRequestDetails: HTTPTransport {
         let isConversation = [
             "timelineItems", "reviewThreads", "resolveReviewThread(", "requestReviews(", "assignableUsers(", "teams(", "updatePullRequest(", "PullRequest { body }", "suggestedReviewers",
             "addPullRequestReview", "submitPullRequestReview(", "deletePullRequestReview(", "deletePullRequestReviewComment(",
+            "addReaction(", "removeReaction(",
         ].contains { query.contains($0) }
         return isConversation ? try await conversations.send(request) : try await viewed.send(request)
     }
@@ -799,4 +909,11 @@ struct FakePullRequestDetails: HTTPTransport {
 
 func fakeResponse(_ url: URL, status: Int) -> HTTPURLResponse {
     HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+}
+
+/// GitHub's eight reaction groups for something no one has reacted to, in its order.
+private var noReactions: [[String: Any]] {
+    ["THUMBS_UP", "THUMBS_DOWN", "LAUGH", "HOORAY", "CONFUSED", "HEART", "ROCKET", "EYES"].map {
+        ["content": $0, "viewerHasReacted": false, "reactors": ["totalCount": 0]]
+    }
 }

@@ -589,6 +589,14 @@ This revises "The conversation's threads link to the diff, where they're replied
 
 The page still runs no script of its own: the app asks the web view in its own script world where the thread is, by a `data-thread-id` on it, and shows an `NSPopover` at that rect. If the thread can't be found in view, the reply opens in a sheet over the conversation instead. Esc, or a click elsewhere, puts the popover away and keeps the draft on the thread, where "Reply…" opens it again and the diff shows it too; Cancel drops it, asking first as elsewhere. "Show in diff", on the thread and quietly in the popover, is still the way to the line, and carries any draft there.
 
+### Reactions show as on github.com and change at once, put back if GitHub refuses
+
+The conversation and thread queries ask for `reactionGroups` on the description, issue comments, reviews and thread comments, and the store keeps the groups anyone has reacted with in a `reaction` table keyed by PR, subject id and reaction, replaced with the conversation or, for thread comments, with the threads. Review comments in the timeline take theirs from their thread comment, which is the same node.
+
+In the conversation page each of them has a pill per reaction made (emoji and count, tinted where the viewer is among them), then a quiet face that opens all eight. The page runs no script, so the face is a `<details>` whose panel holds the eight as links, and every pill and choice is a `loupe-reaction://<add|remove>/<id>/<CONTENT>` link the web view catches as it does a thread's links: one the viewer has made takes it away, any other adds it. A review's own reactions sit under its summary, before its threads; one with no summary takes none, as there's nothing shown of it to react to, and nothing in the viewer's pending review takes any until it's submitted. In the diff each thread comment has the same row natively: a small toggle per reaction made, on where the viewer's is, then a face menu with all eight as checkable items.
+
+A reaction is applied at once to the conversation, the threads on the diff and the store, the page reloading in place as for any change, then sent with `addReaction` or `removeReaction` (from introspection, never run live). If GitHub refuses, the change is undone and logged; on a thread comment the reason also shows on its thread as a refused reply's does. Asking for what's already so sends nothing. Two quick clicks on one reaction send both mutations without waiting, as nothing tracks one underway; GitHub normally applies them in order, and any mismatch is put right on the next fetch.
+
 ## Not yet decided
 
 Nothing is pending.

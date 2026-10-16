@@ -11,16 +11,27 @@ extension PullRequestStore {
             let comments = Dictionary(grouping: try ReviewCommentRow.filter(byPR).order(Column("position")).fetchAll(db), by: \.reviewId)
             let threadComments = Dictionary(grouping: try ThreadCommentRow.filter(byPR).order(Column("position")).fetchAll(db), by: \.threadId)
             let reviewers = try ReviewerRow.filter(byPR).order(Column("position")).fetchAll(db)
+            let reactions = Dictionary(grouping: try ReactionRow.filter(byPR).fetchAll(db), by: \.subjectId).mapValues { rows in
+                [ReactionGroup](shown: rows.compactMap(\.group))
+            }
             return Conversation(
+                id: pullRequestId,
                 author: participant(row.authorLogin, row.authorAvatarUrl),
                 createdAt: row.createdAt,
                 bodyHTML: row.bodyHTML,
                 body: row.body,
+                reactions: reactions[pullRequestId] ?? [],
                 items: try TimelineItemRow.filter(byPR).order(Column("position")).fetchAll(db).compactMap { item in
-                    item.timelineItem(comments: comments[item.id] ?? [])
+                    var timelineItem = item.timelineItem(comments: comments[item.id] ?? [])
+                    timelineItem?.reactions = reactions[item.id] ?? []
+                    return timelineItem
                 },
                 threads: try ReviewThreadRow.filter(byPR).order(Column("position")).fetchAll(db).map { thread in
-                    thread.thread(comments: (threadComments[thread.id] ?? []).map(\.comment))
+                    thread.thread(comments: (threadComments[thread.id] ?? []).map { row in
+                        var comment = row.comment
+                        comment.reactions = reactions[comment.id] ?? []
+                        return comment
+                    })
                 },
                 checks: try CheckContextRow.filter(byPR).order(Column("position")).fetchAll(db).map { check in
                     CheckContext(name: check.name, status: CheckStatus(rawValue: check.status) ?? .neutral, description: check.description, url: check.url)
@@ -35,7 +46,7 @@ extension PullRequestStore {
     /// Makes the PR's stored conversation exactly `conversation`, as GitHub returned it.
     public func replaceConversation(of pullRequestId: String, with conversation: Conversation, fetchedAt: Date) async throws {
         try await database.write { db in
-            for table in ["timelineItem", "reviewComment", "reviewThread", "threadComment", "checkContext", "conversationReviewer"] {
+            for table in ["timelineItem", "reviewComment", "reviewThread", "threadComment", "checkContext", "conversationReviewer", "reaction"] {
                 try db.execute(sql: "DELETE FROM \(table) WHERE pullRequestId = ?", arguments: [pullRequestId])
             }
             try ConversationRow(
@@ -50,8 +61,10 @@ extension PullRequestStore {
                 pendingReviewBody: conversation.pendingReview?.body,
                 pendingReviewCommentCount: conversation.pendingReview?.commentCount
             ).upsert(db)
+            try insertReactions(conversation.reactions, of: pullRequestId, in: pullRequestId, db)
             for (position, item) in conversation.items.enumerated() {
                 try TimelineItemRow(item, pullRequestId: pullRequestId, position: position).insert(db)
+                try insertReactions(item.reactions, of: item.id, in: pullRequestId, db)
                 guard case let .review(_, _, comments) = item.event else { continue }
                 for (position, comment) in comments.enumerated() {
                     try ReviewCommentRow(comment, reviewId: item.id, pullRequestId: pullRequestId, position: position).insert(db)
@@ -81,6 +94,10 @@ extension PullRequestStore {
     public func replaceThreads(of pullRequestId: String, with threads: [ReviewThread], pendingReview: PendingReview?) async throws {
         try await database.write { db in
             guard var row = try ConversationRow.fetchOne(db, key: pullRequestId) else { return }
+            try db.execute(
+                sql: "DELETE FROM reaction WHERE pullRequestId = ? AND subjectId IN (SELECT id FROM threadComment WHERE pullRequestId = ?)",
+                arguments: [pullRequestId, pullRequestId]
+            )
             for table in ["reviewThread", "threadComment"] {
                 try db.execute(sql: "DELETE FROM \(table) WHERE pullRequestId = ?", arguments: [pullRequestId])
             }
@@ -93,12 +110,31 @@ extension PullRequestStore {
     }
 }
 
+extension PullRequestStore {
+    /// Makes the reactions stored for the PR's description, comment, review or thread comment
+    /// with `subjectId` exactly `groups`, as when the viewer reacts.
+    public func replaceReactions(of subjectId: String, in pullRequestId: String, with groups: [ReactionGroup]) async throws {
+        try await database.write { db in
+            try ReactionRow.filter(Column("pullRequestId") == pullRequestId && Column("subjectId") == subjectId).deleteAll(db)
+            try insertReactions(groups, of: subjectId, in: pullRequestId, db)
+        }
+    }
+}
+
 private func insertThreads(_ threads: [ReviewThread], of pullRequestId: String, in db: Database) throws {
     for (position, thread) in threads.enumerated() {
         try ReviewThreadRow(thread, pullRequestId: pullRequestId, position: position).insert(db)
         for (position, comment) in thread.comments.enumerated() {
             try ThreadCommentRow(comment, threadId: thread.id, pullRequestId: pullRequestId, position: position).insert(db)
+            try insertReactions(comment.reactions, of: comment.id, in: pullRequestId, db)
         }
+    }
+}
+
+/// Stores the groups anyone has reacted with; the rest are left out, as they show nothing.
+private func insertReactions(_ groups: [ReactionGroup], of subjectId: String, in pullRequestId: String, _ db: Database) throws {
+    for group in groups where group.count > 0 {
+        try ReactionRow(pullRequestId: pullRequestId, subjectId: subjectId, content: group.content.rawValue, count: group.count, viewerHasReacted: group.viewerHasReacted).insert(db)
     }
 }
 
@@ -319,6 +355,22 @@ private struct ThreadCommentRow: Codable, FetchableRecord, PersistableRecord {
 
     var comment: ThreadComment {
         ThreadComment(id: id, databaseId: databaseId, author: participant(authorLogin, authorAvatarUrl), createdAt: createdAt, bodyHTML: bodyHTML, isMinimized: isMinimized, minimizedReason: minimizedReason, isPending: isPending)
+    }
+}
+
+/// The people who reacted to one thing with one reaction.
+private struct ReactionRow: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "reaction"
+
+    let pullRequestId: String
+    let subjectId: String
+    let content: String
+    let count: Int
+    let viewerHasReacted: Bool
+
+    /// Nil for a reaction this version doesn't know.
+    var group: ReactionGroup? {
+        Reaction(rawValue: content).map { ReactionGroup(content: $0, count: count, viewerHasReacted: viewerHasReacted) }
     }
 }
 

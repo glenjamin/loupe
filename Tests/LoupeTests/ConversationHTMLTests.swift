@@ -60,6 +60,38 @@ struct ConversationHTMLTests {
         #expect(ThreadLink(url: try #require(URL(string: "loupe-thread://delete/t1"))) == nil)
     }
 
+    @Test func reactionsShowAsPillsTheViewersMarkedEachTakingItAwayOrAddingIt() throws {
+        let page = try render(conversation)
+        #expect(page.contains(#"<a class="reaction reacted" href="loupe-reaction://remove/PR_1/THUMBS_UP" title="You and 2 more reacted with +1">👍<span class="count">3</span></a>"#), "the viewer's own, to take away")
+        #expect(page.contains(#"<a class="reaction" href="loupe-reaction://add/PR_1/EYES" title="1 person reacted with eyes">👀<span class="count">1</span></a>"#), "someone else's, to add to")
+        #expect(page.contains(#"href="loupe-reaction://add/c1/HEART""#), "on a comment")
+        #expect(page.contains(#"<a class="reaction reacted" href="loupe-reaction://remove/rc3/ROCKET""#), "on a thread comment")
+
+        let description = try #require(page.range(of: "</p></div>"))
+        let firstPicker = try #require(page.range(of: #"<details class="reaction-picker">"#))
+        #expect(firstPicker.lowerBound > description.upperBound, "under the description's body")
+        #expect(!page.contains("loupe-reaction://add/rc4/"), "none on a comment still pending")
+        #expect(!page.contains("loupe-reaction://add/rr1/"), "none on an event")
+    }
+
+    @Test func eachCommentOffersAllEightReactionsBehindAQuietFace() throws {
+        let page = try render(conversation)
+        let links = hrefs(in: page).compactMap(ReactionLink.init(url:))
+        let offered = links.filter { $0.subjectId == "PR_1" }
+        #expect(offered.map(\.content) == [.thumbsUp, .eyes] + Reaction.allCases, "its pills, then the picker")
+        #expect(offered.suffix(8).map(\.action) == [.remove, .add, .add, .add, .add, .add, .add, .add], "the picker takes away what the viewer's made")
+        #expect(Set(links.map(\.subjectId)) == ["PR_1", "c1", "r1", "rc1", "rc2", "rc3"], "the description, comments, a review with a summary, and submitted thread comments")
+        #expect(page.contains(#"<summary title="Add a reaction"><svg"#))
+    }
+
+    @Test func aReactionLinkCarriesAnyIdAndOnlyKnownReactions() throws {
+        let link = ReactionLink(.add, .hooray, on: "MDExOlB1bGxSZXF1ZXN0/a+b=")
+        #expect(ReactionLink(url: link.url) == link)
+        #expect(ReactionLink(url: try #require(URL(string: "loupe-reaction://add/IC_1/SHRUG"))) == nil)
+        #expect(ReactionLink(url: try #require(URL(string: "loupe-reaction://toggle/IC_1/HEART"))) == nil)
+        #expect(ReactionLink(url: try #require(URL(string: "loupe-thread://show/t1"))) == nil)
+    }
+
     @Test func checksAreListedWithTheirStatusAndLinks() throws {
         let page = try render(conversation)
         #expect(page.contains("Checks <span class=\"muted\">1 failing</span>"))
@@ -77,11 +109,13 @@ struct ConversationHTMLTests {
 private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
 private let conversation = Conversation(
+    id: "PR_1",
     author: Participant(login: "octocat", avatarURL: "https://avatars.githubusercontent.com/u/1?v=4"),
     createdAt: now.addingTimeInterval(-86_400),
     bodyHTML: "<p>Adds <code>&lt;Widget&gt;</code> &amp; tests</p>",
+    reactions: [ReactionGroup(content: .thumbsUp, count: 3, viewerHasReacted: true), ReactionGroup(content: .eyes, count: 1, viewerHasReacted: false)],
     items: [
-        TimelineItem(id: "c1", date: now.addingTimeInterval(-80_000), actor: Participant(login: "mallory<script>", avatarURL: "javascript:alert(1)"), event: .comment(bodyHTML: #"<p>Nice, see <a href="https://github.com/o/r/pull/1">#1</a></p>"#, isMinimized: false)),
+        TimelineItem(id: "c1", date: now.addingTimeInterval(-80_000), actor: Participant(login: "mallory<script>", avatarURL: "javascript:alert(1)"), event: .comment(bodyHTML: #"<p>Nice, see <a href="https://github.com/o/r/pull/1">#1</a></p>"#, isMinimized: false), reactions: [ReactionGroup(content: .heart, count: 1, viewerHasReacted: false)]),
         TimelineItem(id: "rr1", date: now.addingTimeInterval(-70_000), actor: nil, event: .reviewRequested(reviewer: "team&co")),
         TimelineItem(id: "commit1", date: now.addingTimeInterval(-60_000), actor: nil, event: .commit(oid: "0123456789abcdef", headline: #"Fix "quotes" <b>"#)),
         TimelineItem(id: "r1", date: now.addingTimeInterval(-50_000), actor: Participant(login: "reviewer", avatarURL: nil), event: .review(state: .changesRequested, bodyHTML: "<p>Two things</p>", comments: [
@@ -92,7 +126,8 @@ private let conversation = Conversation(
     threads: [
         ReviewThread(id: "t1", isResolved: false, isOutdated: false, path: "app/widget.go", line: 12, viewerCanReply: true, viewerCanResolve: true, comments: [
             ThreadComment(id: "rc1", author: Participant(login: "reviewer", avatarURL: nil), createdAt: now.addingTimeInterval(-50_000), bodyHTML: "<p>Why nil?</p>", isMinimized: false),
-            ThreadComment(id: "rc3", author: Participant(login: "octocat", avatarURL: nil), createdAt: now.addingTimeInterval(-40_000), bodyHTML: "<p>Because.</p>", isMinimized: false),
+            ThreadComment(id: "rc3", author: Participant(login: "octocat", avatarURL: nil), createdAt: now.addingTimeInterval(-40_000), bodyHTML: "<p>Because.</p>", isMinimized: false, reactions: [ReactionGroup(content: .rocket, count: 1, viewerHasReacted: true)]),
+            ThreadComment(id: "rc4", author: Participant(login: "octocat", avatarURL: nil), createdAt: now.addingTimeInterval(-30_000), bodyHTML: "<p>Pending thought</p>", isMinimized: false, isPending: true),
         ]),
         ReviewThread(id: "t2", isResolved: true, isOutdated: true, path: "README.md", line: nil, viewerCanUnresolve: true, comments: [
             ThreadComment(id: "rc2", author: Participant(login: "reviewer", avatarURL: nil), createdAt: now.addingTimeInterval(-50_000), bodyHTML: "<p>Typo</p>", isMinimized: false),

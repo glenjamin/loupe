@@ -5,13 +5,14 @@ query($id: ID!, $after: String) {
       body
       createdAt
       author { login avatarUrl }
+      reactionGroups { content viewerHasReacted reactors { totalCount } }
       timelineItems(first: 100, after: $after, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, HEAD_REF_FORCE_PUSHED_EVENT, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, REVIEW_REQUESTED_EVENT, READY_FOR_REVIEW_EVENT]) {
         pageInfo { hasNextPage endCursor }
         nodes {
           __typename
-          ... on IssueComment { id bodyHTML createdAt isMinimized author { login avatarUrl } }
+          ... on IssueComment { id bodyHTML createdAt isMinimized author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } } }
           ... on PullRequestReview {
-            id state bodyHTML createdAt submittedAt author { login avatarUrl }
+            id state bodyHTML createdAt submittedAt author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } }
             comments(first: 50) { nodes { id bodyHTML path line originalLine diffHunk outdated isMinimized replyTo { id } } }
           }
           ... on PullRequestCommit { id commit { oid messageHeadline committedDate author { name user { login avatarUrl } } } }
@@ -49,5 +50,5 @@ fragment ReviewThread on PullRequestReviewThread {
   viewerCanReply viewerCanResolve viewerCanUnresolve
   resolvedBy { login }
   firstComment: comments(first: 1) { nodes { diffHunk } }
-  comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason author { login avatarUrl } } }
+  comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } } } }
 }

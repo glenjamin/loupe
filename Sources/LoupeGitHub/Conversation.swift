@@ -17,10 +17,12 @@ extension GitHubClient {
             page = timeline.pageInfo
         }
         return Conversation(
+            id: id,
             author: pullRequest.author?.participant,
             createdAt: pullRequest.createdAt,
             bodyHTML: pullRequest.bodyHTML,
             body: pullRequest.body,
+            reactions: pullRequest.reactionGroups.shown,
             items: nodes.compactMap(\.timelineItem),
             threads: pullRequest.reviewThreads.nodes.map(\.thread),
             checks: pullRequest.commits.nodes.first?.commit.statusCheckRollup?.contexts.nodes.compactMap(\.check) ?? [],
@@ -62,6 +64,7 @@ extension GitHubClient {
               body
               createdAt
               author { login avatarUrl }
+              \(reactionGroupsField)
               timelineItems(first: 100, after: $after, itemTypes: \(timelineItemTypes)) { ...TimelinePage }
               reviewThreads(first: 100) { nodes { ...ReviewThread } }
               commits(last: 1) {
@@ -85,7 +88,7 @@ extension GitHubClient {
           viewerCanReply viewerCanResolve viewerCanUnresolve
           resolvedBy { login }
           firstComment: comments(first: 1) { nodes { diffHunk } }
-          comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason state author { login avatarUrl } } }
+          comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason state author { login avatarUrl } \(reactionGroupsField) } }
         }
         """
 
@@ -121,9 +124,9 @@ extension GitHubClient {
           pageInfo { hasNextPage endCursor }
           nodes {
             __typename
-            ... on IssueComment { id bodyHTML createdAt isMinimized author { login avatarUrl } }
+            ... on IssueComment { id bodyHTML createdAt isMinimized author { login avatarUrl } \(reactionGroupsField) }
             ... on PullRequestReview {
-              id state bodyHTML createdAt submittedAt author { login avatarUrl }
+              id state bodyHTML createdAt submittedAt author { login avatarUrl } \(reactionGroupsField)
               comments(first: 50) { nodes { id bodyHTML path line originalLine diffHunk outdated isMinimized replyTo { id } } }
             }
             ... on PullRequestCommit { id commit { oid messageHeadline committedDate author { name user { login avatarUrl } } } }
@@ -189,6 +192,7 @@ private struct ConversationResponse: Decodable {
         let body: String
         let createdAt: Date
         let author: Author?
+        let reactionGroups: [ReactionGroupNode]?
         let timelineItems: Timeline
         let reviewThreads: Connection<ReviewThreadNode>
         let commits: Connection<CommitNode>
@@ -281,6 +285,7 @@ private struct ReviewThreadNode: Decodable {
         /// didn't ask for it.
         let state: String?
         let author: Author?
+        let reactionGroups: [ReactionGroupNode]?
     }
 
     var thread: ReviewThread {
@@ -292,7 +297,8 @@ private struct ReviewThreadNode: Decodable {
             comments: comments.nodes.map {
                 ThreadComment(
                     id: $0.id, databaseId: $0.databaseId, author: $0.author?.participant, createdAt: $0.createdAt, bodyHTML: $0.bodyHTML,
-                    isMinimized: $0.isMinimized, minimizedReason: $0.minimizedReason, isPending: $0.state == "PENDING"
+                    isMinimized: $0.isMinimized, minimizedReason: $0.minimizedReason, isPending: $0.state == "PENDING",
+                    reactions: $0.reactionGroups.shown
                 )
             }
         )
@@ -347,6 +353,7 @@ private struct TimelineNode: Decodable {
     let afterCommit: Oid?
     let mergeRefName: String?
     let requestedReviewer: Reviewer?
+    let reactionGroups: [ReactionGroupNode]?
 
     struct Commit: Decodable {
         let oid: String
@@ -389,14 +396,14 @@ private struct TimelineNode: Decodable {
         switch __typename {
         case "IssueComment":
             guard let createdAt else { return nil }
-            return TimelineItem(id: id, date: createdAt, actor: author?.participant, event: .comment(bodyHTML: bodyHTML ?? "", isMinimized: isMinimized ?? false))
+            return TimelineItem(id: id, date: createdAt, actor: author?.participant, event: .comment(bodyHTML: bodyHTML ?? "", isMinimized: isMinimized ?? false), reactions: reactionGroups.shown)
         case "PullRequestReview":
             // A pending review has no submission time yet.
             guard let date = submittedAt ?? createdAt else { return nil }
             let comments = (comments?.nodes ?? []).map {
                 ReviewComment(id: $0.id, bodyHTML: $0.bodyHTML, path: $0.path, line: $0.line, originalLine: $0.originalLine, diffHunk: $0.diffHunk, isOutdated: $0.outdated, isMinimized: $0.isMinimized, replyTo: $0.replyTo?.id)
             }
-            return TimelineItem(id: id, date: date, actor: author?.participant, event: .review(state: state ?? .unknown, bodyHTML: bodyHTML ?? "", comments: comments))
+            return TimelineItem(id: id, date: date, actor: author?.participant, event: .review(state: state ?? .unknown, bodyHTML: bodyHTML ?? "", comments: comments), reactions: reactionGroups.shown)
         case "PullRequestCommit":
             guard let commit, let date = commit.committedDate else { return nil }
             let author = commit.author.flatMap { $0.user?.participant ?? $0.name.map { Participant(login: $0, avatarURL: nil) } }

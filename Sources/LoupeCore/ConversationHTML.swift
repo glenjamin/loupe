@@ -33,7 +33,8 @@ public enum ConversationHTML {
             action: "opened this pull request",
             date: conversation.createdAt,
             now: now,
-            body: conversation.bodyHTML.isEmpty ? #"<p class="muted">No description provided.</p>"# : conversation.bodyHTML
+            body: conversation.bodyHTML.isEmpty ? #"<p class="muted">No description provided.</p>"# : conversation.bodyHTML,
+            reactions: reactions(conversation.reactions, to: conversation.id)
         )
         var commits: [TimelineItem] = []
         func flushCommits() {
@@ -57,12 +58,15 @@ public enum ConversationHTML {
     private static func render(_ item: TimelineItem, threads: [String: ReviewThread], now: Date) -> String {
         switch item.event {
         case let .comment(bodyHTML, isMinimized):
-            return card(author: item.actor, action: "commented", date: item.date, now: now, body: minimizable(bodyHTML, isMinimized: isMinimized))
+            return card(author: item.actor, action: "commented", date: item.date, now: now, body: minimizable(bodyHTML, isMinimized: isMinimized), reactions: reactions(item.reactions, to: item.id))
         case let .review(state, bodyHTML, comments):
             // Replies are shown in their threads, under the review that started them.
             let started = comments.filter { $0.replyTo == nil }
             if bodyHTML.isEmpty, started.isEmpty, state == .commented { return "" }
-            let body = (bodyHTML.isEmpty ? "" : bodyHTML) + started.map { thread(for: $0, in: threads[$0.id], reviewer: item.actor, date: item.date, now: now) }.joined()
+            // A review's own reactions are to its summary, so they go under it, before its threads;
+            // the viewer's pending review takes none until it's submitted.
+            let summaryReactions = bodyHTML.isEmpty || state == .pending ? "" : reactions(item.reactions, to: item.id)
+            let body = (bodyHTML.isEmpty ? "" : bodyHTML + summaryReactions) + started.map { thread(for: $0, in: threads[$0.id], reviewer: item.actor, date: item.date, now: now) }.joined()
             return card(author: item.actor, action: reviewAction(state), date: item.date, now: now, badge: reviewBadge(state), body: body, kind: "review")
         case .commit:
             return ""
@@ -82,11 +86,11 @@ public enum ConversationHTML {
         }
     }
 
-    private static func card(author: Participant?, action: String, date: Date, now: Date, badge: String = "", body: String, kind: String = "comment") -> String {
+    private static func card(author: Participant?, action: String, date: Date, now: Date, badge: String = "", body: String, kind: String = "comment", reactions: String = "") -> String {
         """
         <article class="item \(kind)">\(avatar(author, size: 40))<div class="card">\
         <header>\(login(author)) \(escape(action))\(badge) \(time(date, now: now))</header>\
-        \(body.isEmpty ? "" : #"<div class="body">\#(body)</div>"#)</div></article>
+        \(body.isEmpty ? "" : #"<div class="body">\#(body)</div>"#)\(reactions)</div></article>
 
         """
     }
@@ -113,7 +117,7 @@ public enum ConversationHTML {
         if isResolved { badges += #" <span class="badge resolved">Resolved</span>"# }
         let comments = thread?.comments ?? [ThreadComment(id: comment.id, author: reviewer, createdAt: date, bodyHTML: comment.bodyHTML, isMinimized: comment.isMinimized)]
         let replies = comments.map { reply in
-            #"<div class="thread-comment">\#(avatar(reply.author, size: 24))<div><header>\#(login(reply.author)) \#(time(reply.createdAt, now: now))</header><div class="body">\#(minimizable(reply.bodyHTML, isMinimized: reply.isMinimized))</div></div></div>"#
+            #"<div class="thread-comment">\#(avatar(reply.author, size: 24))<div><header>\#(login(reply.author)) \#(time(reply.createdAt, now: now))</header><div class="body">\#(minimizable(reply.bodyHTML, isMinimized: reply.isMinimized))</div>\#(reply.isPending ? "" : reactions(reply.reactions, to: reply.id))</div></div>"#
         }.joined()
         let classes = ["thread", isResolved ? "resolved" : nil, isOutdated ? "outdated" : nil].compactMap { $0 }.joined(separator: " ")
         // The app finds the thread by its id, to put a reply to it beside it.
@@ -137,6 +141,26 @@ public enum ConversationHTML {
         guard !links.isEmpty else { return "" }
         return #"<div class="thread-actions">\#(links.joined())</div>"#
     }
+
+    /// A pill for each reaction anyone has made, the viewer's own marked, then a "+" that opens
+    /// all eight; each is a `ReactionLink` the app follows, taking the viewer's away where
+    /// they've made it and adding it where they haven't.
+    private static func reactions(_ groups: [ReactionGroup], to subjectId: String) -> String {
+        let pills = groups.map { group in
+            let link = ReactionLink(group.viewerHasReacted ? .remove : .add, group.content, on: subjectId)
+            let who = group.viewerHasReacted ? (group.count == 1 ? "You" : "You and \(group.count - 1) more") : "\(group.count) \(group.count == 1 ? "person" : "people")"
+            return #"<a class="reaction\#(group.viewerHasReacted ? " reacted" : "")" href="\#(escape(link.url.absoluteString))" title="\#(who) reacted with \#(group.content.name)">\#(group.content.emoji)<span class="count">\#(group.count)</span></a>"#
+        }.joined()
+        let choices = Reaction.allCases.map { content in
+            let reacted = groups.viewerHasReacted(content)
+            let link = ReactionLink(reacted ? .remove : .add, content, on: subjectId)
+            return #"<a class="\#(reacted ? "reacted" : "")" href="\#(escape(link.url.absoluteString))" title="\#(content.name)">\#(content.emoji)</a>"#
+        }.joined()
+        return #"<div class="reactions">\#(pills)<details class="reaction-picker"><summary title="Add a reaction">\#(smiley)</summary><div class="choices">\#(choices)</div></details></div>"#
+    }
+
+    /// GitHub's quiet face for adding a reaction, drawn inline as the page loads nothing else.
+    private static let smiley = #"<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.75" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="5.75" cy="6.5" r="1" fill="currentColor"/><circle cx="10.25" cy="6.5" r="1" fill="currentColor"/><path d="M5.25 9.75a3.25 3.25 0 0 0 5.5 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>"#
 
     /// The last few lines of the hunk, ending on the commented line, as github.com shows.
     private static func hunk(_ diffHunk: String) -> String {
@@ -290,5 +314,45 @@ public struct ThreadLink: Sendable, Equatable {
     }
 
     private static let scheme = "loupe-thread"
+    private static let idCharacters = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+}
+
+/// A link in the conversation page that adds the viewer's reaction to the description, a
+/// comment, a review or a thread comment, or takes it away. Caught by its web view as
+/// `ThreadLink`s are.
+public struct ReactionLink: Sendable, Equatable {
+    public enum Action: String, Sendable {
+        case add
+        case remove
+    }
+
+    public let action: Action
+    public let content: Reaction
+    /// The GraphQL id of what's reacted to.
+    public let subjectId: String
+
+    public init(_ action: Action, _ content: Reaction, on subjectId: String) {
+        self.action = action
+        self.content = content
+        self.subjectId = subjectId
+    }
+
+    /// The link a page names, if it's one of these.
+    public init?(url: URL) {
+        guard url.scheme == Self.scheme, let action = url.host().flatMap(Action.init(rawValue:)) else { return nil }
+        // Split before decoding, as an id can hold an encoded slash.
+        let parts = url.path(percentEncoded: true).split(separator: "/")
+        guard parts.count == 2, let id = parts[0].removingPercentEncoding, !id.isEmpty, let content = Reaction(rawValue: String(parts[1])) else { return nil }
+        self.init(action, content, on: id)
+    }
+
+    /// `loupe-reaction://<add|remove>/<subject id>/<content>`.
+    public var url: URL {
+        let id = subjectId.addingPercentEncoding(withAllowedCharacters: Self.idCharacters) ?? subjectId
+        // Only the id varies, and it's percent-encoded, so this always parses.
+        return URL(string: "\(Self.scheme)://\(action.rawValue)/\(id)/\(content.rawValue)")!
+    }
+
+    private static let scheme = "loupe-reaction"
     private static let idCharacters = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
 }

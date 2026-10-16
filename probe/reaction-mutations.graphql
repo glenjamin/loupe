@@ -1,0 +1,13 @@
+# Adds the viewer's reaction to a PR, issue comment, review or review comment, or takes it
+# away. Never run: it changes the PR and notifies people. Input and payload from
+# introspection, 2026-10-16: AddReactionInput and RemoveReactionInput are { subjectId, content,
+# clientMutationId }, `content` a ReactionContent (THUMBS_UP, THUMBS_DOWN, LAUGH, HOORAY,
+# CONFUSED, HEART, ROCKET, EYES); both payloads have `reaction`, `reactionGroups` and `subject`.
+# variables: {"subjectId": "IC_…", "content": "THUMBS_UP"}
+mutation($subjectId: ID!, $content: ReactionContent!) {
+  addReaction(input: { subjectId: $subjectId, content: $content }) { subject { reactionGroups { content viewerHasReacted reactors { totalCount } } } }
+}
+
+mutation($subjectId: ID!, $content: ReactionContent!) {
+  removeReaction(input: { subjectId: $subjectId, content: $content }) { subject { reactionGroups { content viewerHasReacted reactors { totalCount } } } }
+}
