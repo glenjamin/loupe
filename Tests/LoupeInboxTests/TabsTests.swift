@@ -918,7 +918,7 @@ struct PendingReviewWhileNewCommitsWaitTests {
 
         try await reviewComment("And this?", line: 1, on: tab)
         let abandoned = try #require(tab.placedThreads.first { $0.isPending })
-        await tab.abandonReview()
+        await tab.discardReview()
         #expect(!tab.placedThreadIds.contains(abandoned.id), "gone with the review")
         #expect(tab.placedThreadIds.contains(started.id))
         #expect(tab.pendingChange == .newCommits, "the reload still waits")

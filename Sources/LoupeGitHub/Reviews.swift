@@ -53,6 +53,12 @@ extension GitHubClient {
         let _: IgnoredPayload = try await query(Self.deleteReviewMutation, variables: Input(input: DeleteReviewInput(pullRequestReviewId: reviewId)))
     }
 
+    /// Deletes the review comment with node id `commentId`, such as one of the viewer's pending
+    /// review's; a thread left with no comments goes with it.
+    public func deleteReviewComment(_ commentId: String) async throws {
+        let _: IgnoredPayload = try await query(Self.deleteReviewCommentMutation, variables: Input(input: DeleteReviewCommentInput(id: commentId)))
+    }
+
     static let addReviewMutation = """
         mutation($input: AddPullRequestReviewInput!) {
           addPullRequestReview(input: $input) { pullRequestReview { id state } }
@@ -74,6 +80,12 @@ extension GitHubClient {
     static let deleteReviewMutation = """
         mutation($input: DeletePullRequestReviewInput!) {
           deletePullRequestReview(input: $input) { pullRequestReview { id } }
+        }
+        """
+
+    static let deleteReviewCommentMutation = """
+        mutation($input: DeletePullRequestReviewCommentInput!) {
+          deletePullRequestReviewComment(input: $input) { pullRequestReview { id } }
         }
         """
 }
@@ -121,6 +133,10 @@ private struct SubmitReviewInput: Encodable, Sendable {
 
 private struct DeleteReviewInput: Encodable, Sendable {
     let pullRequestReviewId: String
+}
+
+private struct DeleteReviewCommentInput: Encodable, Sendable {
+    let id: String
 }
 
 private struct AddReviewResponse: Decodable {

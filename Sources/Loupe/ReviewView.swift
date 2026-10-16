@@ -1,4 +1,5 @@
 import AppKit
+import LoupeCore
 import LoupeInbox
 import LoupeModel
 import SwiftUI
@@ -20,9 +21,17 @@ struct ReviewControls: View {
             }
             HStack(spacing: 6) {
                 if let count = tab.pendingReview?.commentCount {
-                    Text(verbatim: "\(count) pending \(count == 1 ? "comment" : "comments")")
-                        .font(.caption)
-                        .foregroundStyle(.diffAttention)
+                    Button { draft.isListingPending = true } label: {
+                        Text(verbatim: "\(count) pending \(count == 1 ? "comment" : "comments")")
+                            .font(.caption)
+                            .foregroundStyle(.diffAttention)
+                    }
+                    .buttonStyle(.plain)
+                    .help("List the comments in your pending review")
+                    .background(PendingCommentsButtonMarker())
+                    .popover(isPresented: $draft.isListingPending, arrowEdge: .bottom) {
+                        PendingCommentsPopover(tab: tab, draft: draft)
+                    }
                 }
                 Spacer(minLength: 0)
                 if draft.isSubmitting {
@@ -34,7 +43,9 @@ struct ReviewControls: View {
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
-                .help("Write the review's summary, sent with whichever of the buttons above you click")
+                .help(tab.pendingReview == nil
+                    ? "Write the review's summary, sent with whichever of the buttons above you click"
+                    : "Write the review's summary, sent with whichever of the buttons above you click, or discard the pending review")
                 .background(SummaryButtonMarker())
                 .popover(isPresented: $draft.isWritingSummary, arrowEdge: .bottom) {
                     SummaryPopover(tab: tab, draft: draft)
@@ -79,11 +90,10 @@ struct ReviewControls: View {
 }
 
 /// The review's summary on its own, kept as it's written; whichever verdict is clicked sends it.
-/// With a review pending, it's also where the review is abandoned.
+/// With a review pending, it's also where the review is discarded.
 private struct SummaryPopover: View {
     let tab: PullRequestTab
     @Bindable var draft: ReviewDraft
-    @State private var confirmsAbandon = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -107,9 +117,7 @@ private struct SummaryPopover: View {
             }
             HStack(spacing: 8) {
                 if tab.pendingReview != nil {
-                    Button("Abandon review", role: .destructive) { confirmsAbandon = true }
-                        .disabled(draft.isSubmitting)
-                        .help("Delete your pending review and its comments")
+                    DiscardReviewButton(tab: tab)
                 }
                 Spacer(minLength: 0)
                 if draft.isSubmitting {
@@ -122,26 +130,144 @@ private struct SummaryPopover: View {
         }
         .padding(12)
         .frame(width: 400)
-        .alert("Abandon your review?", isPresented: $confirmsAbandon) {
-            Button("Abandon Review", role: .destructive) { Task { await tab.abandonReview() } }
-            Button("Keep Reviewing", role: .cancel) {}
-        } message: {
-            Text(abandonMessage)
-        }
     }
 
     private func close() {
         draft.isWritingSummary = false
     }
+}
 
-    private var abandonMessage: String {
+/// The comments in the viewer's pending review, in the diff's order, each saying where it is
+/// and what it answers. Choosing one shows it in the diff; each can be deleted, or the whole
+/// review discarded, from here.
+private struct PendingCommentsPopover: View {
+    let tab: PullRequestTab
+    @Bindable var draft: ReviewDraft
+
+    var body: some View {
+        let comments = tab.pendingComments
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Your pending review")
+                .font(.headline)
+            if comments.isEmpty {
+                Text("It has no comments.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(comments.enumerated()), id: \.element.id) { index, pending in
+                            if index > 0 { Divider() }
+                            PendingCommentRow(tab: tab, pending: pending) { draft.isListingPending = false }
+                        }
+                    }
+                }
+                .frame(maxHeight: 380)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+            }
+            HStack(spacing: 8) {
+                DiscardReviewButton(tab: tab)
+                Spacer(minLength: 0)
+                Button("Done") { draft.isListingPending = false }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(12)
+        .frame(width: 440)
+    }
+}
+
+/// A pending comment in the list: its place, what it answers, then the start of what it says.
+private struct PendingCommentRow: View {
+    let tab: PullRequestTab
+    let pending: PendingComment
+    let close: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Button {
+                close()
+                Task { await tab.follow(ThreadLink(.show, thread: pending.thread.id)) }
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: place(of: pending.thread))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    if let context {
+                        Text(verbatim: context)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    Text(verbatim: excerpt)
+                        .lineLimit(3)
+                        .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            DeletePendingCommentButton(tab: tab, thread: pending.thread, comment: pending.comment)
+        }
+        .font(.callout)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    /// "replying to @alice: …" for a reply, else the line of code it's on.
+    private var context: String? {
+        if let parent = pending.replyingTo {
+            let line = plainLines(of: commentBlocks(parent.bodyHTML)).first ?? ""
+            return "replying to @\(parent.author?.login ?? "ghost"): \(line)"
+        }
+        return pending.commentedCode
+    }
+
+    /// The comment's first few lines, with an ellipsis when there's more.
+    private var excerpt: String {
+        let lines = plainLines(of: commentBlocks(pending.comment.bodyHTML))
+        let shown = lines.prefix(3).joined(separator: "\n")
+        return lines.count > 3 ? shown + "…" : shown
+    }
+}
+
+/// Discards the viewer's pending review, naming how many comments go with it, after asking.
+private struct DiscardReviewButton: View {
+    let tab: PullRequestTab
+    @State private var confirmsDiscard = false
+
+    var body: some View {
         let count = tab.pendingReview?.commentCount ?? 0
-        return "Its \(count) pending \(count == 1 ? "comment is" : "comments are") deleted. No one else has seen \(count == 1 ? "it" : "them")."
+        Button(role: .destructive) { confirmsDiscard = true } label: {
+            Text(verbatim: count == 0 ? "Discard review…" : "Discard review with \(count) pending \(count == 1 ? "comment" : "comments")…")
+        }
+        .disabled(tab.reviewDraft.isSubmitting)
+        .help("Delete your pending review and its comments")
+        .alert("Discard your review?", isPresented: $confirmsDiscard) {
+            Button("Discard Review", role: .destructive) { Task { await tab.discardReview() } }
+            Button("Keep Reviewing", role: .cancel) {}
+        } message: {
+            Text(verbatim: count == 0
+                ? "It has no comments. No one else has seen it."
+                : "Its \(count) pending \(count == 1 ? "comment is" : "comments are") deleted. No one else has seen \(count == 1 ? "it" : "them").")
+        }
     }
 }
 
 /// An empty view behind "Summary…", so a snapshot run can find where it is.
 struct SummaryButtonMarker: NSViewRepresentable {
+    final class Marker: NSView {}
+
+    func makeNSView(context: Context) -> Marker { Marker() }
+    func updateNSView(_ view: Marker, context: Context) {}
+}
+
+/// An empty view behind the pending count, so a snapshot run can find where it is.
+struct PendingCommentsButtonMarker: NSViewRepresentable {
     final class Marker: NSView {}
 
     func makeNSView(context: Context) -> Marker { Marker() }
@@ -209,4 +335,18 @@ private extension ReviewEvent {
         case .requestChanges: "Submit feedback that must be addressed before merging."
         }
     }
+}
+
+/// A comment's text as plain lines, blank ones dropped, for an excerpt read at a glance.
+private func plainLines(of blocks: [CommentBlock]) -> [String] {
+    blocks.flatMap { block -> [String] in
+        switch block {
+        case let .text(text, _): String(text.characters).components(separatedBy: .newlines)
+        case let .code(code): code.components(separatedBy: .newlines)
+        case let .quote(inner): plainLines(of: inner).map { "> \($0)" }
+        case .rule: []
+        }
+    }
+    .map { $0.trimmingCharacters(in: .whitespaces) }
+    .filter { !$0.isEmpty }
 }

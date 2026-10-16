@@ -14,7 +14,7 @@ import Testing
 /// pending review per PR, as in `probe/pending-review.json`: started with or without threads,
 /// added to, submitted (which answers their review request and, once linked to the PRs' GitHub
 /// with `decideReviews(on:)`, sets the PR's review decision) or deleted with its comments, which
-/// until then are in the review threads marked `PENDING`. Tests can add comments,
+/// until then are in the review threads marked `PENDING` and can be deleted one at a time. Tests can add comments,
 /// reviews and review threads, ask for reviews or edit a description, as people do on GitHub,
 /// give a PR the suggested reviewers in `probe/suggested-reviewers.json` or make asking for
 /// them fail, hide the teams, as from a token without access to them, shrink the pages of people and
@@ -41,6 +41,7 @@ actor FakeConversations {
         case addThread(reviewId: String, ThreadInput)
         case submit(reviewId: String, event: String, body: String?)
         case delete(reviewId: String)
+        case deleteComment(id: String)
     }
 
     struct ThreadInput: Equatable {
@@ -246,6 +247,7 @@ actor FakeConversations {
         if query.contains("addPullRequestReviewThread(") { return try addReviewThread(variables, url) }
         if query.contains("addPullRequestReview(") { return try await addReview(variables, url) }
         if query.contains("submitPullRequestReview(") { return try await submitReview(variables, url) }
+        if query.contains("deletePullRequestReviewComment(") { return try deleteReviewComment(variables, url) }
         if query.contains("deletePullRequestReview(") { return try deleteReview(variables, url) }
         if query.contains("suggestedReviewers") { return try suggestedReviewers(variables, url) }
         let id = try #require(variables["id"] as? String)
@@ -412,6 +414,16 @@ actor FakeConversations {
         return reviewId
     }
 
+    /// Replies to the thread into the viewer's pending review, as on github.com, starting the
+    /// review if they have none.
+    func replyInPendingReview(to threadId: String, on id: String, body: String) throws {
+        if pendingReviews[id] == nil { pendingReviews[id] = PendingReviewState(id: newReviewId(), body: "") }
+        var list = threads(of: id)
+        let index = try #require(list.firstIndex { $0["id"] as? String == threadId })
+        list[index]["comments"] = ["nodes": comments(of: list[index]) + [threadComment(body, by: FakeGitHub.viewer, pending: true)]]
+        setThreads(list, of: id)
+    }
+
     /// The viewer's pending review of the PR, if they have one.
     func pendingReviewId(of id: String) -> String? {
         pendingReviews[id]?.id
@@ -511,6 +523,32 @@ actor FakeConversations {
         return (try JSONSerialization.data(withJSONObject: ["data": ["deletePullRequestReview": ["pullRequestReview": ["id": reviewId]]]]), fakeResponse(url, status: 200))
     }
 
+    /// Deletes a comment wherever it is, and its thread once it has none; a pending review left
+    /// with no comments stays, as GitHub keeps it. Answers in `probe/delete-review-comment.json`'s
+    /// shape.
+    private func deleteReviewComment(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
+        let input = try #require(variables["input"] as? [String: Any])
+        let commentId = try #require(input["id"] as? String)
+        reviewMutationsReceived.append(.deleteComment(id: commentId))
+        if let refusal = try refusalOfReviewChanges("deletePullRequestReviewComment", url) { return refusal }
+        guard let id = nodes.keys.first(where: { threads(of: $0).contains { comments(of: $0).contains { $0["id"] as? String == commentId } } }) else {
+            return try refusal(unresolved: commentId, mutation: "deletePullRequestReviewComment", url)
+        }
+        setThreads(threads(of: id).compactMap { thread in
+            var thread = thread
+            let comments = comments(of: thread).filter { $0["id"] as? String != commentId }
+            guard !comments.isEmpty else { return nil }
+            thread["comments"] = ["nodes": comments]
+            return thread
+        }, of: id)
+        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/delete-review-comment.json"))) as? [String: Any])
+        var payload = try #require((probe["data"] as? [String: Any])?["deletePullRequestReviewComment"] as? [String: Any])
+        var review = try #require(payload["pullRequestReview"] as? [String: Any])
+        if let pending = pendingReviews[id] { review["id"] = pending.id }
+        payload["pullRequestReview"] = review
+        return (try JSONSerialization.data(withJSONObject: ["data": ["deletePullRequestReviewComment": payload]]), fakeResponse(url, status: 200))
+    }
+
     /// The viewer's submitted review: their latest, in the timeline, and the PR's review
     /// decision where it decides one.
     private func recordReview(_ event: String, body: String, on id: String) async throws {
@@ -575,6 +613,10 @@ actor FakeConversations {
             }
         }
         return nil
+    }
+
+    private func comments(of thread: [String: Any]) -> [[String: Any]] {
+        ((thread["comments"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
     }
 
     private func setThreads(_ threads: [[String: Any]], of id: String) {
@@ -749,7 +791,7 @@ struct FakePullRequestDetails: HTTPTransport {
         }
         let isConversation = [
             "timelineItems", "reviewThreads", "resolveReviewThread(", "requestReviews(", "assignableUsers(", "teams(", "updatePullRequest(", "PullRequest { body }", "suggestedReviewers",
-            "addPullRequestReview", "submitPullRequestReview(", "deletePullRequestReview(",
+            "addPullRequestReview", "submitPullRequestReview(", "deletePullRequestReview(", "deletePullRequestReviewComment(",
         ].contains { query.contains($0) }
         return isConversation ? try await conversations.send(request) : try await viewed.send(request)
     }

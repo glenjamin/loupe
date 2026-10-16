@@ -11,10 +11,12 @@ public final class ReviewDraft {
     /// The summary, in markdown.
     public var body = ""
     /// Whether the summary is open to write, kept while switching between tabs; it closes once
-    /// submitted or abandoned.
+    /// submitted or discarded.
     public var isWritingSummary = false
+    /// Whether the list of the review's pending comments is open.
+    public var isListingPending = false
     public internal(set) var isSubmitting = false
-    /// Why GitHub refused the last submission or abandonment, until another is tried.
+    /// Why GitHub refused the last submission or discard, until another is tried.
     public internal(set) var error: String?
     /// Whether the summary has been taken from the pending review yet, so it's only filled once.
     var hasStarted = false
@@ -25,7 +27,46 @@ public final class ReviewDraft {
     func reset() {
         body = ""
         isWritingSummary = false
+        isListingPending = false
         hasStarted = false
+    }
+}
+
+/// One of the viewer's pending comments, with what it answers.
+public struct PendingComment: Sendable, Equatable, Identifiable {
+    public let thread: ReviewThread
+    public let comment: ThreadComment
+    /// The comment before it in its thread, which it replies to; nil for one starting a thread.
+    public let replyingTo: ThreadComment?
+
+    public var id: String { comment.id }
+
+    /// The line of code a comment starting a thread is on, without its diff marker: the last
+    /// line of the hunk GitHub keeps, which ends on it.
+    public var commentedCode: String? {
+        guard replyingTo == nil, let last = thread.diffHunk.split(separator: "\n", omittingEmptySubsequences: false).last,
+              !last.hasPrefix("@@") else { return nil }
+        let code = last.dropFirst().trimmingCharacters(in: .whitespaces)
+        return code.isEmpty ? nil : code
+    }
+}
+
+extension PullRequestTab {
+    /// The viewer's pending comments in the order the diff shows them: by file, then line,
+    /// with those on a whole file or nowhere in the diff after a file's lines.
+    public var pendingComments: [PendingComment] {
+        let threads = (conversation?.threads ?? []).enumerated().sorted { a, b in
+            let (left, right) = (a.element, b.element)
+            if left.path != right.path { return left.path < right.path }
+            let (leftLine, rightLine) = (left.lines?.upperBound ?? .max, right.lines?.upperBound ?? .max)
+            return leftLine != rightLine ? leftLine < rightLine : a.offset < b.offset
+        }
+        return threads.flatMap { _, thread in
+            thread.comments.enumerated().compactMap { index, comment in
+                guard comment.isPending else { return nil }
+                return PendingComment(thread: thread, comment: comment, replyingTo: index > 0 ? thread.comments[index - 1] : nil)
+            }
+        }
     }
 }
 
@@ -135,7 +176,7 @@ extension PullRequestTab {
 
     /// Deletes the viewer's pending review and its comments, then fetches the threads again so
     /// they go. Asking first is the view's job.
-    public func abandonReview() async {
+    public func discardReview() async {
         let draft = reviewDraft
         guard let pendingReview, !draft.isSubmitting else { return }
         draft.isSubmitting = true
@@ -144,10 +185,38 @@ extension PullRequestTab {
         do {
             try await client.deleteReview(pendingReview.id)
         } catch {
-            draft.error = "Couldn't abandon your review: \(error.localizedDescription)"
+            draft.error = "Couldn't discard your review: \(error.localizedDescription)"
             return
         }
         draft.reset()
+        await refreshThreads { $0.isPending }
+    }
+
+    /// Deletes one of the viewer's pending comments, and its thread with it if it was the only
+    /// comment, then fetches the threads again so it goes. GitHub keeps a pending review left
+    /// with no comments, which would still show as pending, so one with no summary saved
+    /// either is deleted too; a summary being written here is kept. A refusal shows on the
+    /// thread, with the comment left as it was.
+    public func deletePendingComment(_ comment: ThreadComment, in thread: ReviewThread) async {
+        guard comment.isPending, !threadActivity.deleting.contains(comment.id) else { return }
+        threadActivity.deleting.insert(comment.id)
+        threadActivity.errors[thread.id] = nil
+        defer { threadActivity.deleting.remove(comment.id) }
+        do {
+            try await client.deleteReviewComment(comment.id)
+        } catch {
+            threadActivity.errors[thread.id] = "Couldn't delete your comment: \(error.localizedDescription)"
+            return
+        }
+        await refreshThreads { $0.isPending || $0.id == thread.id }
+        guard let pendingReview, pendingReview.commentCount == 0, pendingReview.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !reviewDraft.isSubmitting else { return }
+        do {
+            try await client.deleteReview(pendingReview.id)
+        } catch {
+            log("Couldn't delete the emptied pending review of \(title): \(error.localizedDescription)")
+            return
+        }
         await refreshThreads { $0.isPending }
     }
 }

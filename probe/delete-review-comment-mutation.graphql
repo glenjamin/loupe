@@ -1,0 +1,9 @@
+# Deletes a review comment, such as one in the viewer's pending review. Never run: it changes
+# the PR. Input and payload from introspection, 2026-10-16: DeletePullRequestReviewCommentInput
+# is { id, clientMutationId }; the payload has `pullRequestReview` ("The pull request review the
+# deleted comment belonged to") and `pullRequestReviewComment` ("The deleted pull request review
+# comment").
+# variables: {"input": {"id": "PRRC_…"}}
+mutation($input: DeletePullRequestReviewCommentInput!) {
+  deletePullRequestReviewComment(input: $input) { pullRequestReview { id } }
+}

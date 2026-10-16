@@ -119,22 +119,110 @@ struct ReviewSubmissionTests {
         #expect(await app.conversations.reviewMutationsReceived.last == .submit(reviewId: reviewId, event: "APPROVE", body: "Mostly fine"))
     }
 
-    @Test func abandoningDeletesTheReviewAndItsComments() async throws {
+    @Test func discardingDeletesTheReviewAndAllItsComments() async throws {
         let (app, tab, _) = try await ThreadsApp.withThread()
         let before = tab.conversation?.threads.map(\.id)
         try await comment("Hmm", at: DiffAnchor(path: "app.go", side: .right, line: 11), on: tab)
+        try await comment("And here", at: DiffAnchor(path: "app.go", side: .right, line: 12), on: tab)
         let reviewId = try #require(tab.pendingReview?.id)
         tab.reviewDraft.body = "Half-written"
-        #expect(tab.unresolvedThreadCount(of: "app.go") == 2)
+        #expect(tab.unresolvedThreadCount(of: "app.go") == 3)
 
-        await tab.abandonReview()
+        await tab.discardReview()
 
         #expect(await app.conversations.reviewMutationsReceived.last == .delete(reviewId: reviewId))
         #expect(tab.pendingReview == nil)
-        #expect(tab.conversation?.threads.map(\.id) == before, "the review's thread goes with it")
+        #expect(tab.conversation?.threads.map(\.id) == before, "the review's threads go with it")
+        #expect(try tab.threadsOn("app.go").anchored.allSatisfy { $0.threads.allSatisfy { !$0.isPending } })
         #expect(tab.unresolvedThreadCount(of: "app.go") == 1)
         #expect(tab.reviewDraft.body.isEmpty)
         #expect(try app.store.conversation(of: tab.id)?.pendingReview == nil)
+    }
+
+    @Test func deletingAPendingCommentTakesItsThreadFromTheDiffAndTheCountDrops() async throws {
+        let (app, tab, _) = try await ThreadsApp.withThread()
+        try await comment("Hmm", at: DiffAnchor(path: "app.go", side: .right, line: 11), on: tab)
+        try await comment("And here", at: DiffAnchor(path: "app.go", side: .right, line: 12), on: tab)
+        let reviewId = try #require(tab.pendingReview?.id)
+        let thread = try #require(try tab.threadsOn("app.go").anchored.first { $0.line == 11 }?.threads.first { $0.isPending })
+        let comment = try #require(thread.comments.first)
+
+        await tab.deletePendingComment(comment, in: thread)
+
+        #expect(await app.conversations.reviewMutationsReceived.last == .deleteComment(id: comment.id))
+        #expect(tab.threadActivity.errors[thread.id] == nil && tab.threadActivity.deleting.isEmpty)
+        #expect(tab.pendingReview == PendingReview(id: reviewId, body: "", commentCount: 1), "the review stays, with its other comment")
+        #expect(tab.reviewThread(thread.id) == nil, "its only comment gone, so is the thread")
+        #expect(try tab.threadsOn("app.go").anchored.contains { $0.line == 11 && $0.threads.contains { $0.isPending } } == false)
+        #expect(try tab.threadsOn("app.go").anchored.first { $0.line == 12 }?.threads.first?.isPending == true)
+        #expect(tab.unresolvedThreadCount(of: "app.go") == 2)
+        #expect(try app.store.conversation(of: tab.id)?.pendingReview?.commentCount == 1)
+    }
+
+    @Test func deletingTheLastPendingCommentDiscardsTheEmptiedReviewButKeepsTheSummaryBeingWritten() async throws {
+        let (app, tab, _) = try await ThreadsApp.withThread()
+        try await comment("Hmm", at: DiffAnchor(path: "app.go", side: .right, line: 11), on: tab)
+        let reviewId = try #require(tab.pendingReview?.id)
+        tab.reviewDraft.body = "Half-written"
+        let thread = try #require(tab.placedThreads.first { $0.isPending })
+
+        await tab.deletePendingComment(try #require(thread.comments.first), in: thread)
+
+        #expect(await app.conversations.reviewMutationsReceived.suffix(2) == [.deleteComment(id: thread.comments[0].id), .delete(reviewId: reviewId)])
+        #expect(tab.pendingReview == nil, "GitHub would keep it, pending with nothing in it")
+        #expect(!tab.placedThreads.contains { $0.isPending })
+        #expect(tab.reviewDraft.body == "Half-written", "the summary waits for the next review")
+    }
+
+    @Test func aPendingReviewWithASavedSummaryIsKeptWhenItsLastCommentIsDeleted() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest()
+        let reviewId = try await app.conversations.startPendingReview(on: pullRequest.id, path: "app.go", line: 11, body: "Why three?", summary: "Mostly fine")
+        let tab = try await app.open(pullRequest)
+        let thread = try #require(tab.placedThreads.first { $0.isPending })
+
+        await tab.deletePendingComment(try #require(thread.comments.first), in: thread)
+
+        #expect(await app.conversations.reviewMutationsReceived == [.deleteComment(id: thread.comments[0].id)])
+        #expect(tab.pendingReview == PendingReview(id: reviewId, body: "Mostly fine", commentCount: 0))
+    }
+
+    @Test func thePendingCommentsAreListedInDiffOrderWithWhatTheyAnswerAndChoosingOneShowsIt() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest()
+        let theirs = try await app.conversations.startThread(on: pullRequest.id, path: "app.go", line: 11, body: "Why three?")
+        try await app.conversations.replyInPendingReview(to: theirs, on: pullRequest.id, body: "Room for growth")
+        let tab = try await app.open(pullRequest)
+        try await comment("Package docs?", at: DiffAnchor(path: "new.go", side: .right, line: 1), on: tab)
+        try await comment("Is this still used?", at: DiffAnchor(path: "app.go", side: .left, line: 50), on: tab)
+        try await comment("And this name?", at: DiffAnchor(path: "app.go", side: .right, line: 12), on: tab)
+
+        let pending = tab.pendingComments
+        #expect(pending.map { "\($0.thread.path):\($0.thread.line ?? 0)" } == ["app.go:11", "app.go:12", "app.go:50", "new.go:1"])
+        #expect(pending.count == tab.pendingReview?.commentCount)
+        #expect(pending[0].replyingTo?.author?.login == "octocat" && pending[0].replyingTo?.bodyHTML.contains("Why three?") == true)
+        #expect(pending[0].comment.bodyHTML.contains("Room for growth") && pending[0].commentedCode == nil)
+        #expect(pending[1].replyingTo == nil && pending[1].commentedCode == "new app.go", "a new thread names its line of code")
+
+        let chosen = pending[3]
+        await tab.follow(ThreadLink(.show, thread: chosen.thread.id))
+        #expect(tab.selectedFile == "new.go")
+        #expect(tab.threadActivity.revealing == chosen.thread.id)
+    }
+
+    @Test func aRefusedDeleteLeavesTheCommentAndSaysWhy() async throws {
+        let (app, tab, _) = try await ThreadsApp.withThread()
+        try await comment("Hmm", at: DiffAnchor(path: "app.go", side: .right, line: 11), on: tab)
+        let thread = try #require(tab.placedThreads.first { $0.isPending })
+        await app.conversations.refuseThreadChanges()
+
+        await tab.deletePendingComment(try #require(thread.comments.first), in: thread)
+
+        #expect(tab.threadActivity.errors[thread.id]?.contains("Resource not accessible") == true)
+        #expect(tab.threadActivity.deleting.isEmpty)
+        #expect(tab.reviewThread(thread.id) == thread, "still there, as it was")
+        #expect(tab.placedThreads.contains(thread))
+        #expect(tab.pendingReview?.commentCount == 1)
     }
 
     @Test func aRefusalSaysWhyAndKeepsTheDraft() async throws {

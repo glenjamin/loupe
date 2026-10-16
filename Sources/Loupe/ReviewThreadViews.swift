@@ -168,7 +168,7 @@ private struct ThreadCard: View {
                 }
                 ForEach(thread.comments) { comment in
                     Divider()
-                    CommentView(comment: comment, viewer: tab.viewer, activity: activity)
+                    CommentView(tab: tab, thread: thread, comment: comment)
                 }
                 // A thread in the viewer's pending review takes no replies until it's submitted.
                 if (thread.viewerCanReply && !thread.isPending) || activity.errors[thread.id] != nil {
@@ -352,7 +352,7 @@ struct ApartReplySheet: View {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(thread.comments.enumerated()), id: \.element.id) { index, comment in
                             if index > 0 { Divider() }
-                            CommentView(comment: comment, viewer: tab.viewer, activity: activity)
+                            CommentView(tab: tab, thread: thread, comment: comment)
                         }
                     }
                 }
@@ -395,13 +395,14 @@ private struct ReplyComposer: View {
 }
 
 /// One comment: who wrote it and when, over its body. A hidden one is a line saying so, which
-/// shows it when clicked.
+/// shows it when clicked. One in the viewer's pending review can be deleted, after asking.
 private struct CommentView: View {
+    let tab: PullRequestTab
+    let thread: ReviewThread
     let comment: ThreadComment
-    let viewer: String?
-    let activity: ThreadActivity
 
     var body: some View {
+        let activity = tab.threadActivity
         if comment.isMinimized && !activity.expanded.contains(comment.id) {
             Button { activity.expanded.insert(comment.id) } label: {
                 HStack(spacing: 6) {
@@ -428,6 +429,8 @@ private struct CommentView: View {
                     .help(comment.createdAt.formatted(date: .abbreviated, time: .shortened))
                     if comment.isPending {
                         PendingBadge()
+                        Spacer(minLength: 0)
+                        DeletePendingCommentButton(tab: tab, thread: thread, comment: comment)
                     }
                 }
                 .font(.callout)
@@ -440,12 +443,39 @@ private struct CommentView: View {
 
     private var author: String {
         guard let login = comment.author?.login else { return "ghost" }
-        return login == viewer ? "\(login) (you)" : login
+        return login == tab.viewer ? "\(login) (you)" : login
     }
 
     private var hiddenSummary: String {
         let reason = comment.minimizedReason.map { " as \($0.lowercased().replacingOccurrences(of: "_", with: " "))" } ?? ""
         return "\(comment.author?.login ?? "ghost")'s comment was hidden\(reason)"
+    }
+}
+
+/// Deletes one of the viewer's pending comments after asking, with a spinner while it goes.
+struct DeletePendingCommentButton: View {
+    let tab: PullRequestTab
+    let thread: ReviewThread
+    let comment: ThreadComment
+    @State private var confirmsDelete = false
+
+    var body: some View {
+        let isDeleting = tab.threadActivity.deleting.contains(comment.id)
+        HStack(spacing: 6) {
+            if isDeleting {
+                ProgressView().controlSize(.mini)
+            }
+            Button("Delete…") { confirmsDelete = true }
+                .controlSize(.small)
+                .disabled(isDeleting)
+                .help("Delete this comment from your pending review")
+        }
+        .alert("Delete this pending comment?", isPresented: $confirmsDelete) {
+            Button("Delete", role: .destructive) { Task { await tab.deletePendingComment(comment, in: thread) } }
+            Button("Keep", role: .cancel) {}
+        } message: {
+            Text("It's in your review, not yet submitted, so no one else has seen it.")
+        }
     }
 }
 
@@ -611,7 +641,7 @@ private struct BlockInset: ViewModifier {
 
 /// The blocks of a comment's HTML, worked out once per body while the app runs.
 @MainActor
-private func commentBlocks(_ html: String) -> [CommentBlock] {
+func commentBlocks(_ html: String) -> [CommentBlock] {
     if let blocks = parsedComments[html] { return blocks }
     let blocks = CommentBlock.blocks(fromHTML: html)
     parsedComments[html] = blocks
@@ -622,6 +652,6 @@ private func commentBlocks(_ html: String) -> [CommentBlock] {
 
 /// `path:line` for a thread, the conversation's name for where it is: its last line in the
 /// current diff, or where it was made once outdated.
-private func place(of thread: ReviewThread) -> String {
+func place(of thread: ReviewThread) -> String {
     thread.lines.map { "\(thread.path):\($0.upperBound)" } ?? thread.path
 }

@@ -36,6 +36,8 @@ public final class ThreadActivity {
     public internal(set) var errors: [String: String] = [:]
     /// Threads being resolved or unresolved, by id.
     public internal(set) var resolving: Set<String> = []
+    /// The viewer's pending comments being deleted, by comment id.
+    public internal(set) var deleting: Set<String> = []
     /// The comment being started on a line, one at a time.
     public internal(set) var newComment: NewComment?
     /// Why the last new comment didn't reach GitHub, until it's sent again or dropped.
