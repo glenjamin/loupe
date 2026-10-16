@@ -62,6 +62,35 @@ struct ExpandControlsTests {
         let runs = try #require(shown.syntax).runs()
         #expect(runs.contains { NSLocationInRange($0.range.location, NSRange(location: shown.rowStarts[revealed], length: shown.rowStarts[revealed + 1] - shown.rowStarts[revealed])) })
     }
+
+    @Test func hidingRevealedLinesKeepsTheFirstCodeLineInViewWhereItWas() throws {
+        let s3 = try fixtureFile("s3.go")
+        let file = newFile(for: s3)
+        let expandable = ExpandableContext(newLineCount: file.count)
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 900, height: 300))
+        let view = DiffTextView.make()
+        view.frame = NSRect(x: 0, y: 0, width: 900, height: 300)
+        scroll.documentView = view
+        let expanded = s3.expanding(ContextExpansion(hunk: 2, direction: .above), newFile: file)
+        view.show(RenderedDiff(file: expanded, expandable: expandable))
+        view.layoutManager?.ensureLayout(for: try #require(view.textContainer))
+
+        let shown = try #require(view.rendered)
+        let plain = RenderedDiff(file: s3, expandable: expandable)
+        let kept = try #require((shown.hunkRows[2] + 1..<shown.rowStarts.count).first { row in
+            shown.rowAnchors[row].map(plain.rowAnchors.contains) ?? false
+        })
+        // Scrolled so the top of the view is at the last revealed line, which hiding them drops.
+        view.scroll(NSPoint(x: 0, y: try top(ofRow: kept - 1, in: view)))
+        let anchor = try #require(shown.rowAnchors[kept])
+        let offset = try top(ofRow: kept, in: view) - view.visibleRect.minY
+
+        view.show(plain, keepingPlace: true)
+        view.layoutManager?.ensureLayout(for: try #require(view.textContainer))
+
+        let row = try #require(plain.rowAnchors.firstIndex(of: anchor))
+        #expect(try top(ofRow: row, in: view) - view.visibleRect.minY == offset)
+    }
 }
 
 /// The expand controls on a row, by the glyph each shows.

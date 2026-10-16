@@ -271,8 +271,9 @@ public final class DiffTextView: NSTextView {
     private func visibleCodeRow(keptIn next: RenderedDiff) -> (row: HeldRow, offset: CGFloat)? {
         guard let current = rendered, let textStorage, textStorage.length > 0 else { return nil }
         let visible = visibleRect
-        let first = characterIndexForInsertion(at: NSPoint(x: visible.minX, y: visible.minY))
-        guard var row = current.row(at: min(first, textStorage.length - 1)) else { return nil }
+        guard let first = characterIndex(nearest: NSPoint(x: visible.minX, y: visible.minY)),
+              var row = current.row(at: min(first, textStorage.length - 1))
+        else { return nil }
         while let top = top(ofRow: row), top < visible.maxY {
             if let anchor = current.rowAnchors[row], next.rowAnchors.contains(anchor) {
                 return (.line(anchor), top - visible.minY)
@@ -289,6 +290,16 @@ public final class DiffTextView: NSTextView {
         layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: rendered.rowStarts[row] + 1))
         let glyph = layoutManager.glyphIndexForCharacter(at: rendered.rowStarts[row])
         return layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + textContainerOrigin.y
+    }
+
+    /// The character nearest a point in the view, from the layout alone. Unlike
+    /// `characterIndexForInsertion(at:)` it doesn't go through the window, which re-enters
+    /// SwiftUI when called while it updates the diff.
+    private func characterIndex(nearest point: NSPoint) -> Int? {
+        guard let layoutManager, let textContainer else { return nil }
+        let inContainer = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = layoutManager.glyphIndex(for: inContainer, in: textContainer)
+        return layoutManager.characterIndexForGlyph(at: glyph)
     }
 
     /// The character drawn under a point in the view, if any; unlike the insertion point, this
