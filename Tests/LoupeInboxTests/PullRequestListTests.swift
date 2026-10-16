@@ -313,7 +313,7 @@ struct PullRequestListTests {
         #expect(model.pullRequests(in: .toReview).count == 12)
     }
 
-    @Test func aReviewRequestOverTwoWeeksOldIsHiddenAndCounted() async throws {
+    @Test func aReviewRequestOverThreeMonthsOldIsHiddenAndCounted() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
         await model.refresh()
@@ -321,8 +321,8 @@ struct PullRequestListTests {
         let stale = toReview[0]
         let recent = toReview[1]
 
-        try await github.setRequestEvents(of: stale.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(15))])
-        try await github.setRequestEvents(of: recent.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(13))])
+        try await github.setRequestEvents(of: stale.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(91))])
+        try await github.setRequestEvents(of: recent.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(89))])
         await model.refresh()
 
         #expect(model.error == nil)
@@ -332,6 +332,25 @@ struct PullRequestListTests {
         #expect(model.staleRequestCount(in: .toReview) == 1)
         #expect(model.pullRequests(in: .mine).count == 50, "the viewer's own PRs aren't requests")
         #expect(model.staleRequestCount(in: .mine) == 0)
+    }
+
+    @Test func askingForHiddenRequestsListsThemAfterTheRecentOnes() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let recent = model.pullRequests(in: .toReview)
+        let older = recent[0]
+        let oldest = recent[1]
+        try await github.setRequestEvents(of: older.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(100))])
+        try await github.setRequestEvents(of: oldest.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(200))])
+        await model.refresh()
+
+        let shown = model.pullRequests(in: .toReview, includingStaleRequests: true)
+
+        #expect(shown.map(\.id) == model.pullRequests(in: .toReview).map(\.id) + [older.id, oldest.id], "newest first, after the recent ones")
+        #expect(model.staleRequestCount(in: .toReview) == 2)
+        #expect(model.pullRequests(in: .toReview).count == 11)
+        #expect(model.pullRequests(in: .mine, includingStaleRequests: true) == model.pullRequests(in: .mine))
     }
 
     @Test func theViewersLatestRequestCountsNotSomeoneElses() async throws {
@@ -348,9 +367,9 @@ struct PullRequestListTests {
         // The viewer's request, not the later one of rowan-ashby.
         let bedrock = try #require(model.pullRequest(id: "PR_kwDOB75F5s7-Gq3V"))
         #expect(bedrock.reviewRequestedAt == (try Date("2026-08-12T14:43:47Z", strategy: .iso8601)))
-        // Every PR the probe found requests on had waited over two weeks.
-        #expect(model.staleRequestCount(in: .toReview) == 6)
-        #expect(model.pullRequests(in: .toReview).count == 7)
+        // The probe's requests from July and earlier had waited over three months by then.
+        #expect(model.staleRequestCount(in: .toReview) == 4)
+        #expect(model.pullRequests(in: .toReview).count == 9)
     }
 
     @Test func aReRequestBringsBackAPullRequestHiddenForAnOldRequest() async throws {
@@ -358,7 +377,7 @@ struct PullRequestListTests {
         let model = try listModel(github)
         await model.refresh()
         let old = try #require(model.pullRequests(in: .toReview).first)
-        try await github.setRequestEvents(of: old.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(40))])
+        try await github.setRequestEvents(of: old.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(120))])
         await model.refresh()
         #expect(!model.pullRequests(in: .toReview).contains { $0.id == old.id })
 
@@ -378,17 +397,17 @@ struct PullRequestListTests {
         let unrecorded = try #require(model.pullRequests(in: .toReview).last)
         try await github.setRequestEvents(of: unrecorded.id, [])
 
-        clock.now = unrecorded.updatedAt + days(13)
+        clock.now = unrecorded.updatedAt + days(89)
         await model.refresh()
         let shown = try #require(model.pullRequests(in: .toReview).first { $0.id == unrecorded.id })
         #expect(shown.reviewRequestedAt == nil)
 
-        clock.now = unrecorded.updatedAt + days(15)
+        clock.now = unrecorded.updatedAt + days(91)
         #expect(!model.pullRequests(in: .toReview).contains { $0.id == unrecorded.id })
         // Hidden, not forgotten: still stored, and shown again by a clock that says it's younger.
         #expect(try store.snapshot()[.toReview].contains { $0.id == unrecorded.id })
         #expect(model.pullRequest(id: unrecorded.id) != nil)
-        clock.now = unrecorded.updatedAt + days(13)
+        clock.now = unrecorded.updatedAt + days(89)
         #expect(model.pullRequests(in: .toReview).contains { $0.id == unrecorded.id })
     }
 

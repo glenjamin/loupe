@@ -483,6 +483,12 @@ This extends "New comments start from a "+" in the gutter and post at once". Whe
 
 "Show Pull Requests" is now ⌘1, replacing ⌘§, and the PR tabs move along one: ⌘2–⌘8 pick the first to seventh PR tab, and ⌘9 still picks the strip's last item, which is the lists when no PR is open. ⌘§ didn't work well in practice. The lists are the first item in the strip, so numbering from them matches what's on screen, as browsers number tabs by position.
 
+### Stale review requests wait three months, and the caption shows them
+
+A review request now counts as stale after three months rather than two weeks. The caption under To review is a quiet link-like button: "N older than three months hidden" lists them below the recent ones, newest first, each with a faint "requested … ago", and "Hide N older than three months" puts them away again. The choice lasts for the session only, like the column's selection; the "show closed" toggle persists, but in `UserDefaults`, not the `setting` table.
+
+Two weeks hid almost everything on Glen's list, including requests that were merely slow. Three months separates the requests nobody means to act on from the ones still in play, and the toggle keeps the rest one click away rather than out of reach. Listing them after the recent ones keeps the top of the list as it was, so showing them never pushes a live request down.
+
 ## Not yet decided
 
 Nothing is pending.

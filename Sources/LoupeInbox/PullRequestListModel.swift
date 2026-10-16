@@ -87,9 +87,13 @@ public final class PullRequestListModel {
 
     /// Newest first. Closed and merged PRs stay stored, but are left out unless asked for. So do
     /// PRs whose request for the viewer's review has gone unanswered too long to be worth
-    /// listing; a fresh request brings one back.
-    public func pullRequests(in list: PullRequestList, includingClosed: Bool = false) -> [PullRequestSummary] {
-        listed(in: list, includingClosed: includingClosed).filter { !isStaleRequest($0, in: list) }
+    /// listing; a fresh request brings one back. Asked for, those follow the rest, newest first,
+    /// so the recent ones keep their place at the top.
+    public func pullRequests(in list: PullRequestList, includingClosed: Bool = false, includingStaleRequests: Bool = false) -> [PullRequestSummary] {
+        let listed = listed(in: list, includingClosed: includingClosed)
+        let recent = listed.filter { !isStaleRequest($0, in: list) }
+        guard includingStaleRequests else { return recent }
+        return recent + listed.filter { isStaleRequest($0, in: list) }
     }
 
     /// How many PRs `pullRequests(in:includingClosed:)` leaves out for their review request's
@@ -297,8 +301,9 @@ public final class PullRequestListModel {
     /// GitHub's search index lagging behind its updates.
     static let refreshOverlap = Duration.seconds(120)
 
-    /// How long a request for the viewer's review stays listed unanswered.
-    static let staleRequestAge: TimeInterval = 14 * 24 * 60 * 60
+    /// How long a request for the viewer's review stays listed unanswered: long enough that only
+    /// requests nobody means to act on pass it, not merely slow ones.
+    static let staleRequestAge: TimeInterval = 90 * 24 * 60 * 60
 
     private func listed(in list: PullRequestList, includingClosed: Bool) -> [PullRequestSummary] {
         includingClosed ? snapshot[list] : snapshot[list].filter { $0.state == .open }
@@ -307,7 +312,7 @@ public final class PullRequestListModel {
     /// Whether `pullRequest` waits on a review request older than `staleRequestAge`. GitHub
     /// records a request as an update, so the PR's update time stands in when no request of the
     /// viewer is known.
-    private func isStaleRequest(_ pullRequest: PullRequestSummary, in list: PullRequestList) -> Bool {
+    public func isStaleRequest(_ pullRequest: PullRequestSummary, in list: PullRequestList) -> Bool {
         guard list == .toReview else { return false }
         let requestedAt = pullRequest.reviewRequestedAt ?? pullRequest.updatedAt
         return now().timeIntervalSince(requestedAt) > Self.staleRequestAge

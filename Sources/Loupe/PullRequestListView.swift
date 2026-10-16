@@ -80,9 +80,11 @@ struct PullRequestColumn: View {
     let model: PullRequestListModel
     /// Moved with the arrow keys; Return opens it.
     @State private var selection: PullRequestSummary.ID?
+    /// Lists the PRs held back for their review request's age, for this session only.
+    @State private var showsStaleRequests = false
 
     var body: some View {
-        let pullRequests = model.pullRequests(in: list, includingClosed: showsClosed)
+        let pullRequests = model.pullRequests(in: list, includingClosed: showsClosed, includingStaleRequests: showsStaleRequests)
         VStack(alignment: .leading, spacing: 0) {
             Text("\(title) (\(pullRequests.count))")
                 .font(.headline)
@@ -96,7 +98,7 @@ struct PullRequestColumn: View {
                 List(pullRequests, selection: $selection) { pullRequest in
                     let checkout = model.checkout(for: pullRequest.repository)
                     Button { model.open(pullRequest) } label: {
-                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, isSelfReviewed: model.isSelfReviewed(pullRequest))
+                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, isSelfReviewed: model.isSelfReviewed(pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest))
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -124,14 +126,25 @@ struct PullRequestColumn: View {
             }
             let stale = model.staleRequestCount(in: list, includingClosed: showsClosed)
             if stale > 0 {
-                Text("\(stale) older than two weeks hidden")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
+                Button(showsStaleRequests ? "Hide \(stale) older than three months" : "\(stale) older than three months hidden") {
+                    showsStaleRequests.toggle()
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .background(StaleRequestsToggleMarker())
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// When the viewer was asked to review a PR listed only because the hidden ones are shown,
+    /// so its row can say how long it has waited.
+    private func staleRequestedAt(of pullRequest: PullRequestSummary) -> Date? {
+        guard model.isStaleRequest(pullRequest, in: list) else { return nil }
+        return pullRequest.reviewRequestedAt ?? pullRequest.updatedAt
     }
 }
 
@@ -141,6 +154,8 @@ struct PullRequestRow: View {
     /// Off where every PR is awaiting the viewer's review, so the badge would say nothing.
     let showsReviewRequired: Bool
     let isSelfReviewed: Bool
+    /// Set on a PR whose request for review is old enough to be hidden by default.
+    var staleRequestedAt: Date? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -170,6 +185,10 @@ struct PullRequestRow: View {
                     ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
                 }
                 Spacer(minLength: 0)
+                if let staleRequestedAt {
+                    Text("requested \(staleRequestedAt.formatted(.relative(presentation: .named)))")
+                        .foregroundStyle(.tertiary)
+                }
                 Text(pullRequest.updatedAt.formatted(.relative(presentation: .named)))
             }
             .font(.caption)
@@ -236,6 +255,8 @@ struct ConflictsBadge: View {
 /// for others to review. Known only to Loupe; nothing changes on GitHub.
 struct SelfReviewedBadge: View {
     let isSelfReviewed: Bool
+    /// Set on a PR whose request for review is old enough to be hidden by default.
+    var staleRequestedAt: Date? = nil
 
     var body: some View {
         if isSelfReviewed {
@@ -281,4 +302,12 @@ struct ChecksIcon: View {
         case .unknown: Image(systemName: "questionmark").foregroundStyle(.secondary)
         }
     }
+}
+
+/// Lets the snapshot run find the To review column's caption to click.
+struct StaleRequestsToggleMarker: NSViewRepresentable {
+    final class Marker: NSView {}
+
+    func makeNSView(context: Context) -> Marker { Marker() }
+    func updateNSView(_ view: Marker, context: Context) {}
 }
