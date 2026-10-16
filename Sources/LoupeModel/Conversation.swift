@@ -162,6 +162,12 @@ public enum ReviewState: String, Sendable, LenientEnum {
     /// The viewer's own review, not yet submitted.
     case pending = "PENDING"
     case unknown
+
+    /// An approval or request for changes, which leaves the PR waiting on its author or a merge
+    /// rather than on the reviewer.
+    public var isVerdict: Bool {
+        self == .approved || self == .changesRequested
+    }
 }
 
 /// A comment made on a line as part of a review.

@@ -145,6 +145,19 @@ public struct PullRequestStore: Sendable {
         }
     }
 
+    /// Records the state of the viewer's latest approval or request for changes on each PR in
+    /// `reviews`, keyed by id, nil where they've given neither. PRs no longer stored are left
+    /// out.
+    @discardableResult
+    public func updateViewerReviews(_ reviews: [String: ReviewState?]) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            for (id, review) in reviews {
+                try db.execute(sql: "UPDATE pullRequest SET viewerReview = ? WHERE id = ?", arguments: [review?.rawValue, id])
+            }
+            return try Self.snapshot(db)
+        }
+    }
+
     /// The signed-in user's GitHub login, once it's been looked up.
     public func viewerLogin() throws -> String? {
         try database.read { db in try Setting.fetchOne(db, key: Setting.viewerLogin)?.value }
@@ -477,6 +490,15 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "isSending", .boolean).notNull().defaults(to: false)
             }
         }
+        // Null until the to-review list's check looks the PR up by id, as searches don't fetch it.
+        // To review's refresh time is forgotten so its next refresh is a full load, which finds
+        // the PRs the viewer reviewed before their reviews were searched for.
+        migrator.registerMigration("Pull request viewer review") { db in
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "viewerReview", .text)
+            }
+            try db.execute(sql: "DELETE FROM listRefresh WHERE list = ?", arguments: [PullRequestList.toReview.rawValue])
+        }
         return migrator
     }
 
@@ -560,6 +582,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let mergeStateStatus: String?
     let reviewRequestedAt: Date?
     let requestedReviewers: [StoredReviewer]?
+    let viewerReview: String?
 
     /// Anything `pullRequest` lacks because only a lookup by id fetches it is kept from `stored`.
     init(_ pullRequest: PullRequestSummary, keepingLookupsFrom stored: PullRequestRow?) {
@@ -587,6 +610,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         mergeStateStatus = pullRequest.mergeStateStatus?.rawValue ?? stored?.mergeStateStatus
         reviewRequestedAt = pullRequest.reviewRequestedAt ?? stored?.reviewRequestedAt
         requestedReviewers = pullRequest.requestedReviewers.map { $0.map(StoredReviewer.init) } ?? stored?.requestedReviewers
+        viewerReview = pullRequest.viewerReview?.rawValue ?? stored?.viewerReview
     }
 
     func summary(checkContexts: [CheckContext]) -> PullRequestSummary {
@@ -616,7 +640,8 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             commentCount: commentCount,
             reviewThreadCount: reviewThreadCount,
             reviewRequestedAt: reviewRequestedAt,
-            requestedReviewers: requestedReviewers?.map(\.reviewer)
+            requestedReviewers: requestedReviewers?.map(\.reviewer),
+            viewerReview: viewerReview.map(ReviewState.init(lenientRawValue:))
         )
     }
 }

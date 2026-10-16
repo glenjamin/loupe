@@ -98,7 +98,7 @@ struct PullRequestColumn: View {
                 List(pullRequests, selection: $selection) { pullRequest in
                     let checkout = model.checkout(for: pullRequest.repository)
                     Button { model.open(pullRequest) } label: {
-                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, isSelfReviewed: model.isSelfReviewed(pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest))
+                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, isSelfReviewed: model.isSelfReviewed(pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list))
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -157,6 +157,8 @@ struct PullRequestRow: View {
     let isSelfReviewed: Bool
     /// Set on a PR whose request for review is old enough to be hidden by default.
     var staleRequestedAt: Date? = nil
+    /// The viewer's approval or request for changes, set where that's why the PR is listed.
+    var verdict: ReviewState? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -179,7 +181,11 @@ struct PullRequestRow: View {
                 if showsAuthor, let author = pullRequest.author {
                     Text(author)
                 }
-                if showsReviewRequired || [.approved, .changesRequested].contains(pullRequest.reviewDecision) {
+                if let verdict {
+                    ViewerVerdictBadge(verdict: verdict)
+                }
+                // GitHub's verdict repeats the viewer's when they're the same.
+                if showsReviewRequired || ([.approved, .changesRequested].contains(pullRequest.reviewDecision) && pullRequest.reviewDecision?.rawValue != verdict?.rawValue) {
                     ReviewDecisionLabel(decision: pullRequest.reviewDecision, requestedReviewers: pullRequest.requestedReviewers)
                 }
                 if let checks = pullRequest.checks {
@@ -263,6 +269,25 @@ struct SelfReviewedBadge: View {
         if isSelfReviewed {
             Badge(text: "Self-reviewed", tint: .diffSuccess)
                 .help("You've marked every file to review as viewed, so it's ready for others to review")
+        }
+    }
+}
+
+/// The viewer's own approval or request for changes on a PR in To review, so the list reads as
+/// what needs them apart from what waits to be merged or on its author.
+struct ViewerVerdictBadge: View {
+    let verdict: ReviewState
+
+    var body: some View {
+        switch verdict {
+        case .approved:
+            Badge(text: "Approved", tint: .diffSuccess)
+                .help("You approved this; it's waiting to be merged")
+        case .changesRequested:
+            Badge(text: "Changes requested", tint: .diffDanger)
+                .help("You asked for changes; it's waiting on its author")
+        default:
+            EmptyView()
         }
     }
 }

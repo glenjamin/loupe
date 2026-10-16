@@ -21,17 +21,22 @@ public struct GitHubClient: Sendable {
     }
 
     /// Without `updatedSince`, every open PR in `list`. With it, every PR in `list` updated since
-    /// then, whatever its state, so merges and closes come through as changes. Either way it
-    /// follows the search's pages until they run out.
+    /// then, so merges and closes come through as changes, though the to-review list's search
+    /// of PRs the viewer has reviewed stays to open ones. Either way it follows each search's
+    /// pages until they run out; a PR more than one search finds is listed once.
     public func pullRequests(in list: PullRequestList, updatedSince: Date? = nil) async throws -> [PullRequestSummary] {
         var pullRequests: [PullRequestSummary] = []
-        var cursor: String?
-        repeat {
-            let variables = SearchVariables(query: Self.searchQuery(list, updatedSince: updatedSince), first: Self.pageSize, after: cursor)
-            let response: SearchPageResponse = try await query(Self.searchPageQuery, variables: variables)
-            pullRequests += response.search.nodes.map(PullRequestSummary.init)
-            cursor = response.search.pageInfo.hasNextPage ? response.search.pageInfo.endCursor : nil
-        } while cursor != nil
+        for search in Self.searchQueries(list, updatedSince: updatedSince) {
+            var cursor: String?
+            repeat {
+                let variables = SearchVariables(query: search, first: Self.pageSize, after: cursor)
+                let response: SearchPageResponse = try await query(Self.searchPageQuery, variables: variables)
+                for node in response.search.nodes where !pullRequests.contains(where: { $0.id == node.id }) {
+                    pullRequests.append(PullRequestSummary(node))
+                }
+                cursor = response.search.pageInfo.hasNextPage ? response.search.pageInfo.endCursor : nil
+            } while cursor != nil
+        }
         return pullRequests
     }
 
@@ -133,15 +138,21 @@ public struct GitHubClient: Sendable {
     /// GitHub's maximum page size.
     static let pageSize = 100
 
-    static func searchQuery(_ list: PullRequestList, updatedSince: Date?) -> String {
-        let who = switch list {
-        case .mine: "author:@me"
-        case .toReview: "review-requested:@me"
-        }
-        guard let updatedSince else { return "is:pr is:open \(who) sort:updated-desc" }
+    /// To review is what's asked of the viewer and what they've approved or asked changes of,
+    /// so it's searched both ways. The second keeps to open PRs, as the to-review check by id
+    /// finds those merged since, and leaves out the viewer's own, which they may have commented
+    /// on.
+    static func searchQueries(_ list: PullRequestList, updatedSince: Date?) -> [String] {
         // Search takes whole seconds; rounding down keeps the boundary inclusive.
-        let since = Date(timeIntervalSince1970: updatedSince.timeIntervalSince1970.rounded(.down))
-        return "is:pr \(who) updated:>=\(since.formatted(.iso8601)) sort:updated-desc"
+        let since = updatedSince.map { "updated:>=\(Date(timeIntervalSince1970: $0.timeIntervalSince1970.rounded(.down)).formatted(.iso8601)) " } ?? ""
+        let state = updatedSince == nil ? "is:open " : ""
+        return switch list {
+        case .mine: ["is:pr \(state)author:@me \(since)sort:updated-desc"]
+        case .toReview: [
+            "is:pr \(state)review-requested:@me \(since)sort:updated-desc",
+            "is:pr is:open reviewed-by:@me -author:@me \(since)sort:updated-desc",
+        ]
+        }
     }
 
     static let viewerQuery = "query { viewer { login } }"
@@ -158,7 +169,8 @@ public struct GitHubClient: Sendable {
         }
         """
 
-    /// Who the PR's review waits on, and its latest requests for review, re-requests included.
+    /// Who the PR's review waits on, its latest requests for review, re-requests included, and
+    /// each reviewer's latest approval or request for changes.
     static let reviewRequestFields = """
         reviewRequests(first: 50) {
           nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
@@ -171,6 +183,7 @@ public struct GitHubClient: Sendable {
             }
           }
         }
+        latestOpinionatedReviews(first: 50) { nodes { state author { login } } }
         """
 
     static let searchPageQuery = """

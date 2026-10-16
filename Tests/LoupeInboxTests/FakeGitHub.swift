@@ -6,8 +6,9 @@ import Testing
 /// An in-memory api.github.com holding the viewer's PRs, the PRs awaiting their review, and a
 /// merged PR in neither list from `probe/pr-by-number.json`. Like GitHub's GraphQL API it
 /// rejects requests without the expected token, caps page sizes, pages with cursors, matches
-/// searches by author, review request, state and update time, looks up nodes by id and PRs by
-/// repo and number with who their review is asked of, serves each PR's checks and mergeability
+/// searches by author, review request, the viewer's reviews, state and update time, looks up
+/// nodes by id and PRs by repo and number with who their review is asked of and each
+/// reviewer's latest verdict, serves each PR's checks and mergeability
 /// as captured in `probe/pr-status.json`,
 /// and bumps a PR's update time when it changes, though not when its checks do. Like its REST notifications, a
 /// change to a PR notifies the viewer, who participates in every PR here, and a poll with
@@ -104,7 +105,11 @@ actor FakeGitHub: HTTPTransport {
 
     /// The open PRs a full load of `list` finds.
     func pullRequests(in list: PullRequestList) -> [FakePullRequest] {
-        pullRequests.filter { $0.state == "OPEN" && matches($0, list) }
+        let searched: [SearchQuery.Who] = switch list {
+        case .mine: [.author]
+        case .toReview: [.reviewRequested, .reviewedBy]
+        }
+        return pullRequests.filter { pullRequest in pullRequest.state == "OPEN" && searched.contains { matches(pullRequest, $0) } }
     }
 
     /// Changes the PR with `id`, which GitHub records as an update.
@@ -136,6 +141,7 @@ actor FakeGitHub: HTTPTransport {
         pullRequest.reviewDecision = "REVIEW_REQUIRED"
         pullRequest.requestedReviewers = []
         pullRequest.requestEvents = []
+        pullRequest.reviews = []
         pullRequests.append(pullRequest)
         try edit(pullRequest.id) { _ in }
         for reviewer in reviewers {
@@ -150,6 +156,23 @@ actor FakeGitHub: HTTPTransport {
         try edit(id) { pullRequest in
             pullRequest.requestEvents.append(.init(reviewer: reviewer, createdAt: date))
             if !pullRequest.requestedReviewers.contains(reviewer) { pullRequest.requestedReviewers.append(reviewer) }
+        }
+    }
+
+    /// Submits a review of the PR with `id` by `login`, as GitHub does: an approval or request
+    /// for changes answers their request for review, while a comment leaves it pending.
+    func review(_ id: String, by login: String = viewer, _ state: String) throws {
+        try edit(id) { pullRequest in
+            pullRequest.reviews.append(.init(login: login, state: state))
+            if state != "COMMENTED" { pullRequest.requestedReviewers.removeAll { $0 == .user(login) } }
+        }
+    }
+
+    /// Dismisses `login`'s latest approval or request for changes on the PR with `id`.
+    func dismissReview(of id: String, by login: String = viewer) throws {
+        try edit(id) { pullRequest in
+            let index = try #require(pullRequest.reviews.lastIndex { $0.login == login && ["APPROVED", "CHANGES_REQUESTED"].contains($0.state) })
+            pullRequest.reviews[index].state = "DISMISSED"
         }
     }
 
@@ -295,8 +318,9 @@ actor FakeGitHub: HTTPTransport {
         searches.append(query)
         let search = try #require(SearchQuery(query), "Unexpected search: \(query)")
         let results = pullRequests.filter { pullRequest in
-            matches(pullRequest, search.list)
+            matches(pullRequest, search.who)
                 && (!search.openOnly || pullRequest.state == "OPEN")
+                && (!search.othersOnly || pullRequest.author?.login != Self.viewer)
                 && search.updatedSince.map { updatedAt(pullRequest) >= $0 } ?? true
         }
         let start = try variables.after.map { try #require(Int($0)) } ?? 0
@@ -426,7 +450,10 @@ actor FakeGitHub: HTTPTransport {
         #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
         let nodes = ids.map { id in
             pullRequests.first { $0.id == id }.map { pullRequest in
-                NodesPayload.Node(id: id, state: pullRequest.state, reviewRequests: pullRequest.reviewRequestNodes, requestEvents: pullRequest.requestEventNodes)
+                NodesPayload.Node(
+                    id: id, state: pullRequest.state, reviewRequests: pullRequest.reviewRequestNodes, requestEvents: pullRequest.requestEventNodes,
+                    latestOpinionatedReviews: pullRequest.verdictNodes
+                )
             }
         }
         let missing = zip(ids, nodes).enumerated().compactMap { index, pair in
@@ -435,17 +462,19 @@ actor FakeGitHub: HTTPTransport {
         return Envelope(data: NodesPayload(nodes: nodes), errors: missing.isEmpty ? nil : missing)
     }
 
-    private func matches(_ pullRequest: FakePullRequest, _ list: PullRequestList) -> Bool {
-        switch list {
-        case .mine:
+    private func matches(_ pullRequest: FakePullRequest, _ who: SearchQuery.Who) -> Bool {
+        switch who {
+        case .author:
             pullRequest.author?.login == Self.viewer
-        case .toReview:
+        case .reviewRequested:
             pullRequest.requestedReviewers.contains { reviewer in
                 switch reviewer {
                 case let .user(login): login == Self.viewer
                 case let .team(slug): viewerTeams.contains(slug)
                 }
             }
+        case .reviewedBy:
+            pullRequest.reviews.contains { $0.login == Self.viewer }
         }
     }
 
@@ -479,6 +508,8 @@ struct FakePullRequest: Codable, Sendable {
     var requestedReviewers: [Reviewer] = []
     /// Every request for review made on the PR, as its timeline records them.
     var requestEvents: [RequestEvent] = []
+    /// Every review submitted on the PR, oldest first.
+    var reviews: [Review] = []
     /// The head commit's checks, whether it merges cleanly and whether it can be merged now,
     /// which only a lookup by id asks for.
     var checkContexts: [FakeCheckContext] = []
@@ -493,6 +524,12 @@ struct FakePullRequest: Codable, Sendable {
     struct RequestEvent: Sendable {
         let reviewer: Reviewer
         let createdAt: Date
+    }
+
+    struct Review: Sendable {
+        let login: String
+        /// `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED` or `DISMISSED`.
+        var state: String
     }
 
     struct Login: Codable, Sendable { let login: String }
@@ -539,17 +576,29 @@ struct FakePullRequest: Codable, Sendable {
             .compactMap { $0.requestedReviewer.fake } ?? []
         requestEvents = try requests.decodeIfPresent(NodesPayload.Connection<NodesPayload.Event>.self, forKey: .requestEvents)?.nodes
             .compactMap { event in try event.requestedReviewer.fake.map { RequestEvent(reviewer: $0, createdAt: try Date(event.createdAt, strategy: .iso8601)) } } ?? []
+        reviews = try requests.decodeIfPresent(NodesPayload.Connection<NodesPayload.Verdict>.self, forKey: .latestOpinionatedReviews)?.nodes
+            .compactMap { verdict in verdict.author.map { Review(login: $0.login, state: verdict.state) } } ?? []
     }
 }
 
 /// The fields only a lookup of a PR by id or number asks for, beside a search node's.
 private enum ReviewRequestKeys: String, CodingKey {
-    case reviewRequests, requestEvents
+    case reviewRequests, requestEvents, latestOpinionatedReviews
 }
 
 private extension FakePullRequest {
     var reviewRequestNodes: NodesPayload.Connection<NodesPayload.Request> {
         .init(nodes: requestedReviewers.map { .init(requestedReviewer: .init($0)) })
+    }
+
+    /// Each reviewer's latest approval or request for changes, dismissed or not, in the order
+    /// they gave them; comments don't count.
+    var verdictNodes: NodesPayload.Connection<NodesPayload.Verdict> {
+        let opinionated = reviews.filter { $0.state != "COMMENTED" }
+        let latest = opinionated.enumerated().filter { index, review in
+            !opinionated[(index + 1)...].contains { $0.login == review.login }
+        }
+        return .init(nodes: latest.map { .init(state: $0.element.state, author: .init(login: $0.element.login)) })
     }
 
     /// The last 20, oldest first, as GitHub returns them to the app's query.
@@ -586,19 +635,34 @@ struct FakeCheckContext: Codable, Sendable {
 let projectRoot = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
 /// A start-screen search string, checked against the shapes the app should send: a full load is
-/// open PRs only; a refresh asks for every state updated since a whole-second UTC time.
+/// open PRs only; a refresh asks for every state updated since a whole-second UTC time, except
+/// that the search of the viewer's reviews is always of open PRs, and never of their own.
 private struct SearchQuery {
-    let list: PullRequestList
+    enum Who {
+        case author, reviewRequested, reviewedBy
+    }
+
+    let who: Who
     let openOnly: Bool
+    let othersOnly: Bool
     let updatedSince: Date?
 
     init?(_ query: String) {
-        let pattern = /is:pr (?<open>is:open )?(?<who>author|review-requested):@me (updated:>=(?<since>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) )?sort:updated-desc/
+        let pattern = /is:pr (?<open>is:open )?(?<who>author|review-requested|reviewed-by):@me (?<others>-author:@me )?(updated:>=(?<since>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) )?sort:updated-desc/
         guard let match = query.wholeMatch(of: pattern) else { return nil }
-        list = match.who == "author" ? .mine : .toReview
+        who = switch match.who {
+        case "author": .author
+        case "review-requested": .reviewRequested
+        default: .reviewedBy
+        }
         openOnly = match.open != nil
+        othersOnly = match.others != nil
         updatedSince = match.since.flatMap { try? Date(String($0), strategy: .iso8601) }
-        guard openOnly != (updatedSince != nil) else { return nil }
+        if who == .reviewedBy {
+            guard openOnly, othersOnly else { return nil }
+        } else {
+            guard !othersOnly, openOnly != (updatedSince != nil) else { return nil }
+        }
     }
 }
 
@@ -744,9 +808,15 @@ private struct NodesPayload: Encodable {
         let state: String
         let reviewRequests: Connection<Request>
         let requestEvents: Connection<Event>
+        let latestOpinionatedReviews: Connection<Verdict>
     }
 
     struct Connection<Element: Codable>: Codable { let nodes: [Element] }
+
+    struct Verdict: Codable {
+        let state: String
+        let author: FakePullRequest.Login?
+    }
     struct Request: Codable { let requestedReviewer: Reviewer }
 
     struct Event: Codable {
@@ -808,8 +878,8 @@ private struct SearchNode: Encodable {
     }
 }
 
-/// A PR as the app looks it up by id or number: a search node's fields, the counts, and who
-/// its review is asked of.
+/// A PR as the app looks it up by id or number: a search node's fields, the counts, who its
+/// review is asked of and each reviewer's latest verdict.
 private struct LookupNode: Encodable {
     let pullRequest: FakePullRequest
 
@@ -818,6 +888,7 @@ private struct LookupNode: Encodable {
         var container = encoder.container(keyedBy: ReviewRequestKeys.self)
         try container.encode(pullRequest.reviewRequestNodes, forKey: .reviewRequests)
         try container.encode(pullRequest.requestEventNodes, forKey: .requestEvents)
+        try container.encode(pullRequest.verdictNodes, forKey: .latestOpinionatedReviews)
     }
 }
 

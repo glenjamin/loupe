@@ -60,8 +60,8 @@ struct PullRequestListTests {
         #expect(Set(model.pullRequests(in: .mine).map(\.id)) == Set(expected))
         #expect(expected.count == 50)
         #expect(model.pullRequests(in: .toReview).count == 13)
-        // Three pages of mine, one of to-review.
-        #expect(await github.searches.count == 4)
+        // Three pages of mine, one of requests for the viewer's review and one of their reviews.
+        #expect(await github.searches.count == 5)
     }
 
     @Test func rowsCarryEachOfTheirChecksAfterARefresh() async throws {
@@ -235,13 +235,16 @@ struct PullRequestListTests {
 
         await model.refresh()
         let firstLoad = await github.searches
-        #expect(firstLoad.count == 2)
+        #expect(firstLoad.count == 3)
         #expect(firstLoad.allSatisfy { $0.contains("is:open") && !$0.contains("updated:") })
 
         await model.refresh()
         let refresh = await github.searches.dropFirst(firstLoad.count)
-        #expect(refresh.count == 2)
-        #expect(refresh.allSatisfy { !$0.contains("is:open") && $0.contains("updated:>=") })
+        #expect(refresh.count == 3)
+        #expect(refresh.allSatisfy { $0.contains("updated:>=") })
+        let (reviewed, others) = (refresh.filter { $0.contains("reviewed-by:@me") }, refresh.filter { !$0.contains("reviewed-by:@me") })
+        #expect(others.count == 2 && others.allSatisfy { !$0.contains("is:open") })
+        #expect(reviewed.count == 1 && reviewed.allSatisfy { $0.contains("is:open") }, "the to-review check finds those merged since")
     }
 
     @Test func aMergedPullRequestLeavesTheDefaultViewButStaysStored() async throws {
@@ -311,6 +314,167 @@ struct PullRequestListTests {
         #expect(!model.pullRequests(in: .toReview, includingClosed: true).contains { $0.id == reviewed.id })
         #expect(model.pullRequests(in: .toReview).contains { $0.id == teamRequested.id })
         #expect(model.pullRequests(in: .toReview).count == 12)
+    }
+
+    @Test func anApprovedPullRequestStaysInToReviewUntilMerged() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let approved = try #require(model.pullRequests(in: .toReview).first)
+        #expect(model.verdict(on: approved, in: .toReview) == nil)
+
+        try await github.review(approved.id, "APPROVED")
+        await model.refresh()
+
+        #expect(model.error == nil)
+        let shown = try #require(model.pullRequests(in: .toReview).first { $0.id == approved.id })
+        #expect(shown.requestedReviewers == [], "the request was answered")
+        #expect(model.verdict(on: shown, in: .toReview) == .approved)
+        #expect(model.pullRequests(in: .toReview).count == 13)
+
+        try await github.merge(approved.id)
+        await model.refresh()
+
+        #expect(!model.pullRequests(in: .toReview, includingClosed: true).contains { $0.id == approved.id })
+        #expect(model.pullRequests(in: .toReview).count == 12)
+    }
+
+    @Test func askingForChangesKeepsAPullRequestInToReviewButACommentDoesNotCount() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let toReview = model.pullRequests(in: .toReview)
+        let changesAsked = toReview[0]
+        let commented = toReview[1]
+
+        try await github.review(changesAsked.id, "CHANGES_REQUESTED")
+        try await github.review(commented.id, "COMMENTED")
+        await model.refresh()
+
+        let listed = model.pullRequests(in: .toReview)
+        let changes = try #require(listed.first { $0.id == changesAsked.id })
+        #expect(model.verdict(on: changes, in: .toReview) == .changesRequested)
+        let stillAsked = try #require(listed.first { $0.id == commented.id }, "GitHub keeps the request after a comment")
+        #expect(model.verdict(on: stillAsked, in: .toReview) == nil)
+    }
+
+    @Test func pullRequestsTheViewerReviewedButIsNoLongerAskedAboutAreListed() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let earlier = try await github.openPullRequest(number: 9001, by: "rowan-ashby")
+        try await github.review(earlier.id, "APPROVED")
+        let commentedOnly = try await github.openPullRequest(number: 9002, by: "rowan-ashby")
+        try await github.review(commentedOnly.id, "COMMENTED")
+        let model = try listModel(github)
+
+        await model.refresh()
+
+        #expect(model.error == nil)
+        let found = try #require(model.pullRequests(in: .toReview).first { $0.id == earlier.id }, "found by the first load")
+        #expect(model.verdict(on: found, in: .toReview) == .approved)
+        #expect(!model.pullRequests(in: .toReview).contains { $0.id == commentedOnly.id }, "a comment isn't a verdict")
+
+        let later = try await github.openPullRequest(number: 9003, by: "rowan-ashby")
+        try await github.review(later.id, "CHANGES_REQUESTED")
+        let mine = try #require(model.pullRequests(in: .mine).first)
+        try await github.review(mine.id, "COMMENTED")
+        await model.refresh()
+
+        #expect(model.pullRequests(in: .toReview).contains { $0.id == later.id }, "found by a refresh's changes")
+        #expect(!model.pullRequests(in: .toReview).contains { $0.id == mine.id }, "the viewer's own PRs stay out")
+        #expect(model.pullRequests(in: .toReview).count == 15)
+    }
+
+    @Test func aDismissedApprovalLeavesToReviewUnlessTheViewerIsAskedAgain() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let toReview = model.pullRequests(in: .toReview)
+        let dismissed = toReview[0]
+        let reRequested = toReview[1]
+        for pullRequest in [dismissed, reRequested] {
+            try await github.review(pullRequest.id, "APPROVED")
+        }
+        await model.refresh()
+
+        try await github.dismissReview(of: dismissed.id)
+        try await github.dismissReview(of: reRequested.id)
+        try await github.requestReview(of: reRequested.id)
+        await model.refresh()
+
+        #expect(!model.pullRequests(in: .toReview, includingClosed: true).contains { $0.id == dismissed.id })
+        let asked = try #require(model.pullRequests(in: .toReview).first { $0.id == reRequested.id })
+        #expect(model.verdict(on: asked, in: .toReview) == nil)
+    }
+
+    @Test func aReRequestAfterAnApprovalWaitsOnTheViewerAgain() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let approved = try #require(model.pullRequests(in: .toReview).first)
+        try await github.review(approved.id, "APPROVED")
+        await model.refresh()
+
+        try await github.requestReview(of: approved.id)
+        await model.refresh()
+
+        let asked = try #require(model.pullRequests(in: .toReview).first)
+        #expect(asked.id == approved.id, "back among those awaiting the viewer, newest first")
+        #expect(model.verdict(on: asked, in: .toReview) == nil)
+    }
+
+    @Test func pullRequestsTheViewerHasGivenAVerdictOnFollowThoseAwaitingThem() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let before = model.pullRequests(in: .toReview)
+        let approved = before[5]
+        let changesAsked = before[2]
+
+        try await github.review(approved.id, "APPROVED")
+        try await github.review(changesAsked.id, "CHANGES_REQUESTED")
+        await model.refresh()
+
+        let shown = model.pullRequests(in: .toReview)
+        let awaiting = before.map(\.id).filter { ![approved.id, changesAsked.id].contains($0) }
+        #expect(shown.prefix(awaiting.count).map(\.id) == awaiting)
+        let reviewed = shown.dropFirst(awaiting.count)
+        #expect(Set(reviewed.map(\.id)) == [approved.id, changesAsked.id])
+        #expect(reviewed.map(\.updatedAt) == reviewed.map(\.updatedAt).sorted(by: >), "newest first")
+    }
+
+    @Test func aMonthWithoutARequestDoesNotHideWhatTheViewerHasApproved() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let toReview = model.pullRequests(in: .toReview)
+        let approved = toReview[0]
+        let stale = toReview[1]
+        for pullRequest in [approved, stale] {
+            try await github.setRequestEvents(of: pullRequest.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(100))])
+        }
+
+        try await github.review(approved.id, "APPROVED")
+        await model.refresh()
+
+        let shown = try #require(model.pullRequests(in: .toReview).first { $0.id == approved.id })
+        #expect(!model.isStaleRequest(shown, in: .toReview))
+        #expect(!model.pullRequests(in: .toReview).contains { $0.id == stale.id })
+        #expect(model.staleRequestCount(in: .toReview) == 1)
+        #expect(model.pullRequests(in: .toReview).count == 12)
+        #expect(model.pullRequests(in: .toReview, includingStaleRequests: true).last?.id == stale.id, "hidden ones still come last")
+    }
+
+    @Test func aPullRequestTheViewerApprovedJoinsToReviewWhenLookedUp() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let approved = try await github.openPullRequest(number: 9001, by: "rowan-ashby")
+        try await github.review(approved.id, "APPROVED")
+
+        try await model.checkForChanges(to: [approved.id])
+
+        let shown = try #require(model.pullRequests(in: .toReview).first { $0.id == approved.id })
+        #expect(model.verdict(on: shown, in: .toReview) == .approved)
     }
 
     @Test func eachPullRequestSaysWhoItsReviewWaitsOn() async throws {
@@ -467,7 +631,7 @@ struct PullRequestListTests {
         #expect(try #require(model.lastRefreshed) > lastRefreshed)
         // Changes are still asked for from just before the last successful refresh.
         for search in await github.searches.dropFirst(searchesBefore) {
-            let list: PullRequestList = search.contains("author:@me") ? .mine : .toReview
+            let list: PullRequestList = search.contains(" author:@me") ? .mine : .toReview
             let refreshedAt = try #require(loaded.refreshedAt(list))
             let since = try Date(String(try #require(search.firstMatch(of: /updated:>=(\S+)/)).1), strategy: .iso8601)
             #expect(since <= refreshedAt.addingTimeInterval(-120))

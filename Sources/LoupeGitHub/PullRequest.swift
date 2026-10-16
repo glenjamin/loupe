@@ -66,6 +66,7 @@ struct SearchPageResponse: Decodable {
         let reviewThreads: Count?
         let reviewRequests: Connection<NodesResponse.ReviewRequest>?
         let requestEvents: Connection<NodesResponse.RequestEvent>?
+        let latestOpinionatedReviews: Connection<NodesResponse.Verdict>?
     }
 
     struct Login: Decodable { let login: String }
@@ -85,20 +86,26 @@ public struct PullRequestLookup: Sendable, Equatable {
 
     init(_ node: SearchPageResponse.PullRequestNode) {
         pullRequest = PullRequestSummary(node)
-        reviewRequests = ReviewRequests(state: node.state, requests: node.reviewRequests?.nodes ?? [], events: node.requestEvents?.nodes ?? [])
+        reviewRequests = ReviewRequests(
+            state: node.state,
+            requests: node.reviewRequests?.nodes ?? [],
+            events: node.requestEvents?.nodes ?? [],
+            verdicts: node.latestOpinionatedReviews?.nodes ?? []
+        )
     }
 }
 
 extension ReviewRequests {
     init(_ node: NodesResponse.PullRequestNode) {
-        self.init(state: node.state, requests: node.reviewRequests.nodes, events: node.requestEvents.nodes)
+        self.init(state: node.state, requests: node.reviewRequests.nodes, events: node.requestEvents.nodes, verdicts: node.latestOpinionatedReviews.nodes)
     }
 
-    init(state: PullRequestState, requests: [NodesResponse.ReviewRequest], events: [NodesResponse.RequestEvent]) {
+    init(state: PullRequestState, requests: [NodesResponse.ReviewRequest], events: [NodesResponse.RequestEvent], verdicts: [NodesResponse.Verdict]) {
         self.init(
             state: state,
             reviewers: requests.map(\.reviewer),
-            events: events.map { ReviewRequestEvent(reviewer: $0.requestedReviewer?.reviewer ?? .other, createdAt: $0.createdAt) }
+            events: events.map { ReviewRequestEvent(reviewer: $0.requestedReviewer?.reviewer ?? .other, createdAt: $0.createdAt) },
+            verdicts: verdicts.compactMap { verdict in verdict.author.map { ReviewVerdict(login: $0.login, state: verdict.state) } }
         )
     }
 }
@@ -131,6 +138,13 @@ struct NodesResponse: Decodable {
         let state: PullRequestState
         let reviewRequests: SearchPageResponse.Connection<ReviewRequest>
         let requestEvents: SearchPageResponse.Connection<RequestEvent>
+        let latestOpinionatedReviews: SearchPageResponse.Connection<Verdict>
+    }
+
+    struct Verdict: Decodable {
+        let state: ReviewState
+        /// Null when the reviewer's account has been deleted.
+        let author: SearchPageResponse.Login?
     }
 
     struct ReviewRequest: Decodable {

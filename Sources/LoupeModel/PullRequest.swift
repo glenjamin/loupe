@@ -46,6 +46,9 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     /// Who the PR's review waits on, in GitHub's order. Nil until looked up by id, as asking the
     /// searches for it takes them past GitHub's time limit.
     public var requestedReviewers: [RequestedReviewer]?
+    /// The state of the viewer's latest approval or request for changes, dismissed or not, as
+    /// the to-review list's check found it. Nil until checked, or when they've given neither.
+    public let viewerReview: ReviewState?
 
     public init(
         id: String,
@@ -72,7 +75,8 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         commentCount: Int? = nil,
         reviewThreadCount: Int? = nil,
         reviewRequestedAt: Date? = nil,
-        requestedReviewers: [RequestedReviewer]? = nil
+        requestedReviewers: [RequestedReviewer]? = nil,
+        viewerReview: ReviewState? = nil
     ) {
         self.id = id
         self.repository = repository
@@ -99,6 +103,16 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.reviewThreadCount = reviewThreadCount
         self.reviewRequestedAt = reviewRequestedAt
         self.requestedReviewers = requestedReviewers
+        self.viewerReview = viewerReview
+    }
+
+    /// The approval or request for changes `login` has made and still stands by, while they
+    /// aren't asked to review again: the PR then waits on its author or a merge rather than on
+    /// them. A team's request doesn't count against it, as the viewer may not be in the team.
+    public func standingVerdict(of login: String) -> ReviewState? {
+        guard let viewerReview, viewerReview.isVerdict else { return nil }
+        let reRequested = (requestedReviewers ?? []).contains { $0.isUser(login) }
+        return reRequested ? nil : viewerReview
     }
 }
 
@@ -126,7 +140,8 @@ public struct PullRequestStatus: Sendable, Equatable {
 public enum PullRequestList: String, Sendable, CaseIterable {
     /// The signed-in user's PRs, drafts included.
     case mine
-    /// PRs awaiting the signed-in user's review.
+    /// PRs awaiting the signed-in user's review, and those they've approved or asked changes of
+    /// until merged or closed.
     case toReview
 }
 
@@ -137,18 +152,34 @@ public enum PullRequestState: String, Sendable, LenientEnum {
     case unknown
 }
 
-/// A PR's state, whose review it's currently waiting on, and its latest requests for review.
+/// A PR's state, whose review it's currently waiting on, its latest requests for review and
+/// each reviewer's latest verdict.
 public struct ReviewRequests: Sendable, Equatable {
     public let state: PullRequestState
     public let reviewers: [RequestedReviewer]
     /// The latest requests from the PR's timeline, re-requests included, whether or not still
     /// pending.
     public let events: [ReviewRequestEvent]
+    /// Each reviewer's latest approval or request for changes, as dismissed if it was.
+    public let verdicts: [ReviewVerdict]
 
-    public init(state: PullRequestState, reviewers: [RequestedReviewer], events: [ReviewRequestEvent] = []) {
+    public init(state: PullRequestState, reviewers: [RequestedReviewer], events: [ReviewRequestEvent] = [], verdicts: [ReviewVerdict] = []) {
         self.state = state
         self.reviewers = reviewers
         self.events = events
+        self.verdicts = verdicts
+    }
+
+    /// The state of `login`'s latest approval or request for changes, nil if they've given
+    /// neither.
+    public func latestVerdict(by login: String) -> ReviewState? {
+        verdicts.last { $0.login.caseInsensitiveCompare(login) == .orderedSame }?.state
+    }
+
+    /// Whether the PR belongs in `login`'s To review: open, and either waiting on their review
+    /// or holding their approval or request for changes, so they can see it through to merge.
+    public func belongsInToReview(of login: String) -> Bool {
+        awaitReview(from: login) || (state == .open && latestVerdict(by: login)?.isVerdict == true)
     }
 
     /// When `login` was last asked to review, as far as the latest requests go back. A request
@@ -162,6 +193,17 @@ public struct ReviewRequests: Sendable, Equatable {
     /// known here.
     public func awaitReview(from login: String) -> Bool {
         state == .open && reviewers.contains { $0.mayBe(login) }
+    }
+}
+
+/// A reviewer's latest approval or request for changes on a PR.
+public struct ReviewVerdict: Sendable, Equatable {
+    public let login: String
+    public let state: ReviewState
+
+    public init(login: String, state: ReviewState) {
+        self.login = login
+        self.state = state
     }
 }
 
@@ -199,6 +241,11 @@ public enum RequestedReviewer: Sendable, Hashable {
         case let .team(slug): slug
         case .other: nil
         }
+    }
+
+    /// Whether this is the user `login`, not a team they may be in.
+    func isUser(_ login: String) -> Bool {
+        if case let .user(requested) = self { requested.caseInsensitiveCompare(login) == .orderedSame } else { false }
     }
 
     /// Whether this could be `login`: that user, or any team, as team membership isn't known.

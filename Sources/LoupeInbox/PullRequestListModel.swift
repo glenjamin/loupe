@@ -87,15 +87,26 @@ public final class PullRequestListModel {
         }
     }
 
-    /// Newest first. Closed and merged PRs stay stored, but are left out unless asked for. So do
-    /// PRs whose request for the viewer's review has gone unanswered too long to be worth
-    /// listing; a fresh request brings one back. Asked for, those follow the rest, newest first,
-    /// so the recent ones keep their place at the top.
+    /// Newest first, those waiting on the viewer's review before those they've approved or asked
+    /// changes of, so what needs them leads. Closed and merged PRs stay stored, but are left out
+    /// unless asked for. So do PRs whose request for the viewer's review has gone unanswered too
+    /// long to be worth listing; a fresh request brings one back. Asked for, those come last,
+    /// newest first, so the rest keep their place.
     public func pullRequests(in list: PullRequestList, includingClosed: Bool = false, includingStaleRequests: Bool = false) -> [PullRequestSummary] {
         let listed = listed(in: list, includingClosed: includingClosed)
-        let recent = listed.filter { !isStaleRequest($0, in: list) }
-        guard includingStaleRequests else { return recent }
-        return recent + listed.filter { isStaleRequest($0, in: list) }
+        let awaiting = listed.filter { verdict(on: $0, in: list) == nil }
+        let recent = awaiting.filter { !isStaleRequest($0, in: list) }
+        let reviewed = listed.filter { verdict(on: $0, in: list) != nil }
+        guard includingStaleRequests else { return recent + reviewed }
+        return recent + reviewed + awaiting.filter { isStaleRequest($0, in: list) }
+    }
+
+    /// The viewer's approval or request for changes on a PR in `list` that's there for it
+    /// rather than for a request of their review, so its row can say it waits to be merged or
+    /// on its author. Nil anywhere but To review.
+    public func verdict(on pullRequest: PullRequestSummary, in list: PullRequestList) -> ReviewState? {
+        guard list == .toReview, let viewer else { return nil }
+        return pullRequest.standingVerdict(of: viewer)
     }
 
     /// How many PRs `pullRequests(in:includingClosed:)` leaves out for their review request's
@@ -229,16 +240,21 @@ public final class PullRequestListModel {
             let startedAt = Date.now
             do {
                 // Rows stored before commit oids were fetched lack them; a full load fills them in.
+                var refreshed: PullRequestSnapshot
                 if let lastRefreshed = snapshot.refreshedAt(list), !snapshot[list].contains(where: { $0.headRefOid == nil }) {
                     let since = lastRefreshed - Self.refreshOverlap.timeInterval
                     let changed = try await client.pullRequests(in: list, updatedSince: since)
-                    snapshot = try await store.merge(list, with: changed, refreshedAt: startedAt)
+                    refreshed = try await store.merge(list, with: changed, refreshedAt: startedAt)
                 } else {
                     let open = try await client.pullRequests(in: list)
-                    snapshot = try await store.replace(list, with: open, refreshedAt: startedAt)
+                    refreshed = try await store.replace(list, with: open, refreshedAt: startedAt)
                 }
-                if list == .toReview { try await checkReviewRequests() }
+                // Shown only once checked, so a PR the viewer has only commented on, which the
+                // search of their reviews finds, doesn't flash up before the check drops it.
+                if list == .toReview { refreshed = try await checkReviewRequests(in: refreshed) }
+                snapshot = refreshed
             } catch {
+                if let stored = try? store.snapshot() { snapshot = stored }
                 let message = error.localizedDescription
                 if !failures.contains(message) { failures.append(message) }
             }
@@ -246,28 +262,32 @@ public final class PullRequestListModel {
         error = failures.isEmpty ? nil : failures.joined(separator: "\n")
     }
 
-    /// A PR stops matching `review-requested:@me` once reviewed, so changes since the last
-    /// refresh never report it leaving; each to-review PR is checked directly instead. The same
-    /// check finds when each was last asked of the viewer, which search doesn't say. The viewer's
-    /// own open PRs are checked alongside, for who each waits on, as asking search for that
-    /// takes a full page past GitHub's time limit.
-    private func checkReviewRequests() async throws {
-        let ids = snapshot[.toReview].map(\.id)
-        let mine = snapshot[.mine].filter { $0.state == .open && !ids.contains($0.id) }.map(\.id)
-        guard !ids.isEmpty || !mine.isEmpty else { return }
+    /// A PR stops matching `review-requested:@me` once reviewed, and `reviewed-by:@me is:open`
+    /// once merged, so changes since the last refresh never report it leaving; each to-review
+    /// PR in `refreshed` is checked directly instead. It stays while open and either waiting on
+    /// the viewer or holding their approval or request for changes. The same check finds when
+    /// each was last asked of the viewer, which search doesn't say. The viewer's own open PRs
+    /// are checked alongside, for who each waits on, as asking search for that takes a full
+    /// page past GitHub's time limit.
+    private func checkReviewRequests(in refreshed: PullRequestSnapshot) async throws -> PullRequestSnapshot {
+        let ids = refreshed[.toReview].map(\.id)
+        let mine = refreshed[.mine].filter { $0.state == .open && !ids.contains($0.id) }.map(\.id)
+        guard !ids.isEmpty || !mine.isEmpty else { return refreshed }
         let login = try await viewerLogin()
         let requests = try await client.reviewRequests(for: ids + mine)
-        snapshot = try await store.updateRequestedReviewers(requests.mapValues(\.reviewers))
-        guard !ids.isEmpty else { return }
-        snapshot = try await store.updateReviewRequestTimes(requests.filter { ids.contains($0.key) }.mapValues { $0.lastRequested(of: login) })
-        let fulfilled = ids.filter { requests[$0]?.awaitReview(from: login) != true }
-        guard !fulfilled.isEmpty else { return }
-        snapshot = try await store.remove(fulfilled, from: .toReview)
+        var checked = try await store.updateRequestedReviewers(requests.mapValues(\.reviewers))
+        guard !ids.isEmpty else { return checked }
+        let toReview = requests.filter { ids.contains($0.key) }
+        checked = try await store.updateReviewRequestTimes(toReview.mapValues { $0.lastRequested(of: login) })
+        checked = try await store.updateViewerReviews(toReview.mapValues { $0.latestVerdict(by: login) })
+        let leaving = ids.filter { requests[$0]?.belongsInToReview(of: login) != true }
+        guard !leaving.isEmpty else { return checked }
+        return try await store.remove(leaving, from: .toReview)
     }
 
     /// Adds each looked-up PR to the lists it belongs in but isn't yet, as the searches would
     /// once they see it, and records when the viewer was last asked to review those in To
-    /// review. The rest are kept as checked directly. Nothing is taken out of a list here; the
+    /// review, and their verdict on them. The rest are kept as checked directly. Nothing is taken out of a list here; the
     /// refresh's own checks do that.
     private func placeInLists(_ lookups: [PullRequestLookup]) async throws {
         let login = try await viewerLogin()
@@ -281,6 +301,8 @@ public final class PullRequestListModel {
         if !requested.isEmpty {
             let times = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.lastRequested(of: login)) }) { $1 }
             snapshot = try await store.updateReviewRequestTimes(times)
+            let verdicts = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.latestVerdict(by: login)) }) { $1 }
+            snapshot = try await store.updateViewerReviews(verdicts)
         }
         for lookup in lookups {
             let id = lookup.pullRequest.id
@@ -370,18 +392,20 @@ public final class PullRequestListModel {
     }
 
     /// The lists the PR belongs in by what their searches match on: open and by the viewer for
-    /// Mine, open and waiting on the viewer's review (or any team's) for To review.
+    /// Mine; open and waiting on the viewer's review (or any team's), or holding their approval
+    /// or request for changes, for To review.
     private static func lists(for lookup: PullRequestLookup, viewer login: String) -> [PullRequestList] {
         let pullRequest = lookup.pullRequest
         let isMine = pullRequest.state == .open && pullRequest.author?.caseInsensitiveCompare(login) == .orderedSame
-        return [isMine ? .mine : nil, lookup.reviewRequests.awaitReview(from: login) ? .toReview : nil].compactMap(\.self)
+        return [isMine ? .mine : nil, lookup.reviewRequests.belongsInToReview(of: login) ? .toReview : nil].compactMap(\.self)
     }
 
     /// Whether `pullRequest` waits on a review request older than `staleRequestAge`. GitHub
     /// records a request as an update, so the PR's update time stands in when no request of the
-    /// viewer is known.
+    /// viewer is known. A PR the viewer has given a verdict on waits on its author or a merge,
+    /// not on them, so it's never stale.
     public func isStaleRequest(_ pullRequest: PullRequestSummary, in list: PullRequestList) -> Bool {
-        guard list == .toReview else { return false }
+        guard list == .toReview, verdict(on: pullRequest, in: list) == nil else { return false }
         let requestedAt = pullRequest.reviewRequestedAt ?? pullRequest.updatedAt
         return now().timeIntervalSince(requestedAt) > Self.staleRequestAge
     }

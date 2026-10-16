@@ -31,6 +31,9 @@
               }
             }
           ]
+        },
+        "latestOpinionatedReviews": {
+          "nodes": []
         }
       },
       {
@@ -63,6 +66,9 @@
               }
             }
           ]
+        },
+        "latestOpinionatedReviews": {
+          "nodes": []
         }
       },
       {
@@ -88,6 +94,9 @@
               }
             }
           ]
+        },
+        "latestOpinionatedReviews": {
+          "nodes": []
         }
       },
       {
@@ -113,6 +122,9 @@
               }
             }
           ]
+        },
+        "latestOpinionatedReviews": {
+          "nodes": []
         }
       },
       {
@@ -145,6 +157,9 @@
               }
             }
           ]
+        },
+        "latestOpinionatedReviews": {
+          "nodes": []
         }
       },
       {
@@ -184,6 +199,9 @@
               }
             }
           ]
+        },
+        "latestOpinionatedReviews": {
+          "nodes": []
         }
       }
     ]
