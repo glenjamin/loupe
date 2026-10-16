@@ -335,6 +335,10 @@ A hunk that starts inside a declaration lost most of its colours. Parsed alone, 
 
 The commit picker is a plain row like the Conversation row: a history symbol, the shown choice ("All changes" or `abc1234  headline`) truncating at the tail, and a small secondary `chevron.down` at the trailing end as the hint that it opens the list. It sits among rows, and a bordered pop-up-style button there read as a form field. It never takes the accent selection fill, being a choice of what the files show rather than a place to go; instead it shows a faint fill while hovered or while its list is open. The divider between it and the Conversation row is gone and the two sit as consecutive rows, with the divider under the picker still setting off the file list.
 
+### The request-review control is a button the size of Merge
+
+Asking for a review is a bordered "Reviewers" button with the `person.badge.plus` symbol, the same size as the Merge button and level with it, at the header's right end. As a caption-sized borderless glyph in the corner it read as decoration and sat higher than the Merge button beside it. Only the reviewer rows stay caption-sized, to the button's left, with the first row on the button's text baseline.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

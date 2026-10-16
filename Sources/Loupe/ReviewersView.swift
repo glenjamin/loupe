@@ -11,7 +11,8 @@ struct ReviewersBlock: View {
     @State private var asking = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        // The first reviewer row sits on the button's baseline, reading as one line with it.
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             if let error = tab.reviewRequestError, !asking {
                 Image(systemName: "exclamationmark.triangle")
                     .foregroundStyle(.diffDanger)
@@ -25,16 +26,16 @@ struct ReviewersBlock: View {
                         }
                     }
                 }
+                .font(.caption)
             }
-            Button("Request a review", systemImage: "person.badge.plus") { asking = true }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
+            // The size of Merge beside it, so the two read as the header's controls.
+            Button("Reviewers", systemImage: "person.badge.plus") { asking = true }
+                .buttonStyle(.bordered)
                 .help("Request a review")
                 .popover(isPresented: $asking, arrowEdge: .bottom) {
                     RequestReviewPopover(tab: tab)
                 }
         }
-        .font(.caption)
         .fixedSize()
         // Fetched ahead so the popover opens full; it retries and shows any failure itself.
         .task { try? await tab.fetchReviewerCandidates() }
