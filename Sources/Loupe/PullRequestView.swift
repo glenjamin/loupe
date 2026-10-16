@@ -218,6 +218,9 @@ struct PullRequestHeader: View {
                         }
                         DelayedSpinner(isActive: tab.isCheckingGitHub)
                             .help("Checking GitHub for changes…")
+                        if let error = tab.checkError {
+                            BackgroundErrorLabel(error: error)
+                        }
                     }
                 }
                 .font(.caption)
@@ -973,6 +976,19 @@ struct DelayedSpinner: View {
             .opacity(isActive && isShown ? 1 : 0)
             .frame(width: isActive ? nil : 0)
             .task(id: isActive) { isShown = await settled(isActive) }
+    }
+}
+
+/// Says quietly that a check made in the background failed, so stale content isn't taken as
+/// current; the full error is in the tooltip.
+struct BackgroundErrorLabel: View {
+    let error: String
+
+    var body: some View {
+        Label("Couldn't check for changes: \(error)", systemImage: "exclamationmark.triangle")
+            .truncationMode(.tail)
+            .layoutPriority(-1)
+            .help(error)
     }
 }
 

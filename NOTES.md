@@ -12,7 +12,7 @@ swift test                  # diff tests, plus PR list tests against a fake GitH
 swift build -c release      # for meaningful bench numbers
 ```
 
-Open the start screen: your open PRs (drafts included) beside the open PRs awaiting your review, newest first. It authenticates with `gh auth token`, so `gh` must be signed in. Clicking a PR (or selecting it with the arrow keys and pressing Return) opens it in a tab:
+Open the start screen: your open PRs (drafts included) beside the open PRs awaiting your review, newest first. It authenticates with `gh auth token`, so `gh` must be signed in. The `gh` run is Homebrew's when installed (`/opt/homebrew/bin/gh`, then `/usr/local/bin/gh`), else `/usr/bin/gh`, else whichever `PATH` finds; `LOUPE_GH=<path>` overrides the choice, as `LOUPE_GIT` does for git. Clicking a PR (or selecting it with the arrow keys and pressing Return) opens it in a tab:
 
 ```sh
 swift run Loupe

@@ -34,6 +34,9 @@ public final class PullRequestTab: Identifiable {
     /// Why the conversation couldn't be fetched last time it was asked for.
     public private(set) var conversationError: String?
     public private(set) var isFetchingConversation = false
+    /// Why GitHub couldn't be asked whether the PR has changed, until a check gets through. The
+    /// PR stays shown as stored meanwhile.
+    public internal(set) var checkError: String?
     /// Whether GitHub is being asked for anything that updates the PR or its conversation: a
     /// refresh of the lists it's in, a lookup of it by id, or a fetch of its conversation.
     public var isCheckingGitHub: Bool {
@@ -235,8 +238,10 @@ public final class PullRequestTab: Identifiable {
     public func reload() async {
         do {
             try await lists.checkForChanges(to: [id])
+            checkError = nil
         } catch {
             // The stored PR is diffed instead; it's what prompted the reload.
+            checkError = error.localizedDescription
             log("Couldn't check \(title) for changes: \(error)")
         }
         await retry()

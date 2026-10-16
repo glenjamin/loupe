@@ -702,6 +702,28 @@ struct TabsTests {
         #expect(tab.pendingChange == .newCommits)
     }
 
+    @Test func aFailedCheckOfAnOpenPullRequestSaysWhyUntilOneGetsThrough() async throws {
+        let app = try await App()
+        let pullRequest = app.toReview[0]
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        await app.github.refuseNotifications(status: 403)
+        _ = await app.tabs.watchForChanges()
+        #expect(tab.checkError == nil)
+        let stored = tab.pullRequest
+
+        await app.github.fail(with: .status(502))
+        _ = await app.tabs.watchForChanges()
+
+        #expect(tab.checkError == "GitHub returned HTTP 502")
+        #expect(tab.pullRequest == stored, "the stored PR stays shown")
+
+        await app.github.recover()
+        _ = await app.tabs.watchForChanges()
+
+        #expect(tab.checkError == nil)
+    }
+
     @Test func showingAPullRequestChecksItAndItsMergeStateOnceTheSelectionSettles() async throws {
         let app = try await App()
         let pullRequest = app.toReview[0]

@@ -210,7 +210,9 @@ public final class TabsModel {
             let ids = tabs.map(\.id)
             try await lists.checkForChanges(to: ids)
             try await lists.checkStatuses(of: ids)
+            for tab in tabs { tab.checkError = nil }
         } catch {
+            for tab in tabs { tab.checkError = error.localizedDescription }
             log("Couldn't check open PRs for changes: \(error.localizedDescription)")
         }
     }
