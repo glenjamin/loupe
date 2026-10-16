@@ -119,6 +119,13 @@ public final class PullRequestListModel {
         }
     }
 
+    /// Looks up the checks, merge state and review decision of the listed PRs with `ids` on
+    /// GitHub directly, for when something done from here changes whether they can merge.
+    public func checkStatuses(of ids: [String]) async throws {
+        guard !ids.isEmpty else { return }
+        snapshot = try await store.updateStatuses(try await client.statuses(ofPullRequests: ids))
+    }
+
     /// Nil until the repo's checkout has been looked for.
     public func checkout(for repository: String) -> CheckoutStatus? {
         checkouts[repository]

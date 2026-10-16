@@ -43,6 +43,8 @@ actor FakeGitHub: HTTPTransport {
     private var pollInterval: Int? = 60
     /// The input of every `mergePullRequest` received, in order.
     private(set) var mergesReceived: [MergeInput] = []
+    /// The PR id of every `markPullRequestReadyForReview` received, in order.
+    private(set) var readyForReviewReceived: [String] = []
     /// The status notifications are refused with, as for a token without access to them.
     private var notificationsRefusal: Int?
     /// The status of each notifications poll, in order.
@@ -173,6 +175,9 @@ actor FakeGitHub: HTTPTransport {
         if body.query.contains("mergePullRequest(") {
             return (try mergePullRequest(try #require(body.variables.input)), httpResponse(url, status: 200))
         }
+        if body.query.contains("markPullRequestReadyForReview(") {
+            return (try markReadyForReview(try #require(body.variables.input).pullRequestId), httpResponse(url, status: 200))
+        }
         let response: any Encodable = if let ids = body.variables.ids, body.query.contains("contexts") {
             try statuses(ids)
         } else if let ids = body.variables.ids, body.query.contains("reviewRequests") {
@@ -279,6 +284,23 @@ actor FakeGitHub: HTTPTransport {
         }
         try merge(input.pullRequestId)
         return try JSONSerialization.data(withJSONObject: ["data": ["mergePullRequest": ["pullRequest": ["id": input.pullRequestId, "state": "MERGED"]]]])
+    }
+
+    /// Takes the PR out of draft as GitHub does, which then works out afresh whether it can be
+    /// merged, refusing a PR it can't find in the shape of its `NOT_FOUND` errors.
+    private func markReadyForReview(_ id: String) throws -> Data {
+        readyForReviewReceived.append(id)
+        guard pullRequests.contains(where: { $0.id == id }) else {
+            return try JSONSerialization.data(withJSONObject: [
+                "data": ["markPullRequestReadyForReview": NSNull()],
+                "errors": [["type": "NOT_FOUND", "path": ["markPullRequestReadyForReview"], "locations": [["line": 2, "column": 3]], "message": "Could not resolve to a node with the global id of '\(id)'"]],
+            ])
+        }
+        try edit(id) {
+            $0.isDraft = false
+            $0.mergeStateStatus = "UNKNOWN"
+        }
+        return try JSONSerialization.data(withJSONObject: ["data": ["markPullRequestReadyForReview": ["pullRequest": ["id": id, "isDraft": false]]]])
     }
 
     private func viewer(_ query: String) throws -> Envelope<[String: [String: String]]> {
@@ -529,7 +551,8 @@ private struct GraphQLRequest: Decodable {
     }
 }
 
-/// What a `mergePullRequest` asked for.
+/// What a `mergePullRequest` asked for, or a `markPullRequestReadyForReview`, which gives
+/// only the id.
 struct MergeInput: Codable, Equatable {
     let pullRequestId: String
     let mergeMethod: String?

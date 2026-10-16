@@ -363,6 +363,12 @@ The user found marking reviewed by pulling worked less well in a file shorter th
 
 The user also asked for room to scroll past the end. The diff now ends in a gutter of half the view's height, as a bottom content inset below the footer, so a long file's end has its footer about mid-view, and the pull counts only once the view is scrolled to the gutter's end. A file shorter than the view can scroll the gutter too, past the view's own height, but no further than brings its footer to the top, so the footer still shows the pull's progress; a very short file scrolls only that far. The footer stays directly under the last row, and the hint stays in the rubber band's gap below the end.
 
+### A draft offers "Ready for review" in place of Merge
+
+On the viewer's own open draft, the merge section shows a "Ready for review" button where Merge would be, the same size and prominence with the default accent tint, and no reason beneath it. A disabled red Merge with "Draft" under it said nothing the header's Draft badge didn't, while the useful next step for a draft is leaving draft. The wording is GitHub's own, so it reads as the same action as on github.com. A draft gives this button whatever its reviews, conflicts or checks, as github.com offers "Ready for review" on any draft; "Draft" is no longer one of the merge's blocked reasons. This refines "The viewer's own PRs can be merged from the header".
+
+Clicking calls `markPullRequestReadyForReview` at once, with no confirmation, since GitHub lets a PR be turned back into a draft. The merge's spinner shows while it runs, and a refusal shows under the button as a refused merge's does. Afterwards the PR is looked up again by id, and its merge state with it, because GitHub's `BLOCKED` for the draft no longer applies; the button becomes Merge with whatever reason then holds.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

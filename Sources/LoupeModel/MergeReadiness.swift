@@ -3,6 +3,8 @@
 public enum MergeReadiness: Sendable, Equatable {
     /// GitHub would merge it (`CLEAN`, `HAS_HOOKS` or `UNSTABLE`) and it's approved.
     case ready
+    /// A draft, whatever its reviews, conflicts or checks: its next step is leaving draft.
+    case draft
     case blocked(MergeBlocker)
     /// GitHub hasn't worked out whether it can merge yet, or hasn't been asked.
     case checking
@@ -12,7 +14,9 @@ public enum MergeReadiness: Sendable, Equatable {
         guard pullRequest.state == .open else { return nil }
         let state = pullRequest.mergeStateStatus ?? .unknown
         let base = pullRequest.baseRefName
-        if state == .dirty || pullRequest.mergeable == .conflicting {
+        if pullRequest.isDraft || state == .draft {
+            self = .draft
+        } else if state == .dirty || pullRequest.mergeable == .conflicting {
             self = .blocked(.conflicts(base: base))
         } else if pullRequest.reviewDecision == .changesRequested {
             self = .blocked(.changesRequested)
@@ -20,12 +24,9 @@ public enum MergeReadiness: Sendable, Equatable {
             // No decision at all, from a base that doesn't require reviews, counts as not
             // approved too: only approved PRs are merged from here.
             self = .blocked(.notApproved)
-        } else if state == .blocked, !pullRequest.isDraft {
-            // A draft is also BLOCKED; the draft is the reason that's useful to give.
+        } else if state == .blocked {
             let failing = pullRequest.checks == .failure || pullRequest.checks == .error
             self = .blocked(failing ? .checksFailing : .branchProtection)
-        } else if pullRequest.isDraft || state == .draft {
-            self = .blocked(.draft)
         } else if state == .behind {
             self = .blocked(.behind(base: base))
         } else if [.clean, .hasHooks, .unstable].contains(state) {
@@ -36,7 +37,7 @@ public enum MergeReadiness: Sendable, Equatable {
     }
 }
 
-/// Why a PR can't be merged.
+/// Why a PR that isn't a draft can't be merged.
 public enum MergeBlocker: Sendable, Equatable {
     case conflicts(base: String)
     case changesRequested
@@ -44,7 +45,6 @@ public enum MergeBlocker: Sendable, Equatable {
     case checksFailing
     /// Blocked by the base branch's rules for some other reason, such as checks still running.
     case branchProtection
-    case draft
     case behind(base: String)
 
     /// A few words to show beside the merge button.
@@ -55,7 +55,6 @@ public enum MergeBlocker: Sendable, Equatable {
         case .notApproved: "Not approved"
         case .checksFailing: "Checks failing"
         case .branchProtection: "Blocked by branch protection"
-        case .draft: "Draft"
         case let .behind(base): "Behind \(base)"
         }
     }

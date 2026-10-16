@@ -19,8 +19,12 @@ struct MergeTests {
         MergeCase("BLOCKED", "CHANGES_REQUESTED", expect: .blocked(.changesRequested)),
         MergeCase("BLOCKED", "APPROVED", checks: "FAILURE", expect: .blocked(.checksFailing)),
         MergeCase("BLOCKED", "APPROVED", checks: "PENDING", expect: .blocked(.branchProtection)),
-        // GitHub says BLOCKED for a draft, not the deprecated DRAFT.
-        MergeCase("BLOCKED", "APPROVED", isDraft: true, expect: .blocked(.draft)),
+        // GitHub says BLOCKED for a draft, not the deprecated DRAFT. A draft's next step is
+        // leaving draft, whatever else would stop it merging.
+        MergeCase("BLOCKED", "APPROVED", isDraft: true, expect: .draft),
+        MergeCase("BLOCKED", "REVIEW_REQUIRED", checks: "FAILURE", isDraft: true, expect: .draft),
+        MergeCase("DIRTY", "CHANGES_REQUESTED", mergeable: "CONFLICTING", isDraft: true, expect: .draft),
+        MergeCase("DRAFT", "APPROVED", expect: .draft),
         MergeCase("BEHIND", "APPROVED", expect: .blocked(.behind(base: "master"))),
         MergeCase("UNKNOWN", "APPROVED", mergeable: "UNKNOWN", expect: .checking),
     ])
@@ -102,6 +106,61 @@ struct MergeTests {
         #expect(tab.pullRequest.state == .open)
     }
 
+    @Test func markingADraftReadyForReviewTakesItOutOfDraftAndOffersTheMerge() async throws {
+        let app = try await MergeApp()
+        let pullRequest = try app.mergeable()
+        try await app.github.edit(pullRequest.id) { $0.isDraft = true }
+        try await app.github.setMergeState(of: pullRequest.id, "BLOCKED")
+        let tab = try await app.open(pullRequest)
+        await app.tabs.lists.refresh()
+        #expect(tab.mergeReadiness == .draft)
+
+        await tab.merge()
+        #expect(await app.github.mergesReceived.isEmpty, "a draft isn't merged")
+
+        await tab.markReadyForReview()
+
+        #expect(await app.github.readyForReviewReceived == [pullRequest.id])
+        #expect(!tab.pullRequest.isDraft)
+        // GitHub works out afresh whether it can merge, rather than keeping the draft's BLOCKED.
+        #expect(tab.mergeReadiness == .checking)
+        #expect(!tab.isMerging)
+        #expect(tab.mergeError == nil)
+
+        try await app.github.setMergeState(of: pullRequest.id, "CLEAN")
+        await app.tabs.lists.refresh()
+        #expect(tab.mergeReadiness == .ready)
+    }
+
+    @Test func readyForReviewGitHubRefusesSaysWhyAndLeavesItADraft() async throws {
+        let app = try await MergeApp()
+        let pullRequest = try app.mergeable()
+        try await app.github.edit(pullRequest.id) { $0.isDraft = true }
+        let tab = try await app.open(pullRequest)
+        await app.tabs.lists.refresh()
+
+        // As when the viewer loses access to the repo after the last lookup.
+        await app.github.delete(pullRequest.id)
+        await tab.markReadyForReview()
+
+        let error = try #require(tab.mergeError)
+        #expect(error.contains("Could not resolve to a node"))
+        #expect(tab.pullRequest.isDraft)
+        #expect(tab.mergeReadiness == .draft)
+        #expect(!tab.isMerging)
+    }
+
+    @Test func onlyADraftIsMarkedReadyForReview() async throws {
+        let app = try await MergeApp()
+        let pullRequest = try app.mergeable()
+        try await app.github.setMergeState(of: pullRequest.id, "CLEAN")
+        let tab = try await app.open(pullRequest)
+        await app.tabs.lists.refresh()
+
+        await tab.markReadyForReview()
+        #expect(await app.github.readyForReviewReceived.isEmpty)
+    }
+
     @Test func someoneElsesPullRequestOffersNoMerge() async throws {
         let app = try await MergeApp()
         let pullRequest = app.conversation.toReview[0]
@@ -177,13 +236,15 @@ private struct MergeApp {
     }
 }
 
-/// Sends merges to the GitHub holding the PRs and everything else a tab asks to the details.
+/// Sends merges and leaving draft to the GitHub holding the PRs and everything else a tab asks
+/// to the details.
 private struct MergeTransport: HTTPTransport {
     let github: FakeGitHub
     let details: FakePullRequestDetails
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let isMerge = request.httpBody.map { String(decoding: $0, as: UTF8.self).contains("mergePullRequest(") } ?? false
-        return isMerge ? try await github.send(request) : try await details.send(request)
+        let body = request.httpBody.map { String(decoding: $0, as: UTF8.self) } ?? ""
+        let changesThePullRequest = body.contains("mergePullRequest(") || body.contains("markPullRequestReadyForReview(")
+        return changesThePullRequest ? try await github.send(request) : try await details.send(request)
     }
 }

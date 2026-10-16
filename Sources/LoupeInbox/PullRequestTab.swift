@@ -35,9 +35,9 @@ public final class PullRequestTab: Identifiable {
     public var isPickingCommit = false
     /// Why GitHub refused the last request for a review, until another is made.
     public private(set) var reviewRequestError: String?
-    /// Whether a merge is on its way to GitHub.
+    /// Whether a merge, or taking the PR out of draft, is on its way to GitHub.
     public private(set) var isMerging = false
-    /// Why GitHub refused the last merge, until another is tried.
+    /// Why GitHub refused the last merge or "Ready for review", until another is tried.
     public private(set) var mergeError: String?
     /// Its markdown files as GitHub renders them, and which are shown so.
     public let markdown: MarkdownPreviews
@@ -398,6 +398,27 @@ public final class PullRequestTab: Identifiable {
             try await lists.checkForChanges(to: [id])
         } catch {
             log("Couldn't look up \(title) after merging it: \(error.localizedDescription)")
+        }
+    }
+
+    /// Takes the draft out of draft on GitHub, then looks it up again, merge state included, so
+    /// the header, its tab and the merge box show it ready for review. A refusal is kept to show.
+    public func markReadyForReview() async {
+        guard !isMerging, mergeReadiness == .draft else { return }
+        isMerging = true
+        defer { isMerging = false }
+        mergeError = nil
+        do {
+            try await client.markReadyForReview(id: id)
+        } catch {
+            mergeError = "Couldn't mark ready for review: \(error.localizedDescription)"
+            return
+        }
+        do {
+            try await lists.checkForChanges(to: [id])
+            try await lists.checkStatuses(of: [id])
+        } catch {
+            log("Couldn't look up \(title) after marking it ready for review: \(error.localizedDescription)")
         }
     }
 

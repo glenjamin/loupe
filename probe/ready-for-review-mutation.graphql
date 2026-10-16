@@ -1,0 +1,5 @@
+# Never run: it takes the PR out of draft.
+# variables: {"input": {"pullRequestId": "PR_…"}}
+mutation($input: MarkPullRequestReadyForReviewInput!) {
+  markPullRequestReadyForReview(input: $input) { pullRequest { id isDraft } }
+}

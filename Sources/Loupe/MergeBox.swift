@@ -3,9 +3,10 @@ import LoupeModel
 import SwiftUI
 
 /// GitHub's merge box in miniature, on the viewer's own open PRs: a Merge button, green when
-/// it can be merged and red when it can't, with the first reason why beneath it. Only merge
-/// commits are made. Merging asks first and names the branches; GitHub's refusal is shown by
-/// `MergeErrorLabel`.
+/// it can be merged and red when it can't, with the first reason why beneath it, or on a draft
+/// a "Ready for review" button in its place. Only merge commits are made. Merging asks first
+/// and names the branches; leaving draft doesn't, as GitHub lets it be undone. GitHub's refusal
+/// of either is shown by `MergeErrorLabel`.
 struct MergeBox: View {
     let tab: PullRequestTab
     let readiness: MergeReadiness
@@ -14,7 +15,18 @@ struct MergeBox: View {
     var body: some View {
         let pullRequest = tab.pullRequest
         VStack(spacing: 2) {
-            button(pullRequest)
+            HStack(spacing: 6) {
+                if tab.isMerging {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                if readiness == .draft {
+                    readyForReviewButton
+                } else {
+                    mergeButton(pullRequest)
+                }
+            }
+            .fixedSize()
             reason
         }
         .alert(Text(verbatim: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName)?"), isPresented: $confirming) {
@@ -35,19 +47,19 @@ struct MergeBox: View {
         }
     }
 
-    private func button(_ pullRequest: PullRequestSummary) -> some View {
-        HStack(spacing: 6) {
-            if tab.isMerging {
-                ProgressView()
-                    .controlSize(.small)
-            }
-            Button("Merge", systemImage: "arrow.triangle.merge") { confirming = true }
-                .buttonStyle(.borderedProminent)
-                .tint(tint)
-                .disabled(readiness != .ready || tab.isMerging)
-                .help(help(pullRequest))
-        }
-        .fixedSize()
+    private var readyForReviewButton: some View {
+        Button("Ready for review", systemImage: "checkmark.circle") { Task { await tab.markReadyForReview() } }
+            .buttonStyle(.borderedProminent)
+            .disabled(tab.isMerging)
+            .help("Mark this PR ready for review on GitHub")
+    }
+
+    private func mergeButton(_ pullRequest: PullRequestSummary) -> some View {
+        Button("Merge", systemImage: "arrow.triangle.merge") { confirming = true }
+            .buttonStyle(.borderedProminent)
+            .tint(tint)
+            .disabled(readiness != .ready || tab.isMerging)
+            .help(help(pullRequest))
     }
 
     /// Green to go, red when blocked, and the plain disabled button while GitHub works it out.
@@ -55,7 +67,7 @@ struct MergeBox: View {
         switch readiness {
         case .ready: .green
         case .blocked: .red
-        case .checking: nil
+        case .checking, .draft: nil
         }
     }
 
@@ -63,12 +75,13 @@ struct MergeBox: View {
         switch readiness {
         case .ready: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName) with a merge commit"
         case let .blocked(blocker): "Can't merge: \(blocker.description)"
-        case .checking: "GitHub is still working out whether this can be merged"
+        case .checking, .draft: "GitHub is still working out whether this can be merged"
         }
     }
 }
 
-/// GitHub's refusal of a merge, under the Merge button, wrapping within the merge section.
+/// GitHub's refusal of a merge or of leaving draft, under the button, wrapping within the
+/// merge section.
 struct MergeErrorLabel: View {
     let error: String
 
