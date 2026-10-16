@@ -40,6 +40,9 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     public let commitCount: Int?
     public let commentCount: Int?
     public let reviewThreadCount: Int?
+    /// When the viewer was last asked to review, as the to-review list's check found it. Nil
+    /// until checked, or when GitHub's timeline had no request of the viewer to show.
+    public let reviewRequestedAt: Date?
 
     public init(
         id: String,
@@ -64,7 +67,8 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         baseRefOid: String? = nil,
         commitCount: Int? = nil,
         commentCount: Int? = nil,
-        reviewThreadCount: Int? = nil
+        reviewThreadCount: Int? = nil,
+        reviewRequestedAt: Date? = nil
     ) {
         self.id = id
         self.repository = repository
@@ -89,6 +93,7 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.commitCount = commitCount
         self.commentCount = commentCount
         self.reviewThreadCount = reviewThreadCount
+        self.reviewRequestedAt = reviewRequestedAt
     }
 }
 
@@ -127,27 +132,42 @@ public enum PullRequestState: String, Sendable, LenientEnum {
     case unknown
 }
 
-/// A PR's state and whose review it's currently waiting on.
+/// A PR's state, whose review it's currently waiting on, and its latest requests for review.
 public struct ReviewRequests: Sendable, Equatable {
     public let state: PullRequestState
     public let reviewers: [RequestedReviewer]
+    /// The latest requests from the PR's timeline, re-requests included, whether or not still
+    /// pending.
+    public let events: [ReviewRequestEvent]
 
-    public init(state: PullRequestState, reviewers: [RequestedReviewer]) {
+    public init(state: PullRequestState, reviewers: [RequestedReviewer], events: [ReviewRequestEvent] = []) {
         self.state = state
         self.reviewers = reviewers
+        self.events = events
+    }
+
+    /// When `login` was last asked to review, as far as the latest requests go back. A request
+    /// of any team counts, for the same reason as in `awaitReview(from:)`.
+    public func lastRequested(of login: String) -> Date? {
+        events.filter { $0.reviewer.mayBe(login) }.map(\.createdAt).max()
     }
 
     /// Whether the PR is open and still waiting on `login`. A request to any team counts, as
     /// GitHub's `review-requested:@me` matches the viewer's teams and team membership isn't
     /// known here.
     public func awaitReview(from login: String) -> Bool {
-        state == .open && reviewers.contains { reviewer in
-            switch reviewer {
-            case let .user(requested): requested.caseInsensitiveCompare(login) == .orderedSame
-            case .team: true
-            case .other: false
-            }
-        }
+        state == .open && reviewers.contains { $0.mayBe(login) }
+    }
+}
+
+/// One request for review, as GitHub's timeline records it.
+public struct ReviewRequestEvent: Sendable, Equatable {
+    public let reviewer: RequestedReviewer
+    public let createdAt: Date
+
+    public init(reviewer: RequestedReviewer, createdAt: Date) {
+        self.reviewer = reviewer
+        self.createdAt = createdAt
     }
 }
 
@@ -156,6 +176,15 @@ public enum RequestedReviewer: Sendable, Hashable {
     case team(slug: String)
     /// A bot, mannequin or deleted account: never the viewer.
     case other
+
+    /// Whether this could be `login`: that user, or any team, as team membership isn't known.
+    func mayBe(_ login: String) -> Bool {
+        switch self {
+        case let .user(requested): requested.caseInsensitiveCompare(login) == .orderedSame
+        case .team: true
+        case .other: false
+        }
+    }
 }
 
 public enum ReviewDecision: String, Sendable, LenientEnum {

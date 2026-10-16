@@ -76,7 +76,11 @@ struct SearchPageResponse: Decodable {
 
 extension ReviewRequests {
     init(_ node: NodesResponse.PullRequestNode) {
-        self.init(state: node.state, reviewers: node.reviewRequests.nodes.map { $0.requestedReviewer?.reviewer ?? .other })
+        self.init(
+            state: node.state,
+            reviewers: node.reviewRequests.nodes.map { $0.requestedReviewer?.reviewer ?? .other },
+            events: node.requestEvents.nodes.map { ReviewRequestEvent(reviewer: $0.requestedReviewer?.reviewer ?? .other, createdAt: $0.createdAt) }
+        )
     }
 }
 
@@ -107,9 +111,16 @@ struct NodesResponse: Decodable {
         let id: String
         let state: PullRequestState
         let reviewRequests: SearchPageResponse.Connection<ReviewRequest>
+        let requestEvents: SearchPageResponse.Connection<RequestEvent>
     }
 
     struct ReviewRequest: Decodable {
+        /// Null when the requested account has been deleted.
+        let requestedReviewer: Reviewer?
+    }
+
+    struct RequestEvent: Decodable {
+        let createdAt: Date
         /// Null when the requested account has been deleted.
         let requestedReviewer: Reviewer?
     }

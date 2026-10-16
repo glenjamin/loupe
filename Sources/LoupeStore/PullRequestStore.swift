@@ -106,6 +106,18 @@ public struct PullRequestStore: Sendable {
         }
     }
 
+    /// Records when the viewer was last asked to review each PR in `requestedAt`, keyed by id,
+    /// nil where GitHub showed no such request. PRs no longer stored are left out.
+    @discardableResult
+    public func updateReviewRequestTimes(_ requestedAt: [String: Date?]) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            for (id, date) in requestedAt {
+                try db.execute(sql: "UPDATE pullRequest SET reviewRequestedAt = ? WHERE id = ?", arguments: [date, id])
+            }
+            return try Self.snapshot(db)
+        }
+    }
+
     /// The signed-in user's GitHub login, once it's been looked up.
     public func viewerLogin() throws -> String? {
         try database.read { db in try Setting.fetchOne(db, key: Setting.viewerLogin)?.value }
@@ -392,6 +404,12 @@ public struct PullRequestStore: Sendable {
             }
             try db.create(index: "reviewRequestByRepository", on: "reviewRequest", columns: ["repository", "requestedAt"])
         }
+        // Nullable, as only the to-review list's check of its requests fetches it.
+        migrator.registerMigration("Pull request review requested at") { db in
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "reviewRequestedAt", .datetime)
+            }
+        }
         return migrator
     }
 
@@ -473,6 +491,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let reviewThreadCount: Int?
     let mergeable: String?
     let mergeStateStatus: String?
+    let reviewRequestedAt: Date?
 
     /// Anything `pullRequest` lacks because only a lookup by id fetches it is kept from `stored`.
     init(_ pullRequest: PullRequestSummary, keepingLookupsFrom stored: PullRequestRow?) {
@@ -498,6 +517,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         reviewThreadCount = pullRequest.reviewThreadCount ?? stored?.reviewThreadCount
         mergeable = pullRequest.mergeable?.rawValue ?? stored?.mergeable
         mergeStateStatus = pullRequest.mergeStateStatus?.rawValue ?? stored?.mergeStateStatus
+        reviewRequestedAt = pullRequest.reviewRequestedAt ?? stored?.reviewRequestedAt
     }
 
     func summary(checkContexts: [CheckContext]) -> PullRequestSummary {
@@ -525,7 +545,8 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             baseRefOid: baseRefOid,
             commitCount: commitCount,
             commentCount: commentCount,
-            reviewThreadCount: reviewThreadCount
+            reviewThreadCount: reviewThreadCount,
+            reviewRequestedAt: reviewRequestedAt
         )
     }
 }

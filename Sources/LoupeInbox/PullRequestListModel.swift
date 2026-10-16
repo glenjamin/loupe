@@ -32,6 +32,8 @@ public final class PullRequestListModel {
     private let staleAfter: Duration
     /// Waits out the refresh interval; tests pass one they control.
     private let sleep: @Sendable (Duration) async throws -> Void
+    /// The time to judge review requests' age by; tests pass one they control.
+    private let now: @MainActor () -> Date
 
     public init(
         client: GitHubClient = GitHubClient(),
@@ -40,6 +42,7 @@ public final class PullRequestListModel {
         staleAfter: Duration = .seconds(300),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         checkoutSearchRoots: [URL] = CheckoutResolver.defaultSearchRoots,
+        now: @escaping @MainActor () -> Date = { .now },
         onOpen: @escaping @MainActor (PullRequestSummary) -> Void
     ) {
         self.client = client
@@ -48,6 +51,7 @@ public final class PullRequestListModel {
         self.refreshInterval = refreshInterval
         self.staleAfter = staleAfter
         self.sleep = sleep
+        self.now = now
         self.onOpen = onOpen
         do {
             snapshot = try store.snapshot()
@@ -81,9 +85,17 @@ public final class PullRequestListModel {
         }
     }
 
-    /// Newest first. Closed and merged PRs stay stored, but are left out unless asked for.
+    /// Newest first. Closed and merged PRs stay stored, but are left out unless asked for. So do
+    /// PRs whose request for the viewer's review has gone unanswered too long to be worth
+    /// listing; a fresh request brings one back.
     public func pullRequests(in list: PullRequestList, includingClosed: Bool = false) -> [PullRequestSummary] {
-        includingClosed ? snapshot[list] : snapshot[list].filter { $0.state == .open }
+        listed(in: list, includingClosed: includingClosed).filter { !isStaleRequest($0, in: list) }
+    }
+
+    /// How many PRs `pullRequests(in:includingClosed:)` leaves out for their review request's
+    /// age.
+    public func staleRequestCount(in list: PullRequestList, includingClosed: Bool = false) -> Int {
+        listed(in: list, includingClosed: includingClosed).count { isStaleRequest($0, in: list) }
     }
 
     /// Whether there's anything from GitHub to show yet, even if out of date.
@@ -193,11 +205,11 @@ public final class PullRequestListModel {
                     let since = lastRefreshed - Self.refreshOverlap.timeInterval
                     let changed = try await client.pullRequests(in: list, updatedSince: since)
                     snapshot = try await store.merge(list, with: changed, refreshedAt: startedAt)
-                    if list == .toReview { try await dropFulfilledReviewRequests() }
                 } else {
                     let open = try await client.pullRequests(in: list)
                     snapshot = try await store.replace(list, with: open, refreshedAt: startedAt)
                 }
+                if list == .toReview { try await checkReviewRequests() }
             } catch {
                 let message = error.localizedDescription
                 if !failures.contains(message) { failures.append(message) }
@@ -207,12 +219,14 @@ public final class PullRequestListModel {
     }
 
     /// A PR stops matching `review-requested:@me` once reviewed, so changes since the last
-    /// refresh never report it leaving; each to-review PR is checked directly instead.
-    private func dropFulfilledReviewRequests() async throws {
+    /// refresh never report it leaving; each to-review PR is checked directly instead. The same
+    /// check finds when each was last asked of the viewer, which search doesn't say.
+    private func checkReviewRequests() async throws {
         let ids = snapshot[.toReview].map(\.id)
         guard !ids.isEmpty else { return }
         let login = try await viewerLogin()
         let requests = try await client.reviewRequests(for: ids)
+        snapshot = try await store.updateReviewRequestTimes(requests.mapValues { $0.lastRequested(of: login) })
         let fulfilled = ids.filter { requests[$0]?.awaitReview(from: login) != true }
         guard !fulfilled.isEmpty else { return }
         snapshot = try await store.remove(fulfilled, from: .toReview)
@@ -282,6 +296,22 @@ public final class PullRequestListModel {
     /// How far before the last refresh to ask for changes from, allowing for clock skew and
     /// GitHub's search index lagging behind its updates.
     static let refreshOverlap = Duration.seconds(120)
+
+    /// How long a request for the viewer's review stays listed unanswered.
+    static let staleRequestAge: TimeInterval = 14 * 24 * 60 * 60
+
+    private func listed(in list: PullRequestList, includingClosed: Bool) -> [PullRequestSummary] {
+        includingClosed ? snapshot[list] : snapshot[list].filter { $0.state == .open }
+    }
+
+    /// Whether `pullRequest` waits on a review request older than `staleRequestAge`. GitHub
+    /// records a request as an update, so the PR's update time stands in when no request of the
+    /// viewer is known.
+    private func isStaleRequest(_ pullRequest: PullRequestSummary, in list: PullRequestList) -> Bool {
+        guard list == .toReview else { return false }
+        let requestedAt = pullRequest.reviewRequestedAt ?? pullRequest.updatedAt
+        return now().timeIntervalSince(requestedAt) > Self.staleRequestAge
+    }
 }
 
 /// Whether a repo's local checkout is known.

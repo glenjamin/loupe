@@ -122,6 +122,14 @@ struct PullRequestColumn: View {
                     return .handled
                 }
             }
+            let stale = model.staleRequestCount(in: list, includingClosed: showsClosed)
+            if stale > 0 {
+                Text("\(stale) older than two weeks hidden")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

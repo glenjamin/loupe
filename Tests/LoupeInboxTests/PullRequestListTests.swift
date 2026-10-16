@@ -313,6 +313,85 @@ struct PullRequestListTests {
         #expect(model.pullRequests(in: .toReview).count == 12)
     }
 
+    @Test func aReviewRequestOverTwoWeeksOldIsHiddenAndCounted() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let toReview = model.pullRequests(in: .toReview)
+        let stale = toReview[0]
+        let recent = toReview[1]
+
+        try await github.setRequestEvents(of: stale.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(15))])
+        try await github.setRequestEvents(of: recent.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(13))])
+        await model.refresh()
+
+        #expect(model.error == nil)
+        #expect(!model.pullRequests(in: .toReview).contains { $0.id == stale.id })
+        #expect(model.pullRequests(in: .toReview).contains { $0.id == recent.id })
+        #expect(model.pullRequests(in: .toReview).count == 12)
+        #expect(model.staleRequestCount(in: .toReview) == 1)
+        #expect(model.pullRequests(in: .mine).count == 50, "the viewer's own PRs aren't requests")
+        #expect(model.staleRequestCount(in: .mine) == 0)
+    }
+
+    @Test func theViewersLatestRequestCountsNotSomeoneElses() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        try await github.replayRequestEvents(fromProbe: "review-requests.json")
+        let clock = StoppedClock(at: try Date("2026-10-16T12:00:00Z", strategy: .iso8601))
+        let model = try listModel(github, now: { clock.now })
+
+        await model.refresh()
+
+        // Re-requested, so the later of two.
+        let lift = try #require(model.pullRequest(id: "PR_kwDOTPMj4M8AAAABABV3wg"))
+        #expect(lift.reviewRequestedAt == (try Date("2026-08-17T16:25:20Z", strategy: .iso8601)))
+        // The viewer's request, not the later one of rowan-ashby.
+        let bedrock = try #require(model.pullRequest(id: "PR_kwDOB75F5s7-Gq3V"))
+        #expect(bedrock.reviewRequestedAt == (try Date("2026-08-12T14:43:47Z", strategy: .iso8601)))
+        // Every PR the probe found requests on had waited over two weeks.
+        #expect(model.staleRequestCount(in: .toReview) == 6)
+        #expect(model.pullRequests(in: .toReview).count == 7)
+    }
+
+    @Test func aReRequestBringsBackAPullRequestHiddenForAnOldRequest() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let old = try #require(model.pullRequests(in: .toReview).first)
+        try await github.setRequestEvents(of: old.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(40))])
+        await model.refresh()
+        #expect(!model.pullRequests(in: .toReview).contains { $0.id == old.id })
+
+        try await github.requestReview(of: old.id, at: .now - days(1))
+        await model.refresh()
+
+        #expect(model.pullRequests(in: .toReview).contains { $0.id == old.id })
+        #expect(model.staleRequestCount(in: .toReview) == 0)
+    }
+
+    @Test func withNoRequestOnRecordThePullRequestsUpdateTimeIsItsAge() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let clock = StoppedClock(at: .now)
+        let store = try PullRequestStore.inMemory()
+        let model = try listModel(github, store: store, now: { clock.now })
+        await model.refresh()
+        let unrecorded = try #require(model.pullRequests(in: .toReview).last)
+        try await github.setRequestEvents(of: unrecorded.id, [])
+
+        clock.now = unrecorded.updatedAt + days(13)
+        await model.refresh()
+        let shown = try #require(model.pullRequests(in: .toReview).first { $0.id == unrecorded.id })
+        #expect(shown.reviewRequestedAt == nil)
+
+        clock.now = unrecorded.updatedAt + days(15)
+        #expect(!model.pullRequests(in: .toReview).contains { $0.id == unrecorded.id })
+        // Hidden, not forgotten: still stored, and shown again by a clock that says it's younger.
+        #expect(try store.snapshot()[.toReview].contains { $0.id == unrecorded.id })
+        #expect(model.pullRequest(id: unrecorded.id) != nil)
+        clock.now = unrecorded.updatedAt + days(13)
+        #expect(model.pullRequests(in: .toReview).contains { $0.id == unrecorded.id })
+    }
+
     @Test func aPullRequestThatCanNoLongerBeFoundLeavesToReview() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
@@ -481,7 +560,8 @@ private func listModel(
     store: PullRequestStore? = nil,
     refreshInterval: Duration = .seconds(180),
     staleAfter: Duration = .seconds(300),
-    sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+    now: @escaping @MainActor () -> Date = { .now }
 ) throws -> PullRequestListModel {
     try PullRequestListModel(
         client: github.client(token: token),
@@ -490,8 +570,23 @@ private func listModel(
         staleAfter: staleAfter,
         sleep: sleep,
         checkoutSearchRoots: [],
+        now: now,
         onOpen: { _ in }
     )
+}
+
+private func days(_ count: Double) -> TimeInterval {
+    count * 24 * 60 * 60
+}
+
+/// A time that moves only when the test sets it.
+@MainActor
+private final class StoppedClock {
+    var now: Date
+
+    init(at now: Date) {
+        self.now = now
+    }
 }
 
 /// Stands in for the clock the refresh loop sleeps on: a sleep lasts until the test advances

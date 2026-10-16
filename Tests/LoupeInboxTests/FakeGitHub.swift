@@ -54,14 +54,15 @@ actor FakeGitHub: HTTPTransport {
     private(set) var notificationPolls: [Int] = []
 
     /// Serves the PRs captured in a probe response, with review requested of the viewer on
-    /// the to-review ones. The probe asked GitHub to sort by update time; `reversed` checks the
-    /// app doesn't depend on that.
+    /// the to-review ones just now. The probe asked GitHub to sort by update time; `reversed`
+    /// checks the app doesn't depend on that.
     init(fixture: String, reversed: Bool = false, maxPageSize: Int = 100, viewerTeams: Set<String> = []) throws {
         let data = try Data(contentsOf: projectRoot.appending(path: "probe/\(fixture)"))
         let probe = try JSONDecoder().decode(ProbeResponse.self, from: data).data
         var toReview = probe.toReview.nodes
         for index in toReview.indices {
             toReview[index].requestedReviewers = [.user(Self.viewer)]
+            toReview[index].requestEvents = [.init(reviewer: .user(Self.viewer), createdAt: .now)]
         }
         var all = probe.mine.nodes + toReview
         let statuses = try JSONDecoder().decode(StatusProbe.self, from: Data(contentsOf: projectRoot.appending(path: "probe/pr-status.json"))).data.nodes
@@ -106,6 +107,36 @@ actor FakeGitHub: HTTPTransport {
         // A second on from the last at least, so each change reaches a poll that saw the last;
         // HTTP dates are whole seconds.
         notified[id] = max(.now, (notified.values.max() ?? Self.quietSince) + 1)
+    }
+
+    /// Asks `reviewer` to review the PR with `id` at `date`, as a request or re-request, which
+    /// GitHub records as an update.
+    func requestReview(of id: String, from reviewer: FakePullRequest.Reviewer = .user(viewer), at date: Date = .now) throws {
+        try edit(id) { pullRequest in
+            pullRequest.requestEvents.append(.init(reviewer: reviewer, createdAt: date))
+            if !pullRequest.requestedReviewers.contains(reviewer) { pullRequest.requestedReviewers.append(reviewer) }
+        }
+    }
+
+    /// Makes `events` the whole history of review requests on the PR with `id`, as though made
+    /// long ago and so not an update now.
+    func setRequestEvents(of id: String, _ events: [FakePullRequest.RequestEvent]) throws {
+        let index = try #require(pullRequests.firstIndex { $0.id == id })
+        pullRequests[index].requestEvents = events
+    }
+
+    /// Gives each PR in the probe's review-request lookup the request history captured there.
+    func replayRequestEvents(fromProbe name: String) throws {
+        let probe = try JSONDecoder().decode(RequestsProbe.self, from: Data(contentsOf: projectRoot.appending(path: "probe/\(name)")))
+        for node in probe.data.nodes {
+            try setRequestEvents(of: node.id, try node.requestEvents.nodes.map { event in
+                let reviewer: FakePullRequest.Reviewer = switch event.requestedReviewer.__typename {
+                case "Team": .team(try #require(event.requestedReviewer.slug))
+                default: .user(try #require(event.requestedReviewer.login))
+                }
+                return .init(reviewer: reviewer, createdAt: try Date(event.createdAt, strategy: .iso8601))
+            })
+        }
     }
 
     /// Changes the checks on the head commit of the PR with `id`, which GitHub doesn't record as
@@ -335,12 +366,15 @@ actor FakeGitHub: HTTPTransport {
         #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
         let nodes = ids.map { id in
             pullRequests.first { $0.id == id }.map { pullRequest in
-                NodesPayload.Node(id: id, state: pullRequest.state, reviewRequests: .init(nodes: pullRequest.requestedReviewers.map { reviewer in
-                    switch reviewer {
-                    case let .user(login): .init(requestedReviewer: .init(__typename: "User", login: login, slug: nil))
-                    case let .team(slug): .init(requestedReviewer: .init(__typename: "Team", login: nil, slug: slug))
-                    }
-                }))
+                NodesPayload.Node(
+                    id: id,
+                    state: pullRequest.state,
+                    reviewRequests: .init(nodes: pullRequest.requestedReviewers.map { .init(requestedReviewer: .init($0)) }),
+                    // The query asks for the last 20, oldest first, as GitHub returns them.
+                    requestEvents: .init(nodes: pullRequest.requestEvents.sorted { $0.createdAt < $1.createdAt }.suffix(20).map { event in
+                        .init(createdAt: event.createdAt.formatted(.iso8601), requestedReviewer: .init(event.reviewer))
+                    })
+                )
             }
         }
         let missing = zip(ids, nodes).enumerated().compactMap { index, pair in
@@ -391,15 +425,22 @@ struct FakePullRequest: Codable, Sendable {
     var comments: Count
     var reviewThreads: Count
     var requestedReviewers: [Reviewer] = []
+    /// Every request for review made on the PR, as its timeline records them.
+    var requestEvents: [RequestEvent] = []
     /// The head commit's checks, whether it merges cleanly and whether it can be merged now,
     /// which only a lookup by id asks for.
     var checkContexts: [FakeCheckContext] = []
     var mergeable = "UNKNOWN"
     var mergeStateStatus = "UNKNOWN"
 
-    enum Reviewer: Sendable {
+    enum Reviewer: Sendable, Equatable {
         case user(String)
         case team(String)
+    }
+
+    struct RequestEvent: Sendable {
+        let reviewer: Reviewer
+        let createdAt: Date
     }
 
     struct Login: Codable, Sendable { let login: String }
@@ -625,16 +666,47 @@ private struct NodesPayload: Encodable {
     struct Node: Encodable {
         let id: String
         let state: String
-        let reviewRequests: Connection
+        let reviewRequests: Connection<Request>
+        let requestEvents: Connection<Event>
     }
 
-    struct Connection: Encodable { let nodes: [Request] }
-    struct Request: Encodable { let requestedReviewer: Reviewer }
+    struct Connection<Element: Codable>: Codable { let nodes: [Element] }
+    struct Request: Codable { let requestedReviewer: Reviewer }
 
-    struct Reviewer: Encodable {
+    struct Event: Codable {
+        let createdAt: String
+        let requestedReviewer: Reviewer
+    }
+
+    struct Reviewer: Codable {
         let __typename: String
         let login: String?
         let slug: String?
+
+        init(_ reviewer: FakePullRequest.Reviewer) {
+            switch reviewer {
+            case let .user(login): self.init(__typename: "User", login: login, slug: nil)
+            case let .team(slug): self.init(__typename: "Team", login: nil, slug: slug)
+            }
+        }
+
+        init(__typename: String, login: String?, slug: String?) {
+            self.__typename = __typename
+            self.login = login
+            self.slug = slug
+        }
+    }
+}
+
+/// `probe/review-requests.json`: the review-request lookup's response for some to-review PRs.
+private struct RequestsProbe: Decodable {
+    let data: Payload
+
+    struct Payload: Decodable { let nodes: [Node] }
+
+    struct Node: Decodable {
+        let id: String
+        let requestEvents: NodesPayload.Connection<NodesPayload.Event>
     }
 }
 

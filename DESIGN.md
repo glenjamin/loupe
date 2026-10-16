@@ -451,6 +451,14 @@ What waits is where threads are placed on the diff. GitHub places a thread by th
 
 The one way the diff's threads change before Reload is the viewer's own action on them: a reply, resolving or unresolving, or a new comment on a shown line. Those act on the lines being shown, so their result appears inline at once; after the threads are fetched again, the threads acted on, and a new one the viewer started, take GitHub's latest copy, and the rest stay as they were. The diff reads all of this through one property, `placedThreads`, separate from the conversation's threads, so anything else that shows on the diff's lines, such as a pending review's comments, is placed the same way.
 
+### Review requests left unanswered for two weeks are hidden from To review
+
+A PR stays out of the To review list once the viewer's request to review it is more than 14 days old. The age is the request's, not the PR's: when the viewer was last asked, re-requests included, taken from the newest `ReviewRequestedEvent` naming them in the PR's latest request events. The check that drops fulfilled requests already looks up each to-review PR by id on every refresh, so it now asks for those events as well, on the first load as on later ones, and stores the time on the PR as `reviewRequestedAt`. A request of any team counts as asking the viewer, as team membership isn't cheaply known. With no request of the viewer among the events, the PR's update time stands in, since GitHub counts a request as an update.
+
+The PR is hidden when the list is read, not removed from the store, so it stays known to tabs and links, and a fresh request brings it back with the next refresh. The viewer's own PRs aren't affected. A quiet caption under the list says how many are hidden, so a shorter list isn't a mystery.
+
+A request nobody acted on for two weeks is stale noise in a list meant for what to review next; GitHub's own list never prunes them, so they pile up. Glen's list on the day this was built held six such requests, the oldest a year old.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

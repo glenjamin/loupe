@@ -1,0 +1,19 @@
+query($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on PullRequest {
+      id
+      state
+      reviewRequests(first: 50) {
+        nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
+      }
+      requestEvents: timelineItems(last: 20, itemTypes: [REVIEW_REQUESTED_EVENT]) {
+        nodes {
+          ... on ReviewRequestedEvent {
+            createdAt
+            requestedReviewer { __typename ... on User { login } ... on Team { slug } }
+          }
+        }
+      }
+    }
+  }
+}

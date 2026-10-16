@@ -41,8 +41,8 @@ public struct GitHubClient: Sendable {
         return response.viewer.login
     }
 
-    /// The state and pending review requests of each PR in `ids`, keyed by id. PRs GitHub no
-    /// longer has (or no longer shows the user) are left out.
+    /// The state, pending review requests and latest requests made of each PR in `ids`, keyed
+    /// by id. PRs GitHub no longer has (or no longer shows the user) are left out.
     public func reviewRequests(for ids: [String]) async throws -> [String: ReviewRequests] {
         var requests: [String: ReviewRequests] = [:]
         for start in stride(from: 0, to: ids.count, by: Self.pageSize) {
@@ -154,6 +154,14 @@ public struct GitHubClient: Sendable {
               state
               reviewRequests(first: 50) {
                 nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
+              }
+              requestEvents: timelineItems(last: 20, itemTypes: [REVIEW_REQUESTED_EVENT]) {
+                nodes {
+                  ... on ReviewRequestedEvent {
+                    createdAt
+                    requestedReviewer { __typename ... on User { login } ... on Team { slug } }
+                  }
+                }
               }
             }
           }
