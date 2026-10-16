@@ -99,8 +99,28 @@ struct ConversationHTMLTests {
         #expect(page.contains(#"<li class="check failure"><span class="status">✗</span>codecov/patch</li>"#), "no link for a URL that isn't https")
     }
 
+    @Test func thePageEndsWithAWayToCommentOnThePullRequest() throws {
+        let page = try render(conversation)
+        #expect(hrefs(in: page).last.flatMap(CommentLink.init(url:)) == CommentLink(), "the last link on the page")
+        let link = try #require(page.range(of: #"<a href="loupe-comment://new" data-new-comment>Add a comment…</a>"#))
+        let lastItem = try #require(page.range(of: "<p>Two things</p>"))
+        let checks = try #require(page.range(of: #"<section class="checks">"#))
+        #expect(link.lowerBound > lastItem.upperBound && link.lowerBound > checks.upperBound, "after the timeline and its checks, as on github.com")
+        #expect(CommentLink(url: try #require(URL(string: "loupe-thread://new"))) == nil)
+    }
+
+    @Test func aCommentOnItsWayShowsAsSendingWithNothingToReactTo() throws {
+        var sending = conversation
+        sending.items.append(TimelineItem(id: "loupe-sending-1", date: now, actor: Participant(login: "viewer", avatarURL: nil), event: .comment(bodyHTML: "<p>On its way</p>", isMinimized: false), isSending: true))
+        let page = try render(sending)
+        let card = try #require(page.range(of: "<strong>viewer</strong>").map { page[$0.lowerBound...] })
+        #expect(card.hasPrefix(#"<strong>viewer</strong> commented <span class="muted sending">Sending…</span>"#))
+        #expect(!hrefs(in: page).compactMap(ReactionLink.init(url:)).contains { $0.subjectId == "loupe-sending-1" })
+    }
+
     @Test func aMissingConversationSaysWhy() throws {
         let (template, stylesheet) = try templates()
+        #expect(!ConversationHTML.page(nil, template: template, stylesheet: stylesheet).contains("loupe-comment://"), "nothing to comment on yet")
         #expect(ConversationHTML.page(nil, template: template, stylesheet: stylesheet).contains("Loading the conversation"))
         #expect(ConversationHTML.page(nil, error: "HTTP <502>", template: template, stylesheet: stylesheet).contains("HTTP &lt;502&gt;"))
     }

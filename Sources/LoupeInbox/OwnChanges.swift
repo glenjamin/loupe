@@ -29,6 +29,8 @@ struct OwnChange {
         /// The viewer's review submitted: its comments no longer pending, and `review` in the
         /// timeline in place of the pending one.
         case submitted(TimelineItem)
+        /// A comment on the PR itself, at the end of the timeline.
+        case conversationComment(TimelineItem)
     }
 
     /// What a change replaced in the conversation, and on the diff where its threads were held.
@@ -137,6 +139,16 @@ extension PullRequestTab {
         conversation?.items[at] = review
     }
 
+    /// GitHub has the comment on the PR: its copy takes the provisional one's place in the
+    /// timeline, and is what's made again over a fetch that started too soon to have it.
+    func confirm(_ change: Int, conversationComment provisionalId: String, as posted: TimelineItem) {
+        guard let index = ownChanges.firstIndex(where: { $0.id == change }), case .conversationComment = ownChanges[index].kind else { return }
+        ownChanges[index].kind = .conversationComment(posted)
+        ownChanges[index].answeredBefore = fetchesStarted
+        guard let at = conversation?.items.firstIndex(where: { $0.id == provisionalId }) else { return }
+        conversation?.items[at] = posted
+    }
+
     /// GitHub has carried out the change as made, so it's made again only over a fetch that
     /// started too soon to have it.
     func confirm(_ change: Int) {
@@ -215,6 +227,15 @@ extension PullRequestTab {
         )
     }
 
+    /// A comment of the viewer's on the PR on its way, with `text` as plain paragraphs until
+    /// GitHub renders it.
+    func sendingConversationComment(_ text: String) -> TimelineItem {
+        TimelineItem(
+            id: OwnChange.provisionalId(), date: .now, actor: viewerParticipant,
+            event: .comment(bodyHTML: plainParagraphs(text), isMinimized: false), isSending: true
+        )
+    }
+
     /// A thread for a comment the viewer is starting on `anchor`, until GitHub says which
     /// thread it made, with the diff's lines up to it as GitHub keeps them.
     func sendingThread(at anchor: DiffAnchor, in review: ReviewDiff) -> ReviewThread {
@@ -266,6 +287,9 @@ extension Conversation {
             // GitHub's copy, once submitted, is the one to show.
             guard items[index].isSending || items[index].isPendingReview else { return }
             items[index] = review
+        case let .conversationComment(comment):
+            guard !items.contains(where: { $0.id == comment.id }) else { return }
+            items.append(comment)
         }
     }
 
@@ -360,6 +384,8 @@ extension [ReviewThread] {
             for index in indices where self[index].comments.contains(where: \.isPending) {
                 for at in self[index].comments.indices { self[index].comments[at].isPending = false }
             }
+        case .conversationComment:
+            break
         }
     }
 

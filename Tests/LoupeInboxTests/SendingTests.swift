@@ -64,6 +64,75 @@ struct SendingTests {
         #expect(try app.store.conversation(of: tab.id)?.threads == tab.conversation?.threads, "gone from the store too")
     }
 
+    @Test func aCommentOnThePullRequestShowsAtTheEndAtOnceAndTakesGitHubsCopy() async throws {
+        let (app, tab) = try await openConversation()
+        let itemCount = try #require(tab.conversation?.items.count)
+        tab.follow(CommentLink())
+        let draft = try #require(tab.conversationComment.draft)
+        #expect(tab.conversationComment.isOpen)
+        draft.text = "  \n"
+        await tab.sendConversationComment()
+        #expect(await app.conversations.conversationCommentsReceived.isEmpty, "nothing is sent empty")
+        draft.text = "Thanks, this reads <well> now"
+        tab.conversationComment.close()
+        tab.follow(CommentLink())
+        #expect(tab.conversationComment.draft === draft, "put away, it opens again as it was")
+
+        await app.conversations.hold(.conversationComment)
+        let sending = Task { await tab.sendConversationComment() }
+        await app.conversations.arrival(of: .conversationComment)
+
+        #expect(tab.conversationComment.draft == nil && !tab.conversationComment.isOpen, "closed as it's sent")
+        let shown = try #require(tab.conversation?.items.last)
+        #expect(shown.isSending)
+        #expect(shown.actor?.login == FakeGitHub.viewer)
+        #expect(shown.event == .comment(bodyHTML: "<p>Thanks, this reads &lt;well&gt; now</p>", isMinimized: false), "as plain text until GitHub renders it")
+        let page = conversationPage(tab)
+        #expect(page.contains(#"<strong>\#(FakeGitHub.viewer)</strong> commented <span class="muted sending">Sending…</span>"#))
+        let card = try #require(page.range(of: "reads &lt;well&gt; now").map { String(page[$0.lowerBound...]) })
+        #expect(!card.contains("reaction-picker"), "nothing to react to until GitHub has it")
+        #expect(card.contains("data-new-comment"), "the way to comment still after it")
+        let stored = try #require(try app.store.conversation(of: tab.id)?.items.last)
+        #expect(stored.id == shown.id && stored.isSending, "stored as it's shown")
+
+        await app.conversations.release(.conversationComment)
+        await sending.value
+
+        #expect(await app.conversations.conversationCommentsReceived == [.init(subjectId: tab.id, body: "Thanks, this reads <well> now")], "as typed")
+        let items = try #require(tab.conversation?.items)
+        #expect(items.count == itemCount + 1, "the fetch after doesn't add it again")
+        let posted = try #require(items.last)
+        #expect(!posted.isSending && posted.id.hasPrefix("IC_"))
+        #expect(posted.event == .comment(bodyHTML: "<p dir=\"auto\">Thanks, this reads &lt;well&gt; now</p>", isMinimized: false), "GitHub's rendering")
+        #expect(conversationPage(tab).contains(ReactionLink(.add, .thumbsUp, on: posted.id).url.absoluteString), "reacted to once GitHub has it")
+        #expect(try app.store.conversation(of: tab.id)?.items == tab.conversation?.items)
+    }
+
+    @Test func aRefusedCommentOnThePullRequestGoesAndItsDraftOpensAgain() async throws {
+        let (app, tab) = try await openConversation()
+        let before = tab.conversation
+        await app.conversations.refuseConversationComments()
+        await app.conversations.hold(.conversationComment)
+        tab.follow(CommentLink())
+        let draft = try #require(tab.conversationComment.draft)
+        draft.text = "Could this wait for the next release?"
+
+        let sending = Task { await tab.sendConversationComment() }
+        await app.conversations.arrival(of: .conversationComment)
+        #expect(tab.conversation?.items.last?.isSending == true)
+        #expect(!tab.conversationComment.isOpen, "put away as it's sent")
+
+        await app.conversations.release(.conversationComment)
+        await sending.value
+
+        #expect(tab.conversation == before, "taken away")
+        #expect(!conversationPage(tab).contains("next release"))
+        #expect(tab.conversationComment.draft === draft && draft.text == "Could this wait for the next release?")
+        #expect(tab.conversationComment.isOpen, "open again by the link")
+        #expect(tab.conversationComment.error?.contains("locked") == true)
+        #expect(try app.store.conversation(of: tab.id)?.items == tab.conversation?.items, "gone from the store too")
+    }
+
     @Test func aNewCommentShowsOnItsLineAndInTheConversationThenTakesGitHubsThread() async throws {
         let (app, tab, _) = try await ThreadsApp.withThread()
         let threadCount = try #require(tab.conversation?.threads.count)
@@ -305,6 +374,14 @@ struct SendingTests {
         _ = try write(text, at: anchor, on: tab)
         await tab.sendReviewComment()
         #expect(tab.threadActivity.newCommentError == nil)
+    }
+
+    /// The first PR to review, with the probe's conversation, open in its tab.
+    private func openConversation() async throws -> (ThreadsApp, PullRequestTab) {
+        let app = try await ThreadsApp()
+        let pullRequest = app.tabs.lists.pullRequests(in: .toReview)[0]
+        try await app.conversations.add(pullRequest.id, number: pullRequest.number)
+        return (app, try await app.open(pullRequest))
     }
 
     private func conversationPage(_ tab: PullRequestTab) -> String {

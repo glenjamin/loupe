@@ -6,7 +6,8 @@ import WebKit
 /// A web view showing a page we assemble around GitHub's rendered HTML, from
 /// `Resources/conversation.html` and `conversation.css`. It loads only that page, keeps nothing
 /// and shares no cookies. Links to PRs go to `openPullRequestLink`, those to its review threads
-/// to `openThreadLink`, and other links to the default browser.
+/// to `openThreadLink`, reactions to `openReactionLink`, "Add a comment…" to `openCommentLink`,
+/// and other links to the default browser.
 @MainActor
 class GitHubWebPage: NSObject {
     let webView: WKWebView
@@ -16,6 +17,8 @@ class GitHubWebPage: NSObject {
     var openThreadLink: @MainActor (ThreadLink) -> Void = { _ in }
     /// Adds or takes away the viewer's reaction a link names; set by whoever makes the page.
     var openReactionLink: @MainActor (ReactionLink) -> Void = { _ in }
+    /// Opens a comment on the PR, as the page's "Add a comment…" asks; set by whoever makes the page.
+    var openCommentLink: @MainActor (CommentLink) -> Void = { _ in }
     /// Whether the latest page has finished loading, images included.
     private(set) var isLoaded = false
     /// What relative links in the page are relative to.
@@ -83,6 +86,7 @@ extension GitHubWebPage: WKNavigationDelegate, WKUIDelegate {
     private func follow(_ action: WKNavigationAction) {
         if let url = action.request.url, let link = ThreadLink(url: url) { return openThreadLink(link) }
         if let url = action.request.url, let link = ReactionLink(url: url) { return openReactionLink(link) }
+        if let url = action.request.url, let link = CommentLink(url: url) { return openCommentLink(link) }
         let inBrowserTab = action.modifierFlags.contains(.command) || action.buttonNumber == middleMouseButton
         followLink(action.request.url, inBrowserTab: inBrowserTab, openPullRequest: openPullRequestLink)
     }

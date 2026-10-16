@@ -69,6 +69,8 @@ public final class PullRequestTab: Identifiable {
     public let contextExpansions: ContextExpansions
     /// What's been opened up among the review threads.
     public let threadActivity = ThreadActivity()
+    /// The comment being written on the PR itself, in its conversation.
+    public let conversationComment = ConversationComment()
     /// Checking the PR's branch out to open the checkout in an editor.
     public let editorLaunch = EditorLaunch()
     /// The review threads as last fetched while the diff was of the PR's head, which stay

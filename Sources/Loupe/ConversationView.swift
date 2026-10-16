@@ -8,7 +8,8 @@ import WebKit
 /// The Conversation tab: one web view per PR window showing the page `ConversationHTML` builds.
 /// The view is kept, hidden, while the files are shown, so its scroll position survives. A
 /// thread the page asks to show that the diff can't is said so over it. A thread's reply is
-/// written in a popover by the thread, or in a sheet if the page has lost sight of it.
+/// written in a popover by the thread, or in a sheet if the page has lost sight of it. A
+/// comment on the PR is written in a popover by the page's "Add a comment…".
 struct ConversationView: View {
     let page: ConversationPage
     let conversation: Conversation?
@@ -37,6 +38,19 @@ struct ConversationView: View {
                     ConversationReply(tab: tab, threadId: replyingInSheet)
                 }
             }
+            .task(id: isCommenting) {
+                guard isCommenting else { return page.closeComment() }
+                // Only a page still loading has no link to put it by; it's put away, keeping
+                // the draft, for "Add a comment…" to open again.
+                if await !page.showComment() { page.tab?.conversationComment.close() }
+            }
+    }
+
+    /// Whether a comment on the PR is being written over the page while it's shown, until it's
+    /// sent, dropped or put away.
+    private var isCommenting: Bool {
+        guard isShown, let comment = page.tab?.conversationComment else { return false }
+        return comment.isOpen && comment.draft != nil
     }
 
     /// The thread being replied to over the page while it's shown, until the reply is sent,
@@ -91,6 +105,8 @@ final class ConversationPage: GitHubWebPage {
     private(set) weak var tab: PullRequestTab?
     /// The open reply's popover, and the thread it's to.
     private(set) var replyPopover: (threadId: String, popover: NSPopover)?
+    /// The open comment on the PR's popover.
+    private(set) var commentPopover: NSPopover?
 
     private static let pages = NSMapTable<PullRequestTab, ConversationPage>.weakToStrongObjects()
 
@@ -102,6 +118,7 @@ final class ConversationPage: GitHubWebPage {
         page.openPullRequestLink = { [weak tab] in await tab?.open($0) ?? false }
         page.openThreadLink = { [weak tab] link in Task { await tab?.follow(link) } }
         page.openReactionLink = { [weak tab] link in Task { await tab?.react(link) } }
+        page.openCommentLink = { [weak tab] link in tab?.follow(link) }
         pages.setObject(page, forKey: tab)
         return page
     }
@@ -171,6 +188,48 @@ final class ConversationPage: GitHubWebPage {
         replyPopover.popover.close()
     }
 
+    /// Shows the comment on the PR in a popover by "Add a comment…", scrolling it into view if
+    /// it isn't, unless the page has no such link yet; returns whether it could.
+    func showComment() async -> Bool {
+        if let commentPopover, commentPopover.isShown { return true }
+        closeComment()
+        guard let tab, let rect = await rectOfCommentLink() else { return false }
+        let hosting = NSHostingController(rootView: ConversationCommentView(tab: tab))
+        hosting.sizingOptions = .preferredContentSize
+        let popover = NSPopover()
+        // A click elsewhere puts it away, as Esc does, keeping the draft.
+        popover.behavior = .transient
+        popover.contentViewController = hosting
+        popover.delegate = self
+        popover.show(relativeTo: rect, of: webView, preferredEdge: .minY)
+        commentPopover = popover
+        return true
+    }
+
+    /// Closes the comment's popover, if it's open, leaving the comment as it is.
+    func closeComment() {
+        guard let commentPopover else { return }
+        self.commentPopover = nil
+        // Closed for the comment's sake, so it's not taken as the reader putting it away.
+        commentPopover.delegate = nil
+        commentPopover.close()
+    }
+
+    /// Where "Add a comment…" sits in the web view, scrolled into view if need be; nil if the
+    /// page has none.
+    private func rectOfCommentLink() async -> NSRect? {
+        let script = """
+            const link = document.querySelector('[data-new-comment]');
+            if (!link) return null;
+            link.scrollIntoView({ block: 'nearest' });
+            const rect = link.getBoundingClientRect();
+            return [rect.left, rect.top, rect.width, rect.height];
+            """
+        let found = try? await webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .defaultClient)
+        guard let values = found as? [Double], values.count == 4 else { return nil }
+        return viewRect(left: values[0], top: values[1], width: values[2], height: values[3])
+    }
+
     /// Where an open thread's actions sit at its foot, or the thread itself when it's folded or
     /// has none, in the web view, kept to what's in view; nil if none of it is.
     private func rectOfThread(_ threadId: String) async -> NSRect? {
@@ -184,16 +243,25 @@ final class ConversationPage: GitHubWebPage {
             """
         let found = try? await webView.callAsyncJavaScript(script, arguments: ["id": threadId], in: nil, contentWorld: .defaultClient)
         guard let values = found as? [Double], values.count == 4 else { return nil }
-        let (x, top, width, height) = (values[0], values[1], values[2], values[3])
-        return NSRect(x: x, y: webView.isFlipped ? top : webView.bounds.height - top - height, width: width, height: height)
+        return viewRect(left: values[0], top: values[1], width: values[2], height: values[3])
+    }
+
+    /// A rect in the page's viewport, from its top left, in the web view's coordinates.
+    private func viewRect(left: Double, top: Double, width: Double, height: Double) -> NSRect {
+        NSRect(x: left, y: webView.isFlipped ? top : webView.bounds.height - top - height, width: width, height: height)
     }
 
     private static let baseURL = URL(string: "https://github.com/")!
 }
 
 extension ConversationPage: NSPopoverDelegate {
-    /// A popover closed by Esc or a click elsewhere puts the reply away, its draft kept.
+    /// A popover closed by Esc or a click elsewhere puts the reply or comment away, its draft kept.
     func popoverDidClose(_ notification: Notification) {
+        if let commentPopover, notification.object as? NSPopover === commentPopover {
+            self.commentPopover = nil
+            tab?.conversationComment.close()
+            return
+        }
         guard let replyPopover else { return }
         self.replyPopover = nil
         if tab?.threadActivity.replyingInConversation == replyPopover.threadId { tab?.threadActivity.closeConversationReply() }

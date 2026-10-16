@@ -274,6 +274,19 @@ time { color: var(--muted); }
 .check.pending .status { color: var(--attention); }
 .check.neutral .status { color: var(--muted); }
 
+/* The way to comment on the PR, at the foot of the page where github.com has its box. */
+.new-comment { position: relative; z-index: 1; margin: 24px 0 0 56px; }
+.new-comment a {
+  display: block;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--subtle);
+  color: var(--muted);
+  font-size: 14px;
+}
+.new-comment a:hover { color: var(--link); text-decoration: none; }
+
 .minimized > summary { color: var(--muted); cursor: pointer; }
 
 /* GitHub's rendered markdown, in brief. */

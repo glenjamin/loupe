@@ -1,0 +1,10 @@
+# Comments on a PR in its conversation (GitHub's "issue comment", the box at the foot of the
+# Conversation tab), not on a line or in a review. Never run: it changes the PR and notifies
+# people. Input from introspection: AddCommentInput is { subjectId, body,
+# clientMutationId }, `subjectId` the PR's (or an issue's) node id. It asks for the comment with
+# the fields the conversation query asks of an issue comment; `add-comment.json` is its answer
+# written by hand in the schema's shape.
+# variables: {"input": {"subjectId": "PR_…", "body": "…"}}
+mutation($input: AddCommentInput!) {
+  addComment(input: $input) { commentEdge { node { id bodyHTML createdAt isMinimized author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } } } } }
+}

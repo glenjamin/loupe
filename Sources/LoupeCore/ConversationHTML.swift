@@ -52,13 +52,16 @@ public enum ConversationHTML {
         }
         flushCommits()
         html += checks(conversation.checks)
+        html += newComment
         return html
     }
 
     private static func render(_ item: TimelineItem, threads: [String: ReviewThread], now: Date) -> String {
         switch item.event {
         case let .comment(bodyHTML, isMinimized):
-            return card(author: item.actor, action: "commented", date: item.date, now: now, body: minimizable(bodyHTML, isMinimized: isMinimized), reactions: reactions(item.reactions, to: item.id))
+            // One on its way to GitHub can't be reacted to until GitHub has it.
+            let reactions = item.isSending ? "" : reactions(item.reactions, to: item.id)
+            return card(author: item.actor, action: "commented", date: item.date, now: now, isSending: item.isSending, body: minimizable(bodyHTML, isMinimized: isMinimized), reactions: reactions)
         case let .review(state, bodyHTML, comments):
             // Replies are shown in their threads, under the review that started them.
             let started = comments.filter { $0.replyTo == nil }
@@ -158,6 +161,10 @@ public enum ConversationHTML {
         }.joined()
         return #"<div class="reactions">\#(pills)<details class="reaction-picker"><summary title="Add a reaction">\#(smiley)</summary><div class="choices">\#(choices)</div></details></div>"#
     }
+
+    /// The way to comment on the PR, after everything else as on github.com, as a `CommentLink`
+    /// the app follows; the app finds it by its `data-new-comment`, to put the composer by it.
+    private static let newComment = #"<div class="new-comment"><a href="\#(CommentLink().url.absoluteString)" data-new-comment>Add a comment…</a></div>"# + "\n"
 
     /// GitHub's quiet face for adding a reaction, drawn inline as the page loads nothing else.
     private static let smiley = #"<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.75" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="5.75" cy="6.5" r="1" fill="currentColor"/><circle cx="10.25" cy="6.5" r="1" fill="currentColor"/><path d="M5.25 9.75a3.25 3.25 0 0 0 5.5 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>"#
@@ -358,4 +365,23 @@ public struct ReactionLink: Sendable, Equatable {
 
     private static let scheme = "loupe-reaction"
     private static let idCharacters = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+}
+
+/// The link at the foot of the conversation page that opens a comment on the PR itself, as
+/// github.com's box there does. Caught by its web view as `ThreadLink`s are.
+public struct CommentLink: Sendable, Equatable {
+    public init() {}
+
+    /// The link a page names, if it's this one.
+    public init?(url: URL) {
+        guard url.scheme == Self.scheme, url.host() == "new" else { return nil }
+    }
+
+    /// `loupe-comment://new`.
+    public var url: URL {
+        // Fixed, so this always parses.
+        URL(string: "\(Self.scheme)://new")!
+    }
+
+    private static let scheme = "loupe-comment"
 }

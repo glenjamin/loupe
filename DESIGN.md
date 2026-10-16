@@ -647,6 +647,12 @@ On the accent-coloured selection the file tree's green and red counts, green tic
 
 The row is told this through SwiftUI's `backgroundProminence` environment value, which is meant to carry exactly this. But `List` on macOS doesn't set it for a selected row; it only resolves `.primary` and `.secondary` to white as it draws. So the file list sets it on the selected row itself, from the selection, its own focus and `controlActiveState`. The row and `LineCounts` swap explicit colours for `.primary`, which the selection then draws white; no white is hard-coded. If the list's guess were ever wrong, the worst case is plain primary text on a grey selection.
 
+### The PR is commented on from the foot of its conversation, in a popover there
+
+Loupe could reply to threads, comment on lines and write a review's summary, but not leave a plain comment on the PR, github.com's box at the bottom of the Conversation tab, so that still meant going to the browser. The conversation page now ends, after the timeline and its checks where github.com has its box, with a quiet "Add a comment…" that opens the composer the threads use in an `NSPopover` by it, as "A thread is replied to where it's read, in a popover by it" does for replies. The comment belongs to the conversation, so it's written where the conversation ends and shows up where it was asked for, without leaving the page being read. The page still runs no script: the link is `loupe-comment://new`, caught by the web view's navigation delegate as thread and reaction links are, and the app finds it by a `data-new-comment` in its own script world, scrolling it into view if need be. Esc, or a click elsewhere, puts the popover away and keeps the draft until the tab is closed; Cancel drops it, asking first as elsewhere.
+
+There's no "Comment…" in the header: its review controls show only on others' PRs, where "Comment" already submits a review, so a second "Comment" there would read as the same thing. The markdown is sent as typed with `addComment` (from introspection, never run live) and GitHub renders it; nothing empty is sent. As "The viewer's comments and review changes show at once, before GitHub answers" does for the rest, it shows at the end of the timeline at once, "Sending…" in place of its time and without reactions until GitHub has it, takes GitHub's copy from the mutation's answer, and is made again over any fetch that started too soon to have it. A refusal takes it away and opens the popover again with the draft and the reason.
+
 ## Not yet decided
 
 Nothing is pending.

@@ -316,6 +316,11 @@ enum SnapshotRun {
                 if let wanted = environment["LOUPE_SNAPSHOT_SHOW_THREAD"] {
                     for url in try await saveSnapshotsOfShownThreads(replying: wanted == "reply", in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_COMMENT_PR=1 clicks each conversation's "Add a comment…" and
+                // snapshots the composer it opens. Nothing is typed or sent.
+                if environment["LOUPE_SNAPSHOT_COMMENT_PR"] == "1" {
+                    for url in try await saveSnapshotsOfConversationComments(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_REACTIONS=1 scrolls each conversation to its first reaction and
                 // opens the picker beside it, and snapshots it. Nothing is clicked or sent.
                 if environment["LOUPE_SNAPSHOT_REACTIONS"] == "1" {
@@ -811,6 +816,49 @@ private func saveSnapshotsOfShownThreads(replying: Bool, in windows: WindowManag
         page.closeReply()
         activity.closeConversationReply()
         written += [conversation, shown]
+    }
+    windows.select(selected)
+    return written
+}
+
+/// On each PR's conversation, scrolls to "Add a comment…" at its foot and clicks it in the page,
+/// so it goes through the web view's navigation as a real click does, prints where the comment
+/// opened, and writes `comment-<title>.png` with its popover moved back by the link. Nothing is
+/// typed or sent.
+@MainActor
+private func saveSnapshotsOfConversationComments(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    let link = "a[data-new-comment]"
+    var written: [URL] = []
+    for tab in windows.tabs.tabs where tab.conversation != nil {
+        tab.section = .conversation
+        windows.select(tab.id)
+        let page = ConversationPage.page(for: tab)
+        let deadline = Date.now.addingTimeInterval(10)
+        while Date.now < deadline, !page.isLoaded { try? await Task.sleep(for: .milliseconds(100)) }
+        let found = try? await page.webView.evaluateJavaScript(
+            "(() => { const link = document.querySelector('\(link)'); if (!link) return false; link.scrollIntoView({ block: 'end' }); return true })()",
+            in: nil, contentWorld: .defaultClient
+        )
+        guard found as? Bool == true else {
+            print("\(tab.title): no \(link) to click")
+            continue
+        }
+        try? await Task.sleep(for: .milliseconds(500))
+        _ = try? await page.webView.evaluateJavaScript("document.querySelector('\(link)').click()", in: nil, contentWorld: .defaultClient)
+        try? await Task.sleep(for: .milliseconds(1200))
+        let comment = tab.conversationComment
+        print("\(tab.title): clicked \(link); comment open \(comment.isOpen), draft \(comment.draft == nil ? "none" : "kept"), \(page.commentPopover == nil ? "no popover" : "in a popover by the link")")
+        if let popover = page.commentPopover {
+            placePopover(under: page.webView.convert(popover.positioningRect, to: nil), in: window)
+        }
+        let url = directory.appending(path: "comment-\(sanitised(windows.title(of: tab.id))).png")
+        try await saveSnapshot(of: window, to: url)
+        page.closeComment()
+        tab.cancelConversationComment()
+        written.append(url)
     }
     windows.select(selected)
     return written

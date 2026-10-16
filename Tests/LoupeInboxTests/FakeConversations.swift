@@ -23,7 +23,8 @@ import Testing
 /// request fail. Writes answer with what they made, in the shapes the app asks for. The
 /// description, comments, reviews and thread comments carry GitHub's eight reaction groups;
 /// tests can react as others do, and the viewer's reactions are added and taken away with
-/// `addReaction` and `removeReaction`, or refused.
+/// `addReaction` and `removeReaction`, or refused. The viewer's comments on a PR itself, with
+/// `addComment`, go at the end of its timeline, or are refused.
 actor FakeConversations {
     /// Each PR's conversation, less its timeline, in GitHub's JSON shape.
     private var nodes: [String: [String: Any]] = [:]
@@ -58,7 +59,7 @@ actor FakeConversations {
     /// The kinds of write a test can hold, as over a slow network, and the conversation's first
     /// page, held once answered, so it lands with what GitHub had when it was asked for.
     enum Gate: Hashable {
-        case comment, reply, resolve, addToReview, submit, discard, deleteComment
+        case comment, reply, resolve, addToReview, submit, discard, deleteComment, conversationComment
         case conversation
     }
 
@@ -103,6 +104,14 @@ actor FakeConversations {
         let path: String
         let line: Int
         let side: String
+    }
+    /// Every comment on a PR itself received, in order.
+    private(set) var conversationCommentsReceived: [ConversationCommentInput] = []
+    private var conversationCommentsRefused = false
+
+    struct ConversationCommentInput: Equatable {
+        let subjectId: String
+        let body: String
     }
     /// Every reply to a thread received, in order.
     private(set) var repliesReceived: [ReplyInput] = []
@@ -319,6 +328,10 @@ actor FakeConversations {
         if query.contains("teams(") { return try teamsPage(variables, url) }
         if query.contains("updatePullRequest(") { return try updatePullRequest(variables, url) }
         if query.contains("addReaction(") || query.contains("removeReaction(") { return try await setReaction(added: query.contains("addReaction("), variables, url) }
+        if query.contains("addComment(") {
+            await pass(.conversationComment)
+            return try addConversationComment(variables, url)
+        }
         if query.contains("resolveReviewThread(") {
             await pass(.resolve)
             return try setResolved(query.contains("unresolveReviewThread("), variables, url)
@@ -470,6 +483,33 @@ actor FakeConversations {
 
     /// Refuses replies and resolving, as for a PR the token can't write to.
     func refuseThreadChanges() { threadChangesRefused = true }
+
+    /// Refuses comments on the PRs themselves, as for a locked conversation.
+    func refuseConversationComments() { conversationCommentsRefused = true }
+
+    /// A comment on the PR itself, added to the end of its timeline by the viewer and answered
+    /// in `probe/add-comment.json`'s shape with it.
+    private func addConversationComment(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
+        let input = try #require(variables["input"] as? [String: Any])
+        let id = try #require(input["subjectId"] as? String)
+        let body = try #require(input["body"] as? String)
+        conversationCommentsReceived.append(ConversationCommentInput(subjectId: id, body: body))
+        if conversationCommentsRefused {
+            let refusal: [String: Any] = [
+                "data": ["addComment": NSNull()],
+                "errors": [["type": "FORBIDDEN", "path": ["addComment"], "message": "Unable to create comment because issue is locked."]],
+            ]
+            return (try JSONSerialization.data(withJSONObject: refusal), fakeResponse(url, status: 200))
+        }
+        guard timelines[id] != nil else { return try refusal(unresolved: id, mutation: "addComment", url) }
+        comment("<p dir=\"auto\">\(escaped(body))</p>", on: id, by: FakeGitHub.viewer)
+        var node = try #require(timelines[id]?.last)
+        node["__typename"] = nil
+        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/add-comment.json"))) as? [String: Any])
+        var payload = try #require((probe["data"] as? [String: Any])?["addComment"] as? [String: Any])
+        payload["commentEdge"] = ["node": node]
+        return (try JSONSerialization.data(withJSONObject: ["data": ["addComment": payload]]), fakeResponse(url, status: 200))
+    }
 
     private func setResolved(_ unresolve: Bool, _ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
         let mutation = unresolve ? "unresolveReviewThread" : "resolveReviewThread"
@@ -999,7 +1039,7 @@ struct FakePullRequestDetails: HTTPTransport {
         let isConversation = [
             "timelineItems", "reviewThreads", "resolveReviewThread(", "requestReviews(", "assignableUsers(", "teams(", "updatePullRequest(", "PullRequest { body }", "suggestedReviewers",
             "addPullRequestReview", "submitPullRequestReview(", "deletePullRequestReview(", "deletePullRequestReviewComment(",
-            "addReaction(", "removeReaction(",
+            "addReaction(", "removeReaction(", "addComment(",
         ].contains { query.contains($0) }
         return isConversation ? try await conversations.send(request) : try await viewed.send(request)
     }

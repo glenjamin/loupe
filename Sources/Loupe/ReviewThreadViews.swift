@@ -385,6 +385,41 @@ struct ConversationReply: View {
     }
 }
 
+/// A comment on the PR itself written over the conversation, by its "Add a comment…": the
+/// composer the threads use, posting at once to the conversation. Esc puts it away with the
+/// draft kept for the link to open again.
+struct ConversationCommentView: View {
+    let tab: PullRequestTab
+
+    var body: some View {
+        let comment = tab.conversationComment
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Add a comment")
+                .font(.headline)
+            if let error = comment.error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.diffDanger)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                    .help(error)
+            }
+            if let draft = comment.draft {
+                CommentComposer(
+                    draft: draft, caption: "Markdown. Posts to the conversation at once.",
+                    actions: [ComposerAction(label: "Comment", help: "Comment on the pull request at once, not as part of a review") {
+                        Task { await tab.sendConversationComment() }
+                    }],
+                    cancel: { tab.cancelConversationComment() },
+                    escape: { comment.close() }
+                )
+                .font(.callout)
+            }
+        }
+        .padding(16)
+        .frame(width: 560)
+    }
+}
+
 /// A reply being written to a thread, which posts at once rather than into a review.
 private struct ReplyComposer: View {
     let tab: PullRequestTab

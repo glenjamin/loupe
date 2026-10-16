@@ -1,0 +1,28 @@
+{
+    "data": {
+        "addComment": {
+            "commentEdge": {
+                "node": {
+                    "id": "IC_kwDOCPShyc7Lq2fA",
+                    "bodyHTML": "<p dir=\"auto\">Thanks, this reads well now.</p>",
+                    "createdAt": "2026-10-16T14:20:07Z",
+                    "isMinimized": false,
+                    "author": {
+                        "login": "glenjamin",
+                        "avatarUrl": "https://avatars.githubusercontent.com/u/151272?v=4"
+                    },
+                    "reactionGroups": [
+                        { "content": "THUMBS_UP", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                        { "content": "THUMBS_DOWN", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                        { "content": "LAUGH", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                        { "content": "HOORAY", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                        { "content": "CONFUSED", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                        { "content": "HEART", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                        { "content": "ROCKET", "viewerHasReacted": false, "reactors": { "totalCount": 0 } },
+                        { "content": "EYES", "viewerHasReacted": false, "reactors": { "totalCount": 0 } }
+                    ]
+                }
+            }
+        }
+    }
+}
