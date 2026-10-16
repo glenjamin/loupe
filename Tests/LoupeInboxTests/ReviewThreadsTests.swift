@@ -163,15 +163,20 @@ struct ThreadRepliesTests {
 
 @MainActor
 struct NewCommentTests {
-    @Test func onlyTheLinesOfThePullRequestsOwnDiffTakeAComment() async throws {
+    @Test func theLinesShownTakeAComment() async throws {
         let (app, tab, _) = try await ThreadsApp.withThread()
         let file = try #require(tab.file("app.go"))
-        let commentable = try #require(tab.commentableAnchors(of: file))
+        let commentable = try #require(tab.commentableAnchors(of: tab.expandedFile(file)))
         #expect(commentable.contains(DiffAnchor(path: "app.go", side: .right, line: 11)), "an added line")
         #expect(commentable.contains(DiffAnchor(path: "app.go", side: .left, line: 50)), "a deleted line")
         #expect(commentable.contains(DiffAnchor(path: "app.go", side: .right, line: 9)), "an unchanged line in a hunk")
-        #expect(!commentable.contains(DiffAnchor(path: "app.go", side: .right, line: 30)), "a line only revealed around a hunk")
+        #expect(!commentable.contains(DiffAnchor(path: "app.go", side: .right, line: 30)), "a line hidden between hunks")
         #expect(!commentable.contains(DiffAnchor(path: "app.go", side: .left, line: 9)), "unchanged lines take comments on the new side")
+
+        await tab.expandContext(of: file, ContextExpansion(hunk: 1, direction: .above))
+        let revealed = try #require(tab.commentableAnchors(of: tab.expandedFile(file)))
+        #expect(revealed.contains(DiffAnchor(path: "app.go", side: .right, line: 30)), "a line revealed around a hunk")
+        #expect(!revealed.contains(DiffAnchor(path: "app.go", side: .left, line: 28)), "revealed lines take comments on the new side")
 
         await tab.showCommit(try #require(tab.ready?.commits.first).oid)
         #expect(tab.commentableAnchors(of: try #require(tab.file("app.go"))) == nil, "not on one commit's changes")
@@ -200,6 +205,27 @@ struct NewCommentTests {
         #expect(posted.comments.map(\.author?.login) == [FakeGitHub.viewer])
         #expect(posted.comments.first?.bodyHTML == "<p dir=\"auto\">Is anything still using this?</p>")
         #expect(tab.unresolvedThreadCount(of: "app.go") == 2)
+    }
+
+    @Test func aCommentOnARevealedLinePostsWithItsNewLineNumber() async throws {
+        let (app, tab, _) = try await ThreadsApp.withThread()
+        let file = try #require(tab.file("app.go"))
+        await tab.expandContext(of: file, ContextExpansion(hunk: 1, direction: .above))
+        let anchor = DiffAnchor(path: "app.go", side: .right, line: 30)
+        #expect(tab.commentableAnchors(of: tab.expandedFile(file))?.contains(anchor) == true)
+        tab.startComment(at: anchor)
+        let draft = try #require(tab.threadActivity.newComment?.draft)
+        draft.text = "Should this move too?"
+
+        await tab.sendComment()
+
+        let pullRequest = tab.pullRequest
+        let head = try #require(tab.ready?.headOid)
+        #expect(await app.conversations.commentsReceived == [
+            .init(repository: pullRequest.repository, number: pullRequest.number, body: "Should this move too?", commitId: head, path: "app.go", line: 30, side: "RIGHT"),
+        ])
+        let threads = try #require(tab.threads(on: tab.expandedFile(file)))
+        #expect(threads.anchored.contains { $0.side == .right && $0.line == 30 }, "shown under the revealed line")
     }
 
     @Test func aRefusedCommentKeepsTheDraftAndSaysWhy() async throws {

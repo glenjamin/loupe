@@ -98,9 +98,9 @@ extension PullRequestTab {
         return conversation?.threads.count { $0.path == path && !$0.isResolved } ?? 0
     }
 
-    /// The rows of a file a comment can be started on: the lines of the PR's own diff of it,
-    /// `file` as produced, not those revealed around its hunks, which GitHub won't take. Nil
-    /// when one commit's changes are shown, as comments go on the whole PR's diff.
+    /// The rows of a file a comment can be started on: every line of `file` as shown, those
+    /// revealed around its hunks included, with unchanged lines on the new side as on
+    /// github.com. Nil when one commit's changes are shown, as comments go on the whole PR's diff.
     public func commentableAnchors(of file: FileDiff) -> Set<DiffAnchor>? {
         guard shownCommit == nil else { return nil }
         return Set(file.hunks.flatMap(\.lines).map { line in

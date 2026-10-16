@@ -349,6 +349,10 @@ The rule is one function in `LoupeModel` (`CheckContext.isToleratedFailure`, `Ch
 
 While a file has lines revealed around its hunks, its header bar shows a small borderless button, `arrow.down.right.and.arrow.up.left`, that hides every one of them, back to the diff as produced. It only hides what's revealed in the changes shown, the whole PR's or one commit's, as each keeps its own. Hiding them one gap at a time isn't offered: GitHub has no such control either, and once gaps have merged hunks there's no clean step back. It's absent while nothing is revealed, so the header stays as it was for most files. When the diff is shown anew without an arrow having been clicked, as when the revealed lines go, the first code row in view that's still there holds still on screen, rather than the scroll offset, so hiding lines above the reader doesn't move what they were reading.
 
+### Lines revealed around a hunk take comments too
+
+This revises "New comments start from a "+" in the gutter and post at once" where it says revealed lines offer no "+". The user wants to comment on code next to a change, as github.com's new Files changed page allows after expanding. Revealed lines are unchanged, so they take comments on the new side with their new line number, posted the same way as any other. Whether the REST endpoint takes a `line` outside the diff's hunks isn't settled by GitHub's docs: they call `line` "the line of the blob in the pull request diff", and the September 2025 changelog that brought comments on unchanged lines to the new page says "API support is currently limited" while such comments are returned by the existing APIs. So it's offered and tried live; if GitHub refuses, the refusal shows under the draft as any other does. Hunk headers and the row after the last hunk still offer no "+".
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.
