@@ -418,12 +418,12 @@ struct ThreadsApp {
         return (app, try await app.open(pullRequest), threadId)
     }
 
-    /// Makes the first to-review PR, with the probe's conversation, change a 60-line `app.go`:
+    /// Makes the first PR in `list`, with the probe's conversation, change a 60-line `app.go`:
     /// line 10 becomes three (new lines 10 to 12) and line 50 goes. It also adds `new.go` and
-    /// changes a vendored file, which is hidden.
-    func pushPullRequest() async throws -> PullRequestSummary {
-        let listed = try #require(tabs.lists.pullRequests(in: .toReview).first)
-        try await conversations.add(listed.id, number: listed.number)
+    /// changes a vendored file, which is hidden. The viewer's own PR is theirs on GitHub too.
+    func pushPullRequest(in list: PullRequestList = .toReview) async throws -> PullRequestSummary {
+        let listed = try #require(tabs.lists.pullRequests(in: list).first)
+        try await conversations.add(listed.id, number: listed.number, author: list == .mine ? listed.author : nil)
         try await store.updateLocalRepos(saving: [LocalRepo(nameWithOwner: listed.repository, path: repo.checkout, verifiedAt: .now)])
         let lines = (1...60).map { "\($0) line" }
         let branchPoint = try await repo.commit(["app.go": lines.joined(separator: "\n") + "\n"], message: "Start")

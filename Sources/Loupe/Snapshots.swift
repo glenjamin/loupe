@@ -190,6 +190,8 @@ enum SnapshotRun {
                 for tab in tabs.tabs {
                     windows.select(tab.id)
                     try? await Task.sleep(for: .milliseconds(800))
+                    // A diff shown while its tab settles can take longer than that to appear.
+                    await wait(until: .now + 10) { windows.mainWindow.flatMap(visibleDiff(in:))?.rendered?.rowAnchors.contains { $0 != nil } == true }
                     guard let window = windows.mainWindow, hoverRow(ofNewLine: line, in: window) else { continue }
                     visibleDiff(in: window)?.commentButton.performClick(nil)
                     try? await Task.sleep(for: .milliseconds(800))
@@ -687,7 +689,8 @@ private func saveSnapshotsOfCommitLists(in windows: WindowManager, to directory:
     return written
 }
 
-/// Opens the review's summary on each PR the viewer can review, and writes the window with it
+/// Opens the review's summary on each PR the viewer can review, or their own with a review
+/// pending, and writes the window with it
 /// open as `review-<title>.png`.
 @MainActor
 private func saveSnapshotsOfReviews(in windows: WindowManager, to directory: URL) async throws -> [URL] {
@@ -695,7 +698,7 @@ private func saveSnapshotsOfReviews(in windows: WindowManager, to directory: URL
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let selected = windows.tabs.selected
     var written: [URL] = []
-    for tab in windows.tabs.tabs where tab.canReview {
+    for tab in windows.tabs.tabs where tab.canReview || (tab.canStartReview && tab.pendingReview != nil) {
         windows.select(tab.id)
         try? await Task.sleep(for: .milliseconds(300))
         tab.startWritingSummary()

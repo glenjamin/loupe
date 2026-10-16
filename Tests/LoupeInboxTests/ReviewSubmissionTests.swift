@@ -264,17 +264,71 @@ struct ReviewSubmissionTests {
         #expect(await app.conversations.reviewMutationsReceived.last == .addThread(reviewId: reviewId, .init(path: "app.go", line: 12, side: "RIGHT", body: "From Loupe")))
     }
 
-    @Test func theViewersOwnPullRequestOffersNoReview() async throws {
+    @Test func theViewerReviewsTheirOwnPullRequestWithCommentsAndSubmitsItAsAComment() async throws {
         let app = try await ThreadsApp()
-        let own = try #require(app.tabs.lists.pullRequests(in: .mine).first)
-        try await app.conversations.add(own.id)
-        let tab = try await app.open(own)
+        let tab = try await app.open(try await app.pushPullRequest(in: .mine))
+        #expect(tab.isOwnPullRequest && tab.canStartReview && !tab.canReview)
 
-        #expect(tab.isOwnPullRequest && !tab.canReview)
-        tab.reviewDraft.body = "LGTM"
-        #expect(!tab.canSubmitReview(as: .approve) && !tab.canSubmitReview(as: .comment))
+        try await comment("Explain this in the description", at: DiffAnchor(path: "app.go", side: .right, line: 11), on: tab)
+        let reviewId = try #require(tab.pendingReview?.id)
+        try await comment("Left over from a spike", at: DiffAnchor(path: "app.go", side: .left, line: 50), on: tab)
+
+        let head = try #require(tab.ready?.headOid)
+        #expect(await app.conversations.reviewMutationsReceived == [
+            .addReview(pullRequestId: tab.id, commitId: head, body: nil, event: nil, threads: [.init(path: "app.go", line: 11, side: "RIGHT", body: "Explain this in the description")]),
+            .addThread(reviewId: reviewId, .init(path: "app.go", line: 50, side: "LEFT", body: "Left over from a spike")),
+        ], "held in a pending review, with no verdict")
+        #expect(await app.conversations.commentsReceived.isEmpty, "nothing posted at once")
+        #expect(tab.pendingReview?.commentCount == 2)
+        #expect(tab.pendingComments.map { "\($0.thread.path):\($0.thread.line ?? 0)" } == ["app.go:11", "app.go:50"])
+
+        #expect(tab.canSubmitReview(as: .comment))
+        #expect(!tab.canSubmitReview(as: .approve) && !tab.canSubmitReview(as: .requestChanges), "GitHub refuses either from the author")
         await tab.submitReview(as: .approve)
-        #expect(await app.conversations.reviewMutationsReceived.isEmpty)
+        #expect(await app.conversations.reviewMutationsReceived.count == 2, "not sent")
+
+        tab.reviewDraft.body = "Notes for reviewers"
+        await tab.submitReview(as: .comment)
+
+        #expect(await app.conversations.reviewMutationsReceived.last == .submit(reviewId: reviewId, event: "COMMENT", body: "Notes for reviewers"))
+        #expect(tab.reviewDraft.error == nil)
+        #expect(tab.pendingReview == nil)
+        #expect(tab.conversation?.threads.allSatisfy { !$0.isPending } == true, "its comments are submitted")
+    }
+
+    @Test func aVerdictGitHubRefusesFromTheAuthorSaysWhyAndKeepsTheReviewPending() async throws {
+        // GitHub knows the PR as the viewer's though the list doesn't yet, so Loupe offers Approve.
+        let app = try await ThreadsApp()
+        let listed = try #require(app.tabs.lists.pullRequests(in: .toReview).first)
+        try await app.conversations.add(listed.id, number: listed.number, author: FakeGitHub.viewer)
+        let reviewId = try await app.conversations.startPendingReview(on: listed.id, path: "app.go", line: 11, body: "Why three?")
+        let tab = try await app.open(listed)
+        #expect(tab.canReview)
+
+        tab.reviewDraft.body = "LGTM"
+        await tab.submitReview(as: .approve)
+
+        #expect(await app.conversations.reviewMutationsReceived == [.submit(reviewId: reviewId, event: "APPROVE", body: "LGTM")])
+        #expect(tab.reviewDraft.error?.contains("Can not approve your own pull request") == true)
+        #expect(tab.reviewDraft.body == "LGTM")
+        #expect(tab.pendingReview?.id == reviewId, "still pending")
+    }
+
+    @Test func onlyAnOpenPullRequestTakesAReviewAndOnlySomeoneElsesAVerdict() async throws {
+        let app = try await ThreadsApp()
+        let (mine, toReview) = (try #require(app.tabs.lists.pullRequests(in: .mine).first), try #require(app.tabs.lists.pullRequests(in: .toReview).first))
+        try await app.conversations.add(mine.id, author: FakeGitHub.viewer)
+        try await app.conversations.add(toReview.id)
+        let (own, theirs) = (try await app.open(mine), try await app.open(toReview))
+        #expect(own.canStartReview && !own.canReview)
+        #expect(theirs.canStartReview && theirs.canReview)
+
+        try await app.github.merge(own.id)
+        try await app.github.edit(theirs.id) { $0.state = "CLOSED"; $0.closedAt = Date.now.formatted(.iso8601) }
+        try await app.tabs.lists.checkForChanges(to: [own.id, theirs.id])
+
+        #expect(own.pullRequest.state == .merged && !own.canStartReview && !own.canReview)
+        #expect(theirs.pullRequest.state == .closed && !theirs.canStartReview && !theirs.canReview)
     }
 
     /// Writes a comment under `anchor` and adds it to the viewer's review, starting one if need be.

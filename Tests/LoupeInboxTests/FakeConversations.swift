@@ -157,11 +157,13 @@ actor FakeConversations {
     }
 
     /// Gives the PR with `id` the probe's conversation, and with its `number` it can be
-    /// commented on over REST, which names PRs by number.
-    func add(_ id: String, number: Int? = nil) throws {
+    /// commented on over REST, which names PRs by number. With `author` it's theirs rather than
+    /// the probe's author.
+    func add(_ id: String, number: Int? = nil, author: String? = nil) throws {
         if let number { numbers[number] = id }
         let probe = try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/conversation.json")))
         var node = try #require(((probe as? [String: Any])?["data"] as? [String: Any])?["node"] as? [String: Any])
+        if let author { node["author"] = ["login": author, "avatarUrl": "https://avatars.githubusercontent.com/u/151272?v=4"] }
         let timeline = try #require(node["timelineItems"] as? [String: Any])
         timelines[id] = try #require(timeline["nodes"] as? [[String: Any]])
         node["timelineItems"] = nil
@@ -607,6 +609,7 @@ actor FakeConversations {
         reviewMutationsReceived.append(.addReview(pullRequestId: id, commitId: input["commitOID"] as? String, body: body, event: event, threads: threads))
         if let refusal = try refusalOfReviewChanges("addPullRequestReview", url) { return refusal }
         guard nodes[id] != nil else { return try refusal(unresolved: id, mutation: "addPullRequestReview", url) }
+        if let event, let refusal = try refusalOfOwnVerdict(event, on: id, "addPullRequestReview", url) { return refusal }
         if pendingReviews[id] != nil {
             return try unprocessable("addPullRequestReview", "User can only have one pending review per pull request", url)
         }
@@ -656,6 +659,7 @@ actor FakeConversations {
         reviewMutationsReceived.append(.submit(reviewId: reviewId, event: event, body: body))
         if let refusal = try refusalOfReviewChanges("submitPullRequestReview", url) { return refusal }
         guard let id = pullRequest(withPendingReview: reviewId) else { return try refusal(unresolved: reviewId, mutation: "submitPullRequestReview", url) }
+        if let refusal = try refusalOfOwnVerdict(event, on: id, "submitPullRequestReview", url) { return refusal }
         if event != "APPROVE", (body ?? "").isEmpty, pendingComments(of: id) == 0 {
             return try unprocessable("submitPullRequestReview", "Review body is required for \(event)", url)
         }
@@ -783,6 +787,16 @@ actor FakeConversations {
             "errors": [["type": "FORBIDDEN", "path": [mutation], "message": "Resource not accessible by personal access token"]],
         ]
         return (try JSONSerialization.data(withJSONObject: refusal), fakeResponse(url, status: 200))
+    }
+
+    /// GitHub's refusal to let a PR's author approve it or ask changes of it.
+    private func refusalOfOwnVerdict(_ event: String, on id: String, _ mutation: String, _ url: URL) throws -> (Data, HTTPURLResponse)? {
+        guard ((nodes[id]?["author"] as? [String: Any])?["login"] as? String) == FakeGitHub.viewer else { return nil }
+        switch event {
+        case "APPROVE": return try unprocessable(mutation, "Can not approve your own pull request", url)
+        case "REQUEST_CHANGES": return try unprocessable(mutation, "Can not request changes on your own pull request", url)
+        default: return nil
+        }
     }
 
     /// GitHub's shape for a mutation it won't carry out as asked.

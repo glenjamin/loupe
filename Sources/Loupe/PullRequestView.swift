@@ -177,8 +177,8 @@ struct ConversationRow: View {
 
 /// Three sections on one row: the PR's name, state and branches; on the viewer's own PRs, while
 /// it's open, a Merge button about 70% across, and on any merged or closed PR when that happened;
-/// and their reviewers at the right. On anyone else's open PR the right holds the viewer's own
-/// review, and the middle is empty.
+/// and their reviewers at the right, with any review of their own pending beneath them. On anyone
+/// else's open PR the right holds the viewer's own review, and the middle is empty.
 struct PullRequestHeader: View {
     let pullRequest: PullRequestSummary
     let tab: PullRequestTab
@@ -238,9 +238,13 @@ struct PullRequestHeader: View {
                     MergeErrorLabel(error: error)
                 }
             }
-            VStack {
+            VStack(alignment: .trailing, spacing: 6) {
                 if let reviewers = tab.reviewers {
                     ReviewersBlock(tab: tab, reviewers: reviewers)
+                    // Under the reviewers rather than beside Merge, so neither moves.
+                    if tab.canStartReview, tab.pendingReview != nil {
+                        ReviewControls(tab: tab)
+                    }
                 } else if tab.canReview {
                     ReviewControls(tab: tab)
                 }

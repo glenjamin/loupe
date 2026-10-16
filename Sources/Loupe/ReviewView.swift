@@ -6,7 +6,8 @@ import SwiftUI
 
 /// On anyone else's open PR, the header's review controls where the reviewers sit on the
 /// viewer's own: Request changes, Submit and Approve, each submitting at once with the summary
-/// written so far, and under them the pending count and "Summary…" to write it.
+/// written so far, and under them the pending count and "Summary…" to write it. On the viewer's
+/// own PR, which they can't approve or ask changes of, Submit is the only verdict, on that row.
 struct ReviewControls: View {
     let tab: PullRequestTab
 
@@ -14,10 +15,12 @@ struct ReviewControls: View {
         @Bindable var draft = tab.reviewDraft
         // The row sets the width; the pending count and any refusal wrap within it.
         RowWidthStack(spacing: 4) {
-            HStack(spacing: 6) {
-                verdictButton(.requestChanges)
-                verdictButton(.comment)
-                verdictButton(.approve)
+            if tab.canReview {
+                HStack(spacing: 6) {
+                    verdictButton(.requestChanges)
+                    verdictButton(.comment)
+                    verdictButton(.approve)
+                }
             }
             HStack(spacing: 6) {
                 if let count = tab.pendingReview?.commentCount {
@@ -43,12 +46,14 @@ struct ReviewControls: View {
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
-                .help(tab.pendingReview == nil
-                    ? "Write the review's summary, sent with whichever of the buttons above you click"
-                    : "Write the review's summary, sent with whichever of the buttons above you click, or discard the pending review")
+                .help(summaryHelp)
                 .background(SummaryButtonMarker())
                 .popover(isPresented: $draft.isWritingSummary, arrowEdge: .bottom) {
                     SummaryPopover(tab: tab, draft: draft)
+                }
+                if !tab.canReview {
+                    verdictButton(.comment)
+                        .controlSize(.small)
                 }
             }
             if let error = draft.error {
@@ -85,7 +90,13 @@ struct ReviewControls: View {
             return "Write a summary or add comments first, to \(event == .requestChanges ? "request changes" : "submit without approving")"
         }
         let pending = tab.pendingReview.map { " with its \($0.commentCount) pending \($0.commentCount == 1 ? "comment" : "comments")" } ?? ""
+        guard tab.canReview else { return "Submits your review\(pending) now, as a comment. Authors can't approve or request changes on their own PR." }
         return "\(event.summary) Submits your review\(pending) now."
+    }
+
+    private var summaryHelp: String {
+        let sent = tab.canReview ? "sent with whichever of the buttons above you click" : "sent with Submit"
+        return tab.pendingReview == nil ? "Write the review's summary, \(sent)" : "Write the review's summary, \(sent), or discard the pending review"
     }
 }
 
@@ -104,7 +115,7 @@ private struct SummaryPopover: View {
                 .frame(height: 110)
                 .background(Color(nsColor: .textBackgroundColor))
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))
-            Text("Leave a comment. Markdown. Sent with Request changes, Submit or Approve.")
+            Text(tab.canReview ? "Leave a comment. Markdown. Sent with Request changes, Submit or Approve." : "Leave a comment. Markdown. Sent with Submit.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let error = draft.error {

@@ -74,12 +74,12 @@ private struct NewCommentCard: View {
         .modifier(BlockInset())
     }
 
-    /// Where the viewer can review, a single comment posted at once and one into their review,
-    /// as on github.com; ⌘↩ adds to a pending review, and otherwise posts at once, and ⌘⇧↩ does
-    /// the other.
+    /// Where the viewer can start a review, their own PR included, a single comment posted at
+    /// once and one into their review, as on github.com; ⌘↩ adds to a pending review, and
+    /// otherwise posts at once, and ⌘⇧↩ does the other.
     private var actions: [ComposerAction] {
         let atOnce = "Post this comment at once, not as part of a review"
-        guard tab.canReview else {
+        guard tab.canStartReview else {
             return [ComposerAction(label: "Comment", help: atOnce) { Task { await tab.sendComment() } }]
         }
         let single = ComposerAction(label: "Add single comment", help: atOnce) { Task { await tab.sendComment() } }
@@ -96,7 +96,7 @@ private struct NewCommentCard: View {
     }
 
     private var caption: String {
-        guard tab.canReview else { return "Markdown. Posts at once, not as part of a review." }
+        guard tab.canStartReview else { return "Markdown. Posts at once, not as part of a review." }
         return tab.pendingReview == nil
             ? "Markdown. ⌘↩ posts a single comment; ⌘⇧↩ starts a review."
             : "Markdown. ⌘↩ adds to your review; ⌘⇧↩ posts a single comment."

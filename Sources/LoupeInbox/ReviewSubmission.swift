@@ -76,11 +76,16 @@ extension PullRequestTab {
         conversation?.pendingReview
     }
 
-    /// Whether the viewer can review the PR from here: it's open and someone else's. Their own
-    /// PR's place is taken by its reviewers and Merge.
+    /// Whether the viewer can give the PR a verdict, approving it or asking for changes: it's
+    /// open and someone else's, as GitHub refuses either from a PR's author.
     public var canReview: Bool {
-        guard let viewer else { return false }
-        return pullRequest.state == .open && pullRequest.author != viewer
+        canStartReview && pullRequest.author != viewer
+    }
+
+    /// Whether the viewer can hold comments in a pending review and submit it: on any open PR,
+    /// their own included, whose review can only be submitted as a comment.
+    public var canStartReview: Bool {
+        viewer != nil && pullRequest.state == .open
     }
 
     /// Whether the PR is the viewer's own, which GitHub won't let them approve or ask changes of.
@@ -95,7 +100,7 @@ extension PullRequestTab {
     /// threads are fetched anyway, so a review started or submitted elsewhere since is known
     /// when it's sent again.
     public func sendReviewComment() async {
-        guard canReview, let comment = threadActivity.newComment, comment.draft.canSend, case let .ready(review) = phase else { return }
+        guard canStartReview, let comment = threadActivity.newComment, comment.draft.canSend, case let .ready(review) = phase else { return }
         threadActivity.newCommentError = nil
         let anchor = comment.anchor
         let text = comment.draft.text
@@ -135,9 +140,10 @@ extension PullRequestTab {
     }
 
     /// Whether a review can be submitted with `event`: approving needs nothing more, but
-    /// commenting or asking for changes needs a summary or comments in the pending review.
+    /// commenting or asking for changes needs a summary or comments in the pending review. On
+    /// the viewer's own PR it can only be submitted as a comment.
     public func canSubmitReview(as event: ReviewEvent) -> Bool {
-        guard canReview, !reviewDraft.isSubmitting else { return false }
+        guard event == .comment ? canStartReview : canReview, !reviewDraft.isSubmitting else { return false }
         let hasSummary = !reviewSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return event == .approve || hasSummary || (pendingReview?.commentCount ?? 0) > 0
     }
