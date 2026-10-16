@@ -597,6 +597,10 @@ In the conversation page each of them has a pill per reaction made (emoji and co
 
 A reaction is applied at once to the conversation, the threads on the diff and the store, the page reloading in place as for any change, then sent with `addReaction` or `removeReaction` (from introspection, never run live). If GitHub refuses, the change is undone and logged; on a thread comment the reason also shows on its thread as a refused reply's does. Asking for what's already so sends nothing. Two quick clicks on one reaction send both mutations without waiting, as nothing tracks one underway; GitHub normally applies them in order, and any mismatch is put right on the next fetch.
 
+### A merged or closed PR says when, where the merge button was
+
+Once a PR isn't open, the header's middle slot shows "Merged" in the state badge's purple, or "Closed" in its red, with when beneath it in secondary caption text, laid out as the button and its reason are. Within the last week the time is relative ("3 hours ago"), which reads at a glance; beyond that it's the date and time, as "4 weeks ago" is too vague to place. The tooltip gives the full date and time either way. This shows on anyone's PR, not only the viewer's own, since when a PR landed matters to a reviewer too. A merged row stored before `mergedAt` was fetched shows just "Merged" until the next refresh. Who merged it isn't fetched, so isn't shown.
+
 ## Not yet decided
 
 Nothing is pending.

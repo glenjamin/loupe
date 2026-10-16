@@ -80,6 +80,36 @@ struct MergeBox: View {
     }
 }
 
+/// In the merge button's place once a PR is merged or closed: what happened, in the state
+/// badge's colour, and when beneath it, where the button's reason sits.
+struct OutcomeLabel: View {
+    let outcome: PullRequestOutcome
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(outcome.title)
+                .font(.headline)
+                .foregroundStyle(tint)
+            TimelineView(.everyMinute) { context in
+                if let when = outcome.when(now: context.date) {
+                    Text(verbatim: when)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .fixedSize()
+        .help(outcome.help())
+    }
+
+    private var tint: Color {
+        switch outcome.kind {
+        case .merged: .purple
+        case .closed: .diffDanger
+        }
+    }
+}
+
 /// GitHub's refusal of a merge or of leaving draft, under the button, wrapping within the
 /// merge section.
 struct MergeErrorLabel: View {
