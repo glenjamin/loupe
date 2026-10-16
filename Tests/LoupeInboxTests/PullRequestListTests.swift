@@ -424,7 +424,8 @@ struct PullRequestListTests {
         #expect(await github.requestCount > requestsForOneRefresh)
     }
 
-    @Test func refreshesEachIntervalUntilCancelled() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func refreshesEachIntervalUntilCancelled() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let clock = ManualClock()
         let model = try listModel(github, refreshInterval: .seconds(180), sleep: { try await clock.sleep(for: $0) })
@@ -500,11 +501,16 @@ private final class ManualClock {
     /// How long each sleep asked for, in order.
     private(set) var sleeps: [Duration] = []
     private var sleeper: CheckedContinuation<Void, Error>?
+    private var waiter: CheckedContinuation<Void, Error>?
 
     func sleep(for duration: Duration) async throws {
         sleeps.append(duration)
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { sleeper = $0 }
+            try await withCheckedThrowingContinuation {
+                sleeper = $0
+                waiter?.resume()
+                waiter = nil
+            }
         } onCancel: {
             Task { @MainActor in self.wake(throwing: CancellationError()) }
         }
@@ -516,12 +522,14 @@ private final class ManualClock {
         try await untilAsleep()
     }
 
-    /// Waits for the loop to sleep. The deadline only guards against a hang.
+    /// Waits for the loop to sleep, however long its refresh takes; the test's time limit
+    /// catches a loop that never does.
     func untilAsleep() async throws {
-        let deadline = ContinuousClock.now + .seconds(5)
-        while sleeper == nil {
-            try #require(ContinuousClock.now < deadline, "the refresh loop never went to sleep")
-            try await Task.sleep(for: .milliseconds(1))
+        guard sleeper == nil else { return }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { waiter = $0 }
+        } onCancel: {
+            Task { @MainActor in self.stopWaiting() }
         }
     }
 
@@ -529,6 +537,11 @@ private final class ManualClock {
         guard let sleeper else { return }
         self.sleeper = nil
         if let error { sleeper.resume(throwing: error) } else { sleeper.resume() }
+    }
+
+    private func stopWaiting() {
+        waiter?.resume(throwing: CancellationError())
+        waiter = nil
     }
 }
 
