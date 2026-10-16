@@ -410,6 +410,18 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "reviewRequestedAt", .datetime)
             }
         }
+        // The viewer's pending review and which thread comments are in it. A conversation
+        // stored before has none until it's next fetched.
+        migrator.registerMigration("Pending reviews") { db in
+            try db.alter(table: "conversation") { t in
+                t.add(column: "pendingReviewId", .text)
+                t.add(column: "pendingReviewBody", .text)
+                t.add(column: "pendingReviewCommentCount", .integer)
+            }
+            try db.alter(table: "threadComment") { t in
+                t.add(column: "isPending", .boolean).notNull().defaults(to: false)
+            }
+        }
         return migrator
     }
 

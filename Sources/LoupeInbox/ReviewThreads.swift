@@ -1,5 +1,6 @@
 import Foundation
 import LoupeCore
+import LoupeGitHub
 import LoupeModel
 import Observation
 
@@ -207,30 +208,39 @@ extension PullRequestTab {
         await refreshThreads { $0.id == thread.id }
     }
 
-    /// Takes the PR's review threads from GitHub alone, which is much cheaper than the whole
-    /// conversation, and stores them. A failure keeps what's shown. While new commits wait for
-    /// a reload, only the threads the viewer just acted on change on the diff shown.
+    /// Takes the PR's review threads and the viewer's pending review from GitHub alone, which is
+    /// much cheaper than the whole conversation, and stores them. A failure keeps what's shown.
+    /// While new commits wait for a reload, only the threads the viewer just acted on change on
+    /// the diff shown.
     func refreshThreads(placing actedOn: (ReviewThread) -> Bool) async {
-        let threads: [ReviewThread]
+        let fetched: ReviewThreads
         do {
-            threads = try await client.reviewThreads(ofPullRequest: id)
+            fetched = try await client.reviewThreads(ofPullRequest: id, viewer: viewer)
         } catch {
             log("Couldn't get the review threads of \(title): \(error.localizedDescription)")
             return
         }
-        conversation?.threads = threads
-        if pendingChange == nil {
-            followPlacedThreads()
-        } else {
-            for thread in threads where actedOn(thread) {
-                threadsOfShownDiff.replaceOrAppend(thread)
-            }
-        }
+        conversation?.threads = fetched.threads
+        conversation?.pendingReview = fetched.pendingReview
+        placeThreads(actedOn)
         do {
-            try await store.replaceThreads(of: id, with: threads)
+            try await store.replaceThreads(of: id, with: fetched.threads, pendingReview: fetched.pendingReview)
         } catch {
             log("Couldn't store the review threads of \(title): \(error)")
         }
+    }
+
+    /// Puts the conversation's threads, as just fetched, on the diff shown: all of them while
+    /// it's of the PR's head. While new commits wait for a reload, only those the viewer acted
+    /// on, and their pending ones GitHub no longer has, such as an abandoned review's, go.
+    func placeThreads(_ actedOn: (ReviewThread) -> Bool) {
+        guard pendingChange != nil else { return followPlacedThreads() }
+        let threads = conversation?.threads ?? []
+        for thread in threads where actedOn(thread) {
+            threadsOfShownDiff.replaceOrAppend(thread)
+        }
+        let fetched = Set(threads.map(\.id))
+        threadsOfShownDiff.removeAll { $0.isPending && !fetched.contains($0.id) }
     }
 
     /// Changes the thread wherever it's shown: in the conversation and placed on the diff.

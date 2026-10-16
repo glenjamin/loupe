@@ -1,0 +1,33 @@
+# Starting, adding to, submitting and abandoning a review. Never run: each changes the PR,
+# and submitting notifies people. Inputs from introspection, 2026-10-16.
+
+# Starts the viewer's pending review (no `event`), or submits a review at once (with `event`:
+# COMMENT, APPROVE or REQUEST_CHANGES). `threads` are DraftPullRequestReviewThread:
+# { path, line, side: LEFT|RIGHT, startLine, startSide, body }, `line` a file line number on
+# `side`. `commitOID` is the commit the review is of; GitHub takes the head if it's left out.
+# GitHub allows one pending review per viewer per PR.
+# variables: {"input": {"pullRequestId": "PR_…", "commitOID": "…", "body": "…", "event": "APPROVE",
+#   "threads": [{"path": "app.go", "line": 11, "side": "RIGHT", "body": "…"}]}}
+mutation($input: AddPullRequestReviewInput!) {
+  addPullRequestReview(input: $input) { pullRequestReview { id state } }
+}
+
+# "Adds a new thread to a pending Pull Request Review": a comment on a line, into the review.
+# The input also takes `pullRequestId`, `startLine`, `startSide` and `subjectType` (LINE or FILE).
+# variables: {"input": {"pullRequestReviewId": "PRR_…", "path": "app.go", "line": 11, "side": "RIGHT", "body": "…"}}
+mutation($input: AddPullRequestReviewThreadInput!) {
+  addPullRequestReviewThread(input: $input) { thread { id } }
+}
+
+# Submits the pending review. `event` is required: COMMENT, APPROVE or REQUEST_CHANGES
+# (DISMISS also exists); `body` replaces the review's summary.
+# variables: {"input": {"pullRequestReviewId": "PRR_…", "event": "APPROVE", "body": "…"}}
+mutation($input: SubmitPullRequestReviewInput!) {
+  submitPullRequestReview(input: $input) { pullRequestReview { id state } }
+}
+
+# Abandons the pending review and its comments.
+# variables: {"input": {"pullRequestReviewId": "PRR_…"}}
+mutation($input: DeletePullRequestReviewInput!) {
+  deletePullRequestReview(input: $input) { pullRequestReview { id } }
+}

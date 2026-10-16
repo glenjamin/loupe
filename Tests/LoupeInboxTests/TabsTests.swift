@@ -544,6 +544,40 @@ struct TabsTests {
 /// The app's models over the PR fixture and an in-memory store, searching no directories for
 /// checkouts.
 @MainActor
+struct PendingReviewWhileNewCommitsWaitTests {
+    @Test func theViewersReviewShowsOnTheDiffBeingReadAtOnce() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, _) = try await app.openDiffed(in: repo)
+        _ = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        _ = await app.tabs.watchForChanges()
+        #expect(tab.pendingChange == .newCommits)
+
+        try await reviewComment("Why hi?", line: 3, on: tab)
+        let started = try #require(tab.placedThreads.first { $0.isPending })
+        #expect(tab.placedThreadIds.contains(started.id), "shown on the diff being read")
+
+        tab.reviewDraft.event = .approve
+        await tab.submitReview()
+        #expect(tab.placedThreads.first { $0.id == started.id }?.isPending == false, "submitted at once")
+
+        try await reviewComment("And this?", line: 1, on: tab)
+        let abandoned = try #require(tab.placedThreads.first { $0.isPending })
+        await tab.abandonReview()
+        #expect(!tab.placedThreadIds.contains(abandoned.id), "gone with the review")
+        #expect(tab.placedThreadIds.contains(started.id))
+        #expect(tab.pendingChange == .newCommits, "the reload still waits")
+    }
+
+    private func reviewComment(_ text: String, line: Int, on tab: PullRequestTab) async throws {
+        tab.startComment(at: DiffAnchor(path: "app.go", side: .right, line: line))
+        try #require(tab.threadActivity.newComment?.draft).text = text
+        await tab.sendReviewComment()
+        #expect(tab.threadActivity.newCommentError == nil)
+    }
+}
+
+@MainActor
 private struct App {
     let github: FakeGitHub
     let details = FakePullRequestDetails()

@@ -26,7 +26,8 @@ extension PullRequestStore {
                     CheckContext(name: check.name, status: CheckStatus(rawValue: check.status) ?? .neutral, description: check.description, url: check.url)
                 },
                 reviewRequests: reviewers.filter { $0.role == ReviewerRow.request }.compactMap(\.reviewer),
-                latestReviews: reviewers.filter { $0.role == ReviewerRow.review }.compactMap(\.latestReview)
+                latestReviews: reviewers.filter { $0.role == ReviewerRow.review }.compactMap(\.latestReview),
+                pendingReview: row.pendingReview
             )
         }
     }
@@ -44,7 +45,10 @@ extension PullRequestStore {
                 createdAt: conversation.createdAt,
                 bodyHTML: conversation.bodyHTML,
                 body: conversation.body,
-                fetchedAt: fetchedAt
+                fetchedAt: fetchedAt,
+                pendingReviewId: conversation.pendingReview?.id,
+                pendingReviewBody: conversation.pendingReview?.body,
+                pendingReviewCommentCount: conversation.pendingReview?.commentCount
             ).upsert(db)
             for (position, item) in conversation.items.enumerated() {
                 try TimelineItemRow(item, pullRequestId: pullRequestId, position: position).insert(db)
@@ -71,15 +75,20 @@ extension PullRequestStore {
 }
 
 extension PullRequestStore {
-    /// Makes the stored conversation's review threads exactly `threads`, as when only they have
-    /// been fetched again. Does nothing if no conversation is stored for the PR.
-    public func replaceThreads(of pullRequestId: String, with threads: [ReviewThread]) async throws {
+    /// Makes the stored conversation's review threads exactly `threads`, and the viewer's
+    /// pending review `pendingReview`, as when only they have been fetched again. Does nothing if
+    /// no conversation is stored for the PR.
+    public func replaceThreads(of pullRequestId: String, with threads: [ReviewThread], pendingReview: PendingReview?) async throws {
         try await database.write { db in
-            guard try ConversationRow.exists(db, key: pullRequestId) else { return }
+            guard var row = try ConversationRow.fetchOne(db, key: pullRequestId) else { return }
             for table in ["reviewThread", "threadComment"] {
                 try db.execute(sql: "DELETE FROM \(table) WHERE pullRequestId = ?", arguments: [pullRequestId])
             }
             try insertThreads(threads, of: pullRequestId, in: db)
+            row.pendingReviewId = pendingReview?.id
+            row.pendingReviewBody = pendingReview?.body
+            row.pendingReviewCommentCount = pendingReview?.commentCount
+            try row.update(db)
         }
     }
 }
@@ -103,6 +112,13 @@ private struct ConversationRow: Codable, FetchableRecord, PersistableRecord {
     let bodyHTML: String
     let body: String
     let fetchedAt: Date
+    var pendingReviewId: String?
+    var pendingReviewBody: String?
+    var pendingReviewCommentCount: Int?
+
+    var pendingReview: PendingReview? {
+        pendingReviewId.map { PendingReview(id: $0, body: pendingReviewBody ?? "", commentCount: pendingReviewCommentCount ?? 0) }
+    }
 }
 
 /// A timeline item of any kind, flattened into the columns its kind uses.
@@ -284,6 +300,7 @@ private struct ThreadCommentRow: Codable, FetchableRecord, PersistableRecord {
     let bodyHTML: String
     let isMinimized: Bool
     let minimizedReason: String?
+    let isPending: Bool
 
     init(_ comment: ThreadComment, threadId: String, pullRequestId: String, position: Int) {
         self.pullRequestId = pullRequestId
@@ -297,10 +314,11 @@ private struct ThreadCommentRow: Codable, FetchableRecord, PersistableRecord {
         bodyHTML = comment.bodyHTML
         isMinimized = comment.isMinimized
         minimizedReason = comment.minimizedReason
+        isPending = comment.isPending
     }
 
     var comment: ThreadComment {
-        ThreadComment(id: id, databaseId: databaseId, author: participant(authorLogin, authorAvatarUrl), createdAt: createdAt, bodyHTML: bodyHTML, isMinimized: isMinimized, minimizedReason: minimizedReason)
+        ThreadComment(id: id, databaseId: databaseId, author: participant(authorLogin, authorAvatarUrl), createdAt: createdAt, bodyHTML: bodyHTML, isMinimized: isMinimized, minimizedReason: minimizedReason, isPending: isPending)
     }
 }
 

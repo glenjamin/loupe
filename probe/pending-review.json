@@ -1,0 +1,106 @@
+{
+    "data": {
+        "repository": {
+            "pullRequest": {
+                "id": "PR_kwDOCPShyc8AAAABH-Xmjw",
+                "pendingReview": {
+                    "nodes": [
+                        {
+                            "id": "PRR_kwDOCPShyc8AAAABR1WcfQ",
+                            "body": "",
+                            "comments": {
+                                "totalCount": 2
+                            }
+                        }
+                    ]
+                },
+                "reviewThreads": {
+                    "nodes": [
+                        {
+                            "id": "PRRT_kwDOCPShyc6rfOSZ",
+                            "isResolved": false,
+                            "isOutdated": false,
+                            "path": "cmd/scheduler/run.go",
+                            "line": 68,
+                            "startLine": 68,
+                            "diffSide": "RIGHT",
+                            "startDiffSide": null,
+                            "originalLine": 68,
+                            "originalStartLine": null,
+                            "subjectType": "LINE",
+                            "viewerCanReply": true,
+                            "viewerCanResolve": false,
+                            "viewerCanUnresolve": false,
+                            "resolvedBy": null,
+                            "firstComment": {
+                                "nodes": [
+                                    {
+                                        "diffHunk": "@@ -56,14 +56,13 @@ func (s *Wagon) ReadFleet() error {\n \trudder, gateFerry := sketch.Paddle\n \tdefer lantern.GatherBadge()\n \n-\tglobe.ResetFrame()\n-}\n-\n-// it is safe to call more than once\n-// the flag can go once every account has moved over\n-func CheckParcel() error {\n \tsignal := 0\n+\tValidateTrail(30)\n+}\n \n+// only the first page is fetched when the limit is small\n+// times are converted to UTC before they are compared\n+func WriteSpool() {\n \tlockCrest := ScanBranch(nil, nil)\n \tif stencil.PushBasket(\"cloud_spindle\") {\n \t\tgroupHinge(nil)"
+                                    }
+                                ]
+                            },
+                            "comments": {
+                                "nodes": [
+                                    {
+                                        "id": "PRRC_kwDOCPShyc79P5gT",
+                                        "databaseId": 4248803347,
+                                        "bodyHTML": "<p dir=\"auto\">do we still need this fallback?</p>",
+                                        "createdAt": "2026-10-12T13:54:03Z",
+                                        "isMinimized": false,
+                                        "minimizedReason": null,
+                                        "state": "PENDING",
+                                        "author": {
+                                            "login": "glenjamin",
+                                            "avatarUrl": "https://avatars.githubusercontent.com/u/151272?u=8a3688637befe674727827e9c2050c7c5b016c26&v=4"
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "id": "PRRT_kwDOCPShyc6rfRQl",
+                            "isResolved": false,
+                            "isOutdated": false,
+                            "path": "scheduler/daemon/daemon.go",
+                            "line": 223,
+                            "startLine": 223,
+                            "diffSide": "RIGHT",
+                            "startDiffSide": null,
+                            "originalLine": 223,
+                            "originalStartLine": null,
+                            "subjectType": "LINE",
+                            "viewerCanReply": true,
+                            "viewerCanResolve": false,
+                            "viewerCanUnresolve": false,
+                            "resolvedBy": null,
+                            "firstComment": {
+                                "nodes": [
+                                    {
+                                        "diffHunk": "@@ -201,15 +219,31 @@ func (c *Gate) normalizeKettle() error {\n \treturn \"spindle\", joinFlame(\"gate\", false)\n }\n \n+// retries are left to the caller\n+// because a batch usually belongs to one account's gauges."
+                                    }
+                                ]
+                            },
+                            "comments": {
+                                "nodes": [
+                                    {
+                                        "id": "PRRC_kwDOCPShyc79P-RG",
+                                        "databaseId": 4248822854,
+                                        "bodyHTML": "<p dir=\"auto\">is this true?</p>\n<div class=\"snippet-clipboard-content notranslate position-relative overflow-auto\" data-snippet-clipboard-copy-content=\"// because a batch usually belongs to one account&#x27;s gauges.\"><pre class=\"notranslate\"><code class=\"notranslate\">// because a batch usually belongs to one account's gauges.\n</code></pre></div>",
+                                        "createdAt": "2026-10-12T13:55:51Z",
+                                        "isMinimized": false,
+                                        "minimizedReason": null,
+                                        "state": "PENDING",
+                                        "author": {
+                                            "login": "glenjamin",
+                                            "avatarUrl": "https://avatars.githubusercontent.com/u/151272?u=8a3688637befe674727827e9c2050c7c5b016c26&v=4"
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    }
+}

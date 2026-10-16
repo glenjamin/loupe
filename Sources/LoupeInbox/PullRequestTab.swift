@@ -51,13 +51,15 @@ public final class PullRequestTab: Identifiable {
     /// The review threads as last fetched while the diff was of the PR's head, which stay
     /// placed on it while new commits wait for a reload.
     var threadsOfShownDiff: [ReviewThread] = []
+    /// The viewer's review being finished.
+    public let reviewDraft = ReviewDraft()
 
     /// Opens a linked PR in its own tab; set by `TabsModel`.
     @ObservationIgnored var linkOpener: @MainActor (PullRequestLink) async -> Bool = { _ in false }
 
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
-    private let lists: PullRequestListModel
+    let lists: PullRequestListModel
     let store: PullRequestStore
     private let differ: PullRequestDiffer
     let client: GitHubClient
@@ -516,7 +518,7 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// Takes the conversation from GitHub and stores it, keeping what was shown if it fails.
-    private func refreshConversation() async {
+    func refreshConversation() async {
         isFetchingConversation = true
         defer { isFetchingConversation = false }
         let fetched: Conversation

@@ -2,10 +2,11 @@ import Foundation
 import LoupeModel
 
 extension GitHubClient {
-    /// The PR's description, timeline, review threads, head commit's checks and reviewers,
-    /// following the timeline's pages to the end.
-    public func conversation(ofPullRequest id: String) async throws -> Conversation {
-        let first: ConversationResponse = try await query(Self.conversationQuery, variables: ConversationVariables(id: id, after: nil))
+    /// The PR's description, timeline, review threads, head commit's checks, reviewers and
+    /// `viewer`'s pending review, following the timeline's pages to the end. With no `viewer`,
+    /// the pending review is whichever GitHub shows, which is only ever the viewer's own.
+    public func conversation(ofPullRequest id: String, viewer: String? = nil) async throws -> Conversation {
+        let first: ConversationResponse = try await query(Self.conversationQuery, variables: FirstPageVariables(id: id, viewer: viewer))
         guard let pullRequest = first.node else { throw GitHubError.graphQL(["Pull request \(id) not found"]) }
         var nodes = pullRequest.timelineItems.nodes
         var page = pullRequest.timelineItems.pageInfo
@@ -24,30 +25,37 @@ extension GitHubClient {
             threads: pullRequest.reviewThreads.nodes.map(\.thread),
             checks: pullRequest.commits.nodes.first?.commit.statusCheckRollup?.contexts.nodes.compactMap(\.check) ?? [],
             reviewRequests: pullRequest.reviewRequests.nodes.compactMap { $0.requestedReviewer?.reviewer },
-            latestReviews: pullRequest.latestReviews.nodes.compactMap(\.latestReview)
+            latestReviews: pullRequest.latestReviews.nodes.compactMap(\.latestReview),
+            pendingReview: pullRequest.pendingReview.nodes.first?.pendingReview
         )
     }
 
-    /// The PR's review threads alone, as after a reply or a change to one, which is much
-    /// cheaper than the whole conversation.
-    public func reviewThreads(ofPullRequest id: String) async throws -> [ReviewThread] {
-        let response: ReviewThreadsResponse = try await query(Self.reviewThreadsQuery, variables: ReviewThreadsVariables(id: id))
-        guard let threads = response.node?.reviewThreads else { throw GitHubError.graphQL(["Pull request \(id) not found"]) }
-        return threads.nodes.map(\.thread)
+    /// The PR's review threads and `viewer`'s pending review alone, as after a reply, a change
+    /// to a thread or to the review, which is much cheaper than the whole conversation.
+    public func reviewThreads(ofPullRequest id: String, viewer: String? = nil) async throws -> ReviewThreads {
+        let response: ReviewThreadsResponse = try await query(Self.reviewThreadsQuery, variables: ReviewThreadsVariables(id: id, viewer: viewer))
+        guard let node = response.node, let threads = node.reviewThreads, let pending = node.pendingReview else {
+            throw GitHubError.graphQL(["Pull request \(id) not found"])
+        }
+        return ReviewThreads(threads: threads.nodes.map(\.thread), pendingReview: pending.nodes.first?.pendingReview)
     }
 
     static let reviewThreadsQuery = """
-        query($id: ID!) {
+        query($id: ID!, $viewer: String) {
           node(id: $id) {
             ... on PullRequest {
               reviewThreads(first: 100) { nodes { ...ReviewThread } }
+              \(pendingReviewField)
             }
           }
         }
         """ + reviewThreadFragment
 
+    /// Only the viewer can see their pending review, and they have at most one per PR.
+    static let pendingReviewField = "pendingReview: reviews(first: 1, states: [PENDING], author: $viewer) { nodes { id body comments { totalCount } } }"
+
     static let conversationQuery = """
-        query($id: ID!, $after: String) {
+        query($id: ID!, $after: String, $viewer: String) {
           node(id: $id) {
             ... on PullRequest {
               bodyHTML
@@ -61,13 +69,15 @@ extension GitHubClient {
               }
               reviewRequests(first: 20) { nodes { requestedReviewer { ...Reviewer } } }
               latestReviews(first: 50) { nodes { state submittedAt author { ...Reviewer } } }
+              \(pendingReviewField)
             }
           }
         }
         """ + timelinePageFragment + reviewerFragment + reviewThreadFragment
 
-    /// A thread's anchoring, what the viewer may do with it, and its comments. Only the first
-    /// comment's diff hunk is asked for, as replies share it.
+    /// A thread's anchoring, what the viewer may do with it, and its comments, each saying
+    /// whether it's in the viewer's pending review. Only the first comment's diff hunk is asked
+    /// for, as replies share it.
     static let reviewThreadFragment = """
 
         fragment ReviewThread on PullRequestReviewThread {
@@ -75,7 +85,7 @@ extension GitHubClient {
           viewerCanReply viewerCanResolve viewerCanUnresolve
           resolvedBy { login }
           firstComment: comments(first: 1) { nodes { diffHunk } }
-          comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason author { login avatarUrl } } }
+          comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason state author { login avatarUrl } } }
         }
         """
 
@@ -142,6 +152,35 @@ private struct ConversationVariables: Encodable, Sendable {
     enum CodingKeys: CodingKey { case id, after }
 }
 
+/// The first page's, which also names whose pending review to fetch.
+private struct FirstPageVariables: Encodable, Sendable {
+    let id: String
+    let viewer: String?
+
+    // `after` and an unknown `viewer` are sent as null rather than left out.
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeNil(forKey: .after)
+        try container.encode(viewer, forKey: .viewer)
+    }
+
+    enum CodingKeys: CodingKey { case id, after, viewer }
+}
+
+/// The viewer's pending review, as `pendingReviewField` returns it.
+private struct PendingReviewNode: Decodable {
+    let id: String
+    let body: String
+    let comments: Count
+
+    struct Count: Decodable { let totalCount: Int }
+
+    var pendingReview: PendingReview {
+        PendingReview(id: id, body: body, commentCount: comments.totalCount)
+    }
+}
+
 private struct ConversationResponse: Decodable {
     let node: PullRequest?
 
@@ -155,6 +194,7 @@ private struct ConversationResponse: Decodable {
         let commits: Connection<CommitNode>
         let reviewRequests: Connection<Request>
         let latestReviews: Connection<Review>
+        let pendingReview: Connection<PendingReviewNode>
     }
 
     struct Request: Decodable {
@@ -186,13 +226,25 @@ private struct ConversationResponse: Decodable {
 
 private struct ReviewThreadsVariables: Encodable, Sendable {
     let id: String
+    let viewer: String?
+
+    // An unknown `viewer` is sent as null rather than left out.
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(viewer, forKey: .viewer)
+    }
+
+    enum CodingKeys: CodingKey { case id, viewer }
 }
 
 private struct ReviewThreadsResponse: Decodable {
     let node: Node?
 
+    /// Both nil for a node that isn't a PR.
     struct Node: Decodable {
         let reviewThreads: Connection<ReviewThreadNode>?
+        let pendingReview: Connection<PendingReviewNode>?
     }
 }
 
@@ -225,6 +277,9 @@ private struct ReviewThreadNode: Decodable {
         let createdAt: Date
         let isMinimized: Bool
         let minimizedReason: String?
+        /// `PENDING` or `SUBMITTED`; taken as submitted when missing, as in captures that
+        /// didn't ask for it.
+        let state: String?
         let author: Author?
     }
 
@@ -235,7 +290,10 @@ private struct ReviewThreadNode: Decodable {
             isOnFile: subjectType == "FILE", diffHunk: firstComment.nodes.first?.diffHunk ?? "", resolvedBy: resolvedBy?.login,
             viewerCanReply: viewerCanReply, viewerCanResolve: viewerCanResolve, viewerCanUnresolve: viewerCanUnresolve,
             comments: comments.nodes.map {
-                ThreadComment(id: $0.id, databaseId: $0.databaseId, author: $0.author?.participant, createdAt: $0.createdAt, bodyHTML: $0.bodyHTML, isMinimized: $0.isMinimized, minimizedReason: $0.minimizedReason)
+                ThreadComment(
+                    id: $0.id, databaseId: $0.databaseId, author: $0.author?.participant, createdAt: $0.createdAt, bodyHTML: $0.bodyHTML,
+                    isMinimized: $0.isMinimized, minimizedReason: $0.minimizedReason, isPending: $0.state == "PENDING"
+                )
             }
         )
     }

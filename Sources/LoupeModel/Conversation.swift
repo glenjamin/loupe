@@ -18,8 +18,10 @@ public struct Conversation: Sendable, Equatable {
     public var reviewRequests: [Reviewer]
     /// Each reviewer's most recent submitted review, in GitHub's order.
     public var latestReviews: [LatestReview]
+    /// The viewer's review not yet submitted, if they have one; only they can see it.
+    public var pendingReview: PendingReview?
 
-    public init(author: Participant?, createdAt: Date, bodyHTML: String, body: String = "", items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext], reviewRequests: [Reviewer] = [], latestReviews: [LatestReview] = []) {
+    public init(author: Participant?, createdAt: Date, bodyHTML: String, body: String = "", items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext], reviewRequests: [Reviewer] = [], latestReviews: [LatestReview] = [], pendingReview: PendingReview? = nil) {
         self.author = author
         self.createdAt = createdAt
         self.bodyHTML = bodyHTML
@@ -29,7 +31,30 @@ public struct Conversation: Sendable, Equatable {
         self.checks = checks
         self.reviewRequests = reviewRequests
         self.latestReviews = latestReviews
+        self.pendingReview = pendingReview
     }
+}
+
+/// The viewer's review of a PR, started and not yet submitted: its comments show only to them
+/// until it is.
+public struct PendingReview: Sendable, Equatable {
+    public var id: String
+    /// The summary as last saved with the review, in markdown.
+    public var body: String
+    public var commentCount: Int
+
+    public init(id: String, body: String, commentCount: Int) {
+        self.id = id
+        self.body = body
+        self.commentCount = commentCount
+    }
+}
+
+/// What submitting a review says of the PR, in GitHub's terms.
+public enum ReviewEvent: String, Sendable, CaseIterable {
+    case comment = "COMMENT"
+    case approve = "APPROVE"
+    case requestChanges = "REQUEST_CHANGES"
 }
 
 /// A person, team or bot who can be asked to review.
@@ -218,6 +243,11 @@ public struct ReviewThread: Sendable, Equatable, Identifiable {
         let first = (line != nil ? startLine : originalStartLine) ?? last
         return min(first, last)...last
     }
+
+    /// Started in the viewer's pending review, so no one else sees it yet.
+    public var isPending: Bool {
+        comments.first?.isPending == true
+    }
 }
 
 public struct ThreadComment: Sendable, Equatable, Identifiable {
@@ -230,8 +260,10 @@ public struct ThreadComment: Sendable, Equatable, Identifiable {
     public var isMinimized: Bool
     /// Why it was hidden, in GitHub's words, such as `outdated` or `resolved`.
     public var minimizedReason: String?
+    /// Part of the viewer's pending review, not yet submitted.
+    public var isPending: Bool
 
-    public init(id: String, databaseId: Int? = nil, author: Participant?, createdAt: Date, bodyHTML: String, isMinimized: Bool, minimizedReason: String? = nil) {
+    public init(id: String, databaseId: Int? = nil, author: Participant?, createdAt: Date, bodyHTML: String, isMinimized: Bool, minimizedReason: String? = nil, isPending: Bool = false) {
         self.id = id
         self.databaseId = databaseId
         self.author = author
@@ -239,6 +271,7 @@ public struct ThreadComment: Sendable, Equatable, Identifiable {
         self.bodyHTML = bodyHTML
         self.isMinimized = isMinimized
         self.minimizedReason = minimizedReason
+        self.isPending = isPending
     }
 }
 
