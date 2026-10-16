@@ -405,6 +405,12 @@ Now the pull adds what it has revealed to the scroll view's bottom inset and scr
 
 Whether the view is at its end is read from its bounds only until a drag is past it; from then the pull's own travel says, so nothing AppKit does to the bounds can disarm it. Travel back at zero is leaving the end: the pull is undone, the fill empties, further moves scroll the document as usual, and coming back to the end is a scroll reaching it, so it dwells. The rubber band stays off for a PR's diff, as at the bottom it would add to the strip's movement and a drag scrolling into the end would leave AppKit mid-bounce under the inset; so the top doesn't bounce either.
 
+### Links to PRs open them in the app
+
+This relaxes "links open in the browser" in "The conversation tab is a web view of GitHub's own HTML" and "Markdown files can be read rendered, by GitHub's own renderer". PRs reference each other constantly, as one PR's description says "Needs porter#1522", and following such a link out to the browser leaves the review behind. So a link to `github.com/<owner>/<repo>/pull/<number>`, whatever part of the PR it points at (its files, a commit, a comment's anchor), opens that PR's tab, or shows it if it's already open, from the conversation, a rendered markdown file or a review thread's comments in the diff. Every other link, issues, commits and compares included, still opens in the browser, as does ⌘-click or a middle click on a PR link, which ask for a browser tab.
+
+A PR in either list, or already open, opens at once. Any other is looked up on GitHub by repo and number, with the same fields as the lists' rows, and stored with its tab in one write, so a list refresh can't drop it as unlisted first; it then behaves as any PR opened from the lists, viewed files and conversation included, and is forgotten when its tab closes. The lookup doesn't block the window. If GitHub has no such PR the viewer can see, or the lookup fails, the link opens in the browser instead and the reason is logged.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

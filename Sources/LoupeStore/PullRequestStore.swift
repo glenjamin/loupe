@@ -383,16 +383,21 @@ public struct PullRequestStore: Sendable {
 
     private static func upsert(_ pullRequests: [PullRequestSummary], into list: PullRequestList, at refreshedAt: Date, _ db: Database) throws {
         for pullRequest in pullRequests {
-            // A row left from a repo that was deleted and recreated would hold the same
-            // repo and number under an old id.
-            try PullRequestRow
-                .filter(Column("repository") == pullRequest.repository && Column("number") == pullRequest.number && Column("id") != pullRequest.id)
-                .deleteAll(db)
-            // Searches don't fetch what's only looked up by id, so the last of that is kept.
-            let stored = try PullRequestRow.fetchOne(db, key: pullRequest.id)
-            try PullRequestRow(pullRequest, keepingLookupsFrom: stored).upsert(db)
+            try upsert(pullRequest, db)
             try ListMembership(list: list.rawValue, pullRequestId: pullRequest.id, confirmedAt: refreshedAt).upsert(db)
         }
+    }
+
+    /// Stores the PR's row, whichever list it's in, if any.
+    static func upsert(_ pullRequest: PullRequestSummary, _ db: Database) throws {
+        // A row left from a repo that was deleted and recreated would hold the same
+        // repo and number under an old id.
+        try PullRequestRow
+            .filter(Column("repository") == pullRequest.repository && Column("number") == pullRequest.number && Column("id") != pullRequest.id)
+            .deleteAll(db)
+        // Searches don't fetch what's only looked up by id, so the last of that is kept.
+        let stored = try PullRequestRow.fetchOne(db, key: pullRequest.id)
+        try PullRequestRow(pullRequest, keepingLookupsFrom: stored).upsert(db)
     }
 
     /// PRs in neither list are no longer needed, unless open in a tab.

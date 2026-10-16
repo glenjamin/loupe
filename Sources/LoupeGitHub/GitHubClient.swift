@@ -68,6 +68,16 @@ public struct GitHubClient: Sendable {
         return pullRequests
     }
 
+    /// The PR numbered `number` in `repository` (`owner/name`) as it is now, as a link names it.
+    /// Nil when GitHub has no such PR, or doesn't show it to the viewer.
+    public func pullRequest(repository: String, number: Int) async throws -> PullRequestSummary? {
+        let parts = repository.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return nil }
+        let variables = PullRequestNumberVariables(owner: String(parts[0]), name: String(parts[1]), number: number)
+        let response: PullRequestByNumberResponse = try await query(Self.pullRequestByNumberQuery, variables: variables, allowingMissingNodes: true)
+        return response.repository?.pullRequest.map(PullRequestSummary.init)
+    }
+
     /// The viewer's viewed state of every file in the PR with `id`, keyed by path. GitHub lists
     /// vendored files too, so the pages are followed to the end.
     public func viewedStates(ofPullRequest id: String) async throws -> [String: FileViewedState] {
@@ -174,6 +184,20 @@ public struct GitHubClient: Sendable {
         }
         """ + pullRequestRowFragment
 
+    /// The same fields as the lookup by id, as the PR is then stored and shown the same way.
+    static let pullRequestByNumberQuery = """
+        query($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $number) {
+              ...PullRequestRow
+              commitCount: commits { totalCount }
+              comments { totalCount }
+              reviewThreads { totalCount }
+            }
+          }
+        }
+        """ + pullRequestRowFragment
+
     static let viewedStatesQuery = """
         query($id: ID!, $first: Int!, $after: String) {
           node(id: $id) {
@@ -263,6 +287,12 @@ private struct NoVariables: Encodable, Sendable {}
 
 struct NodesVariables: Encodable, Sendable {
     let ids: [String]
+}
+
+private struct PullRequestNumberVariables: Encodable, Sendable {
+    let owner: String
+    let name: String
+    let number: Int
 }
 
 private struct FilesVariables: Encodable, Sendable {

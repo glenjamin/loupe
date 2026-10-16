@@ -58,6 +58,18 @@ extension PullRequestStore {
         }
     }
 
+    /// Stores a PR looked up on its own, such as one a link names, and adds its tab after the
+    /// others unless it's open already. One write, so a list refresh can't drop it as unlisted
+    /// before its tab is saved.
+    public func addOpenTab(_ pullRequest: PullRequestSummary) async throws {
+        try await database.write { db in
+            try Self.upsert(pullRequest, db)
+            let isOpen = try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM openTab WHERE pullRequestId = ?)", arguments: [pullRequest.id]) ?? false
+            guard !isOpen else { return }
+            try db.execute(sql: "INSERT INTO openTab (position, pullRequestId) SELECT COALESCE(MAX(position) + 1, 0), ? FROM openTab", arguments: [pullRequest.id])
+        }
+    }
+
     /// Replaces the PR's record, reviewable paths and all.
     public func recordDiff(_ record: DiffRecord) async throws {
         try await database.write { db in

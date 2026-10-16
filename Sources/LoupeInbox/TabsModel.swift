@@ -71,6 +71,31 @@ public final class TabsModel {
         show(pullRequest.id)
     }
 
+    /// Opens the PR a link names, or focuses its tab: at once when it's stored, otherwise once
+    /// it's been looked up on GitHub and stored like any listed PR. False when GitHub has no such
+    /// PR the viewer can see, or can't be reached, so the link can go to the browser instead.
+    public func open(_ link: PullRequestLink) async -> Bool {
+        let named = { (pullRequest: PullRequestSummary) in
+            pullRequest.number == link.number && pullRequest.repository.caseInsensitiveCompare(link.repository) == .orderedSame
+        }
+        if let known = tabs.map(\.pullRequest).first(where: named) ?? lists.pullRequest(repository: link.repository, number: link.number) {
+            open(known)
+            return true
+        }
+        do {
+            guard let found = try await lists.lookUpPullRequest(repository: link.repository, number: link.number) else {
+                log("No pull request \(link.repository)#\(link.number) on GitHub, or none visible; opening the link in the browser")
+                return false
+            }
+            try await store.addOpenTab(found)
+            open(found)
+            return true
+        } catch {
+            log("Couldn't look up \(link.repository)#\(link.number), opening the link in the browser: \(error.localizedDescription)")
+            return false
+        }
+    }
+
     /// Records which PR is shown, or nil for the lists.
     public func select(_ id: String?) {
         guard id.map({ tab(id: $0) != nil }) ?? true, id != selected else { return }
@@ -144,7 +169,9 @@ public final class TabsModel {
     }
 
     private func makeTab(_ pullRequest: PullRequestSummary) -> PullRequestTab {
-        PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ, client: client, candidates: candidates)
+        let tab = PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ, client: client, candidates: candidates)
+        tab.linkOpener = { [weak self] link in await self?.open(link) ?? false }
+        return tab
     }
 
     private func save() {

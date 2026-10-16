@@ -40,6 +40,7 @@ final class ConversationPage: GitHubWebPage {
     static func page(for tab: PullRequestTab) -> ConversationPage {
         if let page = pages.object(forKey: tab) { return page }
         let page = ConversationPage()
+        page.openPullRequestLink = { [weak tab] in await tab?.open($0) ?? false }
         pages.setObject(page, forKey: tab)
         return page
     }

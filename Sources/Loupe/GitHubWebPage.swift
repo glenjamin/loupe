@@ -1,13 +1,17 @@
 import AppKit
 import LoupeCore
+import LoupeModel
 import WebKit
 
 /// A web view showing a page we assemble around GitHub's rendered HTML, from
 /// `Resources/conversation.html` and `conversation.css`. It loads only that page, keeps nothing
-/// and shares no cookies, and opens links in the default browser.
+/// and shares no cookies. Links to PRs go to `openPullRequestLink`, and other links to the
+/// default browser.
 @MainActor
 class GitHubWebPage: NSObject {
     let webView: WKWebView
+    /// Opens a linked PR in the app, returning whether it could; set by whoever makes the page.
+    var openPullRequestLink: @MainActor (PullRequestLink) async -> Bool = { _ in false }
     /// Whether the latest page has finished loading, images included.
     private(set) var isLoaded = false
     /// What relative links in the page are relative to.
@@ -49,13 +53,13 @@ class GitHubWebPage: NSObject {
 }
 
 extension GitHubWebPage: WKNavigationDelegate, WKUIDelegate {
-    /// Only the page itself loads here; links open in the default browser.
+    /// Only the page itself loads here; links are followed elsewhere.
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
         let url = navigationAction.request.url
         if navigationAction.navigationType == .other, url == baseURL { return .allow }
         // A link to a heading on the page itself.
         if let url, url.fragment != nil, url.absoluteString.hasPrefix(baseURL.absoluteString + "#") { return .allow }
-        openInBrowser(url)
+        follow(navigationAction)
         return .cancel
     }
 
@@ -66,12 +70,31 @@ extension GitHubWebPage: WKNavigationDelegate, WKUIDelegate {
 
     /// A link that asks for a new window.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        openInBrowser(navigationAction.request.url)
+        follow(navigationAction)
         return nil
     }
 
-    private func openInBrowser(_ url: URL?) {
-        guard let url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else { return }
-        NSWorkspace.shared.open(url)
+    /// ⌘-click and the middle button ask for a new browser tab, so they go to the browser even
+    /// for a PR.
+    private func follow(_ action: WKNavigationAction) {
+        let inBrowserTab = action.modifierFlags.contains(.command) || action.buttonNumber == middleMouseButton
+        followLink(action.request.url, inBrowserTab: inBrowserTab, openPullRequest: openPullRequestLink)
     }
 }
+
+/// Opens a link to a PR in the app, unless asked for a browser tab or the app can't, and any
+/// other web or mail link in the default browser.
+@MainActor
+func followLink(_ url: URL?, inBrowserTab: Bool, openPullRequest: @escaping @MainActor (PullRequestLink) async -> Bool) {
+    guard let url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else { return }
+    guard !inBrowserTab, let link = PullRequestLink(url: url) else {
+        NSWorkspace.shared.open(url)
+        return
+    }
+    Task {
+        if await !openPullRequest(link) { NSWorkspace.shared.open(url) }
+    }
+}
+
+/// AppKit's number for the middle mouse button, as `WKNavigationAction.buttonNumber` reports it.
+private let middleMouseButton = 2

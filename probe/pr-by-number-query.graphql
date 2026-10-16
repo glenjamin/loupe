@@ -1,0 +1,30 @@
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      ...PullRequestRow
+      commitCount: commits { totalCount }
+      comments { totalCount }
+      reviewThreads { totalCount }
+    }
+  }
+}
+
+fragment PullRequestRow on PullRequest {
+  id
+  number
+  title
+  url
+  isDraft
+  state
+  mergedAt
+  closedAt
+  updatedAt
+  reviewDecision
+  headRefName
+  baseRefName
+  headRefOid
+  baseRefOid
+  author { login }
+  repository { nameWithOwner }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+}

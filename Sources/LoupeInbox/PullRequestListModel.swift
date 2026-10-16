@@ -107,6 +107,27 @@ public final class PullRequestListModel {
         return unlisted[id]
     }
 
+    /// The stored PR numbered `number` in `repository`, whatever its state, if it's in either
+    /// list or has been checked directly. Repo names aren't case-sensitive, as on GitHub.
+    public func pullRequest(repository: String, number: Int) -> PullRequestSummary? {
+        let matches = { (pullRequest: PullRequestSummary) in
+            pullRequest.number == number && pullRequest.repository.caseInsensitiveCompare(repository) == .orderedSame
+        }
+        for list in PullRequestList.allCases {
+            if let found = snapshot[list].first(where: matches) { return found }
+        }
+        return unlisted.values.first(where: matches)
+    }
+
+    /// Looks up the PR numbered `number` in `repository` on GitHub, for one stored nowhere yet,
+    /// and keeps it as checked directly. Nil when GitHub has no such PR the viewer can see.
+    func lookUpPullRequest(repository: String, number: Int) async throws -> PullRequestSummary? {
+        guard let found = try await client.pullRequest(repository: repository, number: number) else { return nil }
+        let listed = PullRequestList.allCases.contains { list in snapshot[list].contains { $0.id == found.id } }
+        if !listed { unlisted[found.id] = found }
+        return found
+    }
+
     /// Looks up the PRs with `ids` on GitHub directly, rather than waiting for the lists'
     /// refresh, and stores them, so their windows see what changed.
     public func checkForChanges(to ids: [String]) async throws {

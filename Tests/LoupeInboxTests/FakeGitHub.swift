@@ -3,10 +3,11 @@ import LoupeGitHub
 import LoupeModel
 import Testing
 
-/// An in-memory api.github.com holding the viewer's PRs and the PRs awaiting their review. Like
-/// GitHub's GraphQL API it rejects requests without the expected token, caps page sizes, pages
-/// with cursors, matches searches by author, review request, state and update time, looks up
-/// nodes by id, serves each PR's checks and mergeability as captured in `probe/pr-status.json`,
+/// An in-memory api.github.com holding the viewer's PRs, the PRs awaiting their review, and a
+/// merged PR in neither list from `probe/pr-by-number.json`. Like GitHub's GraphQL API it
+/// rejects requests without the expected token, caps page sizes, pages with cursors, matches
+/// searches by author, review request, state and update time, looks up nodes by id and PRs by
+/// repo and number, serves each PR's checks and mergeability as captured in `probe/pr-status.json`,
 /// and bumps a PR's update time when it changes, though not when its checks do. Like its REST notifications, a
 /// change to a PR notifies the viewer, who participates in every PR here, and a poll with
 /// `If-Modified-Since` no older than the newest notification gets a 304. Tests can change PRs,
@@ -37,6 +38,8 @@ actor FakeGitHub: HTTPTransport {
     private(set) var pullRequestLookups: [[String]] = []
     /// The ids of every lookup of PRs' statuses, in order.
     private(set) var statusLookups: [[String]] = []
+    /// Every lookup of a PR by repo and number, as `owner/name#number`, in order.
+    private(set) var numberLookups: [String] = []
     /// When each PR's notification was last updated, by PR id.
     private var notified: [String: Date] = [:]
     /// What `X-Poll-Interval` says, or nil to leave it out.
@@ -69,6 +72,8 @@ actor FakeGitHub: HTTPTransport {
             all[index].mergeStateStatus = status?.mergeStateStatus ?? "UNKNOWN"
         }
         pullRequests = reversed ? all.reversed() : all
+        let unlisted = try Data(contentsOf: projectRoot.appending(path: "probe/pr-by-number.json"))
+        pullRequests.append(try JSONDecoder().decode(NumberProbe.self, from: unlisted).data.repository.pullRequest)
         self.viewerTeams = viewerTeams
         self.maxPageSize = maxPageSize
     }
@@ -178,7 +183,9 @@ actor FakeGitHub: HTTPTransport {
         if body.query.contains("markPullRequestReadyForReview(") {
             return (try markReadyForReview(try #require(body.variables.input).pullRequestId), httpResponse(url, status: 200))
         }
-        let response: any Encodable = if let ids = body.variables.ids, body.query.contains("contexts") {
+        let response: any Encodable = if let owner = body.variables.owner, let name = body.variables.name, let number = body.variables.number {
+            pullRequest(in: "\(owner)/\(name)", number: number)
+        } else if let ids = body.variables.ids, body.query.contains("contexts") {
             try statuses(ids)
         } else if let ids = body.variables.ids, body.query.contains("reviewRequests") {
             try reviewRequests(ids)
@@ -246,6 +253,22 @@ actor FakeGitHub: HTTPTransport {
         #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
         pullRequestLookups.append(ids)
         return Envelope(data: ["nodes": ids.map { id in pullRequests.first { $0.id == id } }])
+    }
+
+    /// As GitHub answers: a null repo when it has no PRs here, a null PR when none has that
+    /// number, each with a `NOT_FOUND` error.
+    private func pullRequest(in repository: String, number: Int) -> Envelope<[String: [String: FakePullRequest?]?]> {
+        numberLookups.append("\(repository)#\(number)")
+        let inRepository = pullRequests.filter { $0.repository.nameWithOwner.caseInsensitiveCompare(repository) == .orderedSame }
+        guard !inRepository.isEmpty else {
+            let error = Envelope<[String: [String: FakePullRequest?]?]>.GraphQLError(type: "NOT_FOUND", path: ["repository"], message: "Could not resolve to a Repository with the name '\(repository)'.")
+            return Envelope(data: ["repository": nil], errors: [error])
+        }
+        guard let found = inRepository.first(where: { $0.number == number }) else {
+            let error = Envelope<[String: [String: FakePullRequest?]?]>.GraphQLError(type: "NOT_FOUND", path: ["repository", "pullRequest"], message: "Could not resolve to a PullRequest with the number of \(number).")
+            return Envelope(data: ["repository": ["pullRequest": nil]], errors: [error])
+        }
+        return Envelope(data: ["repository": ["pullRequest": found]])
     }
 
     private func statuses(_ ids: [String]) throws -> Envelope<StatusPayload> {
@@ -511,6 +534,14 @@ private struct ProbeResponse: Decodable {
     }
 }
 
+/// `probe/pr-by-number.json`: one PR looked up by repo and number.
+private struct NumberProbe: Decodable {
+    let data: Payload
+
+    struct Payload: Decodable { let repository: Repository }
+    struct Repository: Decodable { let pullRequest: FakePullRequest }
+}
+
 /// `probe/pr-status.json`: the status lookup's response for the PRs in `probe/pr-list.json`.
 private struct StatusProbe: Decodable {
     let data: StatusPayload
@@ -548,6 +579,9 @@ private struct GraphQLRequest: Decodable {
         let after: String?
         let ids: [String]?
         let input: MergeInput?
+        let owner: String?
+        let name: String?
+        let number: Int?
     }
 }
 

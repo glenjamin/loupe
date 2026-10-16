@@ -23,6 +23,69 @@ struct TabsTests {
         #expect(app.tabs.tab(id: first.id)?.title == "\(first.repository.split(separator: "/").last!) #\(first.number)")
     }
 
+    @Test func aLinkToAStoredPullRequestOpensOrFocusesItsTabWithoutAskingGitHub() async throws {
+        let app = try await App()
+        let (first, second, linked) = (app.toReview[0], app.toReview[1], app.toReview[2])
+        app.tabs.open(first)
+        app.tabs.open(second)
+        let tab = try #require(app.tabs.tab(id: second.id))
+        let requests = await app.github.requestCount
+
+        #expect(await tab.open(try link(to: first, after: "#issuecomment-1")))
+        #expect(app.tabs.tabs.map(\.id) == [first.id, second.id], "not opened twice")
+        #expect(app.tabs.selected == first.id)
+
+        let differentCase = PullRequestLink(repository: linked.repository.uppercased(), number: linked.number)
+        #expect(await tab.open(differentCase))
+        #expect(app.tabs.tabs.map(\.id) == [first.id, second.id, linked.id])
+        #expect(app.tabs.selected == linked.id)
+        #expect(await app.github.requestCount == requests)
+    }
+
+    @Test func aLinkToAPullRequestInNeitherListLooksItUpByNumberAndStoresItWithItsTab() async throws {
+        let app = try await App()
+        let from = app.toReview[0]
+        app.tabs.open(from)
+        let tab = try #require(app.tabs.tab(id: from.id))
+        let url = try #require(URL(string: "https://github.com/tamarinworks/porter/pull/1522/files"))
+        let link = try #require(PullRequestLink(url: url))
+        #expect(app.tabs.lists.pullRequest(repository: link.repository, number: link.number) == nil, "merged, so in neither list")
+
+        #expect(await tab.open(link))
+
+        #expect(await app.github.numberLookups == ["tamarinworks/porter#1522"])
+        let selected = try #require(app.tabs.selected)
+        let opened = try #require(app.tabs.tab(id: selected))
+        #expect(opened.title == "porter #1522")
+        #expect(opened.pullRequest.state == .merged)
+        #expect(app.tabs.tabs.map(\.id) == [from.id, opened.id])
+
+        #expect(await tab.open(link))
+        #expect(await app.github.numberLookups.count == 1, "known now, so not looked up again")
+
+        // A refresh drops PRs in neither list unless a tab holds them.
+        await app.tabs.lists.refresh()
+        let nextRun = try app.relaunch()
+        #expect(nextRun.tabs.map(\.id) == [from.id, opened.id])
+        #expect(nextRun.tabs[1].pullRequest.title == "Read gauge cache status from gazette")
+    }
+
+    @Test func aLinkGitHubCantResolveOrAnsweredWithAFailureIsLeftForTheBrowser() async throws {
+        let app = try await App()
+        let from = app.toReview[0]
+        app.tabs.open(from)
+        let tab = try #require(app.tabs.tab(id: from.id))
+
+        #expect(await !tab.open(PullRequestLink(repository: "tamarinworks/porter", number: 999_999)))
+        #expect(await !tab.open(PullRequestLink(repository: "tamarinworks/nowhere", number: 1)))
+        await app.github.fail(with: .status(502))
+        #expect(await !tab.open(PullRequestLink(repository: "tamarinworks/porter", number: 1522)))
+
+        #expect(await app.github.numberLookups == ["tamarinworks/porter#999999", "tamarinworks/nowhere#1"])
+        #expect(app.tabs.tabs.map(\.id) == [from.id])
+        #expect(app.tabs.selected == from.id)
+    }
+
     @Test func closingAPullRequestsTabForgetsItForNextLaunchAndShowsItsNeighbour() async throws {
         let app = try await App()
         let (first, middle, last) = (app.toReview[0], app.toReview[1], app.toReview[2])
@@ -419,4 +482,11 @@ private extension PullRequestTab {
     var shown: ReviewChanges? {
         if case let .ready(changes)? = shownChanges { changes } else { nil }
     }
+}
+
+/// A link to the PR on github.com, as its description or a comment would link to it, with
+/// `suffix` naming a part of it.
+private func link(to pullRequest: PullRequestSummary, after suffix: String = "") throws -> PullRequestLink {
+    let url = try #require(URL(string: pullRequest.url.absoluteString + suffix))
+    return try #require(PullRequestLink(url: url))
 }

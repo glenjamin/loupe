@@ -89,6 +89,16 @@ struct PullRequestNodesResponse: Decodable {
     let nodes: [SearchPageResponse.PullRequestNode?]
 }
 
+struct PullRequestByNumberResponse: Decodable {
+    /// Null where the repo can't be found or the viewer can't see it.
+    let repository: Repository?
+
+    struct Repository: Decodable {
+        /// Null where the repo has no PR with that number.
+        let pullRequest: SearchPageResponse.PullRequestNode?
+    }
+}
+
 struct NodesResponse: Decodable {
     /// Null where an id couldn't be resolved.
     let nodes: [PullRequestNode?]

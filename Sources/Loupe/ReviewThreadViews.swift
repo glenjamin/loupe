@@ -144,6 +144,13 @@ private struct ThreadCard: View {
             .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+            // Links in comments follow the conversation's: a PR opens in its tab.
+            .environment(\.openURL, OpenURLAction { [tab] url in
+                let inBrowserTab = NSApp.currentEvent?.modifierFlags.contains(.command) == true
+                guard !inBrowserTab, PullRequestLink(url: url) != nil else { return .systemAction }
+                followLink(url, inBrowserTab: false) { await tab.open($0) }
+                return .handled
+            })
         }
     }
 

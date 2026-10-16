@@ -48,6 +48,9 @@ public final class PullRequestTab: Identifiable {
     /// What's been opened up among the review threads.
     public let threadActivity = ThreadActivity()
 
+    /// Opens a linked PR in its own tab; set by `TabsModel`.
+    @ObservationIgnored var linkOpener: @MainActor (PullRequestLink) async -> Bool = { _ in false }
+
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
     private let lists: PullRequestListModel
@@ -102,6 +105,12 @@ public final class PullRequestTab: Identifiable {
     /// As of the lists' last refresh.
     public var pullRequest: PullRequestSummary {
         lists.pullRequest(id: id) ?? opened
+    }
+
+    /// Opens the PR a link in this one names, in its own tab. False when it can't, so the link
+    /// can go to the browser instead.
+    public func open(_ link: PullRequestLink) async -> Bool {
+        await linkOpener(link)
     }
 
     /// `repo #number`.
