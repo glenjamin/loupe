@@ -604,6 +604,8 @@ struct ReviewFileList: View {
     let selection: Binding<FileDiff.ID?>
     /// Directories folded shut, by tree; every one starts open.
     @State private var collapsed: [String: Set<String>] = [:]
+    @FocusState private var isFocused: Bool
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
         List(selection: selection) {
@@ -630,6 +632,7 @@ struct ReviewFileList: View {
                 }
             }
         }
+        .focused($isFocused)
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading, spacing: 4) {
                 if let error = tab.viewedStateError {
@@ -653,8 +656,15 @@ struct ReviewFileList: View {
 
     private func row(_ path: String, help: String? = nil, @ViewBuilder trailing: () -> some View) -> some View {
         ReviewFileRow(path: path, unresolvedThreads: tab.unresolvedThreadCount(of: path) ?? 0, state: tab.viewedState(of: path), trailing: trailing())
+            // SwiftUI's List doesn't tell a row it's on the accent-coloured selection, so the
+            // row is told here: selected, with the list focused in the key window.
+            .environment(\.backgroundProminence, isEmphasized(path) ? .increased : .standard)
             .help(help ?? path)
             .tag(Optional(path))
+    }
+
+    private func isEmphasized(_ path: String) -> Bool {
+        selection.wrappedValue == path && isFocused && activeState == .key
     }
 
     private func collapsed(in tree: String) -> Binding<Set<String>> {
@@ -718,11 +728,14 @@ struct FileTreeRows<FileRow: View>: View {
 /// A file in the list on one line: its name and open conversations, dimmed once viewed, flagged
 /// when it has changed since being viewed, then a tick once viewed and `trailing` at the end.
 /// The tick's slot is kept when there's no tick, so marking a file doesn't shift its row.
+/// Selected in a key window, it all takes the selection's foreground, undimmed, as Finder's
+/// sidebar does, since colours and fading don't read on the accent background.
 struct ReviewFileRow<Trailing: View>: View {
     let path: String
     let unresolvedThreads: Int
     let state: FileViewedState
     let trailing: Trailing
+    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         HStack(spacing: 6) {
@@ -733,14 +746,14 @@ struct ReviewFileRow<Trailing: View>: View {
                 FileName(path: path)
                 UnresolvedThreadCount(count: unresolvedThreads)
             }
-            .opacity(state.isViewed ? 0.5 : 1)
+            .opacity(dimming)
             if state == .dismissed {
                 Text("changed")
                     .font(.caption2)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
                     .foregroundStyle(.secondary)
-                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.5)))
+                    .overlay(Capsule().strokeBorder(.secondary.opacity(0.5)))
                     .help("Changed since you reviewed it")
                     .fixedSize()
             }
@@ -752,13 +765,17 @@ struct ReviewFileRow<Trailing: View>: View {
                     if state.isViewed {
                         Image(systemName: "checkmark")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.diffSuccess)
+                            .foregroundStyle(prominence.rowStyle(.diffSuccess))
                     }
                 }
             trailing
                 .fixedSize()
-                .opacity(state.isViewed ? 0.5 : 1)
+                .opacity(dimming)
         }
+    }
+
+    private var dimming: Double {
+        state.isViewed && prominence != .increased ? 0.5 : 1
     }
 }
 

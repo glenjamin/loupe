@@ -209,15 +209,17 @@ struct FileName: View {
     }
 }
 
-/// `+A −D` in monospaced digits, additions green and deletions red.
+/// `+A −D` in monospaced digits, additions green and deletions red, or both in the selection's
+/// own foreground on an emphasized selected row, where green and red don't read.
 struct LineCounts: View {
     let additions: Int
     let deletions: Int
+    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(verbatim: "+\(additions)").foregroundStyle(.diffSuccess)
-            Text(verbatim: "\u{2212}\(deletions)").foregroundStyle(.diffDanger)
+            Text(verbatim: "+\(additions)").foregroundStyle(prominence.rowStyle(.diffSuccess))
+            Text(verbatim: "\u{2212}\(deletions)").foregroundStyle(prominence.rowStyle(.diffDanger))
         }
         .font(.caption.monospacedDigit())
     }
@@ -253,5 +255,13 @@ private func openStore() -> PullRequestStore {
     } catch {
         FileHandle.standardError.write(Data("Couldn't open \(url.path(percentEncoded: false)), not keeping PRs between runs: \(error)\n".utf8))
         return try! PullRequestStore.inMemory()
+    }
+}
+
+extension BackgroundProminence {
+    /// `color` on a plain row, or on an emphasized selected row (a key window's accent
+    /// background) the selection's foreground, a touch faded so it still reads as secondary.
+    func rowStyle(_ color: Color) -> AnyShapeStyle {
+        self == .increased ? AnyShapeStyle(.primary.opacity(0.85)) : AnyShapeStyle(color)
     }
 }

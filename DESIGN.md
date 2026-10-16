@@ -641,6 +641,12 @@ The token came from `/usr/bin/env gh auth token`, which relies on `PATH`. Launch
 
 The failure went unnoticed until a merge reported it, because what's on screen comes from the store and local git, and the tab's background checks only logged. The lists already said so, in the banner over the columns that offers Retry. A PR tab now says so too: after the header's "updated …", in the caption's secondary text, "Couldn't check for changes: …" with the whole error in its tooltip, until a check gets through. It's for the checks made without being asked (showing or returning to the tab, a notification naming it, the timer fallback) and a reload's check, as the PR shown is then whatever was stored. It's quiet, not an alert, as nothing the viewer did failed and the stored PR is still worth reading. It's the caption's lowest priority, so in a narrow window it truncates before anything else. What the viewer asks for, a merge, a review or a comment, reports its own failure where it was asked, as before.
 
+### A selected file row takes the selection's foreground, as Finder's sidebar does
+
+On the accent-coloured selection the file tree's green and red counts, green tick and half-faded reviewed name had almost no contrast. So a file row that is selected, with the list focused in the key window, now shows everything in the selection's own foreground: the name and symbol undimmed, the tick, the "added"/"binary" words and the `+A −D` counts. The counts and tick are slightly faded, so they still read as secondary to the name. Unselected rows, directory rows, and a selection shown grey (an inactive window or an unfocused list) keep their usual colours, which read fine on grey. The system selection background is kept.
+
+The row is told this through SwiftUI's `backgroundProminence` environment value, which is meant to carry exactly this. But `List` on macOS doesn't set it for a selected row; it only resolves `.primary` and `.secondary` to white as it draws. So the file list sets it on the selected row itself, from the selection, its own focus and `controlActiveState`. The row and `LineCounts` swap explicit colours for `.primary`, which the selection then draws white; no white is hard-coded. If the list's guess were ever wrong, the worst case is plain primary text on a grey selection.
+
 ## Not yet decided
 
 Nothing is pending.
