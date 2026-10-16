@@ -369,6 +369,14 @@ On the viewer's own open draft, the merge section shows a "Ready for review" but
 
 Clicking calls `markPullRequestReadyForReview` at once, with no confirmation, since GitHub lets a PR be turned back into a draft. The merge's spinner shows while it runs, and a refusal shows under the button as a refused merge's does. Afterwards the PR is looked up again by id, and its merge state with it, because GitHub's `BLOCKED` for the draft no longer applies; the button becomes Merge with whatever reason then holds.
 
+### The pull reveals a hidden strip below the footer, and the fill follows once it shows
+
+This reverses the gutter in "The pull skips its dwell when a drag begins at the end, and the diff ends in a scroll gutter"; the dwell skip stands. A scrollable empty gutter helped nothing: it was just a big empty section to scroll to. What the user wants is the pull-to-refresh pattern, as `UIRefreshControl`, `SwipeRefreshLayout` and MacPullToRefresh show it: the normal scroll maximum, with the footer directly under the last row and a short file resting unscrolled, and then, pulling at that maximum, a strip that was hidden below the end comes into view saying what the pull will do, and only once it's showing does the button start to fill.
+
+The strip is as tall as the trigger's lead-in, 40pt, one constant: the lead-in's travel brings the strip into view one-to-one with the fingers, and only travel beyond it fills the button, at the drag rate towards the target as before. The diff moves past its end by itself rather than by AppKit's rubber band, whose damping wouldn't keep to the fingers: a PR's diff has no vertical elasticity, and while a live drag is past the end the clip view holds its bounds past the scroll maximum by the revealed amount, as MacPullToRefresh does, with the strip laid out below the end in the document's coordinates. In a file shorter than the view the strip sits below the view's bottom edge, as below the footer it would show at rest. Letting go, armed or not, animates the view back to the maximum in 0.2s; when it fired, the next file replaces the view once marked, and a file replaced mid-pull drops it at once. A scroll that runs into the end mid-drag reveals the strip with its spent travel, which reads as a bounce, while the dwell still holds the fill. Momentum and mouse wheels never reveal it. A plain diff file, with no footer, keeps the rubber band.
+
+Scrolling back up the document after the button has filled cancels the pull: a live drag that moves with the view away from its end now undoes the pull, so letting go there never fires, and coming back to the end dwells again.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

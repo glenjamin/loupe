@@ -123,14 +123,15 @@ struct FileReview {
     let toggleViewed: () -> Void
     /// Says what the footer's button, or pulling past the end, will do.
     let advanceLabel: String
-    /// Revealed below the footer while pulling, saying what letting the pull fire will do.
+    /// In the strip the pull reveals below the end, saying what letting the pull fire will do.
     let pullHint: String
     let markViewedAndAdvance: () -> Void
 }
 
 /// The diff's text in a scroll view. A PR's file ends in a footer, inside the scrolled content,
 /// whose button marks the file reviewed and moves on. Pulling past the footer on a trackpad, like
-/// pull-to-refresh, fills the button and does the same when let go far enough.
+/// pull-to-refresh, reveals a strip below it, then fills the button and does the same when let go
+/// far enough.
 private struct DiffTextScrollView: NSViewRepresentable {
     let file: FileDiff
     let onAnchorClick: (DiffAnchor) -> Void
@@ -148,10 +149,9 @@ private struct DiffTextScrollView: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
-        // The rubber band is the stretch the user sees while pulling, even in a short file.
-        scroll.verticalScrollElasticity = .allowed
         scroll.automaticallyAdjustsContentInsets = false
-        scroll.contentView = FooterClipView()
+        let clip = FooterClipView()
+        scroll.contentView = clip
         scroll.documentView = coordinator.textView
         // In the clip view, the footer is placed in the document's coordinates and so scrolls
         // with it, clipped like the text.
@@ -161,7 +161,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         scroll.onPull = { [weak coordinator] event in coordinator?.pull(event) }
         scroll.contentView.postsBoundsChangedNotifications = true
         coordinator.textView.postsFrameChangedNotifications = true
-        coordinator.observe(scroll)
+        coordinator.observe(scroll, clip: clip)
         return scroll
     }
 
@@ -176,13 +176,16 @@ private struct DiffTextScrollView: NSViewRepresentable {
         coordinator.textView.commentableAnchors = commentable
         coordinator.textView.onComment = onComment
         scroll.hasHorizontalScroller = !wrapLines
+        // A PR's diff moves past its end only as far as the pull reveals its strip; a plain diff
+        // keeps the rubber band.
+        scroll.verticalScrollElasticity = review == nil ? .allowed : .none
         coordinator.textView.wrapsLines = wrapLines
         // The same file shown anew, as when more of it is revealed, keeps the reader's place.
         let shown = ShownDiff(path: file.path, headers: file.hunks.map(\.header), expandable: expandable, blocks: blocks.map(\.id))
         if coordinator.shown != shown {
             let isSameFile = coordinator.shown?.path == file.path
             coordinator.shown = shown
-            if !isSameFile { coordinator.pull(.cancelled) }
+            if !isSameFile { coordinator.dropPull() }
             let sized = blocks.map { DiffBlock(id: $0.id, placement: $0.placement, height: coordinator.blockHeights[$0.id] ?? Coordinator.estimatedBlockHeight) }
             coordinator.textView.show(RenderedDiff(file: file, expandable: expandable, blocks: sized), keepingPlace: isSameFile)
         }
@@ -196,13 +199,6 @@ private struct DiffTextScrollView: NSViewRepresentable {
 
     @MainActor
     final class Coordinator {
-        /// Room for the hint in the gap the rubber band opens below the end.
-        static let hintHeight: CGFloat = 36
-        /// The share of the view's height that can always be scrolled past the footer, or past
-        /// the view's own height in a short file, so the end of a diff is somewhere to scroll
-        /// to, not only to stretch past.
-        static let gutterShare: CGFloat = 0.5
-
         let textView = DiffTextView.make()
         var shown: ShownDiff?
         var review: FileReview?
@@ -214,7 +210,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
             view.sizingOptions = []
             return view
         }()
-        /// Says what the pull will do, in the gap the rubber band opens below the end.
+        /// Says what the pull will do, in the strip below the end that only the pull brings into
+        /// view.
         lazy var hint: PullHintView = {
             let view = PullHintView(rootView: PullHint(state: footerState))
             view.sizingOptions = []
@@ -228,6 +225,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         private var blockViews: [String: NSHostingView<DiffBlockRoot>] = [:]
         private var trigger = OverscrollTrigger()
         private weak var scroll: NSScrollView?
+        private weak var clip: FooterClipView?
         private var observers: [any NSObjectProtocol] = []
 
         /// Lays each block's view over the row held for it, reusing the view a block had, so
@@ -262,8 +260,9 @@ private struct DiffTextScrollView: NSViewRepresentable {
             layoutFooter()
         }
 
-        func observe(_ scroll: NSScrollView) {
+        func observe(_ scroll: NSScrollView, clip: FooterClipView) {
             self.scroll = scroll
+            self.clip = clip
             let center = NotificationCenter.default
             observers = [
                 center.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak self] _ in
@@ -283,7 +282,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
 
         /// Directly below the last row, across the visible width, so a short file has it
         /// straight after its content rather than at the bottom of the view. The content is
-        /// inset at the bottom as far as the footer and the gutter below it need.
+        /// inset at the bottom only as far as the footer needs to be scrolled to, leaving the
+        /// pull's strip below the end, out of view until pulled.
         func layoutFooter() {
             guard let scroll else { return }
             let clip = scroll.contentView.bounds
@@ -298,9 +298,9 @@ private struct DiffTextScrollView: NSViewRepresentable {
             let top = contentBottom(clipHeight: clip.height)
             let frame = NSRect(x: clip.minX, y: top, width: clip.width, height: ReviewFooter.height)
             if footer.frame != frame { footer.frame = frame }
-            let gap = NSRect(x: clip.minX, y: restingEnd(clipHeight: clip.height), width: clip.width, height: Self.hintHeight)
-            if hint.frame != gap { hint.frame = gap }
-            let inset = review == nil ? 0 : max(0, restingEnd(clipHeight: clip.height) - textView.frame.maxY)
+            let strip = NSRect(x: clip.minX, y: restingEnd(clipHeight: clip.height), width: clip.width, height: OverscrollTrigger.leadIn)
+            if hint.frame != strip { hint.frame = strip }
+            let inset = review == nil ? 0 : max(0, frame.maxY - textView.frame.maxY)
             if scroll.contentInsets.bottom != inset {
                 scroll.contentInsets.bottom = inset
                 // The scrollers keep to the whole height, over the footer too.
@@ -308,7 +308,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
             }
         }
 
-        /// Whether the view is scrolled to its end, past the footer's gutter, or stretched past it.
+        /// Whether the view is scrolled to its end, footer fully shown, or pulled past it.
         var isAtEnd: Bool {
             guard let clip = scroll?.contentView.bounds else { return false }
             return clip.maxY >= restingEnd(clipHeight: clip.height) - 1
@@ -323,24 +323,37 @@ private struct DiffTextScrollView: NSViewRepresentable {
                 if trigger.pull(by: distance, at: time) {
                     NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
                 }
+                clip?.hold(pastEnd: trigger.revealed)
+            case .leftEnd:
+                trigger.leaveEnd()
+                clip?.hold(pastEnd: 0)
             case .ended:
+                // Settles back even when it fires, as the next file comes only once it's marked.
+                clip?.settle()
                 if trigger.endDrag() { review?.markViewedAndAdvance() }
             case .cancelled:
+                clip?.settle()
                 trigger.cancelDrag()
             }
+            showPull()
+        }
+
+        /// Lets go of any pull at once, for a file about to be replaced.
+        func dropPull() {
+            trigger.cancelDrag()
+            clip?.drop()
+            showPull()
+        }
+
+        private func showPull() {
             footerState.progress = trigger.progress
             footerState.isArmed = trigger.isArmed
             footerState.isPulling = trigger.isDragging
         }
 
-        /// Where the bottom of the view rests when scrolled to the end, footer and gutter included.
-        /// A short file scrolls no further than brings its footer to the top, so the footer still
-        /// shows the pull's progress.
+        /// Where the bottom of the view rests when scrolled to the end, footer included.
         private func restingEnd(clipHeight: CGFloat) -> CGFloat {
-            let unscrolled = textView.frame.minY + clipHeight
-            guard review != nil else { return max(textView.frame.maxY, unscrolled) }
-            let gutter = (clipHeight * Self.gutterShare).rounded()
-            return min(max(footer.frame.maxY, unscrolled) + gutter, max(footer.frame.minY + clipHeight, unscrolled))
+            max(footer.frame.maxY, textView.frame.minY + clipHeight)
         }
 
         /// Where the last row ends. A text view stretches to fill the view, so a file shorter
@@ -363,13 +376,15 @@ enum PullEvent {
     /// The fingers moved this far with the view at its end: positive pulls the content further
     /// past it, negative back, at the event's timestamp.
     case moved(CGFloat, at: TimeInterval)
+    /// The fingers moved with the view back in the document, away from its end.
+    case leftEnd
     case ended
     case cancelled
 }
 
-/// Reports a live trackpad drag's touch down, its travel while the view is at its end, and its
-/// lift, leaving the scrolling and its rubber band to AppKit.
-private final class OverscrollScrollView: NSScrollView {
+/// Reports a live trackpad drag's touch down, its travel while the view is at its end or leaving
+/// it, and its lift, leaving the scrolling to AppKit.
+final class OverscrollScrollView: NSScrollView {
     var isAtEnd: () -> Bool = { false }
     var onPull: (PullEvent) -> Void = { _ in }
 
@@ -378,18 +393,40 @@ private final class OverscrollScrollView: NSScrollView {
         if phase.contains(.began) { onPull(.began(atEnd: isAtEnd())) }
         // Checked before the event scrolls, so travel spent reaching the end doesn't count. The
         // delta already follows the content, natural scrolling or not; negative moves it up.
-        if !phase.isDisjoint(with: [.began, .changed]), event.hasPreciseScrollingDeltas, isAtEnd() {
-            onPull(.moved(-event.scrollingDeltaY, at: event.timestamp))
+        if !phase.isDisjoint(with: [.began, .changed]), event.hasPreciseScrollingDeltas {
+            onPull(isAtEnd() ? .moved(-event.scrollingDeltaY, at: event.timestamp) : .leftEnd)
         }
         super.scrollWheel(with: event)
         if phase.contains(.ended) { onPull(.ended) }
         if phase.contains(.cancelled) { onPull(.cancelled) }
     }
+
+    /// Scrolls to the end and pulls `travel` past it from there, without events, so a snapshot
+    /// can show the pull; `letGo()` lets go without firing.
+    func showPull(_ travel: CGFloat) {
+        contentView.scroll(to: NSPoint(x: contentView.bounds.minX, y: contentView.documentRect.maxY + contentInsets.bottom))
+        reflectScrolledClipView(contentView)
+        onPull(.began(atEnd: true))
+        onPull(.moved(travel, at: ProcessInfo.processInfo.systemUptime))
+    }
+
+    func letGo() {
+        onPull(.cancelled)
+    }
 }
 
 /// A clip view whose clicks also reach the views placed beside its document, such as the footer
-/// below the last row. A plain clip view hit-tests only within its document view's frame.
-private final class FooterClipView: NSClipView {
+/// below the last row. A plain clip view hit-tests only within its document view's frame. It can
+/// also be held past the end of its document, which AppKit won't scroll to, to reveal what's
+/// placed below it, the way pull-to-refresh moves the content with the fingers.
+final class FooterClipView: NSClipView {
+    /// How far past the end the pull holds the view, wherever AppKit tries to scroll it there.
+    private var heldPastEnd: CGFloat = 0
+    /// How far past the end the view may still be while it settles back after a pull.
+    private var settling: CGFloat = 0
+    /// Counts settles, so one that's been overtaken doesn't end the next.
+    private var settles = 0
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
         guard bounds.contains(local) else { return nil }
@@ -397,6 +434,74 @@ private final class FooterClipView: NSClipView {
             if let hit = view.hitTest(local) { return hit }
         }
         return super.hitTest(point)
+    }
+
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var rect = super.constrainBoundsRect(proposedBounds)
+        guard heldPastEnd > 0 || settling > 0 else { return rect }
+        let end = endOrigin(height: proposedBounds.height)
+        if heldPastEnd > 0, proposedBounds.minY >= end {
+            rect.origin.y = end + heldPastEnd
+        } else if proposedBounds.minY > end {
+            rect.origin.y = min(proposedBounds.minY, end + settling)
+        }
+        return rect
+    }
+
+    /// Holds the view `offset` past the end of the document, or at zero gives it back to AppKit,
+    /// where the drag that pulled back carries on scrolling it.
+    func hold(pastEnd offset: CGFloat) {
+        stopSettling()
+        heldPastEnd = offset
+        guard offset > 0 else { return }
+        scroll(to: NSPoint(x: bounds.minX, y: endOrigin(height: bounds.height) + offset))
+        enclosingScrollView?.reflectScrolledClipView(self)
+    }
+
+    /// Animates back to the end from past it, as the content springs back once a pull lets go.
+    func settle() {
+        let end = endOrigin(height: bounds.height)
+        heldPastEnd = 0
+        guard bounds.minY > end else { return }
+        settling = bounds.minY - end
+        settles += 1
+        let settle = settles
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            animator().setBoundsOrigin(NSPoint(x: bounds.minX, y: end))
+        } completionHandler: { [weak self] in
+            Task { @MainActor in
+                guard let self, self.settles == settle else { return }
+                self.settling = 0
+                self.enclosingScrollView?.reflectScrolledClipView(self)
+            }
+        }
+    }
+
+    /// Back within the document at once, for a document about to be replaced.
+    func drop() {
+        stopSettling()
+        heldPastEnd = 0
+        scroll(to: bounds.origin)
+        enclosingScrollView?.reflectScrolledClipView(self)
+    }
+
+    /// Ends a settle where it is, so it doesn't fight a new pull or a new document.
+    private func stopSettling() {
+        guard settling > 0 else { return }
+        settles += 1
+        settling = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            animator().setBoundsOrigin(bounds.origin)
+        }
+    }
+
+    /// The origin at the end of the document, as far as AppKit scrolls.
+    private func endOrigin(height: CGFloat) -> CGFloat {
+        let far = NSRect(x: bounds.minX, y: documentRect.maxY + contentInsets.bottom, width: bounds.width, height: height)
+        return super.constrainBoundsRect(far).minY
     }
 }
 
@@ -439,14 +544,13 @@ struct ReviewFooter: View {
         }
         .background(.bar)
         .animation(.easeOut(duration: 0.12), value: state.isArmed)
-        // Follows the fingers exactly, and empties smoothly as the rubber band springs back.
+        // Follows the fingers exactly, and empties smoothly as the content settles back.
         .animation(state.isPulling ? nil : .easeOut(duration: 0.25), value: state.progress)
     }
 }
 
-/// A caption in the rubber band's gap below the footer, like pull-to-refresh's, fading in with
-/// a live drag's progress and saying what letting go will have done once armed. Nothing shows
-/// at rest or once the fingers lift.
+/// A caption in the strip below the end, like pull-to-refresh's, which only the pull brings into
+/// view, saying what letting go will do once armed. It fades as the fingers lift.
 struct PullHint: View {
     let state: ReviewFooterState
 
@@ -457,7 +561,7 @@ struct PullHint: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .opacity(state.isPulling ? state.progress : 0)
+            .opacity(state.isPulling ? 1 : 0)
             .animation(.easeOut(duration: 0.12), value: state.isPulling)
     }
 }

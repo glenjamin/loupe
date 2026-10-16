@@ -234,6 +234,11 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_SHOW_CHECKS"] == "1" {
                     for url in try await saveSnapshotsOfChecks(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_PULL=<points> pulls each shown diff that far past its end, without
+                // events, and snapshots the strip and the fill, then lets go.
+                if let travel = environment["LOUPE_SNAPSHOT_PULL"].flatMap(Double.init) {
+                    for url in try await saveSnapshotsOfPulls(CGFloat(travel), in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 for url in try await saveSnapshotsOfAllTabs(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
             } catch {
                 FileHandle.standardError.write(Data("Couldn't write snapshots: \(error)\n".utf8))
@@ -526,6 +531,29 @@ private func saveSnapshotsOfChecks(in windows: WindowManager, to directory: URL)
         let url = directory.appending(path: "checks-\(sanitised(windows.title(of: id))).png")
         try await saveSnapshot(of: window, to: url)
         anchor.closePopover()
+        written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
+/// Pulls each PR's shown diff `travel` past its end and writes `pull-<title>.png`, letting go
+/// after each without firing.
+@MainActor
+private func saveSnapshotsOfPulls(_ travel: CGFloat, in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow, let root = window.contentView else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs {
+        windows.select(tab.id)
+        try? await Task.sleep(for: .milliseconds(500))
+        window.layoutIfNeeded()
+        guard let scroll = descendants(of: root).lazy.compactMap({ $0 as? OverscrollScrollView }).first(where: { !$0.isHiddenOrHasHiddenAncestor }) else { continue }
+        scroll.showPull(travel)
+        let url = directory.appending(path: "pull-\(sanitised(windows.title(of: tab.id))).png")
+        try await saveSnapshot(of: window, to: url)
+        scroll.letGo()
         written.append(url)
     }
     windows.select(selected)

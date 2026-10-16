@@ -2,20 +2,21 @@ import CoreGraphics
 import Foundation
 
 /// Turns pulling past the end of a document into a deliberate action, pull-to-refresh at the
-/// bottom. Progress is how far the fingers have travelled past the end, not how far the rubber
-/// band stretched, which AppKit damps. The start of each pull is free: travel counts only once
-/// the fingers have been past the end for a while and beyond a lead-in, so a scroll that runs
-/// into the end and spends its remaining travel there never arms. A drag that begins with the
-/// view already at its end has no such scroll behind it, so only the lead-in applies, and a quick
-/// deliberate pull from rest counts straight away. Crossing the target arms it,
-/// pulling back under disarms it, and lifting the fingers while armed fires it. Only a live
-/// drag counts, so momentum carrying on past the end never fills, arms or fires it.
+/// bottom. Progress is how far the fingers have travelled past the end. The first stretch of
+/// travel reveals a strip below the end, one-to-one with the fingers, and only travel beyond it
+/// counts. Travel also counts only once the fingers have been past the end for a while, so a
+/// scroll that runs into the end and spends its remaining travel there never arms. A drag that
+/// begins with the view already at its end has no such scroll behind it, so only the lead-in
+/// applies, and a quick deliberate pull from rest counts straight away. Crossing the target arms
+/// it, pulling back under disarms it, and lifting the fingers while armed fires it. Only a live
+/// drag counts, so momentum carrying on past the end never reveals, fills, arms or fires it.
 public struct OverscrollTrigger: Sendable, Equatable {
     /// How long the fingers must have been past the end, within one drag that reached it while
     /// scrolling, before any travel counts. Longer than the tail of a scroll that runs into the
     /// end.
     public static let dwell: TimeInterval = 0.2
-    /// Finger travel past the end that never counts, like a touch slop.
+    /// Finger travel past the end that never counts, like a touch slop, which brings the strip
+    /// below the end into view; so it's also the strip's height.
     public static let leadIn: CGFloat = 40
     /// How much of the counted finger travel goes towards the target, as SwipeRefreshLayout's
     /// `DRAG_RATE`, so the fill keeps to about the pace of the damped rubber band.
@@ -27,7 +28,7 @@ public struct OverscrollTrigger: Sendable, Equatable {
     /// Whether the fingers are down, scrolling.
     public private(set) var isDragging = false
     /// How far the fingers have pulled past the end in this drag, never below zero.
-    private var travel: CGFloat = 0
+    public private(set) var travel: CGFloat = 0
     /// When this drag's fingers went past the end, while they're still past it.
     private var pastEndSince: TimeInterval?
     /// The travel from which pulling counts, once the dwell has passed.
@@ -36,6 +37,12 @@ public struct OverscrollTrigger: Sendable, Equatable {
     private var beganAtEnd = false
 
     public init() {}
+
+    /// How much of the strip below the end the pull has brought into view, following the
+    /// fingers until it's all shown, through the dwell too.
+    public var revealed: CGFloat {
+        min(travel, Self.leadIn)
+    }
 
     /// The distance counted towards the target, after the dwell and lead-in and at the drag rate.
     public var pulled: CGFloat {
@@ -84,6 +91,15 @@ public struct OverscrollTrigger: Sendable, Equatable {
             if distance < 0 { beganAtEnd = false }
         }
         return isArmed && !wasArmed
+    }
+
+    /// The fingers moved with the document scrolled back from its end, so the pull is undone:
+    /// nothing is pulled or armed, and coming back to the end has to dwell again.
+    public mutating func leaveEnd() {
+        travel = 0
+        pastEndSince = nil
+        countsFrom = nil
+        beganAtEnd = false
     }
 
     /// The fingers have lifted. Returns true if it was armed, and so fires.
