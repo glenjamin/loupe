@@ -1,8 +1,10 @@
 import AppKit
 import LoupeCore
 import LoupeGit
+import LoupeGitHub
 import LoupeInbox
 import SwiftUI
+import os
 import UniformTypeIdentifiers
 import WebKit
 
@@ -47,6 +49,11 @@ enum SnapshotRun {
     }
     /// A run driving pulls with synthesised events, where a pull that fires only says so.
     static let isRehearsingPulls = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_PULL_EVENTS"] != nil
+    /// A run that holds the PRs' checks on GitHub unanswered, so the header's spinner is drawn.
+    private static let isHoldingChecks = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_HOLD_CHECK"] == "1"
+    private static let gitHubHold = GitHubHold()
+    /// How the app talks to GitHub: directly, except in a run that holds its checks.
+    static let gitHubClient = isHoldingChecks ? GitHubClient(transport: gitHubHold) : GitHubClient()
 
     static func start(windows: WindowManager) {
         guard let directory else { return }
@@ -237,6 +244,14 @@ enum SnapshotRun {
                 }
                 await wait(until: .now.addingTimeInterval(20)) { reloading.allSatisfy { $0.reloading == .diffing } }
                 for tab in reloading { print("\(tab.title): reloading, \(tab.reloading.map { "held at \($0)" } ?? "not held")") }
+            }
+            // LOUPE_SNAPSHOT_HOLD_CHECK=1 checks each PR on GitHub, as showing it does, and holds
+            // every request from then on unanswered, so each header shows its spinner.
+            if isHoldingChecks {
+                gitHubHold.start()
+                for tab in tabs.tabs { Task { try? await tabs.lists.checkForChanges(to: [tab.id]) } }
+                await wait(until: .now.addingTimeInterval(20)) { tabs.tabs.allSatisfy(\.isCheckingGitHub) }
+                for tab in tabs.tabs { print("\(tab.title): \(tab.isCheckingGitHub ? "checking GitHub, held" : "not checking GitHub")") }
             }
             // LOUPE_SNAPSHOT_EDITOR=1 prints what each PR's "Open in" button would do, as a dry
             // run: nothing is fetched or switched and no editor is opened.
@@ -1154,6 +1169,20 @@ private final class StepHold {
     func wait(at reached: DiffStep) async {
         guard reached == step else { return }
         try? await Task.sleep(for: .seconds(3600))
+    }
+}
+
+/// Sends requests to GitHub until started, then holds every one unanswered for good.
+private final class GitHubHold: HTTPTransport {
+    private let isHolding = OSAllocatedUnfairLock(initialState: false)
+
+    func start() {
+        isHolding.withLock { $0 = true }
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if isHolding.withLock({ $0 }) { try await Task.sleep(for: .seconds(3600)) }
+        return try await URLSession.shared.send(request)
     }
 }
 

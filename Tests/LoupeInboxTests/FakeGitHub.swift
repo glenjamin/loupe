@@ -55,6 +55,13 @@ actor FakeGitHub: HTTPTransport {
     private var notificationsRefusal: Int?
     /// The status of each notifications poll, in order.
     private(set) var notificationPolls: [Int] = []
+    /// The kinds of read a test can hold unanswered, as over a slow network.
+    enum Gate: Hashable {
+        case search, lookup
+    }
+    private var held: Set<Gate> = []
+    /// The requests waiting at the gate, by kind.
+    private var waiting: [Gate: [CheckedContinuation<Void, Never>]] = [:]
 
     /// Serves the PRs captured in a probe response, with review requested of the viewer on
     /// the to-review ones just now. The probe asked GitHub to sort by update time; `reversed`
@@ -218,6 +225,23 @@ actor FakeGitHub: HTTPTransport {
         failure = nil
     }
 
+    /// Holds requests of this kind as they arrive until released, answering them then with
+    /// what GitHub has by that time.
+    func hold(_ gate: Gate) {
+        held.insert(gate)
+    }
+
+    /// Lets the held requests of this kind through, and those after them.
+    func release(_ gate: Gate) {
+        held.remove(gate)
+        for waiter in waiting.removeValue(forKey: gate) ?? [] { waiter.resume() }
+    }
+
+    /// Returns once a request of this kind is held at the gate.
+    func arrival(of gate: Gate) async {
+        while waiting[gate]?.isEmpty ?? true { await Task.yield() }
+    }
+
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         requestCount += 1
         let url = try #require(request.url)
@@ -236,6 +260,8 @@ actor FakeGitHub: HTTPTransport {
         }
 
         let body = try JSONDecoder().decode(GraphQLRequest.self, from: try #require(request.httpBody))
+        if body.variables.query != nil { await pass(.search) }
+        if body.variables.ids != nil, !body.query.contains("contexts"), body.query.contains("fragment PullRequestRow") { await pass(.lookup) }
         if body.query.contains("mergePullRequest(") {
             return (try mergePullRequest(try #require(body.variables.input)), httpResponse(url, status: 200))
         }
@@ -256,6 +282,12 @@ actor FakeGitHub: HTTPTransport {
             try viewer(body.query)
         }
         return (try JSONEncoder().encode(response), httpResponse(url, status: 200))
+    }
+
+    /// Waits while requests of this kind are held.
+    private func pass(_ gate: Gate) async {
+        guard held.contains(gate) else { return }
+        await withCheckedContinuation { waiting[gate, default: []].append($0) }
     }
 
     private func search(_ variables: GraphQLRequest.Variables) throws -> Envelope<SearchPayload> {

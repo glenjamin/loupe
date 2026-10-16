@@ -544,6 +544,23 @@ struct PullRequestListTests {
         #expect(await github.requestCount > requestsForOneRefresh)
     }
 
+    @Test func aListedPullRequestIsBeingCheckedWhileARefreshWaitsOnGitHub() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let listed = try #require(model.pullRequests(in: .mine).first)
+        #expect(!model.isChecking(listed.id))
+
+        await github.hold(.search)
+        let refreshing = Task { await model.refresh() }
+        await github.arrival(of: .search)
+        #expect(model.isChecking(listed.id))
+
+        await github.release(.search)
+        await refreshing.value
+        #expect(!model.isChecking(listed.id))
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func refreshesEachIntervalUntilCancelled() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")

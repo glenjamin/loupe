@@ -212,8 +212,12 @@ struct PullRequestHeader: View {
                         FailedCheckNames(state: checks, contexts: pullRequest.checkContexts)
                     }
                     ReviewDecisionLabel(decision: pullRequest.reviewDecision, requestedReviewers: pullRequest.requestedReviewers)
-                    TimelineView(.everyMinute) { _ in
-                        Text("updated \(pullRequest.updatedAt.formatted(.relative(presentation: .named)))")
+                    HStack(spacing: 4) {
+                        TimelineView(.everyMinute) { _ in
+                            Text("updated \(pullRequest.updatedAt.formatted(.relative(presentation: .named)))")
+                        }
+                        DelayedSpinner(isActive: tab.isCheckingGitHub)
+                            .help("Checking GitHub for changes…")
                     }
                 }
                 .font(.caption)

@@ -34,6 +34,11 @@ public final class PullRequestTab: Identifiable {
     /// Why the conversation couldn't be fetched last time it was asked for.
     public private(set) var conversationError: String?
     public private(set) var isFetchingConversation = false
+    /// Whether GitHub is being asked for anything that updates the PR or its conversation: a
+    /// refresh of the lists it's in, a lookup of it by id, or a fetch of its conversation.
+    public var isCheckingGitHub: Bool {
+        isFetchingConversation || lists.isChecking(id)
+    }
     /// Which commit's changes are shown, by oid, or nil for the whole PR's.
     public private(set) var shownCommit: String?
     /// The commit picked to show next, by oid, while its changes are diffed. The changes shown

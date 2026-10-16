@@ -238,9 +238,10 @@ extension FileDiff.Change {
 
 @MainActor private func makeTabs() -> TabsModel {
     let store = openStore()
+    let client = SnapshotRun.gitHubClient
     // The tabs take over opening PRs.
-    let lists = PullRequestListModel(store: store) { _ in }
-    return TabsModel(lists: lists, store: store)
+    let lists = PullRequestListModel(client: client, store: store) { _ in }
+    return TabsModel(lists: lists, store: store, client: client)
 }
 
 /// The on-disk store, or a throwaway one if it can't be opened, so the PR list still works.

@@ -609,6 +609,10 @@ Each mutation now asks GitHub for what it made, and that copy takes the provisio
 
 Fetches landing meanwhile don't undo or double a change. The tab keeps each change until no fetch that started before GitHub answered for it is still underway, and makes it again over anything such a fetch brings, skipping it where GitHub's copy already has the comment, by id. A second comment into a review that's still being started waits for that review rather than starting another, which GitHub would refuse. The stored copy keeps the sending flag, so a comment still on its way when Loupe quits shows as sending on the next launch until the conversation is fetched, which settles whether GitHub has it. Only the description's editor still waits for GitHub: its rendering is GitHub's markdown, and its save lives in the editor, not the conversation.
 
+### The header says when GitHub is being checked for the PR's changes
+
+A mini spinner sits after the header's "updated …" while GitHub is being asked for anything that will update this PR's row or conversation: a refresh of the lists while the PR is in one of them (the searches, the review-request check and the status lookups), a lookup of it by id (the check when its tab is shown or returned to, a notification naming it, the timer fallback, and the lookups after merging or marking it ready), and a fetch of its conversation. The tab exposes it as one flag, `isCheckingGitHub`, from the conversation fetch and the lists' per-PR count of lookups by id underway, so overlapping checks don't clear it early. It doesn't spin for git work, which has the commit picker's spinner, for the viewer's own writes, which have their sending states, or for the reviewer picker's candidates and suggestions, which only fill that picker. The selection settling before a shown PR is checked isn't a fetch, so it doesn't spin either. It's `DelayedSpinner`, as on the commit picker, so a check GitHub answers quickly shows nothing and the caption doesn't flicker; it takes no width while hidden, and it's the caption's last item, so nothing moves when it appears.
+
 ## Not yet decided
 
 Nothing is pending.

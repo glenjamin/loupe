@@ -786,6 +786,33 @@ struct TabsTests {
         #expect(await app.github.statusLookups.last == [pullRequest.id], "only the shown PR, not the lists")
     }
 
+    @Test func aShownPullRequestSaysItsBeingCheckedUntilGitHubAnswers() async throws {
+        let app = try await App()
+        let pullRequest = app.toReview[0]
+        try await app.conversations.add(pullRequest.id)
+        await app.github.hold(.lookup)
+        await app.conversations.hold(.conversation)
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        let loading = Task { await tab.load() }
+        await app.conversations.arrival(of: .conversation)
+        #expect(tab.isCheckingGitHub, "while its conversation is fetched")
+        await app.conversations.release(.conversation)
+        await loading.value
+        let other = try #require(app.tabs.lists.pullRequests(in: .toReview).dropFirst().first)
+        try await app.showDelay.untilWaiting()
+        #expect(!tab.isCheckingGitHub, "not while the selection settles")
+
+        app.showDelay.elapse()
+        await app.github.arrival(of: .lookup)
+        #expect(tab.isCheckingGitHub)
+        #expect(!app.tabs.lists.isChecking(other.id), "only the PR shown")
+
+        await app.github.release(.lookup)
+        try await until { !tab.isCheckingGitHub }
+        #expect(await app.github.statusLookups.last == [pullRequest.id], "its merge state is checked before it stops")
+    }
+
     @Test func comingBackToATabWithNewCommitsWaitingReloadsItAtOnce() async throws {
         let repo = try await FakeRepository()
         let app = try await App()

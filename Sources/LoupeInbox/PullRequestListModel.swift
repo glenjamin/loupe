@@ -21,6 +21,8 @@ public final class PullRequestListModel {
     /// Open PRs in neither list, as last checked directly.
     private var unlisted: [String: PullRequestSummary] = [:]
     private var checkouts: [String: CheckoutStatus] = [:]
+    /// How many lookups by id of each PR are on their way to GitHub; they can overlap.
+    private var lookingUp: [String: Int] = [:]
     /// How far the viewer's review of each PR whose diff has been produced has got, as stored.
     private var reviewProgress: [String: ReviewProgress] = [:]
     /// The signed-in user's login, once stored by the lists or a tab.
@@ -135,6 +137,12 @@ public final class PullRequestListModel {
         return unlisted.values.first(where: matches)
     }
 
+    /// Whether GitHub is being asked for anything that updates the stored PR with `id`: a
+    /// refresh of the lists it's in, or a lookup of it by id.
+    public func isChecking(_ id: String) -> Bool {
+        lookingUp[id] != nil || (isLoading && PullRequestList.allCases.contains { list in snapshot[list].contains { $0.id == id } })
+    }
+
     /// Looks up the PR numbered `number` in `repository` on GitHub, for one stored nowhere yet.
     /// It joins the lists it belongs in at once, rather than at their next refresh; otherwise
     /// it's kept as checked directly. Nil when GitHub has no such PR the viewer can see.
@@ -149,16 +157,20 @@ public final class PullRequestListModel {
     /// viewer's review joins To review at once.
     public func checkForChanges(to ids: [String]) async throws {
         guard !ids.isEmpty else { return }
-        let found = try await client.pullRequests(ids: ids)
-        snapshot = try await store.update(found.map(\.pullRequest))
-        try await placeInLists(found)
+        try await checking(ids) {
+            let found = try await client.pullRequests(ids: ids)
+            snapshot = try await store.update(found.map(\.pullRequest))
+            try await placeInLists(found)
+        }
     }
 
     /// Looks up the checks, merge state and review decision of the listed PRs with `ids` on
     /// GitHub directly, for when something done from here changes whether they can merge.
     public func checkStatuses(of ids: [String]) async throws {
         guard !ids.isEmpty else { return }
-        snapshot = try await store.updateStatuses(try await client.statuses(ofPullRequests: ids))
+        try await checking(ids) {
+            snapshot = try await store.updateStatuses(try await client.statuses(ofPullRequests: ids))
+        }
     }
 
     /// Adds `reviewer` to those the PR with `id` waits on, once GitHub has accepted asking them
@@ -345,6 +357,13 @@ public final class PullRequestListModel {
     /// How long a request for the viewer's review stays listed unanswered before it's hidden as
     /// stale; the list's caption shows the hidden ones again in a click, so it can be tight.
     static let staleRequestAge: TimeInterval = 30 * 24 * 60 * 60
+
+    /// Counts the PRs with `ids` as being looked up on GitHub while `body` runs.
+    private func checking(_ ids: [String], during body: () async throws -> Void) async rethrows {
+        for id in ids { lookingUp[id, default: 0] += 1 }
+        defer { for id in ids { lookingUp[id] = lookingUp[id].flatMap { $0 > 1 ? $0 - 1 : nil } } }
+        try await body()
+    }
 
     private func listed(in list: PullRequestList, includingClosed: Bool) -> [PullRequestSummary] {
         includingClosed ? snapshot[list] : snapshot[list].filter { $0.state == .open }
