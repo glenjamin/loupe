@@ -110,6 +110,7 @@ struct ReviewersTests {
         #expect(error.contains("stranger"))
         #expect(error.contains("Could not resolve to a node"))
         #expect(try app.store.conversation(of: pullRequest.id)?.reviewRequests.map(\.login) == ["pat-barrow"])
+        #expect(try app.store.lastReviewRequests(in: pullRequest.repository)[stranger.id] == nil, "a refusal isn't kept")
 
         // The next request clears it.
         let kit = try #require(try await candidates(of: tab, matching: "vance").first)
@@ -199,6 +200,71 @@ struct ReviewersTests {
         #expect(tab.conversation?.reviewRequests.map(\.login) == ["pat-barrow"])
         #expect(tab.reviewers == nil, "the place is kept for the viewer's own review")
     }
+
+    @Test func thoseAskedLatelyInTheRepoAreOfferedFirst() async throws {
+        let app = try await ConversationApp()
+        let (asking, sameRepo, otherRepo) = try await openTabsInTwoRepos(app)
+
+        let kit = try #require(try await candidates(of: asking, matching: "vance").first)
+        await asking.requestReview(from: kit)
+        #expect(try await candidates(of: sameRepo, matching: "").prefix(2).map(\.login) == ["kit-vance", "pat-barrow"])
+
+        let eden = try #require(try await candidates(of: asking, matching: "harcourt").first)
+        await asking.requestReview(from: eden)
+        #expect(try await candidates(of: sameRepo, matching: "").map(\.login) == [
+            "eharcourt", "kit-vance", "pat-barrow", "jules-hollis", "tam-fairweather",
+            "tamarinworks/devs", "tamarinworks/on-call", "tamarinworks/package-update-reviewers",
+        ], "most recent first, then GitHub's order")
+        #expect(try await candidates(of: sameRepo, matching: "c").map(\.login) == [
+            "eharcourt", "kit-vance", "tamarinworks/on-call", "tamarinworks/package-update-reviewers",
+        ], "still filtered as typed")
+        #expect(try await candidates(of: otherRepo, matching: "").prefix(3).map(\.login) == ["pat-barrow", "kit-vance", "jules-hollis"], "another repo keeps GitHub's order")
+    }
+
+    @Test func thoseAskedOrReviewingOnTheViewersStoredPullRequestsCountFromTheirLastUpdate() async throws {
+        let app = try await ConversationApp()
+        let (asking, sameRepo, _) = try await openTabsInTwoRepos(app)
+        // pat-barrow is asked in the probe.
+        try await app.conversations.review("CHANGES_REQUESTED", by: "tam-fairweather", on: sameRepo.id)
+        await sameRepo.load()
+
+        #expect(try await candidates(of: asking, matching: "").prefix(3).map(\.login) == ["pat-barrow", "tam-fairweather", "kit-vance"])
+
+        let eden = try #require(try await candidates(of: asking, matching: "harcourt").first)
+        await asking.requestReview(from: eden)
+        #expect(try await candidates(of: sameRepo, matching: "").first?.login == "eharcourt", "a request made here is newer")
+    }
+
+    @Test func whoWasAskedIsKeptForTheNextRun() async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "loupe.sqlite")
+
+        let firstRun = try await ConversationApp(store: PullRequestStore(url: url))
+        let (asking, _, _) = try await openTabsInTwoRepos(firstRun)
+        let jules = try #require(try await candidates(of: asking, matching: "hollis").first)
+        await asking.requestReview(from: jules)
+
+        let nextRun = try await ConversationApp(store: PullRequestStore(url: url))
+        let (_, sameRepo, _) = try await openTabsInTwoRepos(nextRun)
+        #expect(try await candidates(of: sameRepo, matching: "").prefix(2).map(\.login) == ["jules-hollis", "pat-barrow"])
+    }
+}
+
+/// Tabs on two of the viewer's PRs in one repo and one in another, each with its conversation
+/// on GitHub.
+@MainActor
+private func openTabsInTwoRepos(_ app: ConversationApp) async throws -> (PullRequestTab, PullRequestTab, PullRequestTab) {
+    let first = try #require(app.mine.first { pullRequest in app.mine.count { $0.repository == pullRequest.repository } >= 2 })
+    let sameRepo = app.mine.filter { $0.repository == first.repository }
+    let otherRepo = try #require(app.mine.first { $0.repository != first.repository })
+    var tabs: [PullRequestTab] = []
+    for pullRequest in [sameRepo[0], sameRepo[1], otherRepo] {
+        try await app.conversations.add(pullRequest.id)
+        app.tabs.open(pullRequest)
+        tabs.append(try #require(app.tabs.tab(id: pullRequest.id)))
+    }
+    return (tabs[0], tabs[1], tabs[2])
 }
 
 /// Who `tab` offers to ask for a review when `text` is typed, once the popover's fetch is done.

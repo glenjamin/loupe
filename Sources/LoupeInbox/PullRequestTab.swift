@@ -352,12 +352,13 @@ public final class PullRequestTab: Identifiable {
 
     /// Fetches who could be asked to review in the PR's repo, unless they have been this run.
     public func fetchReviewerCandidates() async throws {
-        try await candidates.fetch(pullRequest.repository)
+        try await candidates.fetch(pullRequest.repository, store: store)
     }
 
     /// Who could be asked to review, of those fetched, whose login or name contains `text`: anyone
     /// but the author and those already asked. Someone who has reviewed is included, as asking
-    /// again is how a re-review is sought. Nil until they've been fetched.
+    /// again is how a re-review is sought. Those asked lately in the repo come first. Nil until
+    /// they've been fetched.
     public func reviewerCandidates(matching text: String) -> [Reviewer]? {
         let asked = Set(conversation?.reviewRequests.map(\.id) ?? [])
         let author = pullRequest.author
@@ -369,6 +370,7 @@ public final class PullRequestTab: Identifiable {
 
     /// Asks `reviewer` to review, or to review again. They show as asked at once; the
     /// conversation is fetched again once GitHub agrees, and they're taken off if it refuses.
+    /// An accepted request is kept in the history that orders the candidates.
     public func requestReview(from reviewer: Reviewer) async {
         if conversation?.reviewRequests.contains(where: { $0.id == reviewer.id }) == true { return }
         conversation?.reviewRequests.append(reviewer)
@@ -380,6 +382,7 @@ public final class PullRequestTab: Identifiable {
             reviewRequestError = "Couldn't ask \(reviewer.displayName) to review: \(error.localizedDescription)"
             return
         }
+        await candidates.recordRequest(of: reviewer, in: pullRequest.repository, on: id, store: store)
         await refreshConversation()
     }
 

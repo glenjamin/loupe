@@ -415,6 +415,14 @@ A PR in either list, or already open, opens at once. Any other is looked up on G
 
 As plain caption text, "Review required" read as information rather than as the thing blocking the merge. It's now a badge like Conflicts, in Primer's attention colour as GitHub shows it, with help saying a review is needed before merging. "Approved" and "Changes requested" stay as coloured text: they're outcomes rather than something still owed.
 
+### Who could review is offered most recently asked first, from a history of requests
+
+The request-a-review popover offered candidates in GitHub's order, people then teams, so the few colleagues the viewer usually asks were wherever their logins happened to sort. Now everyone asked lately in that repo comes first, most recent first, then the rest in GitHub's order; typing filters that list as before. Each request made from Loupe, re-requests included, is appended to a `reviewRequest` table once GitHub accepts it, never on the optimistic add or after a refusal: the repo (lowercased `owner/name`), the reviewer's node id, login or team `org/slug`, kind, the PR's id and when. It isn't tied to the `pullRequest` table, so the history outlives the PRs it was made on.
+
+An empty history would order nothing at first, so the reviewers already on the viewer's own stored PRs count too: anyone asked or reviewing on one counts as used at that PR's last update, unless the table has something newer for them. GitHub doesn't say when a request was made, and those requests weren't made from Loupe, so they aren't written to the table; the one store query merges both. The order is read from the store once a run per repo, alongside the candidates, and each accepted request updates it in memory so the list reorders straight away; reviewers stored with a conversation later in the run count from the next launch.
+
+The ordering is one function of the candidates and when each was last asked, so more can be weighed in later: spreading reviews around, so the same few people aren't always asked, and GitHub's suggested reviewers. Neither is built yet.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

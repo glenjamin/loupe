@@ -378,6 +378,20 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "mergeStateStatus", .text)
             }
         }
+        // Every review asked for from here, to put those asked lately first. Independent of
+        // `pullRequest`, so the history outlives the PRs.
+        migrator.registerMigration("Review requests") { db in
+            try db.create(table: "reviewRequest") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("repository", .text).notNull()
+                t.column("reviewerId", .text)
+                t.column("login", .text).notNull()
+                t.column("kind", .text).notNull()
+                t.column("pullRequestId", .text).notNull()
+                t.column("requestedAt", .datetime).notNull()
+            }
+            try db.create(index: "reviewRequestByRepository", on: "reviewRequest", columns: ["repository", "requestedAt"])
+        }
         return migrator
     }
 

@@ -89,10 +89,11 @@ struct ConversationApp {
     let store: PullRequestStore
     let tabs: TabsModel
 
-    init() async throws {
+    /// Over `store`, or an in-memory one.
+    init(store: PullRequestStore? = nil) async throws {
         github = try FakeGitHub(fixture: "pr-list.json")
-        store = try PullRequestStore.inMemory()
-        tabs = Self.tabs(github, details, store)
+        self.store = try store ?? PullRequestStore.inMemory()
+        tabs = Self.tabs(github, details, self.store)
         await tabs.lists.refresh()
     }
 
