@@ -427,7 +427,7 @@ struct CommitPicker: View {
     }
 
     private var shownLabel: Text {
-        guard let commit = commits.first(where: { $0.oid == tab.shownCommit }) else { return Text("All changes") }
+        guard let commit = commits.first(where: { $0.oid == tab.shownCommit }) else { return Text(verbatim: allCommitsTitle(commits.count)) }
         return Text(verbatim: String(commit.oid.prefix(7))).monospaced() + Text(verbatim: "  \(commit.headline)")
     }
 }
@@ -442,7 +442,7 @@ struct CommitList: View {
 
     var body: some View {
         List(selection: $highlighted) {
-            row(.all, title: "All changes", oid: nil)
+            row(.all, title: allCommitsTitle(commits.count), oid: nil)
             Section("Commits") {
                 ForEach(commits) { commit in
                     row(.commit(commit.oid), title: commit.headline, oid: commit.oid)
@@ -800,4 +800,14 @@ private struct HeaderLayout: Layout {
     private static let mergeCentre: CGFloat = 0.7
     /// How wide a refused merge's message may grow before it wraps.
     private static let mergeMaxWidth: CGFloat = 240
+}
+
+/// Names the whole PR's changes by how many commits the picker can step through; before the
+/// commits are listed there's no count to give.
+private func allCommitsTitle(_ count: Int) -> String {
+    switch count {
+    case 0: "All commits"
+    case 1: "All 1 commit"
+    default: "All \(count) commits"
+    }
 }

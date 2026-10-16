@@ -503,6 +503,10 @@ Whenever a PR's tab becomes the shown one, however it got there (the strip, ⌘1
 
 The check waits 300ms for the selection to settle and is replaced by the next selection change, so flicking through tabs checks only the one landed on. A PR checked in the last 10 seconds, by this or by a notification or the fallback timer, isn't checked again, so going back and forth between two tabs, or switching apps, doesn't ask GitHub each time. A failed check is logged and ignored, as the others are. The lists' own refresh keeps its timing.
 
+### The commit picker says "All N commits"
+
+The whole PR's choice in the commit picker, both the sidebar row and the first row of its list, reads "All N commits" (or "All 1 commit") rather than "All changes". The count says how much the picker can step through, which "All changes" didn't. Before the commits are listed it reads "All commits", there being no count yet.
+
 ## Not yet decided
 
 Nothing is pending.
