@@ -16,8 +16,8 @@ struct PullRequestView: View {
         VStack(spacing: 0) {
             PullRequestHeader(pullRequest: pullRequest, tab: tab)
             Divider()
-            if let change = tab.pendingChange {
-                PendingChangeBanner(change: change) {
+            if tab.pendingChange == .newCommits {
+                NewCommitsBanner {
                     Task { await tab.reload() }
                 } dismiss: {
                     tab.dismissPendingChange()
@@ -48,8 +48,8 @@ struct PullRequestView: View {
                 .frame(minWidth: 400)
             }
         }
-        // Showing the tab produces the diff if it isn't already in memory. Changes on GitHub
-        // after that are offered by the banner rather than replacing what's being read.
+        // Showing the tab produces the diff if it isn't already in memory. New commits after
+        // that are offered by the banner rather than replacing what's being read.
         .task { await tab.load() }
     }
 
@@ -244,18 +244,17 @@ struct FailedCheckNames: View {
     }
 }
 
-/// Says the PR has changed on GitHub since its diff was produced, without disturbing the diff,
+/// Says new commits have been pushed since the diff was produced, without disturbing the diff,
 /// and offers to reload it.
-struct PendingChangeBanner: View {
-    let change: PendingChange
+struct NewCommitsBanner: View {
     let reload: () -> Void
     let dismiss: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: change == .newCommits ? "arrow.triangle.branch" : "bell")
+            Image(systemName: "arrow.triangle.branch")
                 .foregroundStyle(Color.accentColor)
-            Text(change == .newCommits ? "New commits pushed" : "Updated on GitHub")
+            Text("New commits pushed")
             Spacer(minLength: 0)
             Button("Reload", action: reload)
                 .controlSize(.small)

@@ -326,41 +326,106 @@ struct TabsTests {
         let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
         _ = await app.tabs.watchForChanges()
         #expect(tab.pendingChange == nil, "the notification about the PR's last change finds nothing new")
+        let pages = await app.conversations.pagesServed
 
         let second = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        await app.conversations.comment("<p>Pushed a fix</p>", on: pullRequest.id)
         _ = await app.tabs.watchForChanges()
 
         #expect(await app.github.pullRequestLookups.last == [pullRequest.id])
         #expect(tab.pullRequest.headRefOid == second)
         #expect(tab.pendingChange == .newCommits)
         #expect(tab.ready?.headOid == first, "the diff being read stays")
+        #expect(try app.store.diffRecord(for: pullRequest.id)?.headRefOid == first)
         #expect(tab.selectedFile == "app.go")
+        #expect(app.delay.sleeps.isEmpty, "the rest waits for the reload too, as threads sit on the head's lines")
+        #expect(await app.conversations.pagesServed == pages)
 
         await tab.reload()
 
         #expect(tab.pendingChange == nil)
         #expect(tab.ready?.headOid == second)
+        #expect(await app.conversations.pagesServed == pages + 1)
+        #expect(tab.conversation?.items.last?.event == .comment(bodyHTML: "<p>Pushed a fix</p>", isMinimized: false))
     }
 
-    @Test func otherActivityIsOfferedAsAnUpdateUntilDismissed() async throws {
+    @Test func dismissingNewCommitsKeepsTheDiffAndFollowsTheRestOfThePullRequest() async throws {
         let repo = try await FakeRepository()
         let app = try await App()
         let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
-
-        try await app.github.edit(pullRequest.id) { $0.comments.totalCount += 1 }
+        let pages = await app.conversations.pagesServed
+        _ = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        await app.conversations.comment("<p>Pushed a fix</p>", on: pullRequest.id)
         _ = await app.tabs.watchForChanges()
-        #expect(tab.pendingChange == .updated)
+        #expect(tab.pendingChange == .newCommits)
 
         tab.dismissPendingChange()
         #expect(tab.pendingChange == nil)
+        try await app.delay.untilWaiting()
+        app.delay.elapse()
+        try await until { tab.conversation?.items.last?.event == .comment(bodyHTML: "<p>Pushed a fix</p>", isMinimized: false) && tab.isConversationSettled }
+        #expect(await app.conversations.pagesServed == pages + 1)
         #expect(tab.ready?.headOid == first)
-        await app.tabs.lists.refresh()
-        #expect(tab.pendingChange == nil, "the lists' searches, which lack the counts, change nothing")
-        #expect(tab.pullRequest.commentCount == 1)
 
-        try await app.github.edit(pullRequest.id) { $0.reviewDecision = "APPROVED" }
+        let third = try await app.pushCommit(["README": "An app that says hello.\n"], to: pullRequest, in: repo)
         _ = await app.tabs.watchForChanges()
-        #expect(tab.pendingChange == .updated, "a later change is offered again")
+        #expect(tab.pullRequest.headRefOid == third)
+        #expect(tab.pendingChange == .newCommits, "more commits are offered again")
+    }
+
+    @Test func otherActivityIsFetchedInTheBackgroundWithNoBanner() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
+        let pages = await app.conversations.pagesServed
+        let threads = try #require(tab.conversation).threads.count
+
+        await app.conversations.comment("<p>Looks good</p>", on: pullRequest.id, by: "reviewer")
+        _ = try await app.conversations.startThread(on: pullRequest.id, path: "app.go", line: 3, body: "Why hi?", by: "reviewer")
+        try await app.github.edit(pullRequest.id) { $0.comments.totalCount += 1; $0.reviewDecision = "APPROVED" }
+        _ = await app.tabs.watchForChanges()
+        #expect(tab.pendingChange == nil, "nothing to reload")
+        try await app.delay.untilWaiting()
+        #expect(await app.conversations.pagesServed == pages, "not until changes settle")
+
+        app.delay.elapse()
+        try await until { tab.conversation?.threads.count == threads + 1 && tab.isConversationSettled }
+        #expect(await app.conversations.pagesServed == pages + 1)
+        #expect(await app.conversations.threadFetches == 0, "the threads come with the conversation")
+        #expect(tab.conversation?.items.last?.actor?.login == "reviewer")
+        #expect(try app.store.conversation(of: pullRequest.id) == tab.conversation)
+        #expect(tab.ready?.headOid == first, "the diff isn't produced again")
+
+        // Nothing new, so nothing more is fetched.
+        await app.tabs.lists.refresh()
+        _ = await app.tabs.watchForChanges()
+        #expect(app.delay.sleeps.count == 1)
+
+        // New commits are still told apart after following the rest.
+        let second = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        _ = await app.tabs.watchForChanges()
+        #expect(tab.pullRequest.headRefOid == second)
+        #expect(tab.pendingChange == .newCommits)
+    }
+
+    @Test func aBurstOfChangesIsFetchedOnce() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, _) = try await app.openDiffed(in: repo)
+        let pages = await app.conversations.pagesServed
+
+        for index in 1...3 {
+            await app.conversations.comment("<p>Comment \(index)</p>", on: pullRequest.id, by: "reviewer")
+            try await app.github.edit(pullRequest.id) { $0.comments.totalCount += 1 }
+            _ = await app.tabs.watchForChanges()
+        }
+        try await app.delay.untilWaiting()
+        app.delay.elapse()
+        try await until { tab.conversation?.items.last?.event == .comment(bodyHTML: "<p>Comment 3</p>", isMinimized: false) && tab.isConversationSettled }
+
+        #expect(await app.conversations.pagesServed == pages + 1)
+        #expect(app.delay.sleeps == [.seconds(2)])
+        #expect(tab.pendingChange == nil)
     }
 
     @Test func refusedNotificationsFallBackToCheckingOpenPullRequestsOnATimer() async throws {
@@ -406,15 +471,18 @@ struct TabsTests {
 @MainActor
 private struct App {
     let github: FakeGitHub
+    let details = FakePullRequestDetails()
     let store: PullRequestStore
     let tabs: TabsModel
+    /// What tabs wait on before fetching changes, which only end when the test says.
+    let delay = ManualDelay()
     /// The PRs whose tabs the app was asked to show, in order.
     private let showRecorder = ShowRecorder()
 
     init() async throws {
         github = try FakeGitHub(fixture: "pr-list.json")
         store = try PullRequestStore.inMemory()
-        tabs = Self.tabs(github, store)
+        tabs = Self.tabs(github, details, store, delay)
         tabs.show = { [showRecorder] in showRecorder.ids.append($0) }
         await tabs.lists.refresh()
     }
@@ -422,6 +490,8 @@ private struct App {
     var shown: [String] {
         showRecorder.ids
     }
+
+    var conversations: FakeConversations { details.conversations }
 
     var toReview: [PullRequestSummary] {
         tabs.lists.pullRequests(in: .toReview)
@@ -431,6 +501,7 @@ private struct App {
     /// Returns the PR as GitHub has it, its tab, and the commit.
     func openDiffed(in repo: FakeRepository) async throws -> (PullRequestSummary, PullRequestTab, String) {
         let listed = toReview[0]
+        try await conversations.add(listed.id)
         try await store.updateLocalRepos(saving: [LocalRepo(nameWithOwner: listed.repository, path: repo.checkout, verifiedAt: .now)])
         let branchPoint = try await repo.git(["rev-parse", "HEAD"], in: repo.checkout)
         try await repo.switchTo("feature", creatingFrom: "main")
@@ -460,12 +531,12 @@ private struct App {
 
     /// Fresh models over the same store, as on the next launch.
     func relaunch() throws -> TabsModel {
-        Self.tabs(github, store)
+        Self.tabs(github, details, store, delay)
     }
 
-    private static func tabs(_ github: FakeGitHub, _ store: PullRequestStore) -> TabsModel {
+    private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore, _ delay: ManualDelay) -> TabsModel {
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
-        return TabsModel(lists: lists, store: store, client: FakePullRequestDetails().client(), notifications: github.notifications(), fallbackInterval: fallbackInterval)
+        return TabsModel(lists: lists, store: store, client: details.client(), notifications: github.notifications(), fallbackInterval: fallbackInterval, sleep: { await delay.sleep(for: $0) })
     }
 
     /// Distinct from GitHub's poll intervals, to tell which one a round waits for.

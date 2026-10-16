@@ -47,6 +47,26 @@ struct MergeTests {
         #expect(nextRun.mergeReadiness == merge.expected)
     }
 
+    @Test func anApprovalNoticedOnGitHubMakesItMergeableWithoutWaitingForTheLists() async throws {
+        let app = try await MergeApp()
+        let pullRequest = try app.mergeable()
+        try await app.github.edit(pullRequest.id) { $0.reviewDecision = "REVIEW_REQUIRED" }
+        try await app.github.setMergeState(of: pullRequest.id, "BLOCKED")
+        try await app.github.setChecks(of: pullRequest.id, state: "SUCCESS", [])
+        let tab = try await app.open(pullRequest)
+        await app.tabs.lists.refresh()
+        #expect(tab.mergeReadiness == .blocked(.notApproved))
+        _ = await app.tabs.watchForChanges()
+
+        // GitHub works out that the approval unblocks it, but doesn't count that as an update.
+        try await app.github.edit(pullRequest.id) { $0.reviewDecision = "APPROVED" }
+        try await app.github.setMergeState(of: pullRequest.id, "CLEAN")
+        _ = await app.tabs.watchForChanges()
+
+        #expect(tab.mergeReadiness == .ready)
+        #expect(await app.github.statusLookups.last == [pullRequest.id], "only the open PR, not the lists")
+    }
+
     @Test func mergingMakesAMergeCommitOfTheHeadLookedUpAndShowsThePullRequestMerged() async throws {
         let app = try await MergeApp()
         let pullRequest = try app.mergeable()
@@ -232,7 +252,8 @@ private struct MergeApp {
     private static func tabs(_ app: ConversationApp) -> TabsModel {
         let lists = PullRequestListModel(client: app.github.client(), store: app.store, checkoutSearchRoots: [], onOpen: { _ in })
         let transport = MergeTransport(github: app.github, details: app.details)
-        return TabsModel(lists: lists, store: app.store, client: GitHubClient(token: { FakeGitHub.validToken }, transport: transport), notifications: app.github.notifications())
+        let delay = app.delay
+        return TabsModel(lists: lists, store: app.store, client: GitHubClient(token: { FakeGitHub.validToken }, transport: transport), notifications: app.github.notifications(), sleep: { await delay.sleep(for: $0) })
     }
 }
 

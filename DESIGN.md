@@ -423,6 +423,16 @@ An empty history would order nothing at first, so the reviewers already on the v
 
 The ordering is one function of the candidates and when each was last asked, so more can be weighed in later: spreading reviews around, so the same few people aren't always asked, and GitHub's suggested reviewers. Neither is built yet.
 
+### Only the diff waits for a reload; the rest of an open PR follows GitHub
+
+This narrows "Open PRs learn of changes from notifications, and offer a reload". The banner now appears only when new commits are pushed, "New commits pushed" with Reload, as the diff is the one thing a reviewer is partway through and must not have replaced under them. A comment, a review, an approval or a change of state moves nothing in the diff, so there's nothing to protect, and "Updated on GitHub" for those was noise the user had to act on to see what they'd been told about.
+
+When the stored PR shows activity (its update time, state, review decision or counts) and its head hasn't moved, the tab fetches its conversation, which brings the review threads with it, and its viewed states in the background. It waits a couple of seconds first so a burst of changes is one fetch, never starts one while another or the tab's load is underway, and checks again once done for anything stored meanwhile. The tab notices by observing its stored row in the lists, so it doesn't matter whether a notification, the fallback timer or the lists' refresh stored it. A failed fetch keeps what's shown, as before. While new commits wait for the reload, nothing else is fetched either: GitHub places threads by the head's lines, so threads for the new head could sit on the wrong rows of the old diff. Reload still brings everything; dismissing the banner keeps the old diff and the rest follows GitHub again.
+
+The conversation's web view loads a whole new page for new content, which put the reader back at the top, so it reads the scroll position before replacing the page and restores it once loaded. That's done from the app's own script world, which the page's no-script policy doesn't govern. Reply drafts and the description editor are native, outside the page, so a refresh never touches them.
+
+A noticed change on an open PR also looks up its checks and merge state, which the lookup by id leaves out. Before, an approval reached the review decision within a minute but `mergeStateStatus` stayed `BLOCKED` until the lists' next refresh, so the merge box said "Blocked by branch protection" on a PR that could merge. It reuses the status lookup the lists run after each refresh, as "Ready for review" already did, rather than widening the by-id query, so both stay one query each with known costs.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

@@ -29,6 +29,8 @@ public final class TabsModel {
     private let fallbackInterval: Duration
     /// From the last notifications poll that found changes, to ask only for newer ones.
     private var notificationsModified: String?
+    /// How the tabs wait for a burst of changes to settle; tests pass one they control.
+    private let sleep: @Sendable (Duration) async throws -> Void
 
     /// Restores the PRs stored by the previous run, and makes choosing a PR in `lists` open it.
     /// `fallbackInterval` is how often open PRs are checked when notifications can't say.
@@ -38,7 +40,8 @@ public final class TabsModel {
         differ: PullRequestDiffer = PullRequestDiffer(),
         client: GitHubClient = GitHubClient(),
         notifications: GitHubNotifications = GitHubNotifications(),
-        fallbackInterval: Duration = .seconds(60)
+        fallbackInterval: Duration = .seconds(60),
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.lists = lists
         self.store = store
@@ -47,6 +50,7 @@ public final class TabsModel {
         candidates = ReviewerCandidates(client: client)
         self.notifications = notifications
         self.fallbackInterval = fallbackInterval
+        self.sleep = sleep
         do {
             let saved = try store.openTabs()
             tabs = saved.pullRequests.map(makeTab)
@@ -160,16 +164,20 @@ public final class TabsModel {
         }
     }
 
+    /// Looks up the PRs, then their checks and merge state, which the lookup leaves out and
+    /// which an approval or a push can change, so the merge box doesn't wait for the lists.
     private func checkForChanges(to tabs: [PullRequestTab]) async {
         do {
-            try await lists.checkForChanges(to: tabs.map(\.id))
+            let ids = tabs.map(\.id)
+            try await lists.checkForChanges(to: ids)
+            try await lists.checkStatuses(of: ids)
         } catch {
             log("Couldn't check open PRs for changes: \(error.localizedDescription)")
         }
     }
 
     private func makeTab(_ pullRequest: PullRequestSummary) -> PullRequestTab {
-        let tab = PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ, client: client, candidates: candidates)
+        let tab = PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ, client: client, candidates: candidates, sleep: sleep)
         tab.linkOpener = { [weak self] link in await self?.open(link) ?? false }
         return tab
     }

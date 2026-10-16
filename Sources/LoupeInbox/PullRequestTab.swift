@@ -7,8 +7,9 @@ import LoupeStore
 import Observation
 
 /// One open PR: its latest known details and its diff, produced from the local checkout and
-/// kept in memory, so switching back to its tab is instant. When the PR changes on GitHub the
-/// diff stays as it is and the change is offered as a reload, as github.com does.
+/// kept in memory, so switching back to its tab is instant. When new commits are pushed the
+/// diff stays as it is and they're offered as a reload, as github.com does; any other change
+/// on GitHub is fetched in the background.
 @Observable
 @MainActor
 public final class PullRequestTab: Identifiable {
@@ -64,10 +65,17 @@ public final class PullRequestTab: Identifiable {
     private var viewerLogin: String?
     /// How many changes to each path's viewed state are on their way to GitHub.
     private var settingViewed: [String: Int] = [:]
-    /// The PR as it was when its diff was last asked for, success or not, or when a change to
-    /// it was last dismissed. Nil until the diff is asked for.
+    /// The PR as it was when its diff was last asked for, success or not, or when its new
+    /// commits were last dismissed. Nil until the diff is asked for.
     private var seen: PullRequestSummary?
     private var loading: Task<Void, Never>?
+    /// The PR as it was when its conversation and viewed states were last asked for, to tell
+    /// when GitHub has more. Nil until they're first asked for.
+    private var followed: PullRequestSummary?
+    /// Waiting for a burst of changes to settle, then fetching them.
+    private var following: Task<Void, Never>?
+    /// Waits out the settling delay; tests pass one they control.
+    private let sleep: @Sendable (Duration) async throws -> Void
     /// The checkout the diff was produced from, for diffing a commit or hidden file, or reading
     /// a file to render, later.
     private(set) var checkout: URL?
@@ -79,8 +87,9 @@ public final class PullRequestTab: Identifiable {
     /// Each hidden file's diff once asked for, by range and path.
     private var hiddenFileDiffs: [HiddenFileKey: DiffState<FileDiff>] = [:]
 
-    init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer, client: GitHubClient, candidates: ReviewerCandidates) {
+    init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer, client: GitHubClient, candidates: ReviewerCandidates, sleep: @escaping @Sendable (Duration) async throws -> Void) {
         id = opened.id
+        self.sleep = sleep
         self.opened = opened
         self.lists = lists
         self.store = store
@@ -100,6 +109,7 @@ public final class PullRequestTab: Identifiable {
             log("Couldn't read the conversation of \(opened.repository)#\(opened.number): \(error)")
         }
         readViewerLogin()
+        watchStoredPullRequest()
     }
 
     /// As of the lists' last refresh.
@@ -120,13 +130,11 @@ public final class PullRequestTab: Identifiable {
         return "\(name) #\(pullRequest.number)"
     }
 
-    /// How the PR has changed on GitHub since its diff was produced, if it has: nil while the
-    /// diff is still of the PR as it is now.
+    /// How the PR has changed on GitHub since its diff was produced, if in a way that needs
+    /// the diff reloading: nil while the diff is still of the PR's head.
     public var pendingChange: PendingChange? {
-        guard let seen else { return nil }
-        let now = pullRequest
-        if now.headRefOid != seen.headRefOid { return .newCommits }
-        return now.hasSameActivity(as: seen) ? nil : .updated
+        guard let seen, pullRequest.headRefOid != seen.headRefOid else { return nil }
+        return .newCommits
     }
 
     /// Produces the diff and asks GitHub which files are viewed and for the conversation, unless
@@ -139,6 +147,7 @@ public final class PullRequestTab: Identifiable {
         if seen != nil { return }
         let pullRequest = pullRequest
         seen = pullRequest
+        followed = pullRequest
         let task = Task {
             async let viewed: Void = refreshViewedStates()
             async let conversation: Void = refreshConversation()
@@ -148,6 +157,7 @@ public final class PullRequestTab: Identifiable {
             await conversation
             await viewer
             loading = nil
+            followStoredChanges()
         }
         loading = task
         await task.value
@@ -171,9 +181,11 @@ public final class PullRequestTab: Identifiable {
         await retry()
     }
 
-    /// Keeps the diff as it is and stops offering the change, until the PR changes again.
+    /// Keeps the diff as it is and stops offering the new commits, until more are pushed. The
+    /// rest of the PR then follows GitHub again.
     public func dismissPendingChange() {
         if seen != nil { seen = pullRequest }
+        followStoredChanges()
     }
 
     /// Records `directory` as the repo's checkout, if its origin is the repo, then produces the
@@ -513,6 +525,54 @@ public final class PullRequestTab: Identifiable {
         }
     }
 
+    /// Follows each new copy of the PR the lists store, for as long as the tab lives.
+    private func watchStoredPullRequest() {
+        withObservationTracking {
+            _ = pullRequest
+        } onChange: { [weak self] in
+            // Called as the change is about to be made, so it's read once made.
+            Task { @MainActor in
+                self?.watchStoredPullRequest()
+                self?.followStoredChanges()
+            }
+        }
+    }
+
+    /// Fetches the conversation, its review threads with it, and the viewed states again once
+    /// the stored PR shows activity on GitHub since they were last asked for. A moved head
+    /// waits for the diff's reload instead, as the threads are placed by the head's lines.
+    /// Waits for a burst of changes to settle first, and never overlaps a fetch underway.
+    private func followStoredChanges() {
+        guard following == nil, loading == nil, hasUnfollowedActivity else { return }
+        let sleep = sleep
+        following = Task { [weak self] in
+            try? await sleep(PullRequestTab.followDelay)
+            await self?.followActivity()
+        }
+    }
+
+    private func followActivity() async {
+        if loading == nil, hasUnfollowedActivity {
+            followed = pullRequest
+            async let viewed: Void = refreshViewedStates()
+            async let conversation: Void = refreshConversation()
+            await viewed
+            await conversation
+        }
+        following = nil
+        // Anything stored while this was fetching.
+        followStoredChanges()
+    }
+
+    /// Whether the stored PR has activity not yet fetched, and no new commits waiting on a reload.
+    private var hasUnfollowedActivity: Bool {
+        guard let followed, pendingChange == nil else { return false }
+        return !pullRequest.hasSameActivity(as: followed)
+    }
+
+    /// How long a change waits for others before it's fetched.
+    static let followDelay = Duration.seconds(2)
+
     /// The lists may have stored the login since the tab opened; if not, GitHub is asked.
     private func learnViewerLogin() async {
         if viewerLogin == nil { readViewerLogin() }
@@ -589,12 +649,11 @@ public final class PullRequestTab: Identifiable {
     }
 }
 
-/// How an open PR has changed on GitHub since its diff was produced.
+/// How an open PR has changed on GitHub since its diff was produced, in a way that waits for
+/// the reviewer to reload.
 public enum PendingChange: Sendable, Equatable {
     /// Its head commit moved, so the diff is out of date.
     case newCommits
-    /// Anything else, such as a comment, a review or a change of state.
-    case updated
 }
 
 /// The PR view's two tabs, as on github.com.
@@ -645,8 +704,8 @@ private struct HiddenFileKey: Hashable {
 }
 
 private extension PullRequestSummary {
-    /// Whether nothing a reviewer would reload for has changed since `earlier`. Counts unknown
-    /// either side aren't compared.
+    /// Whether nothing shown from the conversation could have changed since `earlier`. Counts
+    /// unknown either side aren't compared.
     func hasSameActivity(as earlier: PullRequestSummary) -> Bool {
         func same(_ count: KeyPath<PullRequestSummary, Int?>) -> Bool {
             earlier[keyPath: count] == nil || self[keyPath: count] == nil || earlier[keyPath: count] == self[keyPath: count]
