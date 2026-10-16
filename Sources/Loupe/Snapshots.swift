@@ -236,7 +236,7 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_OPEN_COMMITS"] == "1" {
                     for url in try await saveSnapshotsOfCommitLists(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
-                // LOUPE_SNAPSHOT_REVIEW=1 opens "Finish your review" on each PR the viewer can
+                // LOUPE_SNAPSHOT_REVIEW=1 opens the review's summary on each PR the viewer can
                 // review, and snapshots it.
                 if environment["LOUPE_SNAPSHOT_REVIEW"] == "1" {
                     for url in try await saveSnapshotsOfReviews(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
@@ -549,7 +549,7 @@ private func saveSnapshotsOfCommitLists(in windows: WindowManager, to directory:
     return written
 }
 
-/// Opens "Finish your review" on each PR the viewer can review, and writes the window with it
+/// Opens the review's summary on each PR the viewer can review, and writes the window with it
 /// open as `review-<title>.png`.
 @MainActor
 private func saveSnapshotsOfReviews(in windows: WindowManager, to directory: URL) async throws -> [URL] {
@@ -560,16 +560,16 @@ private func saveSnapshotsOfReviews(in windows: WindowManager, to directory: URL
     for tab in windows.tabs.tabs where tab.canReview {
         windows.select(tab.id)
         try? await Task.sleep(for: .milliseconds(300))
-        tab.startFinishingReview()
-        tab.reviewDraft.isFinishing = true
+        tab.startWritingSummary()
+        tab.reviewDraft.isWritingSummary = true
         try? await Task.sleep(for: .milliseconds(300))
         if let root = window.contentView,
-           let button = descendants(of: root).first(where: { $0 is ReviewButtonMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }) {
+           let button = descendants(of: root).first(where: { $0 is SummaryButtonMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }) {
             placePopover(under: button, in: window)
         }
         let url = directory.appending(path: "review-\(sanitised(windows.title(of: tab.id))).png")
         try await saveSnapshot(of: window, to: url)
-        tab.reviewDraft.isFinishing = false
+        tab.reviewDraft.isWritingSummary = false
         written.append(url)
     }
     windows.select(selected)

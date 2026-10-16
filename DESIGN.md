@@ -515,6 +515,14 @@ The file tree's levels were `DisclosureGroup`s, so each took the list's own outl
 
 A review request nobody has answered is now hidden from To review after a month rather than three. Three months was chosen while hiding still meant gone from view, so it had to be long enough to spare slow requests; since the caption toggles listing the hidden ones below the rest, a request hidden too soon costs one click, which makes a tighter cutoff cheap. A month keeps To review to what the viewer was asked about recently, and the caption reads "N older than a month hidden".
 
+### Verdicts are one click from the header; the summary is written apart from them
+
+This revises the "Finish your review" popover of "Reviews are submitted as on github.com: a pending review, then "Finish your review"". On anyone else's open PR, the header's right end now has three bordered buttons in a row: "Request changes" (red, `xmark.circle`), "Submit" (`paperplane`) and "Approve" (green, `checkmark.circle`). Each submits the review at once with that verdict and the summary written so far, through the same mutations as before: `submitPullRequestReview` with a review pending, else `addPullRequestReview` with the event. "Submit" is GitHub's `COMMENT` verdict, finishing the review without approving or asking for changes. GitHub's rules stay as they were modelled: Approve needs nothing, while Submit and Request changes need a summary or pending comments, and are disabled until there is one, with help saying so. Under the row are the pending comment count, a spinner while a mutation runs, a smaller borderless "Summary…" button, and beneath them any refusal, wrapped to the row's width so the merge and info sections lay out as before.
+
+"Summary…" opens a popover with only the markdown field, filled from the pending review's body the first time, a Done button, and with a review pending "Abandon review" after asking. ⌘↩ and Escape there close it; nothing is submitted from it. The summary is kept while the tab lives, as before. If the summary is never opened, a pending review's own summary (written on github.com, say) is what's sent, so a one-click verdict doesn't wipe it.
+
+The popover put a radio group and a second button between the reviewer and the verdict: deciding to approve meant opening it, picking Approve and clicking Submit. Most reviews here end in a verdict with little or no summary, so the verdict is now the one click, and the summary is the optional step taken first. The button is "Summary…" rather than "Comment", because github.com calls the `COMMENT` verdict "Comment", so a "Comment" button beside "Submit" would read as a fourth way to submit; the ellipsis says it opens something. There's no confirmation on the verdicts, as on github.com's Submit, and no key for them: ⌘↩ belongs to the comment box and the summary field.
+
 ## Not yet decided
 
 Nothing is pending.

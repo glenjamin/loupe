@@ -219,7 +219,7 @@ struct PullRequestHeader: View {
                 if let reviewers = tab.reviewers {
                     ReviewersBlock(tab: tab, reviewers: reviewers)
                 } else if tab.canReview {
-                    ReviewButton(tab: tab)
+                    ReviewControls(tab: tab)
                 }
             }
         }

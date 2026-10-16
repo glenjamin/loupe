@@ -44,10 +44,10 @@ struct ReviewSubmissionTests {
         let tab = try await app.open(pullRequest)
         #expect(tab.pendingReview == PendingReview(id: reviewId, body: "Mostly fine", commentCount: 1))
 
-        tab.startFinishingReview()
+        tab.startWritingSummary()
         #expect(tab.reviewDraft.body == "Mostly fine")
         tab.reviewDraft.body = "Mostly fine, one question"
-        tab.startFinishingReview()
+        tab.startWritingSummary()
         #expect(tab.reviewDraft.body == "Mostly fine, one question", "only filled the first time")
 
         try await comment("Typo", at: DiffAnchor(path: "app.go", side: .right, line: 10), on: tab)
@@ -61,32 +61,32 @@ struct ReviewSubmissionTests {
         try await comment("Nit: rename", at: DiffAnchor(path: "app.go", side: .right, line: 11), on: tab)
         let reviewId = try #require(tab.pendingReview?.id)
 
-        tab.startFinishingReview()
-        tab.reviewDraft.isFinishing = true
+        tab.startWritingSummary()
+        tab.reviewDraft.isWritingSummary = true
         tab.reviewDraft.body = "Looks good"
-        tab.reviewDraft.event = .approve
-        await tab.submitReview()
+        await tab.submitReview(as: .approve)
 
         #expect(await app.conversations.reviewMutationsReceived.last == .submit(reviewId: reviewId, event: "APPROVE", body: "Looks good"))
         #expect(tab.reviewDraft.error == nil)
-        #expect(!tab.reviewDraft.isFinishing, "closed once submitted")
+        #expect(!tab.reviewDraft.isWritingSummary, "closed once submitted")
         #expect(tab.pendingReview == nil)
         #expect(tab.conversation?.threads.allSatisfy { !$0.isPending } == true, "its comments are submitted")
         #expect(tab.conversation?.latestReviews.contains { $0.reviewer.login == FakeGitHub.viewer && $0.state == .approved } == true)
         #expect(tab.pullRequest.reviewDecision == .approved)
         #expect(app.tabs.lists.pullRequest(id: tab.id)?.reviewDecision == .approved, "the list's row too")
-        #expect(tab.reviewDraft.body.isEmpty && tab.reviewDraft.event == .comment, "ready for the next review")
+        #expect(tab.reviewDraft.body.isEmpty, "ready for the next review")
     }
 
     @Test func submittingWithNoPendingReviewSendsOneReviewWithTheEvent() async throws {
         let (app, tab, _) = try await ThreadsApp.withThread()
         await app.conversations.decideReviews(on: app.github)
 
-        tab.reviewDraft.event = .requestChanges
-        #expect(!tab.canSubmitReview, "asking for changes needs a summary")
+        #expect(tab.canSubmitReview(as: .approve), "approving needs nothing more")
+        #expect(!tab.canSubmitReview(as: .requestChanges), "asking for changes needs a summary")
+        #expect(!tab.canSubmitReview(as: .comment), "so does submitting without a verdict")
         tab.reviewDraft.body = "Please split this up"
-        #expect(tab.canSubmitReview)
-        await tab.submitReview()
+        #expect(tab.canSubmitReview(as: .requestChanges) && tab.canSubmitReview(as: .comment))
+        await tab.submitReview(as: .requestChanges)
 
         let head = try #require(tab.ready?.headOid)
         #expect(await app.conversations.reviewMutationsReceived == [
@@ -94,9 +94,29 @@ struct ReviewSubmissionTests {
         ])
         #expect(tab.pendingReview == nil)
         #expect(tab.pullRequest.reviewDecision == .changesRequested)
+    }
 
-        tab.reviewDraft.event = .approve
-        #expect(tab.canSubmitReview, "approving needs nothing more")
+    @Test func pendingCommentsAreEnoughToSubmitWithoutAVerdict() async throws {
+        let (app, tab, _) = try await ThreadsApp.withThread()
+        try await comment("Nit: rename", at: DiffAnchor(path: "app.go", side: .right, line: 11), on: tab)
+        let reviewId = try #require(tab.pendingReview?.id)
+        #expect(tab.canSubmitReview(as: .comment) && tab.canSubmitReview(as: .requestChanges))
+
+        await tab.submitReview(as: .comment)
+
+        #expect(await app.conversations.reviewMutationsReceived.last == .submit(reviewId: reviewId, event: "COMMENT", body: ""))
+        #expect(tab.pendingReview == nil)
+    }
+
+    @Test func aPendingReviewsSummaryIsSentWhenTheSummaryWasNeverOpened() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest()
+        let reviewId = try await app.conversations.startPendingReview(on: pullRequest.id, path: "app.go", line: 11, body: "Why three?", summary: "Mostly fine")
+        let tab = try await app.open(pullRequest)
+
+        await tab.submitReview(as: .approve)
+
+        #expect(await app.conversations.reviewMutationsReceived.last == .submit(reviewId: reviewId, event: "APPROVE", body: "Mostly fine"))
     }
 
     @Test func abandoningDeletesTheReviewAndItsComments() async throws {
@@ -123,11 +143,10 @@ struct ReviewSubmissionTests {
         await app.conversations.refuseThreadChanges()
 
         tab.reviewDraft.body = "Looks good"
-        tab.reviewDraft.event = .approve
-        await tab.submitReview()
+        await tab.submitReview(as: .approve)
 
         #expect(tab.reviewDraft.error?.contains("Resource not accessible") == true)
-        #expect(tab.reviewDraft.body == "Looks good" && tab.reviewDraft.event == .approve)
+        #expect(tab.reviewDraft.body == "Looks good")
         #expect(tab.pendingReview?.commentCount == 1, "still pending")
         #expect(!tab.reviewDraft.isSubmitting)
 
@@ -165,9 +184,8 @@ struct ReviewSubmissionTests {
 
         #expect(tab.isOwnPullRequest && !tab.canReview)
         tab.reviewDraft.body = "LGTM"
-        tab.reviewDraft.event = .approve
-        #expect(!tab.canSubmitReview)
-        await tab.submitReview()
+        #expect(!tab.canSubmitReview(as: .approve) && !tab.canSubmitReview(as: .comment))
+        await tab.submitReview(as: .approve)
         #expect(await app.conversations.reviewMutationsReceived.isEmpty)
     }
 

@@ -3,17 +3,16 @@ import LoupeGitHub
 import LoupeModel
 import Observation
 
-/// The review the viewer is finishing: its summary and verdict, kept while the tab lives so
-/// closing the popover loses nothing.
+/// The review the viewer is finishing: its summary, kept while the tab lives so closing the
+/// popover loses nothing. The verdict is picked as it's submitted.
 @Observable
 @MainActor
 public final class ReviewDraft {
     /// The summary, in markdown.
     public var body = ""
-    public var event = ReviewEvent.comment
-    /// Whether it's open to finish, kept while switching between tabs; it closes once
+    /// Whether the summary is open to write, kept while switching between tabs; it closes once
     /// submitted or abandoned.
-    public var isFinishing = false
+    public var isWritingSummary = false
     public internal(set) var isSubmitting = false
     /// Why GitHub refused the last submission or abandonment, until another is tried.
     public internal(set) var error: String?
@@ -25,8 +24,7 @@ public final class ReviewDraft {
     /// Closed and empty, for the next review.
     func reset() {
         body = ""
-        event = .comment
-        isFinishing = false
+        isWritingSummary = false
         hasStarted = false
     }
 }
@@ -75,41 +73,48 @@ extension PullRequestTab {
         await refreshThreads { $0.isPending }
     }
 
-    /// Fills the summary from the pending review's, the first time the review is opened to finish.
-    public func startFinishingReview() {
+    /// Fills the summary from the pending review's, the first time it's opened to write.
+    public func startWritingSummary() {
         let draft = reviewDraft
         guard !draft.hasStarted else { return }
         draft.hasStarted = true
         if draft.body.isEmpty, let body = pendingReview?.body { draft.body = body }
     }
 
-    /// Whether there's a review to submit: approving needs nothing more, but commenting or asking
-    /// for changes needs a summary or comments in the pending review.
-    public var canSubmitReview: Bool {
+    /// The summary a review would be submitted with: the draft's, or the pending review's until
+    /// the summary has been opened or written.
+    public var reviewSummary: String {
         let draft = reviewDraft
-        guard canReview, !draft.isSubmitting else { return false }
-        if isOwnPullRequest && draft.event != .comment { return false }
-        let hasBody = !draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return draft.event == .approve || hasBody || (pendingReview?.commentCount ?? 0) > 0
+        guard draft.body.isEmpty, !draft.hasStarted else { return draft.body }
+        return pendingReview?.body ?? ""
     }
 
-    /// Submits the viewer's review with the draft's summary and verdict: the pending review if
-    /// there is one, else a new review at once. Then the conversation and the PR's status are
-    /// fetched again, so the review shows and the review decision follows it. A refusal is kept
-    /// to show, with the draft as it was.
-    public func submitReview() async {
+    /// Whether a review can be submitted with `event`: approving needs nothing more, but
+    /// commenting or asking for changes needs a summary or comments in the pending review.
+    public func canSubmitReview(as event: ReviewEvent) -> Bool {
+        guard canReview, !reviewDraft.isSubmitting else { return false }
+        let hasSummary = !reviewSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return event == .approve || hasSummary || (pendingReview?.commentCount ?? 0) > 0
+    }
+
+    /// Submits the viewer's review with the summary and `event`: the pending review if there is
+    /// one, else a new review at once. Then the conversation and the PR's status are fetched
+    /// again, so the review shows and the review decision follows it. A refusal is kept to show,
+    /// with the draft as it was.
+    public func submitReview(as event: ReviewEvent) async {
         let draft = reviewDraft
-        guard canSubmitReview else { return }
+        guard canSubmitReview(as: event) else { return }
+        let summary = reviewSummary
         let reviewed = Set(placedThreads.filter(\.isPending).map(\.id))
         draft.isSubmitting = true
         draft.error = nil
         defer { draft.isSubmitting = false }
         do {
             if let pendingReview {
-                try await client.submitReview(pendingReview.id, event: draft.event, body: draft.body)
+                try await client.submitReview(pendingReview.id, event: event, body: summary)
             } else {
                 let head = if case let .ready(review) = phase { review.headOid } else { pullRequest.headRefOid }
-                try await client.addReview(toPullRequest: id, commitId: head, body: draft.body.isEmpty ? nil : draft.body, event: draft.event, threads: [])
+                try await client.addReview(toPullRequest: id, commitId: head, body: summary.isEmpty ? nil : summary, event: event, threads: [])
             }
         } catch {
             draft.error = "Couldn't submit your review: \(error.localizedDescription)"

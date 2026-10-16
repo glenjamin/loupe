@@ -3,70 +3,100 @@ import LoupeInbox
 import LoupeModel
 import SwiftUI
 
-/// On anyone else's open PR, the header's review control where the reviewers sit on the
-/// viewer's own: "Review", or "Finish review (N)" with N comments pending, opening github.com's
-/// "Finish your review" as a popover.
-struct ReviewButton: View {
+/// On anyone else's open PR, the header's review controls where the reviewers sit on the
+/// viewer's own: Request changes, Submit and Approve, each submitting at once with the summary
+/// written so far, and under them the pending count and "Summary…" to write it.
+struct ReviewControls: View {
     let tab: PullRequestTab
 
     var body: some View {
         @Bindable var draft = tab.reviewDraft
-        Button(title, systemImage: "text.bubble") {
-            tab.startFinishingReview()
-            draft.isFinishing = true
-        }
-        .buttonStyle(.borderedProminent)
-        .help(help)
-        .background(ReviewButtonMarker())
-        .popover(isPresented: $draft.isFinishing, arrowEdge: .bottom) {
-            FinishReviewPopover(tab: tab, draft: draft)
+        // The row sets the width; the pending count and any refusal wrap within it.
+        RowWidthStack(spacing: 4) {
+            HStack(spacing: 6) {
+                verdictButton(.requestChanges)
+                verdictButton(.comment)
+                verdictButton(.approve)
+            }
+            HStack(spacing: 6) {
+                if let count = tab.pendingReview?.commentCount {
+                    Text(verbatim: "\(count) pending \(count == 1 ? "comment" : "comments")")
+                        .font(.caption)
+                        .foregroundStyle(.diffAttention)
+                }
+                Spacer(minLength: 0)
+                if draft.isSubmitting {
+                    ProgressView().controlSize(.small)
+                }
+                Button("Summary…", systemImage: tab.reviewSummary.isEmpty ? "text.bubble" : "text.bubble.fill") {
+                    tab.startWritingSummary()
+                    draft.isWritingSummary = true
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help("Write the review's summary, sent with whichever of the buttons above you click")
+                .background(SummaryButtonMarker())
+                .popover(isPresented: $draft.isWritingSummary, arrowEdge: .bottom) {
+                    SummaryPopover(tab: tab, draft: draft)
+                }
+            }
+            if let error = draft.error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.diffDanger)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                    .help(error)
+            }
         }
         .fixedSize()
     }
 
-    private var title: String {
-        guard let count = tab.pendingReview?.commentCount else { return "Review" }
-        return "Finish review (\(count))"
+    private func verdictButton(_ event: ReviewEvent) -> some View {
+        Button {
+            Task { await tab.submitReview(as: event) }
+        } label: {
+            Label {
+                Text(event.title)
+            } icon: {
+                Image(systemName: event.symbol)
+                    .foregroundStyle(event.colour ?? .primary)
+            }
+        }
+        .buttonStyle(.bordered)
+        .tint(event.colour)
+        .disabled(!tab.canSubmitReview(as: event))
+        .help(help(for: event))
     }
 
-    private var help: String {
-        guard let count = tab.pendingReview?.commentCount else { return "Comment on, approve or request changes to this pull request" }
-        return "Submit your review with its \(count) pending \(count == 1 ? "comment" : "comments"), or abandon it"
+    private func help(for event: ReviewEvent) -> String {
+        if !tab.canSubmitReview(as: event), !tab.reviewDraft.isSubmitting {
+            return "Write a summary or add comments first, to \(event == .requestChanges ? "request changes" : "submit without approving")"
+        }
+        let pending = tab.pendingReview.map { " with its \($0.commentCount) pending \($0.commentCount == 1 ? "comment" : "comments")" } ?? ""
+        return "\(event.summary) Submits your review\(pending) now."
     }
 }
 
-/// A summary, a verdict and Submit, as github.com's "Finish your review" has them, and with a
-/// review pending a way to abandon it. ⌘↩ submits; GitHub's refusal shows here.
-private struct FinishReviewPopover: View {
+/// The review's summary on its own, kept as it's written; whichever verdict is clicked sends it.
+/// With a review pending, it's also where the review is abandoned.
+private struct SummaryPopover: View {
     let tab: PullRequestTab
     @Bindable var draft: ReviewDraft
     @State private var confirmsAbandon = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Finish your review")
-                    .font(.headline)
-                Spacer(minLength: 0)
-                if let count = tab.pendingReview?.commentCount {
-                    Text(verbatim: "\(count) pending \(count == 1 ? "comment" : "comments")")
-                        .font(.caption)
-                        .foregroundStyle(.diffAttention)
-                }
-            }
-            MarkdownTextView(text: $draft.body, isEditable: !draft.isSubmitting, save: submit, cancel: { draft.isFinishing = false }, font: .systemFont(ofSize: NSFont.systemFontSize))
+            Text("Review summary")
+                .font(.headline)
+            // ⌘↩ and Escape only close it: the verdict is chosen in the header.
+            MarkdownTextView(text: $draft.body, isEditable: !draft.isSubmitting, save: close, cancel: close, font: .systemFont(ofSize: NSFont.systemFontSize))
                 .frame(height: 110)
                 .background(Color(nsColor: .textBackgroundColor))
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))
-            Text("Leave a comment. Markdown.")
+            Text("Leave a comment. Markdown. Sent with Request changes, Submit or Approve.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(ReviewEvent.allCases, id: \.self) { event in
-                    EventOption(event: event, selected: $draft.event, refusal: refusal(of: event))
-                }
-            }
-            .disabled(draft.isSubmitting)
             if let error = draft.error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -85,11 +115,9 @@ private struct FinishReviewPopover: View {
                 if draft.isSubmitting {
                     ProgressView().controlSize(.small)
                 }
-                Button("Submit review", action: submit)
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(!tab.canSubmitReview)
-                    .help(submitHelp)
+                Button("Done", action: close)
+                    .keyboardShortcut(.defaultAction)
+                    .help("Keep the summary for when you submit (⌘↩)")
             }
         }
         .padding(12)
@@ -102,23 +130,8 @@ private struct FinishReviewPopover: View {
         }
     }
 
-    private func submit() {
-        guard tab.canSubmitReview else { return }
-        Task { await tab.submitReview() }
-    }
-
-    /// Why GitHub won't take `event` here, if it won't.
-    private func refusal(of event: ReviewEvent) -> String? {
-        guard tab.isOwnPullRequest else { return nil }
-        switch event {
-        case .comment: return nil
-        case .approve: return "You can't approve your own pull request"
-        case .requestChanges: return "You can't request changes on your own pull request"
-        }
-    }
-
-    private var submitHelp: String {
-        tab.canSubmitReview ? "Submit review (⌘↩)" : "Leave a comment to submit a review that doesn't approve"
+    private func close() {
+        draft.isWritingSummary = false
     }
 
     private var abandonMessage: String {
@@ -127,47 +140,64 @@ private struct FinishReviewPopover: View {
     }
 }
 
-/// One verdict as a radio button, with GitHub's description of it beneath.
-private struct EventOption: View {
-    let event: ReviewEvent
-    @Binding var selected: ReviewEvent
-    let refusal: String?
-
-    var body: some View {
-        Button { selected = event } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: selected == event ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected == event ? Color.accentColor : .secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(event.title)
-                    Text(event.summary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(refusal != nil)
-        .help(refusal ?? event.summary)
-    }
-}
-
-/// An empty view behind the Review button, so a snapshot run can find where it is.
-struct ReviewButtonMarker: NSViewRepresentable {
+/// An empty view behind "Summary…", so a snapshot run can find where it is.
+struct SummaryButtonMarker: NSViewRepresentable {
     final class Marker: NSView {}
 
     func makeNSView(context: Context) -> Marker { Marker() }
     func updateNSView(_ view: Marker, context: Context) {}
 }
 
+/// A column as wide as its first subview's own size, each later one proposed that width, so
+/// text under a row of buttons wraps rather than widening the header's reviews section.
+private struct RowWidthStack: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let frames = frames(subviews: subviews)
+        return CGSize(width: frames.map(\.maxX).max() ?? 0, height: frames.map(\.maxY).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (subview, frame) in zip(subviews, frames(subviews: subviews)) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func frames(subviews: Subviews) -> [CGRect] {
+        guard let first = subviews.first else { return [] }
+        let width = first.sizeThatFits(.unspecified).width
+        var y: CGFloat = 0
+        return subviews.map { subview in
+            let size = subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            defer { y += size.height + spacing }
+            return CGRect(x: 0, y: y, width: width, height: size.height)
+        }
+    }
+}
+
 private extension ReviewEvent {
     var title: String {
         switch self {
-        case .comment: "Comment"
+        case .comment: "Submit"
         case .approve: "Approve"
         case .requestChanges: "Request changes"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .comment: "paperplane"
+        case .approve: "checkmark.circle"
+        case .requestChanges: "xmark.circle"
+        }
+    }
+
+    var colour: Color? {
+        switch self {
+        case .comment: nil
+        case .approve: .diffSuccess
+        case .requestChanges: .diffDanger
         }
     }
 

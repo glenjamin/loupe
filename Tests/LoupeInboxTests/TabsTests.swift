@@ -710,8 +710,7 @@ struct PendingReviewWhileNewCommitsWaitTests {
         let started = try #require(tab.placedThreads.first { $0.isPending })
         #expect(tab.placedThreadIds.contains(started.id), "shown on the diff being read")
 
-        tab.reviewDraft.event = .approve
-        await tab.submitReview()
+        await tab.submitReview(as: .approve)
         #expect(tab.placedThreads.first { $0.id == started.id }?.isPending == false, "submitted at once")
 
         try await reviewComment("And this?", line: 1, on: tab)
