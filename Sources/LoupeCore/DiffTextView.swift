@@ -100,11 +100,12 @@ public final class DiffTextView: NSTextView {
     private var shownCount = 0
 
     /// Shows a diff from its top or, `keepingPlace`, a new rendering of the same file where the
-    /// reader was: the row whose expand control was clicked holds still, else the view stays
+    /// reader was: the row whose expand control was clicked holds still, else the first code row
+    /// in view that's still shown, as when revealed lines are hidden, else the view stays
     /// scrolled as it was.
     public func show(_ rendered: RenderedDiff, keepingPlace: Bool = false) {
         let visible = visibleRect
-        let held = keepingPlace ? heldRow : nil
+        let held = keepingPlace ? heldRow ?? visibleCodeRow(keptIn: rendered) : nil
         heldRow = nil
         hoveredAnchor = nil
         self.rendered = rendered
@@ -238,6 +239,22 @@ public final class DiffTextView: NSTextView {
             return
         }
         heldRow = (held, top - visibleRect.minY)
+    }
+
+    /// The first row in view, from the top, whose line is still in `next`, and how far below
+    /// the top of the view it is, so rows going above or around it don't move the reader.
+    private func visibleCodeRow(keptIn next: RenderedDiff) -> (row: HeldRow, offset: CGFloat)? {
+        guard let current = rendered, let textStorage, textStorage.length > 0 else { return nil }
+        let visible = visibleRect
+        let first = characterIndexForInsertion(at: NSPoint(x: visible.minX, y: visible.minY))
+        guard var row = current.row(at: min(first, textStorage.length - 1)) else { return nil }
+        while let top = top(ofRow: row), top < visible.maxY {
+            if let anchor = current.rowAnchors[row], next.rowAnchors.contains(anchor) {
+                return (.line(anchor), top - visible.minY)
+            }
+            row += 1
+        }
+        return nil
     }
 
     /// The top of a row in the view. Everything above it is laid out first, as non-contiguous

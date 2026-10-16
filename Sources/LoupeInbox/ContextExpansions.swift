@@ -63,6 +63,16 @@ public final class ContextExpansions {
         expanded[key] = (expanded[key] ?? file).expanding(expansion, newFile: lines)
     }
 
+    /// Whether anything has been revealed in the file over `range`.
+    func hasRevealed(_ file: FileDiff, in range: DiffRange) -> Bool {
+        expanded[ExpandedFile(range: range, path: file.path)] != nil
+    }
+
+    /// Hides what's been revealed in the file over `range`, showing its diff as produced.
+    func collapse(_ file: FileDiff, in range: DiffRange) {
+        expanded[ExpandedFile(range: range, path: file.path)] = nil
+    }
+
     /// Forgets what's been revealed, as the diff it was revealed in is produced again.
     func reset() {
         expanded = [:]
@@ -94,6 +104,18 @@ extension PullRequestTab {
     public func expandContext(of file: FileDiff, _ expansion: ContextExpansion) async {
         guard let checkout, let range = shownRange else { return }
         await contextExpansions.expand(file, expansion, in: range, checkout: checkout)
+    }
+
+    /// Whether the reader has revealed any of the file's unchanged lines in the changes shown.
+    public func hasRevealedContext(of file: FileDiff) -> Bool {
+        guard let range = shownRange else { return false }
+        return contextExpansions.hasRevealed(file, in: range)
+    }
+
+    /// Hides every line revealed in the file in the changes shown, back to its diff as produced.
+    public func collapseContext(of file: FileDiff) {
+        guard let range = shownRange else { return }
+        contextExpansions.collapse(file, in: range)
     }
 }
 

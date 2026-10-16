@@ -345,6 +345,10 @@ GitHub's rollup read as failing on most PRs because of Codecov alone: its projec
 
 The rule is one function in `LoupeModel` (`CheckContext.isToleratedFailure`, `CheckState.tolerating(_:)`), applied when the store turns a row into a `PullRequestSummary`, so the list glyph, the header glyph and its failed names, the popover and the merge button's reason all take the same state without each working it out. The store keeps GitHub's rollup and checks as given, so the rule can change without a migration or a fresh lookup. In the popover a tolerated failure keeps its row and description with its cross in the secondary colour, listed after real failures and pending checks; the summary line doesn't count it as failed but ends "1 coverage failure ignored". The header names a patch check below the threshold as `patch`. GitHub's own `mergeStateStatus` is untouched, so a `BLOCKED` PR whose only failures are tolerated gives "Blocked by branch protection" rather than "Checks failing". The conversation page's checks list still shows each check as GitHub reports it.
 
+### Revealed lines can all be hidden again from the file's header
+
+While a file has lines revealed around its hunks, its header bar shows a small borderless button, `arrow.down.right.and.arrow.up.left`, that hides every one of them, back to the diff as produced. It only hides what's revealed in the changes shown, the whole PR's or one commit's, as each keeps its own. Hiding them one gap at a time isn't offered: GitHub has no such control either, and once gaps have merged hunks there's no clean step back. It's absent while nothing is revealed, so the header stays as it was for most files. When the diff is shown anew without an arrow having been clicked, as when the revealed lines go, the first code row in view that's still there holds still on screen, rather than the scroll offset, so hiding lines above the reader doesn't move what they were reading.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

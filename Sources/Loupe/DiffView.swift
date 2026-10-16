@@ -14,6 +14,8 @@ struct DiffView: View {
     var markdown: MarkdownPreview?
     var expandable: ExpandableContext?
     var onExpand: (ContextExpansion) -> Void = { _ in }
+    /// Hides the lines revealed in the file; nil while nothing is revealed.
+    var onCollapse: (() -> Void)?
     var blocks: [DiffBlockContent] = []
     /// The rows that offer a "+" to start a comment on hover; none when nil.
     var commentable: Set<DiffAnchor>?
@@ -21,7 +23,7 @@ struct DiffView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            FileHeader(file: file, review: review, markdown: markdown)
+            FileHeader(file: file, review: review, markdown: markdown, onCollapse: onCollapse)
             Divider()
             // The rendering covers the diff rather than replacing it, so the diff keeps its place.
             ZStack {
@@ -45,6 +47,7 @@ private struct FileHeader: View {
     let file: FileDiff
     let review: FileReview?
     let markdown: MarkdownPreview?
+    let onCollapse: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -64,6 +67,12 @@ private struct FileHeader: View {
                 Text(verbatim: "\u{2212}\(file.deletions)").foregroundStyle(.diffDanger)
             }
             .monospacedDigit()
+            if let onCollapse {
+                Button("Hide Revealed Lines", systemImage: "arrow.down.right.and.arrow.up.left", action: onCollapse)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .help("Hide the revealed lines")
+            }
             if let markdown {
                 Picker("Show", selection: Binding(get: { markdown.isRendered }, set: markdown.setRendered)) {
                     Text("Source").tag(false)
