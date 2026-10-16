@@ -353,6 +353,10 @@ While a file has lines revealed around its hunks, its header bar shows a small b
 
 This revises "New comments start from a "+" in the gutter and post at once" where it says revealed lines offer no "+". The user wants to comment on code next to a change, as github.com's new Files changed page allows after expanding. Revealed lines are unchanged, so they take comments on the new side with their new line number, posted the same way as any other. Whether the REST endpoint takes a `line` outside the diff's hunks isn't settled by GitHub's docs: they call `line` "the line of the blob in the pull request diff", and the September 2025 changelog that brought comments on unchanged lines to the new page says "API support is currently limited" while such comments are returned by the existing APIs. So it's offered and tried live; if GitHub refuses, the refusal shows under the draft as any other does. Hunk headers and the row after the last hunk still offer no "+".
 
+### Double-clicking a row starts a comment on it
+
+Double-clicking anywhere on a row that offers the "+", its gutter or its code, starts a comment there as the "+" does, so a reviewer needn't aim for a small target at the row's edge. The double-click is taken before the text view's own handling, so it selects no word on those rows; on rows that take no comment (hunk headers, the rows held for threads, one commit's changes) it selects a word as before. Selecting a word to copy from a commentable row now needs a drag; a triple-click still selects the row. The "+"'s tooltip mentions it. It uses the same row lookup as the "+", so the two can't disagree about which rows take comments.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

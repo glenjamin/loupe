@@ -174,6 +174,20 @@ enum SnapshotRun {
                 }
                 windows.select(tabs.selected)
             }
+            // LOUPE_SNAPSHOT_DOUBLE_CLICK=<line> double-clicks the code of that new line's row in
+            // each shown diff, which starts a comment there as its "+" would. Nothing is typed or sent.
+            if let line = environment["LOUPE_SNAPSHOT_DOUBLE_CLICK"].flatMap(Int.init) {
+                for tab in tabs.tabs {
+                    windows.select(tab.id)
+                    try? await Task.sleep(for: .milliseconds(800))
+                    guard let window = windows.mainWindow else { continue }
+                    doubleClickRow(ofNewLine: line, in: window)
+                    try? await Task.sleep(for: .milliseconds(800))
+                    let selected = visibleDiff(in: window)?.selectedRange().length ?? 0
+                    print("double-clicking new line \(line): \(tab.threadActivity.newComment.map { "a comment is open on \($0.anchor.side) line \($0.anchor.line)" } ?? "no comment is open"), \(selected) characters selected")
+                }
+                windows.select(tabs.selected)
+            }
             // LOUPE_SNAPSHOT_THREAD=<n> scrolls each shown diff to its nth block of threads (from
             // 1, in the order they come down the diff), once they've measured themselves.
             if let wanted = environment["LOUPE_SNAPSHOT_THREAD"].flatMap(Int.init) {
@@ -321,23 +335,46 @@ enum SnapshotRun {
     /// Scrolls the shown diff so the row of a new line is a little way down, then moves the
     /// mouse over it as the pointer would, printing whether its "+" shows.
     private static func hoverRow(ofNewLine line: Int, in window: NSWindow) -> Bool {
-        guard let textView = visibleDiff(in: window), let rendered = textView.rendered, let layoutManager = textView.layoutManager,
-              let row = rendered.rowAnchors.firstIndex(where: { $0?.side == .right && $0?.line == line })
-        else {
+        guard let (textView, point) = scrollToRow(ofNewLine: line, in: window) else {
             print("no row for new line \(line) to hover")
             return false
         }
+        guard let event = NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return false }
+        textView.mouseMoved(with: event)
+        print("hovering new line \(line): the comment button is \(textView.commentButton.isHidden ? "hidden" : "shown")")
+        return !textView.commentButton.isHidden
+    }
+
+    /// Scrolls the shown diff so the row of a new line is a little way down, then double-clicks
+    /// its code through the window as the mouse would. Each mouse-up is queued before its
+    /// mouse-down, so a selection-tracking loop finds it.
+    private static func doubleClickRow(ofNewLine line: Int, in window: NSWindow) {
+        guard let (_, point) = scrollToRow(ofNewLine: line, in: window) else {
+            return print("no row for new line \(line) to double-click")
+        }
+        for clickCount in 1...2 {
+            let events = [NSEvent.EventType.leftMouseUp, .leftMouseDown].compactMap { type in
+                NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: type == .leftMouseDown ? 1 : 0)
+            }
+            guard events.count == 2 else { return }
+            NSApp.postEvent(events[0], atStart: false)
+            window.sendEvent(events[1])
+        }
+    }
+
+    /// Scrolls the shown diff so the row of a new line is a little way down the view, and gives
+    /// a point in the window over that row's code.
+    private static func scrollToRow(ofNewLine line: Int, in window: NSWindow) -> (DiffTextView, NSPoint)? {
+        guard let textView = visibleDiff(in: window), let rendered = textView.rendered, let layoutManager = textView.layoutManager,
+              let row = rendered.rowAnchors.firstIndex(where: { $0?.side == .right && $0?.line == line })
+        else { return nil }
         let start = rendered.rowStarts[row]
         layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: start + 1))
         let fragment = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: start), effectiveRange: nil)
         let top = fragment.minY + textView.textContainerOrigin.y
         textView.scroll(NSPoint(x: 0, y: max(0, top - 120)))
         window.layoutIfNeeded()
-        let point = textView.convert(NSPoint(x: 300, y: top + fragment.height / 2), to: nil)
-        guard let event = NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return false }
-        textView.mouseMoved(with: event)
-        print("hovering new line \(line): the comment button is \(textView.commentButton.isHidden ? "hidden" : "shown")")
-        return !textView.commentButton.isHidden
+        return (textView, textView.convert(NSPoint(x: 300, y: top + fragment.height / 2), to: nil))
     }
 
     private static func visibleDiff(in window: NSWindow) -> DiffTextView? {

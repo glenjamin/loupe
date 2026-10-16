@@ -78,11 +78,7 @@ public final class DiffTextView: NSTextView {
     }
 
     private func showCommentButton(at point: NSPoint) {
-        guard let commentableAnchors, let rendered, let layoutManager, let textStorage, textStorage.length > 0 else {
-            return hoveredAnchor = nil
-        }
-        let index = min(characterIndexForInsertion(at: point), textStorage.length - 1)
-        guard let row = rendered.row(at: index), let anchor = rendered.rowAnchors[row], commentableAnchors.contains(anchor) else {
+        guard let rendered, let layoutManager, let (row, anchor) = commentableRow(at: point) else {
             return hoveredAnchor = nil
         }
         let fragment = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: rendered.rowStarts[row]), effectiveRange: nil)
@@ -90,7 +86,15 @@ public final class DiffTextView: NSTextView {
         let size = commentButton.intrinsicContentSize
         commentButton.frame = NSRect(x: textContainerOrigin.x + 2, y: fragment.minY + textContainerOrigin.y + (fragment.height - size.height) / 2, width: size.width, height: size.height)
         hoveredAnchor = anchor
-        commentButton.toolTip = "Comment on line \(anchor.line)"
+        commentButton.toolTip = "Comment on line \(anchor.line) (or double-click the row)"
+    }
+
+    /// The row under a point, gutter or code, and its anchor, when a comment can be started there.
+    private func commentableRow(at point: NSPoint) -> (row: Int, anchor: DiffAnchor)? {
+        guard let commentableAnchors, let rendered, let textStorage, textStorage.length > 0 else { return nil }
+        let index = min(characterIndexForInsertion(at: point), textStorage.length - 1)
+        guard let row = rendered.row(at: index), let anchor = rendered.rowAnchors[row], commentableAnchors.contains(anchor) else { return nil }
+        return (row, anchor)
     }
 
     /// Files up to this many rows are highlighted before first paint; larger ones paint plain first.
@@ -191,6 +195,13 @@ public final class DiffTextView: NSTextView {
         if event.clickCount == 1, let rendered, let index = characterIndex(under: point), let expansion = rendered.expansion(at: index) {
             hold(rowAt: index, for: expansion, in: rendered)
             onExpand?(expansion)
+            return
+        }
+        // Double-clicking a row that takes comments starts one, as its "+" does, instead of
+        // selecting a word; elsewhere a double-click selects as usual.
+        if event.clickCount == 2, let (_, anchor) = commentableRow(at: point) {
+            setSelectedRange(NSRange(location: selectedRange().location, length: 0))
+            onComment?(anchor)
             return
         }
         super.mouseDown(with: event)
