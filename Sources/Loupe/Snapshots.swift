@@ -281,6 +281,11 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_SHOW_CHECKS"] == "1" {
                     for url in try await saveSnapshotsOfChecks(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_SHOW_THREAD=1 clicks each conversation's first "Show in diff", or
+                // =reply its first "Reply…", and snapshots the conversation and what the click showed.
+                if let wanted = environment["LOUPE_SNAPSHOT_SHOW_THREAD"] {
+                    for url in try await saveSnapshotsOfShownThreads(replying: wanted == "reply", in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_PULL_EVENTS=<points> pulls each shown diff that far past its end
                 // with synthesised trackpad scroll events, and snapshots it halfway and at the end;
                 // LOUPE_SNAPSHOT_PULL_BACK=<points> then scrolls back that far before letting go.
@@ -692,6 +697,47 @@ private func saveSnapshotsOfReviewerPickers(in windows: WindowManager, to direct
         button.isPresented.wrappedValue = false
         try? await Task.sleep(for: .milliseconds(300))
         written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
+/// On each PR with review threads, scrolls its conversation to the first thread's "Show in diff",
+/// or its "Reply…" when `replying`, and writes `thread-conversation-<title>.png`; then clicks it
+/// in the page, so it goes through the web view's navigation as a real click does, prints where
+/// that left the tab, and writes `thread-<title>.png`. Nothing is typed or sent.
+@MainActor
+private func saveSnapshotsOfShownThreads(replying: Bool, in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    let link = replying ? "a.thread-reply" : "a.thread-show"
+    var written: [URL] = []
+    for tab in windows.tabs.tabs where tab.conversation?.threads.isEmpty == false {
+        tab.section = .conversation
+        windows.select(tab.id)
+        let page = ConversationPage.page(for: tab)
+        let deadline = Date.now.addingTimeInterval(10)
+        while Date.now < deadline, !page.isLoaded { try? await Task.sleep(for: .milliseconds(100)) }
+        let found = try? await page.webView.evaluateJavaScript(
+            "(() => { const link = document.querySelector('\(link)'); if (!link) return false; link.closest('details').scrollIntoView(); window.scrollBy(0, -16); return true })()",
+            in: nil, contentWorld: .defaultClient
+        )
+        guard found as? Bool == true else {
+            print("\(tab.title): no \(link) to click")
+            continue
+        }
+        try? await Task.sleep(for: .milliseconds(500))
+        let title = sanitised(windows.title(of: tab.id))
+        let conversation = directory.appending(path: "thread-conversation-\(title).png")
+        try await saveSnapshot(of: window, to: conversation)
+        _ = try? await page.webView.evaluateJavaScript("document.querySelector('\(link)').click()", in: nil, contentWorld: .defaultClient)
+        try? await Task.sleep(for: .milliseconds(1200))
+        let activity = tab.threadActivity
+        print("\(tab.title): clicked \(link); section \(tab.section), file \(tab.selectedFile ?? "none"), still to reveal \(activity.revealing ?? "nothing"), replies open \(activity.replies.count), unshown \(activity.unshown?.reason ?? activity.replyingApart?.reason ?? "none")")
+        let shown = directory.appending(path: "thread-\(title).png")
+        try await saveSnapshot(of: window, to: shown)
+        written += [conversation, shown]
     }
     windows.select(selected)
     return written

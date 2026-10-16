@@ -40,8 +40,37 @@ public final class ThreadActivity {
     public internal(set) var newComment: NewComment?
     /// Why the last new comment didn't reach GitHub, until it's sent again or dropped.
     public internal(set) var newCommentError: String?
+    /// The thread, by id, the diff is to scroll into view once it draws it, until it has.
+    public internal(set) var revealing: String?
+    /// The thread just shown from the conversation, marked for a moment so the eye finds it.
+    public var highlighted: String?
+    /// The thread the conversation last asked to show that the diff can't, and why.
+    public internal(set) var unshown: UnshownThread?
+    /// A thread the diff can't show being replied to over the conversation instead.
+    public internal(set) var replyingApart: UnshownThread?
 
     init() {}
+
+    /// Called once the diff has scrolled the thread into view.
+    public func didReveal(_ id: String) {
+        if revealing == id { revealing = nil }
+    }
+
+    /// Stops offering, or writing a reply to, a thread the diff can't show; the reply's draft
+    /// itself is closed as any other is.
+    public func dismissUnshown() {
+        unshown = nil
+        replyingApart = nil
+    }
+}
+
+/// A review thread the diff can't show, and why, in words that follow "it can't be shown in the
+/// diff: ".
+public struct UnshownThread: Sendable, Equatable {
+    public let threadId: String
+    public let reason: String
+    /// Whether its file is in the PR's changes and now selected, to show without the thread.
+    public let isFileSelected: Bool
 }
 
 /// A comment being written on a line that has no thread of the viewer's making yet.
@@ -71,6 +100,50 @@ public final class CommentDraft {
 }
 
 extension PullRequestTab {
+    /// Acts on a link to a thread from the conversation page.
+    public func follow(_ link: ThreadLink) async {
+        guard let thread = reviewThread(link.threadId) else { return }
+        switch link.action {
+        case .show: await showInDiff(thread, replying: false)
+        case .reply: await showInDiff(thread, replying: true)
+        case .resolve: await setResolved(true, thread: thread)
+        case .unresolve: await setResolved(false, thread: thread)
+        }
+    }
+
+    /// Shows the thread where the diff places it, in the whole PR's changes: its file selected,
+    /// the files shown, and the thread opened, marked and scrolled into view once drawn, with a
+    /// reply started if `replying`. One the diff can't show is said so over the conversation,
+    /// its file selected if the PR changes it, and a reply to it is written there instead.
+    public func showInDiff(_ thread: ReviewThread, replying: Bool) async {
+        threadActivity.dismissUnshown()
+        let canReply = replying && thread.viewerCanReply && !thread.isPending
+        if let reason = whyDiffCannotShow(thread) {
+            let isFileSelected = isInChanges(thread.path)
+            if isFileSelected { selectedFile = thread.path }
+            let unshown = UnshownThread(threadId: thread.id, reason: reason, isFileSelected: isFileSelected)
+            if canReply {
+                startReply(to: thread)
+                threadActivity.replyingApart = unshown
+            } else {
+                threadActivity.unshown = unshown
+            }
+            return
+        }
+        if shownCommit != nil { await showCommit(nil) }
+        selectedFile = thread.path
+        section = .files
+        if thread.isResolved { threadActivity.expanded.insert(thread.id) }
+        threadActivity.revealing = thread.id
+        threadActivity.highlighted = thread.id
+        if canReply { startReply(to: thread) }
+    }
+
+    /// The thread with this id, as last fetched.
+    public func reviewThread(_ id: String) -> ReviewThread? {
+        conversation?.threads.first { $0.id == id }
+    }
+
     /// The PR's review threads placed on `file`, as shown with any lines revealed around its
     /// hunks. Nil when one commit's changes are shown: threads belong to the whole PR's diff.
     public func threads(on file: FileDiff) -> FileThreads? {
@@ -249,6 +322,28 @@ extension PullRequestTab {
         guard var conversation, let index = conversation.threads.firstIndex(where: { $0.id == id }) else { return }
         change(&conversation.threads[index])
         self.conversation = conversation
+    }
+}
+
+private extension PullRequestTab {
+    /// Why the whole PR's diff can't show the thread, or nil when it can: on a line, or after
+    /// the file's last row for one with no line there, a hidden file's once it's diffed.
+    func whyDiffCannotShow(_ thread: ReviewThread) -> String? {
+        switch phase {
+        case .ready: break
+        case .noCheckout: return "there's no local checkout to diff"
+        case .failed: return "the diff couldn't be produced"
+        case .producing: return "the diff isn't ready yet"
+        }
+        guard isInChanges(thread.path) else { return "the PR no longer changes \(thread.path)" }
+        guard placedThreads.contains(where: { $0.id == thread.id }) else { return "it's on commits newer than the diff shown; reload to see it there" }
+        return nil
+    }
+
+    /// Whether the whole PR's changes have the file, hidden or not.
+    func isInChanges(_ path: String) -> Bool {
+        guard case let .ready(review) = phase else { return false }
+        return review.changes.files.contains { $0.path == path } || review.changes.hidden.contains { $0.path == path }
     }
 }
 

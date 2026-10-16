@@ -9,15 +9,24 @@ import SwiftUI
 /// comment being started on one of the file's lines, if any.
 @MainActor
 func threadBlocks(for threads: FileThreads, onFileAt path: String, in tab: PullRequestTab) -> [DiffBlockContent] {
+    let activity = tab.threadActivity
+    // The block with the thread the conversation asked to show scrolls into view once.
+    func reveal(_ shown: [ReviewThread]) -> (() -> Void)? {
+        guard let id = activity.revealing, shown.contains(where: { $0.id == id }) else { return nil }
+        return { activity.didReveal(id) }
+    }
     var blocks = threads.anchored.map { line in
         DiffBlockContent(
             id: "threads:\(line.side.rawValue):\(line.line)",
             placement: .after(side: line.side, line: line.line),
-            view: AnyView(ThreadStack(tab: tab, threads: line.threads))
+            view: AnyView(ThreadStack(tab: tab, threads: line.threads)),
+            reveal: reveal(line.threads)
         )
     }
     if !threads.elsewhere.isEmpty {
-        blocks.append(DiffBlockContent(id: "threads:elsewhere", placement: .end, view: AnyView(ElsewhereThreads(tab: tab, threads: threads.elsewhere))))
+        blocks.append(DiffBlockContent(
+            id: "threads:elsewhere", placement: .end, view: AnyView(ElsewhereThreads(tab: tab, threads: threads.elsewhere)), reveal: reveal(threads.elsewhere)
+        ))
     }
     // A comment being started goes under its line, after any threads already there.
     if let comment = tab.threadActivity.newComment, comment.anchor.path == path {
@@ -170,6 +179,12 @@ private struct ThreadCard: View {
             .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor, lineWidth: 2).opacity(isHighlighted ? 1 : 0))
+            .animation(.easeOut(duration: 0.6), value: isHighlighted)
+            .task(id: isHighlighted) {
+                guard isHighlighted, (try? await Task.sleep(for: .seconds(2))) != nil else { return }
+                if activity.highlighted == thread.id { activity.highlighted = nil }
+            }
             // Links in comments follow the conversation's: a PR opens in its tab.
             .environment(\.openURL, OpenURLAction { [tab] url in
                 let inBrowserTab = NSApp.currentEvent?.modifierFlags.contains(.command) == true
@@ -178,6 +193,11 @@ private struct ThreadCard: View {
                 return .handled
             })
         }
+    }
+
+    /// Just shown from the conversation, so outlined for a moment.
+    private var isHighlighted: Bool {
+        tab.threadActivity.highlighted == thread.id
     }
 
     /// `Resolved · 4 comments · login`, naming who started it.
@@ -243,11 +263,7 @@ private struct ThreadCard: View {
                     .help(error)
             }
             if let draft = activity.replies[thread.id] {
-                CommentComposer(
-                    draft: draft, caption: "Markdown. Posts at once, not as part of a review.",
-                    actions: [ComposerAction(label: "Reply", help: "Reply at once, not as part of a review") { Task { await tab.sendReply(to: thread) } }],
-                    cancel: { tab.cancelReply(to: thread) }
-                )
+                ReplyComposer(tab: tab, thread: thread, draft: draft)
             } else if thread.viewerCanReply {
                 Button("Reply…") { tab.startReply(to: thread) }
                     .controlSize(.small)
@@ -267,6 +283,111 @@ private struct ThreadCard: View {
         let range = lines.count == 1 ? "line \(lines.lowerBound)" : "lines \(lines.lowerBound)–\(lines.upperBound)"
         let text = prefix + range + side
         return text.prefix(1).uppercased() + text.dropFirst()
+    }
+}
+
+/// Says over the conversation that a thread it asked to show can't be shown in the diff, and
+/// why, offering a reply to it there instead, and its file when the PR changes it.
+struct UnshownThreadNote: View {
+    let tab: PullRequestTab
+    let unshown: UnshownThread
+
+    var body: some View {
+        let thread = tab.reviewThread(unshown.threadId)
+        HStack(spacing: 10) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(.secondary)
+            Text(verbatim: "\(thread.map(place(of:)) ?? "This conversation") can't be shown in the diff: \(unshown.reason).")
+                .lineLimit(2)
+                .textSelection(.enabled)
+            Spacer(minLength: 0)
+            if unshown.isFileSelected {
+                Button("Show File") {
+                    tab.threadActivity.dismissUnshown()
+                    tab.section = .files
+                }
+                .help("Show the file without the conversation")
+            }
+            if let thread, thread.viewerCanReply, !thread.isPending {
+                Button("Reply…") { Task { await tab.showInDiff(thread, replying: true) } }
+                    .help("Reply to this conversation here; it posts at once, not as part of a review")
+            }
+            Button("Dismiss", systemImage: "xmark") { tab.threadActivity.dismissUnshown() }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+        }
+        .font(.callout)
+        .controlSize(.small)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: .separatorColor)))
+        .frame(maxWidth: 720)
+        .padding(16)
+    }
+}
+
+/// A reply to a thread the diff can't show, written over the conversation: the thread's
+/// comments, then the composer the diff's threads use, which sends the same way.
+struct ApartReplySheet: View {
+    let tab: PullRequestTab
+    let unshown: UnshownThread
+
+    var body: some View {
+        let activity = tab.threadActivity
+        VStack(alignment: .leading, spacing: 10) {
+            if let thread = tab.reviewThread(unshown.threadId) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: "Reply on \(place(of: thread))")
+                        .font(.headline)
+                        .textSelection(.enabled)
+                    Text(verbatim: "It can't be shown in the diff: \(unshown.reason).")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(thread.comments.enumerated()), id: \.element.id) { index, comment in
+                            if index > 0 { Divider() }
+                            CommentView(comment: comment, viewer: tab.viewer, activity: activity)
+                        }
+                    }
+                }
+                .frame(maxHeight: 260)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+                if let error = activity.errors[thread.id] {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.diffDanger)
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                        .help(error)
+                }
+                if let draft = activity.replies[thread.id] {
+                    ReplyComposer(tab: tab, thread: thread, draft: draft)
+                        .font(.callout)
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: 560)
+    }
+}
+
+/// A reply being written to a thread, which posts at once rather than into a review.
+private struct ReplyComposer: View {
+    let tab: PullRequestTab
+    let thread: ReviewThread
+    let draft: CommentDraft
+
+    var body: some View {
+        CommentComposer(
+            draft: draft, caption: "Markdown. Posts at once, not as part of a review.",
+            actions: [ComposerAction(label: "Reply", help: "Reply at once, not as part of a review") { Task { await tab.sendReply(to: thread) } }],
+            cancel: { tab.cancelReply(to: thread) }
+        )
     }
 }
 
@@ -495,3 +616,9 @@ private func commentBlocks(_ html: String) -> [CommentBlock] {
 }
 
 @MainActor private var parsedComments: [String: [CommentBlock]] = [:]
+
+/// `path:line` for a thread, the conversation's name for where it is: its last line in the
+/// current diff, or where it was made once outdated.
+private func place(of thread: ReviewThread) -> String {
+    thread.lines.map { "\(thread.path):\($0.upperBound)" } ?? thread.path
+}

@@ -121,6 +121,29 @@ time { color: var(--muted); }
 }
 .thread[open] > summary { border-bottom: 1px solid var(--border); }
 .thread.resolved > summary, .thread.outdated > summary code { color: var(--muted); }
+/* The place reads as text, and drags select it, so it can be copied; clicking it shows the diff. */
+.thread-location { color: inherit; -webkit-user-drag: none; user-select: text; }
+.thread-location:hover code { color: var(--link); }
+.thread-show { float: right; margin-left: 12px; font-size: 12px; line-height: 20px; color: var(--muted); }
+.thread-show:hover { color: var(--link); }
+.thread-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-muted);
+  background: var(--subtle);
+}
+.thread-actions a {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.thread-actions a:hover { background: var(--subtle); text-decoration: none; }
 .hunk {
   margin: 0;
   padding: 4px 0;

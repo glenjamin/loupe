@@ -190,6 +190,11 @@ private struct DiffTextScrollView: NSViewRepresentable {
             coordinator.textView.show(RenderedDiff(file: file, expandable: expandable, blocks: sized), keepingPlace: isSameFile)
         }
         coordinator.showBlocks(blocks)
+        if let block = blocks.first(where: { $0.reveal != nil }) {
+            coordinator.reveal(block.id)
+            // After this update, as it changes what the view is drawn from.
+            DispatchQueue.main.async { block.reveal?() }
+        }
         coordinator.footer.isHidden = review == nil
         coordinator.hint.isHidden = review == nil
         coordinator.layoutFooter()
@@ -223,6 +228,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
         /// Each block's height as its view last measured itself, so showing it again starts right.
         var blockHeights: [String: CGFloat] = [:]
         private var blockViews: [String: NSHostingView<DiffBlockRoot>] = [:]
+        /// The block last brought into view, kept there until a moment has passed.
+        private var revealing: (id: String, until: Date)?
         private var trigger = OverscrollTrigger()
         /// How far below the footer the view can scroll for the pull, as extra bottom inset: the
         /// strip it has revealed while the fingers are down, kept while it settles back.
@@ -257,11 +264,19 @@ private struct DiffTextScrollView: NSViewRepresentable {
             layoutFooter()
         }
 
+        /// Scrolls the block into view, and again as blocks measure themselves for a moment
+        /// after, as each one above it that does moves it.
+        func reveal(_ id: String) {
+            revealing = (id, .now.addingTimeInterval(1))
+            textView.scrollToBlock(id)
+        }
+
         private func blockMeasured(_ height: CGFloat, id: String) {
             let height = ceil(height)
             guard height > 0, blockViews[id] != nil, blockHeights[id] != height else { return }
             blockHeights[id] = height
             textView.setHeight(height, ofBlock: id)
+            if let revealing, Date.now < revealing.until { textView.scrollToBlock(revealing.id) }
             layoutFooter()
         }
 
@@ -619,6 +634,9 @@ struct DiffBlockContent {
     let id: String
     let placement: DiffBlock.Placement
     let view: AnyView
+    /// Set to bring the block into view: the diff scrolls to it, then calls this, so it's done
+    /// once.
+    var reveal: (() -> Void)?
 }
 
 /// A block's view, at its natural height for the width it's given, reporting that height so

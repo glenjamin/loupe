@@ -36,8 +36,28 @@ struct ConversationHTMLTests {
 
     @Test func resolvedAndOutdatedThreadsAreMarkedAndResolvedOnesStartFolded() throws {
         let page = try render(conversation)
-        #expect(page.contains(#"<details class="thread" open><summary><code>app/widget.go:12</code></summary>"#))
-        #expect(page.contains(#"<details class="thread resolved outdated"><summary><code>README.md:3</code> <span class="badge outdated">Outdated</span> <span class="badge resolved">Resolved</span></summary>"#))
+        #expect(page.contains(#"<details class="thread" open><summary><a class="thread-location" href="loupe-thread://show/t1" title="Show in the diff"><code>app/widget.go:12</code></a><a class="thread-show""#))
+        #expect(page.contains(#"<details class="thread resolved outdated"><summary><a class="thread-location" href="loupe-thread://show/t2" title="Show in the diff"><code>README.md:3</code></a> <span class="badge outdated">Outdated</span> <span class="badge resolved">Resolved</span>"#))
+    }
+
+    @Test func eachThreadLinksToItsPlaceInTheDiffAndOffersWhatTheViewerMayDo() throws {
+        let page = try render(conversation)
+        let links = hrefs(in: page).compactMap(ThreadLink.init(url:))
+
+        #expect(links == [
+            ThreadLink(.show, thread: "t1"), ThreadLink(.show, thread: "t1"), ThreadLink(.reply, thread: "t1"), ThreadLink(.resolve, thread: "t1"),
+            ThreadLink(.show, thread: "t2"), ThreadLink(.show, thread: "t2"), ThreadLink(.unresolve, thread: "t2"),
+        ], "its place and Show in diff, then Reply… and Resolve where allowed; t2 takes no reply")
+        #expect(page.contains(#">Show in diff</a>"#))
+        #expect(page.contains(#">Reply…</a><a class="thread-resolve" href="loupe-thread://resolve/t1">Resolve conversation</a>"#))
+        #expect(page.contains(#">Unresolve conversation</a>"#))
+    }
+
+    @Test func aThreadLinkCarriesAnyThreadId() throws {
+        let link = ThreadLink(.reply, thread: "PRRT_kwDO/a+b=")
+        #expect(ThreadLink(url: link.url) == link)
+        #expect(ThreadLink(url: try #require(URL(string: "https://github.com/o/r/pull/1"))) == nil)
+        #expect(ThreadLink(url: try #require(URL(string: "loupe-thread://delete/t1"))) == nil)
     }
 
     @Test func checksAreListedWithTheirStatusAndLinks() throws {
@@ -70,11 +90,11 @@ private let conversation = Conversation(
         ])),
     ],
     threads: [
-        ReviewThread(id: "t1", isResolved: false, isOutdated: false, path: "app/widget.go", line: 12, comments: [
+        ReviewThread(id: "t1", isResolved: false, isOutdated: false, path: "app/widget.go", line: 12, viewerCanReply: true, viewerCanResolve: true, comments: [
             ThreadComment(id: "rc1", author: Participant(login: "reviewer", avatarURL: nil), createdAt: now.addingTimeInterval(-50_000), bodyHTML: "<p>Why nil?</p>", isMinimized: false),
             ThreadComment(id: "rc3", author: Participant(login: "octocat", avatarURL: nil), createdAt: now.addingTimeInterval(-40_000), bodyHTML: "<p>Because.</p>", isMinimized: false),
         ]),
-        ReviewThread(id: "t2", isResolved: true, isOutdated: true, path: "README.md", line: nil, comments: [
+        ReviewThread(id: "t2", isResolved: true, isOutdated: true, path: "README.md", line: nil, viewerCanUnresolve: true, comments: [
             ThreadComment(id: "rc2", author: Participant(login: "reviewer", avatarURL: nil), createdAt: now.addingTimeInterval(-50_000), bodyHTML: "<p>Typo</p>", isMinimized: false),
         ]),
     ],
@@ -96,4 +116,9 @@ private func templates() throws -> (String, String) {
         try String(contentsOf: resources.appending(path: "conversation.html"), encoding: .utf8),
         try String(contentsOf: resources.appending(path: "conversation.css"), encoding: .utf8)
     )
+}
+
+/// Every link's target in the page, in order.
+private func hrefs(in page: String) -> [URL] {
+    page.matches(of: /href="([^"]*)"/).compactMap { URL(string: String($0.1)) }
 }

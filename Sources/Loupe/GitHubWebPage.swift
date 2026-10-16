@@ -5,13 +5,15 @@ import WebKit
 
 /// A web view showing a page we assemble around GitHub's rendered HTML, from
 /// `Resources/conversation.html` and `conversation.css`. It loads only that page, keeps nothing
-/// and shares no cookies. Links to PRs go to `openPullRequestLink`, and other links to the
-/// default browser.
+/// and shares no cookies. Links to PRs go to `openPullRequestLink`, those to its review threads
+/// to `openThreadLink`, and other links to the default browser.
 @MainActor
 class GitHubWebPage: NSObject {
     let webView: WKWebView
     /// Opens a linked PR in the app, returning whether it could; set by whoever makes the page.
     var openPullRequestLink: @MainActor (PullRequestLink) async -> Bool = { _ in false }
+    /// Acts on a link to one of the page's review threads; set by whoever makes the page.
+    var openThreadLink: @MainActor (ThreadLink) -> Void = { _ in }
     /// Whether the latest page has finished loading, images included.
     private(set) var isLoaded = false
     /// What relative links in the page are relative to.
@@ -75,8 +77,9 @@ extension GitHubWebPage: WKNavigationDelegate, WKUIDelegate {
     }
 
     /// ⌘-click and the middle button ask for a new browser tab, so they go to the browser even
-    /// for a PR.
+    /// for a PR. A thread's links act in the app however they're clicked, as no browser could.
     private func follow(_ action: WKNavigationAction) {
+        if let url = action.request.url, let link = ThreadLink(url: url) { return openThreadLink(link) }
         let inBrowserTab = action.modifierFlags.contains(.command) || action.buttonNumber == middleMouseButton
         followLink(action.request.url, inBrowserTab: inBrowserTab, openPullRequest: openPullRequestLink)
     }

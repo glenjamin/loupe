@@ -252,6 +252,109 @@ struct NewCommentTests {
     }
 }
 
+/// Following the conversation page's links to a thread.
+@MainActor
+struct ThreadLinksTests {
+    @Test func showingAThreadOpensItsFileInTheWholePRsDiffScrolledToIt() async throws {
+        let (_, tab, threadId) = try await ThreadsApp.withThread()
+        let commit = try #require(tab.ready?.commits.last)
+        await tab.showCommit(commit.oid)
+        tab.selectedFile = "new.go"
+        tab.section = .conversation
+
+        await tab.follow(ThreadLink(.show, thread: threadId))
+
+        #expect(tab.section == .files)
+        #expect(tab.shownCommit == nil, "threads are placed on the whole PR's diff")
+        #expect(tab.selectedFile == "app.go")
+        #expect(tab.threadActivity.revealing == threadId, "for the diff to scroll to once drawn")
+        #expect(tab.threadActivity.highlighted == threadId)
+        #expect(tab.threadActivity.replies[threadId] == nil, "showing it doesn't start a reply")
+        let file = try #require(tab.file("app.go"))
+        let threads = try #require(tab.threads(on: tab.expandedFile(file)))
+        #expect(threads.anchored.first { $0.line == 11 }?.threads.map(\.id) == [threadId], "under its line, where the diff scrolls")
+
+        tab.threadActivity.didReveal(threadId)
+        #expect(tab.threadActivity.revealing == nil, "scrolled to once")
+    }
+
+    @Test func aResolvedOrOutdatedThreadIsShownOpenWhereTheDiffPutsIt() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest()
+        let resolved = try await app.conversations.startThread(on: pullRequest.id, path: "app.go", line: 11, resolved: true, body: "Typo")
+        let outdated = try await app.conversations.startThread(on: pullRequest.id, path: "app.go", line: 3, outdated: true, body: "Gone now")
+        let hidden = try await app.conversations.startThread(on: pullRequest.id, path: "vendor/example.com/lib/lib.go", line: 1, body: "Vendored?")
+        let tab = try await app.open(pullRequest)
+
+        await tab.follow(ThreadLink(.show, thread: resolved))
+        #expect(tab.threadActivity.expanded.contains(resolved), "opened, not folded away")
+
+        await tab.follow(ThreadLink(.show, thread: outdated))
+        #expect(tab.threadActivity.revealing == outdated)
+        #expect(tab.threads(on: tab.expandedFile(try #require(tab.file("app.go"))))?.elsewhere.map(\.id) == [outdated], "after the last row")
+
+        await tab.follow(ThreadLink(.show, thread: hidden))
+        #expect(tab.section == .files)
+        #expect(tab.selectedFile == "vendor/example.com/lib/lib.go", "a hidden file, whose diff is made once it's shown")
+        #expect(tab.threadActivity.revealing == hidden)
+        #expect(tab.threadActivity.unshown == nil)
+    }
+
+    @Test func replyingFromTheConversationOpensTheComposerOnTheThreadInTheDiff() async throws {
+        let (app, tab, threadId) = try await ThreadsApp.withThread()
+
+        await tab.follow(ThreadLink(.reply, thread: threadId))
+
+        #expect(tab.section == .files)
+        #expect(tab.selectedFile == "app.go")
+        #expect(tab.threadActivity.revealing == threadId)
+        #expect(tab.threadActivity.replyingApart == nil, "written in the diff, not over the conversation")
+        let draft = try #require(tab.threadActivity.replies[threadId])
+        draft.text = "Fixed"
+        await tab.sendReply(to: try #require(tab.thread(threadId)))
+        #expect(await app.conversations.repliesReceived.map(\.body) == ["Fixed"])
+    }
+
+    @Test func aThreadTheDiffCantShowSaysWhyAndIsRepliedToOverTheConversation() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest()
+        let gone = try await app.conversations.startThread(on: pullRequest.id, path: "removed.go", line: 4, outdated: true, body: "Still needed?")
+        let tab = try await app.open(pullRequest)
+        let selected = tab.selectedFile
+
+        await tab.follow(ThreadLink(.show, thread: gone))
+
+        #expect(tab.section == .conversation)
+        #expect(tab.threadActivity.unshown?.threadId == gone)
+        #expect(tab.threadActivity.unshown?.reason == "the PR no longer changes removed.go")
+        #expect(tab.threadActivity.unshown?.isFileSelected == false)
+        #expect(tab.selectedFile == selected)
+        #expect(tab.threadActivity.revealing == nil)
+
+        await tab.follow(ThreadLink(.reply, thread: gone))
+
+        #expect(tab.section == .conversation)
+        #expect(tab.threadActivity.unshown == nil)
+        #expect(tab.threadActivity.replyingApart?.threadId == gone)
+        let draft = try #require(tab.threadActivity.replies[gone])
+        draft.text = "Yes, still needed"
+        await tab.sendReply(to: try #require(tab.thread(gone)))
+        #expect(await app.conversations.repliesReceived.map(\.body) == ["Yes, still needed"], "sent as a reply in the diff is")
+        #expect(tab.threadActivity.replies[gone] == nil, "closed once posted")
+    }
+
+    @Test func resolveAndUnresolveActAtOnce() async throws {
+        let (_, tab, threadId) = try await ThreadsApp.withThread()
+
+        await tab.follow(ThreadLink(.resolve, thread: threadId))
+        #expect(tab.thread(threadId)?.isResolved == true)
+        #expect(tab.section == .conversation, "staying on the conversation")
+
+        await tab.follow(ThreadLink(.unresolve, thread: threadId))
+        #expect(tab.thread(threadId)?.isResolved == false)
+    }
+}
+
 /// The app's models over the PR fixture and an in-memory store, with a conversation for each
 /// PR from `FakeConversations`.
 @MainActor

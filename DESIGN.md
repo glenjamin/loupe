@@ -559,6 +559,14 @@ Once a diff has been shown, nothing blanks it again. A reload, from the banner o
 
 The veil waits 150ms before showing, so quick work such as a small commit's diff doesn't flicker, and lifts at once, so new content never shows dimmed. It's a half-opaque layer of the window's background colour over the content rather than `opacity` on it: AppKit-backed lists fade layer by layer, so rows showed through their own footer. Threads stay as placed for the shown diff while a reload is under way, as they do while new commits wait, since the new head's lines could put them on the wrong rows.
 
+### The conversation's threads link to the diff, where they're replied to
+
+A review's threads in the conversation are where a reviewer's comments are read, but answering one meant finding its file and line by hand. Each thread's place (`path:line`) and a quiet "Show in diff" now open it in the whole PR's diff: the files are shown, the commit picker goes back to all commits if one was picked, the file is selected, a resolved thread is opened, and the diff scrolls its block to a third of the way down, as github.com does, outlining it for a moment. "Reply…" does the same and opens the diff thread's own composer, so there's one composer and one send path. "Resolve conversation" and "Unresolve conversation" act at once, as the diff's buttons do, staying on the conversation.
+
+The page runs no script, so these are links in a `loupe-thread://<action>/<thread id>` scheme that the web view's navigation delegate catches, as it already catches links to PRs. The place stays a link styled as text that a drag selects, so it can still be copied.
+
+An outdated thread, or one on a line the diff lacks, is shown where the diff already puts it, after the file's last row; one on a hidden file shows once that file's diff is made on demand. Only a thread the diff can't show at all, because there's no diff yet, the PR no longer changes its file, or it's on commits newer than the diff waiting for a reload, is said so in a note over the conversation; its reply is written in a sheet there with the same composer, so every thread can be answered.
+
 ## Not yet decided
 
 Nothing is pending.

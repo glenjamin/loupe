@@ -182,6 +182,20 @@ public final class DiffTextView: NSTextView {
         }
     }
 
+    /// Scrolls a block's row to a third of the way down the view, as github.com puts a linked
+    /// comment, with the code it hangs under in view above it. A block too tall for the rest of
+    /// the view goes higher so its end shows, though never so high its top doesn't.
+    public func scrollToBlock(_ id: String) {
+        guard let layoutManager, let rendered, let textStorage, let range = rendered.range(ofBlock: id), NSMaxRange(range) <= textStorage.length else { return }
+        layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: NSMaxRange(range)))
+        let fragment = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: range.location), effectiveRange: nil)
+        let top = fragment.minY + textContainerOrigin.y
+        let visible = visibleRect
+        let margin: CGFloat = 40
+        let showingEnd = max(top - visible.height / 3, top + fragment.height + margin - visible.height)
+        scroll(NSPoint(x: visible.minX, y: max(0, min(showingEnd, top - margin))))
+    }
+
     /// The expand arrows act on the first click, as buttons do, even in a window not yet active.
     public override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         guard let event, let rendered, let index = characterIndex(under: convert(event.locationInWindow, from: nil)),

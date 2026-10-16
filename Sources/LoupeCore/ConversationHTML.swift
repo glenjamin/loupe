@@ -92,12 +92,22 @@ public enum ConversationHTML {
     }
 
     /// A review comment's thread: where it is, the diff it's on, then every comment in it. A
-    /// resolved thread starts folded, as on github.com.
+    /// resolved thread starts folded, as on github.com. Its place, and "Show in diff", open it in
+    /// the diff, and it ends with what the viewer may do to it, as `ThreadLink`s the app follows.
     private static func thread(for comment: ReviewComment, in thread: ReviewThread?, reviewer: Participant?, date: Date, now: Date) -> String {
         let isResolved = thread?.isResolved ?? false
         let isOutdated = thread?.isOutdated ?? comment.isOutdated
         let line = comment.line ?? thread?.line ?? comment.originalLine
         let location = line.map { "\(comment.path):\($0)" } ?? comment.path
+        var place = "<code>\(escape(location))</code>"
+        var showInDiff = ""
+        var actions = ""
+        if let thread {
+            let show = escape(ThreadLink(.show, thread: thread.id).url.absoluteString)
+            place = #"<a class="thread-location" href="\#(show)" title="Show in the diff">\#(place)</a>"#
+            showInDiff = #"<a class="thread-show" href="\#(show)">Show in diff</a>"#
+            actions = threadActions(thread)
+        }
         var badges = ""
         if isOutdated { badges += #" <span class="badge outdated">Outdated</span>"# }
         if isResolved { badges += #" <span class="badge resolved">Resolved</span>"# }
@@ -106,7 +116,24 @@ public enum ConversationHTML {
             #"<div class="thread-comment">\#(avatar(reply.author, size: 24))<div><header>\#(login(reply.author)) \#(time(reply.createdAt, now: now))</header><div class="body">\#(minimizable(reply.bodyHTML, isMinimized: reply.isMinimized))</div></div></div>"#
         }.joined()
         let classes = ["thread", isResolved ? "resolved" : nil, isOutdated ? "outdated" : nil].compactMap { $0 }.joined(separator: " ")
-        return #"<details class="\#(classes)"\#(isResolved ? "" : " open")><summary><code>\#(escape(location))</code>\#(badges)</summary>\#(hunk(comment.diffHunk))\#(replies)</details>"#
+        return #"<details class="\#(classes)"\#(isResolved ? "" : " open")><summary>\#(place)\#(badges)\#(showInDiff)</summary>\#(hunk(comment.diffHunk))\#(replies)\#(actions)</details>"#
+    }
+
+    /// Reply, and resolve or unresolve, where the viewer may; a thread in the viewer's pending
+    /// review takes neither until it's submitted, as in the diff.
+    private static func threadActions(_ thread: ReviewThread) -> String {
+        guard !thread.isPending else { return "" }
+        var links: [String] = []
+        if thread.viewerCanReply {
+            links.append(#"<a class="thread-reply" href="\#(escape(ThreadLink(.reply, thread: thread.id).url.absoluteString))">Reply…</a>"#)
+        }
+        if thread.isResolved ? thread.viewerCanUnresolve : thread.viewerCanResolve {
+            let action: ThreadLink.Action = thread.isResolved ? .unresolve : .resolve
+            let label = thread.isResolved ? "Unresolve conversation" : "Resolve conversation"
+            links.append(#"<a class="thread-\#(action.rawValue)" href="\#(escape(ThreadLink(action, thread: thread.id).url.absoluteString))">\#(label)</a>"#)
+        }
+        guard !links.isEmpty else { return "" }
+        return #"<div class="thread-actions">\#(links.joined())</div>"#
     }
 
     /// The last few lines of the hunk, ending on the commented line, as github.com shows.
@@ -223,4 +250,43 @@ public enum ConversationHTML {
         }
         return escaped
     }
+}
+
+/// A link in the conversation page that acts on one of its review threads in the app: shows it
+/// in the diff, opens a reply to it, or resolves or unresolves it. The page runs no script, so
+/// its web view catches these as they're followed.
+public struct ThreadLink: Sendable, Equatable {
+    public enum Action: String, Sendable {
+        case show
+        case reply
+        case resolve
+        case unresolve
+    }
+
+    public let action: Action
+    /// The thread's GraphQL id.
+    public let threadId: String
+
+    public init(_ action: Action, thread threadId: String) {
+        self.action = action
+        self.threadId = threadId
+    }
+
+    /// The link a page names, if it's one of these.
+    public init?(url: URL) {
+        guard url.scheme == Self.scheme, let action = url.host().flatMap(Action.init(rawValue:)) else { return nil }
+        let id = url.path(percentEncoded: false).trimmingPrefix("/")
+        guard !id.isEmpty else { return nil }
+        self.init(action, thread: String(id))
+    }
+
+    /// `loupe-thread://<action>/<thread id>`.
+    public var url: URL {
+        let id = threadId.addingPercentEncoding(withAllowedCharacters: Self.idCharacters) ?? threadId
+        // Only the id varies, and it's percent-encoded, so this always parses.
+        return URL(string: "\(Self.scheme)://\(action.rawValue)/\(id)")!
+    }
+
+    private static let scheme = "loupe-thread"
+    private static let idCharacters = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
 }

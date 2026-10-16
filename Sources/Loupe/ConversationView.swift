@@ -6,8 +6,36 @@ import SwiftUI
 import WebKit
 
 /// The Conversation tab: one web view per PR window showing the page `ConversationHTML` builds.
-/// The view is kept, hidden, while the files are shown, so its scroll position survives.
-struct ConversationView: NSViewRepresentable {
+/// The view is kept, hidden, while the files are shown, so its scroll position survives. A
+/// thread the page asks to show that the diff can't is said so over it, and replied to there.
+struct ConversationView: View {
+    let page: ConversationPage
+    let conversation: Conversation?
+    let error: String?
+    let isShown: Bool
+
+    var body: some View {
+        ConversationWebView(page: page, conversation: conversation, error: error, isShown: isShown)
+            .overlay(alignment: .bottom) {
+                if isShown, let tab = page.tab, let unshown = tab.threadActivity.unshown {
+                    UnshownThreadNote(tab: tab, unshown: unshown)
+                }
+            }
+            // Open while the reply's draft is: sending or cancelling it closes the sheet.
+            .sheet(isPresented: .constant(isReplyingApart), onDismiss: { page.tab?.threadActivity.dismissUnshown() }) {
+                if let tab = page.tab, let unshown = tab.threadActivity.replyingApart {
+                    ApartReplySheet(tab: tab, unshown: unshown)
+                }
+            }
+    }
+
+    private var isReplyingApart: Bool {
+        guard isShown, let activity = page.tab?.threadActivity, let apart = activity.replyingApart else { return false }
+        return activity.replies[apart.threadId] != nil
+    }
+}
+
+private struct ConversationWebView: NSViewRepresentable {
     let page: ConversationPage
     let conversation: Conversation?
     let error: String?
@@ -37,6 +65,8 @@ final class ConversationPage: GitHubWebPage {
     private var restoredOffset: Double?
     /// Counts the pages asked for, so only the latest is loaded.
     private var requested = 0
+    /// The tab the page shows the conversation of.
+    private(set) weak var tab: PullRequestTab?
 
     private static let pages = NSMapTable<PullRequestTab, ConversationPage>.weakToStrongObjects()
 
@@ -44,7 +74,9 @@ final class ConversationPage: GitHubWebPage {
     static func page(for tab: PullRequestTab) -> ConversationPage {
         if let page = pages.object(forKey: tab) { return page }
         let page = ConversationPage()
+        page.tab = tab
         page.openPullRequestLink = { [weak tab] in await tab?.open($0) ?? false }
+        page.openThreadLink = { [weak tab] link in Task { await tab?.follow(link) } }
         pages.setObject(page, forKey: tab)
         return page
     }
