@@ -323,9 +323,9 @@ public final class PullRequestListModel {
     /// GitHub's search index lagging behind its updates.
     static let refreshOverlap = Duration.seconds(120)
 
-    /// How long a request for the viewer's review stays listed unanswered: long enough that only
-    /// requests nobody means to act on pass it, not merely slow ones.
-    static let staleRequestAge: TimeInterval = 90 * 24 * 60 * 60
+    /// How long a request for the viewer's review stays listed unanswered before it's hidden as
+    /// stale; the list's caption shows the hidden ones again in a click, so it can be tight.
+    static let staleRequestAge: TimeInterval = 30 * 24 * 60 * 60
 
     private func listed(in list: PullRequestList, includingClosed: Bool) -> [PullRequestSummary] {
         includingClosed ? snapshot[list] : snapshot[list].filter { $0.state == .open }

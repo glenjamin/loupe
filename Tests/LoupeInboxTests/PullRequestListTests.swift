@@ -321,8 +321,8 @@ struct PullRequestListTests {
         let stale = toReview[0]
         let recent = toReview[1]
 
-        try await github.setRequestEvents(of: stale.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(91))])
-        try await github.setRequestEvents(of: recent.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(89))])
+        try await github.setRequestEvents(of: stale.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(31))])
+        try await github.setRequestEvents(of: recent.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(29))])
         await model.refresh()
 
         #expect(model.error == nil)
@@ -367,9 +367,9 @@ struct PullRequestListTests {
         // The viewer's request, not the later one of rowan-ashby.
         let bedrock = try #require(model.pullRequest(id: "PR_kwDOB75F5s7-Gq3V"))
         #expect(bedrock.reviewRequestedAt == (try Date("2026-08-12T14:43:47Z", strategy: .iso8601)))
-        // The probe's requests from July and earlier had waited over three months by then.
-        #expect(model.staleRequestCount(in: .toReview) == 4)
-        #expect(model.pullRequests(in: .toReview).count == 9)
+        // Every request in the probe, all from August or earlier, had waited over a month by then.
+        #expect(model.staleRequestCount(in: .toReview) == 6)
+        #expect(model.pullRequests(in: .toReview).count == 7)
     }
 
     @Test func aReRequestBringsBackAPullRequestHiddenForAnOldRequest() async throws {
@@ -397,17 +397,17 @@ struct PullRequestListTests {
         let unrecorded = try #require(model.pullRequests(in: .toReview).last)
         try await github.setRequestEvents(of: unrecorded.id, [])
 
-        clock.now = unrecorded.updatedAt + days(89)
+        clock.now = unrecorded.updatedAt + days(29)
         await model.refresh()
         let shown = try #require(model.pullRequests(in: .toReview).first { $0.id == unrecorded.id })
         #expect(shown.reviewRequestedAt == nil)
 
-        clock.now = unrecorded.updatedAt + days(91)
+        clock.now = unrecorded.updatedAt + days(31)
         #expect(!model.pullRequests(in: .toReview).contains { $0.id == unrecorded.id })
         // Hidden, not forgotten: still stored, and shown again by a clock that says it's younger.
         #expect(try store.snapshot()[.toReview].contains { $0.id == unrecorded.id })
         #expect(model.pullRequest(id: unrecorded.id) != nil)
-        clock.now = unrecorded.updatedAt + days(89)
+        clock.now = unrecorded.updatedAt + days(29)
         #expect(model.pullRequests(in: .toReview).contains { $0.id == unrecorded.id })
     }
 

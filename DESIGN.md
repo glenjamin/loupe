@@ -511,6 +511,10 @@ The whole PR's choice in the commit picker, both the sidebar row and the first r
 
 The file tree's levels were `DisclosureGroup`s, so each took the list's own outline indent and disclosure chevron, and a file under a directory sat well to the right of the directory's own symbol. That spent the sidebar's narrow width on whitespace, where long names get cut short. github.com's tree steps in about 12px a level, with a small chevron on directories. The tree is now flattened into plain rows, each stepped in 12pt a level, and a directory row draws its own small chevron in a slot as wide as a file's tick slot, so in a PR's list a directory's folder symbol lines up with its sibling files' document symbols. Clicking anywhere on a directory row folds or opens it; directories still can't be selected.
 
+### Stale review requests are hidden after a month
+
+A review request nobody has answered is now hidden from To review after a month rather than three. Three months was chosen while hiding still meant gone from view, so it had to be long enough to spare slow requests; since the caption toggles listing the hidden ones below the rest, a request hidden too soon costs one click, which makes a tighter cutoff cheap. A month keeps To review to what the viewer was asked about recently, and the caption reads "N older than a month hidden".
+
 ## Not yet decided
 
 Nothing is pending.

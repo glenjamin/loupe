@@ -126,7 +126,7 @@ struct PullRequestColumn: View {
             }
             let stale = model.staleRequestCount(in: list, includingClosed: showsClosed)
             if stale > 0 {
-                Button(showsStaleRequests ? "Hide \(stale) older than three months" : "\(stale) older than three months hidden") {
+                Button(showsStaleRequests ? "Hide \(stale) older than a month" : "\(stale) older than a month hidden") {
                     showsStaleRequests.toggle()
                 }
                 .buttonStyle(.borderless)
