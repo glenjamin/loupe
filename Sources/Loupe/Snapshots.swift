@@ -51,9 +51,11 @@ enum SnapshotRun {
     static let isRehearsingPulls = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_PULL_EVENTS"] != nil
     /// A run that holds the PRs' checks on GitHub unanswered, so the header's spinner is drawn.
     private static let isHoldingChecks = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_HOLD_CHECK"] == "1"
-    private static let gitHubHold = GitHubHold()
-    /// How the app talks to GitHub: directly, except in a run that holds its checks.
-    static let gitHubClient = isHoldingChecks ? GitHubClient(transport: gitHubHold) : GitHubClient()
+    /// A run that holds each PR's conversation fetch unanswered, so its wait is drawn.
+    private static let isHoldingConversations = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_HOLD_CONVERSATION"] == "1"
+    private static let gitHubHold = GitHubHold(holdsConversations: isHoldingConversations)
+    /// How the app talks to GitHub: directly, except in a run that holds some of it.
+    static let gitHubClient = isHoldingChecks || isHoldingConversations ? GitHubClient(transport: gitHubHold) : GitHubClient()
 
     static func start(windows: WindowManager) {
         guard let directory else { return }
@@ -81,10 +83,16 @@ enum SnapshotRun {
             } else if let section = environment["LOUPE_SNAPSHOT_TAB"].flatMap(ReviewSection.init(named:)) {
                 for tab in tabs.tabs { tab.section = section }
             }
-            // A conversation is shown once it's fetched and its web view has drawn it.
+            // A conversation is shown once it's fetched and its web view has drawn it, or its
+            // failure is; LOUPE_SNAPSHOT_HOLD_CONVERSATION=1 holds each fetch, so its wait is shown.
             let conversations = tabs.tabs.filter { $0.section == .conversation }
-            await wait(until: deadline) {
-                conversations.allSatisfy { $0.isConversationSettled && ConversationPage.existingPage(for: $0)?.isLoaded == true }
+            if isHoldingConversations {
+                await wait(until: deadline) { conversations.allSatisfy(\.isFetchingConversation) }
+                for tab in conversations { print("\(tab.title): \(tab.isFetchingConversation ? "fetching the conversation, held" : "not fetching the conversation"), \(tab.conversation == nil ? "none stored" : "one stored")") }
+            } else {
+                await wait(until: deadline) {
+                    conversations.allSatisfy { $0.isConversationSettled && ($0.conversation == nil || ConversationPage.existingPage(for: $0)?.isLoaded == true) }
+                }
             }
             // LOUPE_SNAPSHOT_EDIT_DESCRIPTION=1 opens the description's editor on each of the
             // viewer's own PRs, fetching the description from GitHub as a click would.
@@ -1222,18 +1230,31 @@ private final class StepHold {
     }
 }
 
-/// Sends requests to GitHub until started, then holds every one unanswered for good.
+/// Sends requests to GitHub until started, then holds every one unanswered for good; asked to,
+/// it holds every conversation fetch from the outset.
 private final class GitHubHold: HTTPTransport {
     private let isHolding = OSAllocatedUnfairLock(initialState: false)
+    private let holdsConversations: Bool
+
+    init(holdsConversations: Bool) {
+        self.holdsConversations = holdsConversations
+    }
 
     func start() {
         isHolding.withLock { $0 = true }
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        if isHolding.withLock({ $0 }) { try await Task.sleep(for: .seconds(3600)) }
+        if isHolding.withLock({ $0 }) || holdsConversations && isConversationFetch(request) { try await Task.sleep(for: .seconds(3600)) }
         return try await URLSession.shared.send(request)
     }
+}
+
+/// Whether the request asks for a page of a PR's conversation, the only queries that spread its
+/// timeline fragment.
+private func isConversationFetch(_ request: URLRequest) -> Bool {
+    guard let body = request.httpBody else { return false }
+    return String(decoding: body, as: UTF8.self).contains("...TimelinePage")
 }
 
 private extension DiffStep {

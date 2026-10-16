@@ -39,7 +39,7 @@ struct PullRequestView: View {
                     // view stays behind it, keeping its place.
                     let editor = showsFiles ? nil : tab.descriptionEditor
                     if let page = showsFiles ? ConversationPage.existingPage(for: tab) : ConversationPage.page(for: tab) {
-                        ConversationView(page: page, conversation: tab.conversation, error: tab.conversationError, isShown: !showsFiles && editor == nil)
+                        ConversationView(page: page, pullRequest: pullRequest, conversation: tab.conversation, error: tab.isFetchingConversation ? nil : tab.conversationError, isShown: !showsFiles && editor == nil)
                     }
                     if let editor {
                         DescriptionEditorView(editor: editor, tab: tab)

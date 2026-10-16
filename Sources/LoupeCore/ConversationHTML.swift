@@ -5,16 +5,9 @@ import LoupeModel
 /// `{{content}}` in it. GitHub's `bodyHTML` fragments go in verbatim, as GitHub has already rendered and
 /// sanitised them; every other string is escaped.
 public enum ConversationHTML {
-    /// The page for `conversation`, or a placeholder saying it's loading or why it failed.
-    public static func page(_ conversation: Conversation?, error: String? = nil, template: String, stylesheet: String, now: Date = .now) -> String {
-        let content = if let conversation {
-            render(conversation, now: now)
-        } else if let error {
-            #"<p class="placeholder">Couldn't load the conversation: \#(escape(error))</p>"#
-        } else {
-            #"<p class="placeholder">Loading the conversation…</p>"#
-        }
-        return fill(template, layout: "timeline", content: content, stylesheet: stylesheet)
+    /// The page for `conversation`. Waiting for one, or failing to get one, is shown natively.
+    public static func page(_ conversation: Conversation, template: String, stylesheet: String, now: Date = .now) -> String {
+        fill(template, layout: "timeline", content: render(conversation, now: now), stylesheet: stylesheet)
     }
 
     /// The template with its placeholders filled, `layout` being the class of its `main`.

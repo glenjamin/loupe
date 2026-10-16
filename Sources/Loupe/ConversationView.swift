@@ -6,20 +6,31 @@ import SwiftUI
 import WebKit
 
 /// The Conversation tab: one web view per PR window showing the page `ConversationHTML` builds.
-/// The view is kept, hidden, while the files are shown, so its scroll position survives. A
+/// The view is kept, hidden, while the files are shown, so its scroll position survives. Until
+/// a conversation's page has loaded, a native wait or failure covers it, as the diff's does. A
 /// thread the page asks to show that the diff can't is said so over it. A thread's reply is
 /// written in a popover by the thread, or in a sheet if the page has lost sight of it. A
 /// comment on the PR is written in a popover by the page's "Add a comment…".
 struct ConversationView: View {
     let page: ConversationPage
+    let pullRequest: PullRequestSummary
     let conversation: Conversation?
+    /// Why the conversation couldn't be fetched, nil while it's being fetched again.
     let error: String?
     let isShown: Bool
     /// The thread whose reply couldn't be put by it, so is written in a sheet.
     @State private var replyingInSheet: String?
 
     var body: some View {
-        ConversationWebView(page: page, conversation: conversation, error: error, isShown: isShown)
+        ConversationWebView(page: page, conversation: conversation, isShown: isShown)
+            .overlay {
+                // Opaque, so the web view is never seen blank or half drawn before its first page.
+                if isShown, !page.hasLoadedConversation {
+                    placeholder
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                }
+            }
             .overlay(alignment: .bottom) {
                 if isShown, let tab = page.tab, let unshown = tab.threadActivity.unshown {
                     UnshownThreadNote(tab: tab, unshown: unshown)
@@ -69,12 +80,28 @@ struct ConversationView: View {
             page.tab?.threadActivity.closeConversationReply()
         }
     }
+
+    /// The wait for the conversation, laid out as the diff's, or why it couldn't be fetched
+    /// when there's none stored to show instead.
+    @ViewBuilder
+    private var placeholder: some View {
+        if conversation == nil, let error {
+            ContentUnavailableView {
+                Label("Couldn't load the conversation", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error).textSelection(.enabled)
+            } actions: {
+                Button("Try Again") { Task { await page.tab?.retryConversation() } }
+            }
+        } else {
+            LoadingLabel(title: "Fetching the conversation…", detail: "\(pullRequest.repository) #\(pullRequest.number)")
+        }
+    }
 }
 
 private struct ConversationWebView: NSViewRepresentable {
     let page: ConversationPage
     let conversation: Conversation?
-    let error: String?
     let isShown: Bool
 
     func makeNSView(context: Context) -> WKWebView {
@@ -82,7 +109,7 @@ private struct ConversationWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        page.show(conversation, error: error)
+        if let conversation { page.show(conversation) }
         let wasShown = !webView.isHidden
         webView.isHidden = !isShown
         // So the arrow keys, space and page keys scroll the conversation straight away.
@@ -95,18 +122,24 @@ private struct ConversationWebView: NSViewRepresentable {
 /// A PR window's conversation web view and what it last loaded. Made the first time the
 /// conversation is shown and kept while the PR's tab lives.
 @MainActor
+@Observable
 final class ConversationPage: GitHubWebPage {
-    private var shown: (conversation: Conversation?, error: String?)?
+    /// Whether a conversation's page has finished loading, so the web view can be seen. Once it
+    /// has, a page replacing it shows over it as WebKit draws it, keeping the reader's place.
+    private(set) var hasLoadedConversation = false
+    @ObservationIgnored private var shown: Conversation?
     /// Where the reader had scrolled to on the page being replaced, to put them back there.
-    private var restoredOffset: Double?
+    @ObservationIgnored private var restoredOffset: Double?
+    /// A picture of the page being replaced, over the web view until its replacement is ready.
+    @ObservationIgnored private var coverView: NSImageView?
     /// Counts the pages asked for, so only the latest is loaded.
-    private var requested = 0
+    @ObservationIgnored private var requested = 0
     /// The tab the page shows the conversation of.
-    private(set) weak var tab: PullRequestTab?
+    @ObservationIgnored private(set) weak var tab: PullRequestTab?
     /// The open reply's popover, and the thread it's to.
-    private(set) var replyPopover: (threadId: String, popover: NSPopover)?
+    @ObservationIgnored private(set) var replyPopover: (threadId: String, popover: NSPopover)?
     /// The open comment on the PR's popover.
-    private(set) var commentPopover: NSPopover?
+    @ObservationIgnored private(set) var commentPopover: NSPopover?
 
     private static let pages = NSMapTable<PullRequestTab, ConversationPage>.weakToStrongObjects()
 
@@ -136,14 +169,14 @@ final class ConversationPage: GitHubWebPage {
     /// Loads the page for `conversation`, unless it's already showing it, keeping the reader's
     /// place when it replaces one, as it does when the conversation updates in the background.
     /// Times are relative to when it's loaded, so an unchanged conversation isn't reloaded just
-    /// to update them.
-    func show(_ conversation: Conversation?, error: String?) {
-        if let shown, shown.conversation == conversation, shown.error == error { return }
+    /// to update them. A page replacing one is covered by a picture of the old until it's ready.
+    func show(_ conversation: Conversation) {
+        if shown == conversation { return }
         let isReplacing = shown != nil
-        shown = (conversation, error)
+        shown = conversation
         requested += 1
         let request = requested
-        let html = ConversationHTML.page(conversation, error: error, template: Self.template.html, stylesheet: Self.template.css)
+        let html = ConversationHTML.page(conversation, template: Self.template.html, stylesheet: Self.template.css)
         // A page still loading has no place of its own yet; the one it replaced is kept for it.
         guard isReplacing, isLoaded else { return load(html, baseURL: Self.baseURL) }
         Task {
@@ -151,14 +184,38 @@ final class ConversationPage: GitHubWebPage {
             let offset = try? await webView.evaluateJavaScript("window.scrollY", in: nil, contentWorld: .defaultClient)
             guard request == requested else { return }
             restoredOffset = offset as? Double
+            await cover()
+            guard request == requested else { return }
             load(html, baseURL: Self.baseURL)
         }
     }
 
+    /// Shows the page once it's been put back where the reader was and drawn there, so neither
+    /// its top nor images still arriving are seen first.
     override func didFinishLoading() {
-        guard let offset = restoredOffset else { return }
+        let offset = restoredOffset ?? -1
         restoredOffset = nil
-        webView.evaluateJavaScript("window.scrollTo(0, \(offset))", in: nil, in: .defaultClient)
+        let request = requested
+        Task {
+            _ = try? await webView.callAsyncJavaScript(Self.settleScript, arguments: ["offset": offset], in: nil, contentWorld: .defaultClient)
+            // A newer page on its way uncovers itself once it's ready.
+            guard request == requested, isLoaded else { return }
+            hasLoadedConversation = true
+            coverView?.removeFromSuperview()
+            coverView = nil
+        }
+    }
+
+    /// Puts a picture of the page as it is over the web view, unless it's already covered or
+    /// can't be seen anyway.
+    private func cover() async {
+        guard coverView == nil, !webView.isHidden, let image = try? await webView.takeSnapshot(configuration: nil) else { return }
+        let cover = NSImageView(image: image)
+        cover.imageScaling = .scaleAxesIndependently
+        cover.frame = webView.bounds
+        cover.autoresizingMask = [.width, .height]
+        webView.addSubview(cover)
+        coverView = cover
     }
 
     /// Shows the reply to the thread in a popover by it, unless the page has no such thread in
@@ -252,6 +309,16 @@ final class ConversationPage: GitHubWebPage {
     }
 
     private static let baseURL = URL(string: "https://github.com/")!
+
+    /// Scrolls to `offset` unless it's negative, then waits for a frame to be drawn, or a moment
+    /// where frames are held back, as in a window off screen.
+    private static let settleScript = """
+        if (offset >= 0) window.scrollTo(0, offset);
+        await Promise.race([
+          new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))),
+          new Promise(done => setTimeout(done, 250)),
+        ]);
+        """
 }
 
 extension ConversationPage: NSPopoverDelegate {

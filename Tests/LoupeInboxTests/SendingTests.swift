@@ -87,7 +87,7 @@ struct SendingTests {
         #expect(shown.isSending)
         #expect(shown.actor?.login == FakeGitHub.viewer)
         #expect(shown.event == .comment(bodyHTML: "<p>Thanks, this reads &lt;well&gt; now</p>", isMinimized: false), "as plain text until GitHub renders it")
-        let page = conversationPage(tab)
+        let page = try conversationPage(tab)
         #expect(page.contains(#"<strong>\#(FakeGitHub.viewer)</strong> commented <span class="muted sending">Sending…</span>"#))
         let card = try #require(page.range(of: "reads &lt;well&gt; now").map { String(page[$0.lowerBound...]) })
         #expect(!card.contains("reaction-picker"), "nothing to react to until GitHub has it")
@@ -104,7 +104,7 @@ struct SendingTests {
         let posted = try #require(items.last)
         #expect(!posted.isSending && posted.id.hasPrefix("IC_"))
         #expect(posted.event == .comment(bodyHTML: "<p dir=\"auto\">Thanks, this reads &lt;well&gt; now</p>", isMinimized: false), "GitHub's rendering")
-        #expect(conversationPage(tab).contains(ReactionLink(.add, .thumbsUp, on: posted.id).url.absoluteString), "reacted to once GitHub has it")
+        #expect(try conversationPage(tab).contains(ReactionLink(.add, .thumbsUp, on: posted.id).url.absoluteString), "reacted to once GitHub has it")
         #expect(try app.store.conversation(of: tab.id)?.items == tab.conversation?.items)
     }
 
@@ -126,7 +126,7 @@ struct SendingTests {
         await sending.value
 
         #expect(tab.conversation == before, "taken away")
-        #expect(!conversationPage(tab).contains("next release"))
+        #expect(try !conversationPage(tab).contains("next release"))
         #expect(tab.conversationComment.draft === draft && draft.text == "Could this wait for the next release?")
         #expect(tab.conversationComment.isOpen, "open again by the link")
         #expect(tab.conversationComment.error?.contains("locked") == true)
@@ -147,7 +147,7 @@ struct SendingTests {
         let shown = try #require(try tab.threadsOn("app.go").anchored.first { $0.side == .left && $0.line == 50 }?.threads.first)
         #expect(shown.comments.map(\.isSending) == [true])
         #expect(shown.diffHunk.hasSuffix("\n-50 line"), "ending on its line, as GitHub keeps it")
-        let page = conversationPage(tab)
+        let page = try conversationPage(tab)
         let card = try #require(section(of: page, from: #"data-thread-id="\#(shown.id)""#))
         #expect(card.contains("Is anything still using this?") && card.contains("Sending…"))
         #expect(card.contains("50 line"), "its line of code")
@@ -160,7 +160,7 @@ struct SendingTests {
         #expect(threads.first?.comments.map(\.isSending) == [false])
         #expect(threads.first?.id.hasPrefix("PRRT_") == true)
         #expect(tab.conversation?.threads.count == threadCount + 1)
-        #expect(!conversationPage(tab).contains("Sending…"))
+        #expect(try !conversationPage(tab).contains("Sending…"))
     }
 
     @Test func aRefusedNewCommentGoesAndItsDraftOpensAgain() async throws {
@@ -183,7 +183,7 @@ struct SendingTests {
         #expect(tab.threadActivity.newComment?.anchor == anchor)
         #expect(tab.threadActivity.newComment?.draft === draft && draft.text == "Rename this?")
         #expect(tab.threadActivity.newCommentError?.contains("Resource not accessible") == true)
-        #expect(!conversationPage(tab).contains("Rename this?"))
+        #expect(try !conversationPage(tab).contains("Rename this?"))
     }
 
     @Test func aConversationFetchedBeforeGitHubHadTheReplyDoesntTakeItAwayOrDoubleIt() async throws {
@@ -212,7 +212,7 @@ struct SendingTests {
         let comments = try #require(tab.reviewThread(thread.id)?.comments)
         #expect(comments.last == posted, "kept, as GitHub answered for it")
         #expect(comments.count(where: { $0.bodyHTML.contains("Fixed now") }) == 1)
-        let page = conversationPage(tab)
+        let page = try conversationPage(tab)
         let card = try #require(section(of: page, from: #"data-thread-id="\#(thread.id)""#))
         #expect(card.contains("Fixed now"), "in its thread on the page")
         #expect(page.components(separatedBy: "Fixed now").count == 2, "once")
@@ -283,13 +283,13 @@ struct SendingTests {
         await app.conversations.arrival(of: .deleteComment)
         #expect(tab.reviewThread(thread.id) == nil, "gone at once")
         #expect(tab.pendingReview?.commentCount == 1)
-        #expect(!conversationPage(tab).contains("Hmm"))
+        #expect(try !conversationPage(tab).contains("Hmm"))
 
         await app.conversations.release(.deleteComment)
         try await deleting.value
         #expect(tab.reviewThread(thread.id) == thread, "back as it was")
         #expect(tab.pendingReview?.commentCount == 2)
-        #expect(conversationPage(tab).contains("Hmm"))
+        #expect(try conversationPage(tab).contains("Hmm"))
     }
 
     @Test func discardingTakesTheReviewAwayAtOnceAndARefusalBringsItAndTheSummaryBack() async throws {
@@ -330,7 +330,7 @@ struct SendingTests {
         #expect(shown.isSending)
         #expect(shown.event == .review(state: .approved, bodyHTML: "<p>Looks good</p>", comments: review(shown)?.comments ?? []))
         #expect(review(shown)?.comments.count == 1, "holding the thread it started")
-        let page = conversationPage(tab)
+        let page = try conversationPage(tab)
         #expect(page.contains("approved these changes") && page.contains("Sending…"))
         #expect(tab.reviewDraft.body.isEmpty)
 
@@ -341,7 +341,7 @@ struct SendingTests {
         #expect(reviews.count == 1, "GitHub's copy in its place")
         #expect(reviews.first?.isSending == false)
         #expect(reviews.first.flatMap(review)?.bodyHTML == "<p dir=\"auto\">Looks good</p>")
-        #expect(!conversationPage(tab).contains("Sending…"))
+        #expect(try !conversationPage(tab).contains("Sending…"))
     }
 
     @Test func aRefusedSubmissionPutsThePendingReviewAndTheSummaryBack() async throws {
@@ -384,8 +384,8 @@ struct SendingTests {
         return (app, try await app.open(pullRequest))
     }
 
-    private func conversationPage(_ tab: PullRequestTab) -> String {
-        ConversationHTML.page(tab.conversation, template: "{{content}}", stylesheet: "")
+    private func conversationPage(_ tab: PullRequestTab) throws -> String {
+        ConversationHTML.page(try #require(tab.conversation), template: "{{content}}", stylesheet: "")
     }
 
     /// The page from `marker` to the next thread, or its end.

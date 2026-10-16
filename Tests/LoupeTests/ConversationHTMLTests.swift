@@ -117,13 +117,6 @@ struct ConversationHTMLTests {
         #expect(card.hasPrefix(#"<strong>viewer</strong> commented <span class="muted sending">Sending…</span>"#))
         #expect(!hrefs(in: page).compactMap(ReactionLink.init(url:)).contains { $0.subjectId == "loupe-sending-1" })
     }
-
-    @Test func aMissingConversationSaysWhy() throws {
-        let (template, stylesheet) = try templates()
-        #expect(!ConversationHTML.page(nil, template: template, stylesheet: stylesheet).contains("loupe-comment://"), "nothing to comment on yet")
-        #expect(ConversationHTML.page(nil, template: template, stylesheet: stylesheet).contains("Loading the conversation"))
-        #expect(ConversationHTML.page(nil, error: "HTTP <502>", template: template, stylesheet: stylesheet).contains("HTTP &lt;502&gt;"))
-    }
 }
 
 private let now = Date(timeIntervalSince1970: 1_800_000_000)

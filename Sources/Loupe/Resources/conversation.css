@@ -57,7 +57,6 @@ code, pre, tt { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 
 .item { position: relative; z-index: 1; margin: 0 0 16px; }
 .muted { color: var(--muted); }
-.placeholder { color: var(--muted); text-align: center; margin-top: 80px; }
 
 .avatar {
   display: inline-block;

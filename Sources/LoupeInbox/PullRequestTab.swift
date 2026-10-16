@@ -671,6 +671,12 @@ public final class PullRequestTab: Identifiable {
         !isFetchingConversation && (conversation != nil || conversationError != nil)
     }
 
+    /// Fetches the conversation again after it failed, leaving the diff as it is.
+    public func retryConversation() async {
+        guard !isFetchingConversation else { return }
+        await refreshConversation()
+    }
+
     /// Takes the viewed states from GitHub, keeping any change of the viewer's still on its way.
     private func refreshViewedStates() async {
         let fetched: [String: FileViewedState]

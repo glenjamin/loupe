@@ -48,6 +48,24 @@ struct ConversationTests {
         #expect(nextRun.isConversationSettled)
     }
 
+    @Test func aConversationThatFailedWithNoneStoredCanBeFetchedAgain() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = app.toReview[0]
+        try await app.conversations.add(pullRequest.id)
+        await app.conversations.fail()
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        await tab.load()
+        #expect(tab.conversation == nil)
+        #expect(tab.conversationError != nil)
+
+        await app.conversations.recover()
+        await tab.retryConversation()
+        #expect(tab.conversation?.author?.login == "rowan-ashby")
+        #expect(tab.conversationError == nil)
+        #expect(tab.isConversationSettled)
+    }
+
     @Test func reloadingFetchesTheConversationAgain() async throws {
         let app = try await ConversationApp()
         let pullRequest = app.toReview[0]
