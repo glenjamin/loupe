@@ -231,6 +231,11 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_OPEN_COMMITS"] == "1" {
                     for url in try await saveSnapshotsOfCommitLists(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_REVIEW=1 opens "Finish your review" on each PR the viewer can
+                // review, and snapshots it.
+                if environment["LOUPE_SNAPSHOT_REVIEW"] == "1" {
+                    for url in try await saveSnapshotsOfReviews(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_SHOW_CHECKS=1 opens the checks popover on the lists' first glyph
                 // and each PR's header, and snapshots it.
                 if environment["LOUPE_SNAPSHOT_SHOW_CHECKS"] == "1" {
@@ -503,6 +508,33 @@ private func saveSnapshotsOfCommitLists(in windows: WindowManager, to directory:
         let url = directory.appending(path: "commits-\(sanitised(windows.title(of: tab.id))).png")
         try await saveSnapshot(of: window, to: url)
         tab.isPickingCommit = false
+        written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
+/// Opens "Finish your review" on each PR the viewer can review, and writes the window with it
+/// open as `review-<title>.png`.
+@MainActor
+private func saveSnapshotsOfReviews(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs where tab.canReview {
+        windows.select(tab.id)
+        try? await Task.sleep(for: .milliseconds(300))
+        tab.startFinishingReview()
+        tab.reviewDraft.isFinishing = true
+        try? await Task.sleep(for: .milliseconds(300))
+        if let root = window.contentView,
+           let button = descendants(of: root).first(where: { $0 is ReviewButtonMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }) {
+            placePopover(under: button, in: window)
+        }
+        let url = directory.appending(path: "review-\(sanitised(windows.title(of: tab.id))).png")
+        try await saveSnapshot(of: window, to: url)
+        tab.reviewDraft.isFinishing = false
         written.append(url)
     }
     windows.select(selected)

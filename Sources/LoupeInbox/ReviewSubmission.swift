@@ -11,6 +11,9 @@ public final class ReviewDraft {
     /// The summary, in markdown.
     public var body = ""
     public var event = ReviewEvent.comment
+    /// Whether it's open to finish, kept while switching between tabs; it closes once
+    /// submitted or abandoned.
+    public var isFinishing = false
     public internal(set) var isSubmitting = false
     /// Why GitHub refused the last submission or abandonment, until another is tried.
     public internal(set) var error: String?
@@ -18,6 +21,14 @@ public final class ReviewDraft {
     var hasStarted = false
 
     init() {}
+
+    /// Closed and empty, for the next review.
+    func reset() {
+        body = ""
+        event = .comment
+        isFinishing = false
+        hasStarted = false
+    }
 }
 
 extension PullRequestTab {
@@ -105,9 +116,7 @@ extension PullRequestTab {
             await refreshThreads { $0.isPending }
             return
         }
-        draft.body = ""
-        draft.event = .comment
-        draft.hasStarted = false
+        draft.reset()
         await refreshConversation()
         // The review's comments are the viewer's own, so they show as submitted at once even
         // while new commits wait for a reload.
@@ -133,9 +142,7 @@ extension PullRequestTab {
             draft.error = "Couldn't abandon your review: \(error.localizedDescription)"
             return
         }
-        draft.body = ""
-        draft.event = .comment
-        draft.hasStarted = false
+        draft.reset()
         await refreshThreads { $0.isPending }
     }
 }

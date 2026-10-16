@@ -54,7 +54,7 @@ private struct NewCommentCard: View {
                         .textSelection(.enabled)
                         .help(error)
                 }
-                CommentComposer(draft: comment.draft, sendLabel: "Comment", send: { Task { await tab.sendComment() } }, cancel: { tab.cancelComment() })
+                CommentComposer(draft: comment.draft, caption: caption, actions: actions, cancel: { tab.cancelComment() })
             }
             .font(.callout)
             .padding(10)
@@ -63,6 +63,31 @@ private struct NewCommentCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
         .modifier(BlockInset())
+    }
+
+    /// Where the viewer can review, a single comment posted at once and one into their review,
+    /// as on github.com; ⌘↩ adds to a pending review, and otherwise posts at once.
+    private var actions: [ComposerAction] {
+        let atOnce = "Post this comment at once, not as part of a review"
+        guard tab.canReview else {
+            return [ComposerAction(label: "Comment", help: atOnce) { Task { await tab.sendComment() } }]
+        }
+        let single = ComposerAction(label: "Add single comment", help: atOnce) { Task { await tab.sendComment() } }
+        guard tab.pendingReview != nil else {
+            let start = ComposerAction(label: "Start a review", help: "Start a review with this comment; no one else sees it until the review is submitted") {
+                Task { await tab.sendReviewComment() }
+            }
+            return [single, start]
+        }
+        let add = ComposerAction(label: "Add review comment", help: "Add this comment to your pending review; no one else sees it until the review is submitted") {
+            Task { await tab.sendReviewComment() }
+        }
+        return [add, single]
+    }
+
+    private var caption: String {
+        guard tab.canReview else { return "Markdown. Posts at once, not as part of a review." }
+        return tab.pendingReview == nil ? "Markdown. ⌘↩ adds a single comment, posted at once." : "Markdown. ⌘↩ adds it to your pending review."
     }
 }
 
@@ -136,7 +161,8 @@ private struct ThreadCard: View {
                     Divider()
                     CommentView(comment: comment, viewer: tab.viewer, activity: activity)
                 }
-                if thread.viewerCanReply || activity.errors[thread.id] != nil {
+                // A thread in the viewer's pending review takes no replies until it's submitted.
+                if (thread.viewerCanReply && !thread.isPending) || activity.errors[thread.id] != nil {
                     Divider()
                     footer(activity)
                 }
@@ -192,7 +218,7 @@ private struct ThreadCard: View {
     @ViewBuilder
     private var resolveButton: some View {
         let resolve = !thread.isResolved
-        if resolve ? thread.viewerCanResolve : thread.viewerCanUnresolve {
+        if !thread.isPending, resolve ? thread.viewerCanResolve : thread.viewerCanUnresolve {
             if tab.threadActivity.resolving.contains(thread.id) {
                 ProgressView().controlSize(.mini)
             }
@@ -217,7 +243,11 @@ private struct ThreadCard: View {
                     .help(error)
             }
             if let draft = activity.replies[thread.id] {
-                CommentComposer(draft: draft, sendLabel: "Reply", send: { Task { await tab.sendReply(to: thread) } }, cancel: { tab.cancelReply(to: thread) })
+                CommentComposer(
+                    draft: draft, caption: "Markdown. Posts at once, not as part of a review.",
+                    actions: [ComposerAction(label: "Reply", help: "Reply at once, not as part of a review") { Task { await tab.sendReply(to: thread) } }],
+                    cancel: { tab.cancelReply(to: thread) }
+                )
             } else if thread.viewerCanReply {
                 Button("Reply…") { tab.startReply(to: thread) }
                     .controlSize(.small)
@@ -272,6 +302,9 @@ private struct CommentView: View {
                             .foregroundStyle(.secondary)
                     }
                     .help(comment.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    if comment.isPending {
+                        PendingBadge()
+                    }
                 }
                 .font(.callout)
                 CommentBody(blocks: commentBlocks(comment.bodyHTML))
@@ -292,35 +325,53 @@ private struct CommentView: View {
     }
 }
 
-/// A plain-text field for a comment in markdown, as the description's editor is: ⌘↩ sends,
-/// Esc cancels, asking first if anything has been typed.
+/// One way to send a comment: its button's title and tooltip, and what it does.
+struct ComposerAction {
+    let label: String
+    let help: String
+    let send: () -> Void
+}
+
+/// A plain-text field for a comment in markdown, as the description's editor is: ⌘↩ sends by
+/// the first of `actions`, which is the prominent button, and Esc cancels, asking first if
+/// anything has been typed.
 struct CommentComposer: View {
     @Bindable var draft: CommentDraft
-    let sendLabel: String
-    let send: () -> Void
+    let caption: String
+    let actions: [ComposerAction]
     let cancel: () -> Void
     @State private var confirmsDiscard = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            MarkdownTextView(text: $draft.text, isEditable: !draft.isSending, save: sendIfReady, cancel: cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize))
+            MarkdownTextView(text: $draft.text, isEditable: !draft.isSending, save: { send(actions.first) }, cancel: cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize))
                 .frame(height: 96)
                 .background(Color(nsColor: .textBackgroundColor))
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))
             HStack(spacing: 8) {
-                Text("Markdown. Posts at once, not as part of a review.")
+                Text(caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .help(caption)
                 Spacer(minLength: 0)
                 if draft.isSending {
                     ProgressView().controlSize(.small)
                 }
                 Button("Cancel", action: cancelAsking)
                     .disabled(draft.isSending)
-                Button(sendLabel, action: sendIfReady)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!draft.canSend)
-                    .help("\(sendLabel) (⌘↩)")
+                // The default sits last, at the trailing edge, as in a dialog.
+                ForEach(Array(actions.enumerated().reversed()), id: \.offset) { index, action in
+                    if index == 0 {
+                        Button(action.label) { send(action) }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!draft.canSend)
+                            .help("\(action.help) (⌘↩)")
+                    } else {
+                        Button(action.label) { send(action) }
+                            .disabled(!draft.canSend)
+                            .help(action.help)
+                    }
+                }
             }
             .controlSize(.small)
         }
@@ -332,8 +383,8 @@ struct CommentComposer: View {
         }
     }
 
-    private func sendIfReady() {
-        if draft.canSend { send() }
+    private func send(_ action: ComposerAction?) {
+        if draft.canSend { action?.send() }
     }
 
     private func cancelAsking() {
@@ -378,6 +429,14 @@ struct CommentBody: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Marks a comment, or a thread, in the viewer's review not yet submitted.
+private struct PendingBadge: View {
+    var body: some View {
+        Badge(text: "Pending", tint: .diffAttention)
+            .help("In your pending review; no one else sees it until the review is submitted")
     }
 }
 

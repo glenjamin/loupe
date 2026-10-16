@@ -163,7 +163,7 @@ struct ConversationRow: View {
 
 /// Three sections on one row: the PR's name, state and branches; on the viewer's own PRs, while
 /// it's open, a Merge button about 70% across; and their reviewers at the right. On anyone else's
-/// PR those places are left for the viewer's own review.
+/// open PR the right holds the viewer's own review, and the middle is empty.
 struct PullRequestHeader: View {
     let pullRequest: PullRequestSummary
     let tab: PullRequestTab
@@ -218,6 +218,8 @@ struct PullRequestHeader: View {
             VStack {
                 if let reviewers = tab.reviewers {
                     ReviewersBlock(tab: tab, reviewers: reviewers)
+                } else if tab.canReview {
+                    ReviewButton(tab: tab)
                 }
             }
         }

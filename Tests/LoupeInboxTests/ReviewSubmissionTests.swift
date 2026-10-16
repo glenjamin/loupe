@@ -62,12 +62,14 @@ struct ReviewSubmissionTests {
         let reviewId = try #require(tab.pendingReview?.id)
 
         tab.startFinishingReview()
+        tab.reviewDraft.isFinishing = true
         tab.reviewDraft.body = "Looks good"
         tab.reviewDraft.event = .approve
         await tab.submitReview()
 
         #expect(await app.conversations.reviewMutationsReceived.last == .submit(reviewId: reviewId, event: "APPROVE", body: "Looks good"))
         #expect(tab.reviewDraft.error == nil)
+        #expect(!tab.reviewDraft.isFinishing, "closed once submitted")
         #expect(tab.pendingReview == nil)
         #expect(tab.conversation?.threads.allSatisfy { !$0.isPending } == true, "its comments are submitted")
         #expect(tab.conversation?.latestReviews.contains { $0.reviewer.login == FakeGitHub.viewer && $0.state == .approved } == true)
