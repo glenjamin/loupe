@@ -171,7 +171,7 @@ struct ConversationApp {
 
     private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore, _ delay: ManualDelay, _ showDelay: ManualDelay) -> TabsModel {
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
-        return TabsModel(lists: lists, store: store, client: details.client(), notifications: github.notifications(), sleep: { await delay.sleep(for: $0) }, showDelay: { await showDelay.sleep(for: $0) })
+        return .manuallyTimed(lists: lists, store: store, client: details.client(), notifications: github.notifications(), delay: delay, showDelay: showDelay)
     }
 }
 
@@ -198,6 +198,15 @@ final class ManualDelay {
     /// Waits for something to wait on the delay.
     func untilWaiting() async throws {
         try await until { !self.sleepers.isEmpty }
+    }
+}
+
+extension TabsModel {
+    /// Tabs whose waits last until the test elapses `delay` or `showDelay`. Every test's tabs are
+    /// made this way so that no check or fetch starts in the background unbidden, landing in the
+    /// middle of a slow-running test and changing what it sees.
+    static func manuallyTimed(lists: PullRequestListModel, store: PullRequestStore, client: GitHubClient, notifications: GitHubNotifications, fallbackInterval: Duration = .seconds(60), delay: ManualDelay = ManualDelay(), showDelay: ManualDelay = ManualDelay()) -> TabsModel {
+        TabsModel(lists: lists, store: store, client: client, notifications: notifications, fallbackInterval: fallbackInterval, sleep: { await delay.sleep(for: $0) }, showDelay: { await showDelay.sleep(for: $0) })
     }
 }
 

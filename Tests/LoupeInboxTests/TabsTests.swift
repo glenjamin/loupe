@@ -1139,7 +1139,7 @@ private struct App {
 
     private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore, _ delay: ManualDelay, _ showDelay: ManualDelay) -> TabsModel {
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
-        return TabsModel(lists: lists, store: store, client: details.client(), notifications: github.notifications(), fallbackInterval: fallbackInterval, sleep: { await delay.sleep(for: $0) }, showDelay: { await showDelay.sleep(for: $0) })
+        return .manuallyTimed(lists: lists, store: store, client: details.client(), notifications: github.notifications(), fallbackInterval: fallbackInterval, delay: delay, showDelay: showDelay)
     }
 
     /// Distinct from GitHub's poll intervals, to tell which one a round waits for.

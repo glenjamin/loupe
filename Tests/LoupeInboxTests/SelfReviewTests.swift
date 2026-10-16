@@ -144,6 +144,6 @@ private struct SelfReviewApp {
 
     private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore) -> TabsModel {
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
-        return TabsModel(lists: lists, store: store, client: details.client(), notifications: github.notifications())
+        return .manuallyTimed(lists: lists, store: store, client: details.client(), notifications: github.notifications())
     }
 }

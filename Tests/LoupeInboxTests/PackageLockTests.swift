@@ -75,7 +75,7 @@ private struct PackageLockApp {
         github = try FakeGitHub(fixture: "pr-list.json")
         store = try PullRequestStore.inMemory()
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
-        tabs = TabsModel(lists: lists, store: store, client: details.client(), notifications: github.notifications())
+        tabs = TabsModel.manuallyTimed(lists: lists, store: store, client: details.client(), notifications: github.notifications())
         await tabs.lists.refresh()
     }
 
