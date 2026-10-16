@@ -537,6 +537,14 @@ This narrows "Open PRs learn of changes from notifications, and offer a reload".
 
 While that check is underway the banner stays hidden and the threads stay as placed for the diff shown, so arriving never flashes a banner that's about to go. A line comment with something typed in it keeps the banner instead: the comment is anchored by line number, so a reload would put it under whatever the new head has on that line, or after the file's last row if the new diff lacks the line, and sending it would post on that line of the new head. Replies follow their thread by id and the description and review summary aren't on the diff, so none of those hold a reload back.
 
+### GitHub's suggested reviewers head the reviewer picker
+
+The picker offers GitHub's suggested reviewers for the PR first, in GitHub's order, then the repo's candidates as before: those asked lately in the repo, then GitHub's order. Someone both suggested and asked lately shows once, among the suggestions. A suggestion who isn't among the repo's candidates is still offered, and the author and those already asked are left out of suggestions by the same filter as everyone else.
+
+Suggestions are per PR, so they come from a small query of their own, made with the repo's candidates when the header fetches them ahead of the picker opening, rather than from the conversation query, which is refetched on every change to the PR, or the lists' row fragment, which every search pays for. They're fetched once a tab. A failure to fetch them is logged and the picker shows the usual order; the next opening asks again.
+
+Each suggested row ends with a small tertiary "Suggested" caption, rather than a group heading: the list has no sections, and the caption stays with the row as typing filters the list. The login keeps its line and the full name truncates first, so the caption never squeezes the login.
+
 ## Not yet decided
 
 Nothing is pending.

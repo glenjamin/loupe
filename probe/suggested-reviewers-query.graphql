@@ -1,0 +1,7 @@
+# Who GitHub suggests should review a PR, as github.com's reviewer picker lists under
+# "Suggestions": people who have lately changed or commented on the code it touches.
+query($id: ID!) {
+  node(id: $id) {
+    ... on PullRequest { suggestedReviewers { reviewer { id login name avatarUrl } } }
+  }
+}

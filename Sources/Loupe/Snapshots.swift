@@ -246,6 +246,11 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_REVIEW"] == "1" {
                     for url in try await saveSnapshotsOfReviews(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_REVIEWERS=1 opens the Reviewers picker on each of the viewer's
+                // own PRs once its candidates are fetched, and snapshots it.
+                if environment["LOUPE_SNAPSHOT_REVIEWERS"] == "1" {
+                    for url in try await saveSnapshotsOfReviewerPickers(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_SHOW_CHECKS=1 opens the checks popover on the lists' first glyph
                 // and each PR's header, and snapshots it.
                 if environment["LOUPE_SNAPSHOT_SHOW_CHECKS"] == "1" {
@@ -625,6 +630,42 @@ private func saveSnapshotsOfReviews(in windows: WindowManager, to directory: URL
         let url = directory.appending(path: "review-\(sanitised(windows.title(of: tab.id))).png")
         try await saveSnapshot(of: window, to: url)
         tab.reviewDraft.isWritingSummary = false
+        written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
+/// Opens the Reviewers button's picker on each PR that shows one, once the candidates are
+/// fetched, printing those offered, and writes the window with it open as
+/// `reviewers-<title>.png`. Nothing is requested.
+@MainActor
+private func saveSnapshotsOfReviewerPickers(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs where tab.reviewers != nil {
+        windows.select(tab.id)
+        do {
+            try await tab.fetchReviewerCandidates()
+        } catch {
+            print("\(windows.title(of: tab.id)) couldn't fetch reviewers: \(error)")
+        }
+        let offered = tab.reviewerCandidates(matching: "") ?? []
+        print("\(windows.title(of: tab.id)) offers \(offered.map { tab.isSuggestedReviewer($0) ? "\($0.login) (suggested)" : $0.login })")
+        try? await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+        guard let root = window.contentView,
+              let button = descendants(of: root).lazy.compactMap({ $0 as? ReviewersButtonMarker.Marker }).first(where: { !$0.isHiddenOrHasHiddenAncestor })
+        else { continue }
+        button.isPresented.wrappedValue = true
+        try? await Task.sleep(for: .milliseconds(500))
+        placePopover(under: button, in: window)
+        let url = directory.appending(path: "reviewers-\(sanitised(windows.title(of: tab.id))).png")
+        try await saveSnapshot(of: window, to: url)
+        button.isPresented.wrappedValue = false
+        try? await Task.sleep(for: .milliseconds(300))
         written.append(url)
     }
     windows.select(selected)

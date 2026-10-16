@@ -16,7 +16,8 @@ import Testing
 /// with `decideReviews(on:)`, sets the PR's review decision) or deleted with its comments, which
 /// until then are in the review threads marked `PENDING`. Tests can add comments,
 /// reviews and review threads, ask for reviews or edit a description, as people do on GitHub,
-/// hide the teams, as from a token without access to them, shrink the pages of people and
+/// give a PR the suggested reviewers in `probe/suggested-reviewers.json` or make asking for
+/// them fail, hide the teams, as from a token without access to them, shrink the pages of people and
 /// teams, refuse edits or changes to threads and reviews, as for a PR the token can't write to,
 /// or make every request fail.
 actor FakeConversations {
@@ -63,6 +64,11 @@ actor FakeConversations {
     private var candidatePageSize = 100
     private var users: [[String: Any]] = []
     private var teams: [[String: Any]] = []
+    /// Each PR's suggested reviewers, by PR id, for those given any.
+    private var suggestions: [String: [[String: Any]]] = [:]
+    private var suggestionsFailing = false
+    /// How many times suggested reviewers have been asked for, served or not.
+    private(set) var suggestionFetches = 0
     /// How many threads and thread comments have been made here, for their ids.
     private var threadCount = 0
     private var commentCount = 0
@@ -241,6 +247,7 @@ actor FakeConversations {
         if query.contains("addPullRequestReview(") { return try await addReview(variables, url) }
         if query.contains("submitPullRequestReview(") { return try await submitReview(variables, url) }
         if query.contains("deletePullRequestReview(") { return try deleteReview(variables, url) }
+        if query.contains("suggestedReviewers") { return try suggestedReviewers(variables, url) }
         let id = try #require(variables["id"] as? String)
         guard var node = nodes[id], let timeline = timelines[id] else {
             return (try JSONSerialization.data(withJSONObject: ["data": ["node": NSNull()]]), fakeResponse(url, status: 200))
@@ -285,7 +292,7 @@ actor FakeConversations {
         guard nodes[id] != nil else { return try refusal(unresolved: id, mutation: "requestReviews", url) }
         var asked: [[String: Any]] = []
         for userId in userIds {
-            guard let user = users.first(where: { $0["id"] as? String == userId }) else { return try refusal(unresolved: userId, mutation: "requestReviews", url) }
+            guard let user = (users + suggestedUsers).first(where: { $0["id"] as? String == userId }) else { return try refusal(unresolved: userId, mutation: "requestReviews", url) }
             asked.append(user)
         }
         for teamId in teamIds {
@@ -592,6 +599,34 @@ actor FakeConversations {
         return (try JSONSerialization.data(withJSONObject: ["data": ["updatePullRequest": ["pullRequest": ["id": id]]]]), fakeResponse(url, status: 200))
     }
 
+    /// Gives the PR with `id` the suggested reviewers in `probe/suggested-reviewers.json`; PRs
+    /// otherwise have none, as GitHub has for code nobody else has touched lately.
+    func suggestReviewers(on id: String) throws {
+        let probe = try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/suggested-reviewers.json")))
+        let node = try #require(((probe as? [String: Any])?["data"] as? [String: Any])?["node"] as? [String: Any])
+        suggestions[id] = try #require(node["suggestedReviewers"] as? [[String: Any]])
+    }
+
+    /// Everyone suggested on any PR, shaped as the conversation's `Reviewer` fragment returns
+    /// them, as they can be asked even when they aren't among the repo's candidates.
+    private var suggestedUsers: [[String: Any]] {
+        suggestions.values.joined().compactMap { ($0["reviewer"] as? [String: Any])?.merging(["__typename": "User"]) { $1 } }
+    }
+
+    /// Makes asking for suggested reviewers fail, and only that.
+    func failSuggestions() { suggestionsFailing = true }
+
+    private func suggestedReviewers(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
+        suggestionFetches += 1
+        if suggestionsFailing { return (Data(), fakeResponse(url, status: 502)) }
+        let id = try #require(variables["id"] as? String)
+        guard nodes[id] != nil else {
+            return (try JSONSerialization.data(withJSONObject: ["data": ["node": NSNull()]]), fakeResponse(url, status: 200))
+        }
+        let node: [String: Any] = ["suggestedReviewers": suggestions[id] ?? []]
+        return (try JSONSerialization.data(withJSONObject: ["data": ["node": node]]), fakeResponse(url, status: 200))
+    }
+
     private func usersPage(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
         let page = try self.page(of: users.map { $0.filter { $0.key != "__typename" } }, variables)
         let repository: [String: Any] = ["assignableUsers": page]
@@ -713,7 +748,7 @@ struct FakePullRequestDetails: HTTPTransport {
             return (try JSONSerialization.data(withJSONObject: ["data": ["viewer": ["login": FakeGitHub.viewer]]]), fakeResponse(url, status: 200))
         }
         let isConversation = [
-            "timelineItems", "reviewThreads", "resolveReviewThread(", "requestReviews(", "assignableUsers(", "teams(", "updatePullRequest(", "PullRequest { body }",
+            "timelineItems", "reviewThreads", "resolveReviewThread(", "requestReviews(", "assignableUsers(", "teams(", "updatePullRequest(", "PullRequest { body }", "suggestedReviewers",
             "addPullRequestReview", "submitPullRequestReview(", "deletePullRequestReview(",
         ].contains { query.contains($0) }
         return isConversation ? try await conversations.send(request) : try await viewed.send(request)

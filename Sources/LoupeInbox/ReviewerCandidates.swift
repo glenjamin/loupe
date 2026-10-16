@@ -7,7 +7,7 @@ import Observation
 /// Who can be asked to review in each repo, fetched from GitHub once a run and shared by every
 /// tab, so the request-a-review search filters them as the viewer types rather than asking
 /// GitHub each time. A repo's people and teams rarely change while the app runs. They're
-/// offered in `ReviewerRanking`'s order.
+/// offered in `ReviewerRanking`'s order, after the PR's suggested reviewers.
 @Observable
 @MainActor
 final class ReviewerCandidates {
@@ -24,11 +24,11 @@ final class ReviewerCandidates {
         self.client = client
     }
 
-    /// The candidates in `repository`, those asked lately first, or nil until they've been
-    /// fetched.
-    func candidates(in repository: String) -> [Reviewer]? {
+    /// The candidates in `repository`, the PR's `suggested` reviewers first and then those asked
+    /// lately, or nil until they've been fetched.
+    func candidates(in repository: String, suggested: [Reviewer]) -> [Reviewer]? {
         let key = repository.lowercased()
-        return fetched[key].map { ReviewerRanking.ranked($0, lastRequested: lastRequested[key] ?? [:]) }
+        return fetched[key].map { ReviewerRanking.ranked($0, suggested: suggested, lastRequested: lastRequested[key] ?? [:]) }
     }
 
     /// Fetches the candidates in `repository` unless they already have been, and reads who was
@@ -74,12 +74,14 @@ final class ReviewerCandidates {
     }
 }
 
-/// The order reviewers are offered in. For now, whoever was asked most recently in the repo
-/// comes first, then the rest in GitHub's order; spreading reviews around and GitHub's
-/// suggested reviewers are to be weighed in here too.
+/// The order reviewers are offered in: GitHub's suggested reviewers for the PR first, in its
+/// order and whether or not the repo's candidates include them, then whoever was asked most
+/// recently in the repo, then the rest in GitHub's order. Each is offered once. Spreading
+/// reviews around is to be weighed in here too.
 enum ReviewerRanking {
-    static func ranked(_ candidates: [Reviewer], lastRequested: [String: Date]) -> [Reviewer] {
-        candidates.enumerated()
+    static func ranked(_ candidates: [Reviewer], suggested: [Reviewer], lastRequested: [String: Date]) -> [Reviewer] {
+        let suggestedIds = Set(suggested.map(\.id))
+        return suggested + candidates.filter { !suggestedIds.contains($0.id) }.enumerated()
             .sorted { a, b in
                 switch (lastRequested[a.element.id], lastRequested[b.element.id]) {
                 case let (aDate?, bDate?) where aDate != bDate: aDate > bDate

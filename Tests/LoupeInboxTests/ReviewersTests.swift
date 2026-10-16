@@ -221,6 +221,74 @@ struct ReviewersTests {
         #expect(try await candidates(of: otherRepo, matching: "").prefix(3).map(\.login) == ["pat-barrow", "kit-vance", "jules-hollis"], "another repo keeps GitHub's order")
     }
 
+    @Test func gitHubsSuggestedReviewersAreOfferedFirst() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = app.mine[0]
+        try await app.conversations.add(pullRequest.id)
+        // The probe suggests tam-fairweather, jules-hollis and ada-reviewer, who isn't among the
+        // repo's candidates; tam-fairweather is already asked.
+        try await app.conversations.suggestReviewers(on: pullRequest.id)
+        try await app.conversations.request("tam-fairweather", on: pullRequest.id)
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        await tab.load()
+
+        // Opening the popover as the header fetches ahead asks GitHub once.
+        async let opening: Void = tab.fetchReviewerCandidates()
+        async let prefetching: Void = tab.fetchReviewerCandidates()
+        _ = try await (opening, prefetching)
+        #expect(await app.conversations.suggestionFetches == 1)
+
+        let offered = try await candidates(of: tab, matching: "")
+        #expect(offered.map(\.login) == [
+            "jules-hollis", "ada-reviewer", "kit-vance", "eharcourt",
+            "tamarinworks/devs", "tamarinworks/on-call", "tamarinworks/package-update-reviewers",
+        ], "suggestions in GitHub's order, then the rest, leaving out the asked and the author")
+        #expect(offered.filter(tab.isSuggestedReviewer).map(\.login) == ["jules-hollis", "ada-reviewer"])
+        #expect(try await candidates(of: tab, matching: "ada").map(\.login) == ["ada-reviewer"], "still filtered as typed")
+
+        let ada = try #require(offered.first { $0.login == "ada-reviewer" })
+        await tab.requestReview(from: ada)
+        #expect(await app.conversations.reviewRequestsReceived.map(\.userIds) == [["U_kgDOFakeRev1"]])
+        #expect(await app.conversations.suggestionFetches == 1, "fetched once a tab")
+    }
+
+    @Test func aSuggestedReviewerAskedLatelyIsOfferedOnceAtTheTop() async throws {
+        let app = try await ConversationApp()
+        let (asking, sameRepo, _) = try await openTabsInTwoRepos(app)
+        for login in ["kit-vance", "jules-hollis"] {
+            let reviewer = try #require(try await candidates(of: asking, matching: login).first)
+            await asking.requestReview(from: reviewer)
+        }
+
+        try await app.conversations.suggestReviewers(on: sameRepo.id)
+        #expect(try await candidates(of: sameRepo, matching: "").map(\.login) == [
+            "tam-fairweather", "jules-hollis", "ada-reviewer", "kit-vance", "pat-barrow", "eharcourt",
+            "tamarinworks/devs", "tamarinworks/on-call", "tamarinworks/package-update-reviewers",
+        ])
+    }
+
+    @Test func suggestionsThatFailToLoadLeaveTheUsualOrder() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = app.mine[0]
+        try await app.conversations.add(pullRequest.id)
+        try await app.conversations.suggestReviewers(on: pullRequest.id)
+        await app.conversations.failSuggestions()
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+
+        let offered = try await candidates(of: tab, matching: "")
+        #expect(offered.map(\.login) == [
+            "pat-barrow", "kit-vance", "jules-hollis", "tam-fairweather", "eharcourt",
+            "tamarinworks/devs", "tamarinworks/on-call", "tamarinworks/package-update-reviewers",
+        ])
+        #expect(!offered.contains(where: tab.isSuggestedReviewer))
+
+        // Asked again on the next opening.
+        _ = try await candidates(of: tab, matching: "")
+        #expect(await app.conversations.suggestionFetches == 2)
+    }
+
     @Test func thoseAskedOrReviewingOnTheViewersStoredPullRequestsCountFromTheirLastUpdate() async throws {
         let app = try await ConversationApp()
         let (asking, sameRepo, _) = try await openTabsInTwoRepos(app)

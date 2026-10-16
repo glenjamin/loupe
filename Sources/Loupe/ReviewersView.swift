@@ -32,6 +32,7 @@ struct ReviewersBlock: View {
             Button("Reviewers", systemImage: "person.badge.plus") { asking = true }
                 .buttonStyle(.bordered)
                 .help("Request a review")
+                .background(ReviewersButtonMarker(isPresented: $asking))
                 .popover(isPresented: $asking, arrowEdge: .bottom) {
                     RequestReviewPopover(tab: tab)
                 }
@@ -137,7 +138,7 @@ private struct RequestReviewPopover: View {
                     Button {
                         Task { await tab.requestReview(from: reviewer) }
                     } label: {
-                        CandidateRow(reviewer: reviewer)
+                        CandidateRow(reviewer: reviewer, isSuggested: tab.isSuggestedReviewer(reviewer))
                     }
                     .buttonStyle(.plain)
                 }
@@ -162,24 +163,47 @@ private struct RequestReviewPopover: View {
     }
 }
 
+/// A reviewer to pick, with a quiet caption on those GitHub suggests, which come first.
 private struct CandidateRow: View {
     let reviewer: Reviewer
+    let isSuggested: Bool
 
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: reviewer.kind == .team ? "person.2" : "person")
                 .foregroundStyle(.secondary)
                 .frame(width: 18)
+            // The login or team gives way last, after the full name.
             Text(verbatim: reviewer.displayName)
+                .lineLimit(1)
+                .layoutPriority(1)
             if reviewer.kind == .user, let name = reviewer.name {
                 Text(verbatim: name)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
+            if isSuggested {
+                Text("Suggested")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize()
+            }
         }
         .contentShape(Rectangle())
     }
+}
+
+/// Marks the Reviewers button, for snapshot runs to find and open or close its picker.
+struct ReviewersButtonMarker: NSViewRepresentable {
+    @Binding var isPresented: Bool
+
+    final class Marker: NSView {
+        var isPresented: Binding<Bool> = .constant(false)
+    }
+
+    func makeNSView(context: Context) -> Marker { Marker() }
+    func updateNSView(_ view: Marker, context: Context) { view.isPresented = $isPresented }
 }
 
 private extension ReviewerStatus.State {

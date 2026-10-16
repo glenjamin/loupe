@@ -66,6 +66,10 @@ public final class PullRequestTab: Identifiable {
     let client: GitHubClient
     /// Who could review in each repo, shared with the other tabs.
     private let candidates: ReviewerCandidates
+    /// Who GitHub suggests should review this PR, or nil until it has said.
+    private var suggestedReviewers: [Reviewer]?
+    /// The fetch of suggested reviewers on its way, shared by everyone asking meanwhile.
+    @ObservationIgnored private var suggesting: Task<Void, Never>?
     /// The signed-in user's login, which decides whether the PR is theirs. Read from the store,
     /// or looked up once and stored if nothing has yet.
     private var viewerLogin: String?
@@ -402,22 +406,36 @@ public final class PullRequestTab: Identifiable {
         Conversation.reviewers(of: conversation, author: pullRequest.author, viewer: viewerLogin)
     }
 
-    /// Fetches who could be asked to review in the PR's repo, unless they have been this run.
+    /// Fetches who could be asked to review in the PR's repo, unless they have been this run,
+    /// and who GitHub suggests for this PR, unless it has said. Suggestions that can't be
+    /// fetched are logged and left out rather than holding back the rest.
     public func fetchReviewerCandidates() async throws {
-        try await candidates.fetch(pullRequest.repository, store: store)
+        async let suggesting: Void = fetchSuggestedReviewers()
+        do {
+            try await candidates.fetch(pullRequest.repository, store: store)
+        } catch {
+            await suggesting
+            throw error
+        }
+        await suggesting
     }
 
     /// Who could be asked to review, of those fetched, whose login or name contains `text`: anyone
     /// but the author and those already asked. Someone who has reviewed is included, as asking
-    /// again is how a re-review is sought. Those asked lately in the repo come first. Nil until
-    /// they've been fetched.
+    /// again is how a re-review is sought. GitHub's suggestions for the PR come first, then those
+    /// asked lately in the repo. Nil until they've been fetched.
     public func reviewerCandidates(matching text: String) -> [Reviewer]? {
         let asked = Set(conversation?.reviewRequests.map(\.id) ?? [])
         let author = pullRequest.author
-        return candidates.candidates(in: pullRequest.repository)?.filter {
+        return candidates.candidates(in: pullRequest.repository, suggested: suggestedReviewers ?? [])?.filter {
             !asked.contains($0.id) && !($0.kind == .user && $0.login == author)
                 && (text.isEmpty || $0.login.localizedCaseInsensitiveContains(text) || $0.name?.localizedCaseInsensitiveContains(text) == true)
         }
+    }
+
+    /// Whether GitHub suggests `reviewer` for this PR.
+    public func isSuggestedReviewer(_ reviewer: Reviewer) -> Bool {
+        suggestedReviewers?.contains { $0.id == reviewer.id } == true
     }
 
     /// Asks `reviewer` to review, or to review again. They show as asked at once; the
@@ -657,6 +675,25 @@ public final class PullRequestTab: Identifiable {
 
     private var isViewersOwn: Bool {
         viewerLogin != nil && pullRequest.author == viewerLogin
+    }
+
+    /// Fetches GitHub's suggested reviewers once a tab, sharing a fetch already on its way. A
+    /// failure is logged and tried again next time.
+    private func fetchSuggestedReviewers() async {
+        if suggestedReviewers != nil { return }
+        if let suggesting { return await suggesting.value }
+        let client = client
+        let pullRequest = pullRequest
+        let task = Task {
+            do {
+                suggestedReviewers = try await client.suggestedReviewers(pullRequestId: pullRequest.id)
+            } catch {
+                log("Couldn't fetch the suggested reviewers of \(pullRequest.repository)#\(pullRequest.number): \(error)")
+            }
+        }
+        suggesting = task
+        await task.value
+        suggesting = nil
     }
 
     /// The range of the changes shown, once the PR's diff is ready.
