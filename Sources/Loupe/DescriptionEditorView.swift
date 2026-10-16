@@ -1,4 +1,5 @@
 import AppKit
+import LoupeCore
 import LoupeInbox
 import SwiftUI
 
@@ -154,23 +155,35 @@ struct MarkdownTextView: NSViewRepresentable {
 }
 
 /// Takes ⌘↩, ⌘⇧↩ when given something to do with it, and Esc itself while it has focus, as a
-/// text view would otherwise insert a newline or offer completions.
+/// text view would otherwise insert a newline or offer completions. ⌘← and ⌘→ move by code words
+/// rather than to the line's ends, as comments are mostly about code; with ⇧ they select.
 final class MarkdownEditingTextView: NSTextView {
     var onSave: () -> Void = {}
     var onAlternateSave: (() -> Void)?
     var onCancel: () -> Void = {}
+    /// The fixed end of a selection made by code words, so the other end moves on the next one.
+    private var wordSelectionAnchor: Int?
 
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isReturn = event.keyCode == returnKeyCode || event.keyCode == enterKeyCode
+        let arrowModifiers = modifiers.intersection([.command, .shift, .option, .control])
+        let arrow: CodeWordDirection? = switch event.keyCode {
+        case leftArrowKeyCode: .left
+        case rightArrowKeyCode: .right
+        default: nil
+        }
         if isReturn, modifiers == .command {
             onSave()
         } else if isReturn, modifiers == [.command, .shift], let onAlternateSave {
             onAlternateSave()
+        } else if let arrow, arrowModifiers == .command || arrowModifiers == [.command, .shift] {
+            moveByCodeWord(arrow, extendingSelection: arrowModifiers.contains(.shift))
         } else {
             super.keyDown(with: event)
         }
     }
+
 
     override func cancelOperation(_ sender: Any?) {
         onCancel()
@@ -203,7 +216,30 @@ final class MarkdownEditingTextView: NSTextView {
         isAutomaticTextCompletionEnabled = false
         smartInsertDeleteEnabled = false
     }
+
+    private func moveByCodeWord(_ direction: CodeWordDirection, extendingSelection: Bool) {
+        let selection = selectedRange()
+        // The end that moves is the one away from the anchor, or else the end it's moving towards.
+        let anchor = if let wordSelectionAnchor, selection.length > 0,
+                        wordSelectionAnchor == selection.lowerBound || wordSelectionAnchor == selection.upperBound {
+            wordSelectionAnchor
+        } else {
+            direction == .left ? selection.upperBound : selection.lowerBound
+        }
+        let head = anchor == selection.lowerBound ? selection.upperBound : selection.lowerBound
+        let target = codeWordBoundary(in: string, from: head, direction)
+        if extendingSelection {
+            wordSelectionAnchor = anchor
+            setSelectedRange(NSRange(location: min(anchor, target), length: abs(target - anchor)))
+        } else {
+            wordSelectionAnchor = nil
+            setSelectedRange(NSRange(location: target, length: 0))
+        }
+        scrollRangeToVisible(NSRange(location: target, length: 0))
+    }
 }
 
 private let returnKeyCode: UInt16 = 36
 private let enterKeyCode: UInt16 = 76
+private let leftArrowKeyCode: UInt16 = 123
+private let rightArrowKeyCode: UInt16 = 124
