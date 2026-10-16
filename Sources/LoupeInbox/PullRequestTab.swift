@@ -38,9 +38,10 @@ public final class PullRequestTab: Identifiable {
     /// PR stays shown as stored meanwhile.
     public internal(set) var checkError: String?
     /// Whether GitHub is being asked for anything that updates the PR or its conversation: a
-    /// refresh of the lists it's in, a lookup of it by id, or a fetch of its conversation.
+    /// refresh of the lists it's in, a lookup of it by id, a fetch of its conversation, or of
+    /// its threads as the viewer comes to the tab.
     public var isCheckingGitHub: Bool {
-        isFetchingConversation || lists.isChecking(id)
+        isFetchingConversation || catchingUpThreads > 0 || lists.isChecking(id)
     }
     /// Which commit's changes are shown, by oid, or nil for the whole PR's.
     public private(set) var shownCommit: String?
@@ -118,6 +119,8 @@ public final class PullRequestTab: Identifiable {
     /// The check underway as the viewer comes to the tab, while which new commits are about to
     /// be reloaded rather than offered.
     private var catchingUp: Task<Void, Never>?
+    /// How many fetches of the threads made as the viewer comes to the tab are underway.
+    private var catchingUpThreads = 0
     private var loading: Task<Void, Never>?
     /// The PR as it was when its conversation and viewed states were last asked for, to tell
     /// when GitHub has more. Nil until they're first asked for.
@@ -252,15 +255,22 @@ public final class PullRequestTab: Identifiable {
     /// Checks the PR with `check` as the viewer comes to the tab, then reloads the diff if it
     /// has new commits rather than offering them, as none of them is being read yet; any already
     /// waiting stop being offered at once. A comment being written on a line keeps them offered
-    /// instead, as the new head could move its line. Joins a catch-up already underway.
+    /// instead, as the new head could move its line. Without a reload the threads and pending
+    /// review are fetched, as a review started or ended on github.com shows no activity. Joins a
+    /// catch-up already underway.
     @discardableResult
     func catchUp(checking check: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
         if let catchingUp { return catchingUp }
-        guard !isWritingOnLine else { return Task { await check() } }
+        guard !isWritingOnLine else {
+            return Task {
+                await check()
+                await catchUpThreads()
+            }
+        }
         let task = Task {
             await check()
             catchingUp = nil
-            if hasNewCommits { await retry() }
+            if hasNewCommits { await retry() } else { await catchUpThreads() }
         }
         catchingUp = task
         return task
@@ -780,6 +790,16 @@ public final class PullRequestTab: Identifiable {
             if case .comment(_, _, startsThread: true, _) = change.kind { change.answeredBefore == nil } else { false }
         }
         return isSendingOnLine || threadActivity.newComment?.draft.hasText == true
+    }
+
+    /// Fetches the threads and the viewer's pending review, placing the viewer's pending threads
+    /// on the diff, unless a fetch of the whole conversation, which brings them too, is underway
+    /// or about to start.
+    private func catchUpThreads() async {
+        guard loading == nil, !isFetchingConversation, !hasUnfollowedActivity else { return }
+        catchingUpThreads += 1
+        defer { catchingUpThreads -= 1 }
+        await refreshThreads { $0.isPending }
     }
 
     /// The lists may have stored the login since the tab opened; if not, GitHub is asked.

@@ -657,6 +657,12 @@ There's no "Comment…" in the header: its review controls show only on others' 
 
 This extends "A new comment can start a review; ⌘↩ adds to the review only once one is pending". ⌘↩ kept a single comment as the default until a review was pending, so starting a review from the keyboard wasn't possible: the first comment of a review needed the mouse. Now ⌘⇧↩ sends by the composer's second button wherever it has one, so on a new line comment it starts a review until one is pending, and then posts a single comment. Each key keeps one meaning per state, the prominent button stays what ⌘↩ sends, and neither choice needs the mouse. The second button's tooltip names ⌘⇧↩ as the first's names ⌘↩, and the caption names both keys. Composers with one button (replies, the PR's comment, the description and the review summary) leave ⌘⇧↩ to the text view, as before.
 
+### Coming back to a PR fetches its threads and pending review, whatever its activity
+
+This extends "Showing a PR checks it on GitHub straight away". A review started on github.com, or submitted or discarded there, didn't show in Loupe until something else changed on the PR: the pending review and its comments come with the conversation and threads, which are fetched only when the stored PR shows activity, and a pending review is a private draft that doesn't change the PR's `updatedAt`. Someone who starts a review in the browser and comes to Loupe to carry on expects to find it, so the check made as a tab is shown now also fetches its review threads and the viewer's pending review, the cheap query the review's own writes use, and places the viewer's pending threads on the diff. A review GitHub no longer has goes, with its pending threads.
+
+It runs after the lookup by id, and only when nothing else will bring them: a reload for new commits, a load underway, or activity the conversation fetch is about to follow each fetch the whole conversation, threads included. A comment being written on a line holds back a reload but not this, as the threads move on the diff shown only for what the viewer acted on, here their pending ones. It's per shown tab, under the same 300ms settle and 10 second recheck, and not part of the lists' refresh; the header's spinner covers it, as it's a check of GitHub for the PR's changes.
+
 ## Not yet decided
 
 Nothing is pending.

@@ -835,6 +835,71 @@ struct TabsTests {
         #expect(await app.github.statusLookups.last == [pullRequest.id], "its merge state is checked before it stops")
     }
 
+    @Test func aReviewStartedOnGitHubShowsWhenItsTabIsShownAgain() async throws {
+        let app = try await App()
+        let pullRequest = app.toReview[0]
+        try await app.conversations.add(pullRequest.id)
+        let tab = try await app.openLoaded(pullRequest)
+        #expect(tab.pendingReview == nil && tab.pendingComments.isEmpty)
+        app.tabs.select(nil)
+
+        // Started on github.com while the viewer was elsewhere, which isn't activity on the PR.
+        let reviewId = try await app.conversations.startPendingReview(on: pullRequest.id, path: "app.go", line: 11, body: "Why three?")
+        try await app.conversations.startThread(on: pullRequest.id, path: "app.go", line: 14, pending: true, body: "And here?", by: FakeGitHub.viewer)
+        await app.conversations.hold(.threads)
+        app.tabs.select(pullRequest.id)
+        try await until { app.showDelay.sleeps.count == 2 }
+        app.showDelay.elapse()
+        await app.conversations.arrival(of: .threads)
+        #expect(tab.isCheckingGitHub, "while its threads are fetched")
+
+        await app.conversations.release(.threads)
+        try await until { !tab.isCheckingGitHub }
+        #expect(tab.pendingReview?.id == reviewId)
+        #expect(tab.pendingComments.map(\.thread.lines?.upperBound) == [11, 14])
+        #expect(tab.placedThreads.filter(\.isPending).count == 2, "on the diff")
+        #expect(tab.pullRequest.updatedAt == pullRequest.updatedAt)
+    }
+
+    @Test func aReviewDiscardedOnGitHubGoesWhenItsTabIsShownAgain() async throws {
+        let app = try await App()
+        let pullRequest = app.toReview[0]
+        try await app.conversations.add(pullRequest.id)
+        try await app.conversations.startPendingReview(on: pullRequest.id, path: "app.go", line: 11, body: "Why three?")
+        let tab = try await app.openLoaded(pullRequest)
+        #expect(tab.pendingReview != nil && tab.pendingComments.count == 1)
+        app.tabs.select(nil)
+
+        await app.conversations.discardPendingReview(on: pullRequest.id)
+        app.tabs.select(pullRequest.id)
+        try await until { app.showDelay.sleeps.count == 2 }
+        app.showDelay.elapse()
+
+        try await until { tab.pendingReview == nil }
+        #expect(tab.pendingComments.isEmpty)
+        #expect(!tab.placedThreads.contains { $0.isPending })
+    }
+
+    @Test func showingATabWithNoChangesFetchesOnlyItsThreads() async throws {
+        let app = try await App()
+        let pullRequest = app.toReview[0]
+        try await app.conversations.add(pullRequest.id)
+        let tab = try await app.openLoaded(pullRequest)
+        app.tabs.select(nil)
+        let (pages, threadFetches) = (await app.conversations.pagesServed, await app.conversations.threadFetches)
+
+        await app.conversations.hold(.threads)
+        app.tabs.select(pullRequest.id)
+        try await until { app.showDelay.sleeps.count == 2 }
+        app.showDelay.elapse()
+        await app.conversations.arrival(of: .threads)
+        await app.conversations.release(.threads)
+
+        try await until { !tab.isCheckingGitHub }
+        #expect(await app.conversations.threadFetches == threadFetches + 1)
+        #expect(await app.conversations.pagesServed == pages, "not the whole conversation")
+    }
+
     @Test func comingBackToATabWithNewCommitsWaitingReloadsItAtOnce() async throws {
         let repo = try await FakeRepository()
         let app = try await App()
@@ -1028,6 +1093,15 @@ private struct App {
 
     /// Opens the first to-review PR, pushed to `repo` with one commit, once its diff is ready.
     /// Returns the PR as GitHub has it, its tab, and the commit.
+    /// Opens the PR's tab and waits for it to load, leaving the check made as it's shown waiting
+    /// for the selection to settle.
+    func openLoaded(_ pullRequest: PullRequestSummary) async throws -> PullRequestTab {
+        tabs.open(pullRequest)
+        let tab = try #require(tabs.tab(id: pullRequest.id))
+        await tab.load()
+        return tab
+    }
+
     func openDiffed(in repo: FakeRepository) async throws -> (PullRequestSummary, PullRequestTab, String) {
         let listed = toReview[0]
         try await conversations.add(listed.id)

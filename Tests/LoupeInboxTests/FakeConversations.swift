@@ -57,10 +57,11 @@ actor FakeConversations {
     }
 
     /// The kinds of write a test can hold, as over a slow network, and the conversation's first
-    /// page, held once answered, so it lands with what GitHub had when it was asked for.
+    /// page and the threads alone, held once answered, so they land with what GitHub had when
+    /// they were asked for.
     enum Gate: Hashable {
         case comment, reply, resolve, addToReview, submit, discard, deleteComment, conversationComment
-        case conversation
+        case conversation, threads
     }
 
     /// Kinds of request held until released.
@@ -370,7 +371,9 @@ actor FakeConversations {
             let threads = node["reviewThreads"] ?? ["nodes": []]
             var answer: [String: Any] = ["reviewThreads": threads]
             answer["pendingReview"] = node["pendingReview"]
-            return (try JSONSerialization.data(withJSONObject: ["data": ["node": answer]]), fakeResponse(url, status: 200))
+            let data = try JSONSerialization.data(withJSONObject: ["data": ["node": answer]])
+            await pass(.threads)
+            return (data, fakeResponse(url, status: 200))
         }
         if !query.contains("timelineItems") {
             #expect(query.contains("PullRequest { body }"), "the only query of a PR without its timeline is for its description")
@@ -559,6 +562,11 @@ actor FakeConversations {
         setThreads(list, of: id)
     }
 
+    /// Discards the viewer's pending review of the PR, as on github.com.
+    func discardPendingReview(on id: String) {
+        removePendingReview(of: id)
+    }
+
     /// The viewer's pending review of the PR, if they have one.
     func pendingReviewId(of id: String) -> String? {
         pendingReviews[id]?.id
@@ -569,6 +577,19 @@ actor FakeConversations {
     private func pendingReview(of id: String, for viewer: Any?) -> [String: Any] {
         guard let review = pendingReviews[id], viewer is NSNull || viewer == nil || viewer as? String == FakeGitHub.viewer else { return ["nodes": []] }
         return ["nodes": [["id": review.id, "body": review.body, "comments": ["totalCount": pendingComments(of: id)]]]]
+    }
+
+    /// Drops the viewer's pending review of the PR with its comments, and with them any thread
+    /// it started.
+    private func removePendingReview(of id: String) {
+        pendingReviews[id] = nil
+        setThreads(threads(of: id).compactMap { thread in
+            var thread = thread
+            let comments = (((thread["comments"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []).filter { $0["state"] as? String != "PENDING" }
+            guard !comments.isEmpty else { return nil }
+            thread["comments"] = ["nodes": comments]
+            return thread
+        }, of: id)
     }
 
     private func pendingComments(of id: String) -> Int {
@@ -658,15 +679,7 @@ actor FakeConversations {
         reviewMutationsReceived.append(.delete(reviewId: reviewId))
         if let refusal = try refusalOfReviewChanges("deletePullRequestReview", url) { return refusal }
         guard let id = pullRequest(withPendingReview: reviewId) else { return try refusal(unresolved: reviewId, mutation: "deletePullRequestReview", url) }
-        pendingReviews[id] = nil
-        // Its comments go, and with them any thread it started.
-        setThreads(threads(of: id).compactMap { thread in
-            var thread = thread
-            let comments = (((thread["comments"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []).filter { $0["state"] as? String != "PENDING" }
-            guard !comments.isEmpty else { return nil }
-            thread["comments"] = ["nodes": comments]
-            return thread
-        }, of: id)
+        removePendingReview(of: id)
         return (try JSONSerialization.data(withJSONObject: ["data": ["deletePullRequestReview": ["pullRequestReview": ["id": reviewId]]]]), fakeResponse(url, status: 200))
     }
 
