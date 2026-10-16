@@ -411,6 +411,10 @@ This relaxes "links open in the browser" in "The conversation tab is a web view 
 
 A PR in either list, or already open, opens at once. Any other is looked up on GitHub by repo and number, with the same fields as the lists' rows, and stored with its tab in one write, so a list refresh can't drop it as unlisted first; it then behaves as any PR opened from the lists, viewed files and conversation included, and is forgotten when its tab closes. The lookup doesn't block the window. If GitHub has no such PR the viewer can see, or the lookup fails, the link opens in the browser instead and the reason is logged.
 
+### "Review required" is a badge in GitHub's attention colour
+
+As plain caption text, "Review required" read as information rather than as the thing blocking the merge. It's now a badge like Conflicts, in Primer's attention colour as GitHub shows it, with help saying a review is needed before merging. "Approved" and "Changes requested" stay as coloured text: they're outcomes rather than something still owed.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

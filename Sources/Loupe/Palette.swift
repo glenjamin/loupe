@@ -5,4 +5,5 @@ import SwiftUI
 extension ShapeStyle where Self == Color {
     static var diffSuccess: Color { Color(nsColor: DiffColors.successText) }
     static var diffDanger: Color { Color(nsColor: DiffColors.dangerText) }
+    static var diffAttention: Color { Color(nsColor: DiffColors.attentionText) }
 }

@@ -242,7 +242,9 @@ struct ReviewDecisionLabel: View {
         switch decision {
         case .approved: Text("Approved").foregroundStyle(.diffSuccess)
         case .changesRequested: Text("Changes requested").foregroundStyle(.diffDanger)
-        case .reviewRequired: Text("Review required")
+        case .reviewRequired:
+            Badge(text: "Review required", tint: .diffAttention)
+                .help("A review is required before this can be merged")
         case .unknown: EmptyView()
         }
     }
