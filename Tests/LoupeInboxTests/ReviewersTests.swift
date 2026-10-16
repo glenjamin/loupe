@@ -74,6 +74,11 @@ struct ReviewersTests {
         #expect(tab.reviewRequestError == nil)
         #expect(try app.store.conversation(of: pullRequest.id)?.reviewRequests.map(\.login) == ["pat-barrow", "kit-vance", "tamarinworks/devs"])
         #expect(try await candidates(of: tab, matching: "vance").isEmpty, "those already asked aren't offered")
+
+        // The PR's row names them straight away, rather than at the next refresh, and keeps them.
+        let asked: [RequestedReviewer] = [.user(login: "kit-vance"), .team(slug: "devs")]
+        #expect(app.tabs.lists.pullRequest(id: pullRequest.id)?.requestedReviewers == asked)
+        #expect(try app.relaunch().lists.pullRequest(id: pullRequest.id)?.requestedReviewers == asked)
     }
 
     @Test func askingSomeoneWhoHasReviewedAsksThemAgain() async throws {
@@ -111,6 +116,7 @@ struct ReviewersTests {
         #expect(error.contains("Could not resolve to a node"))
         #expect(try app.store.conversation(of: pullRequest.id)?.reviewRequests.map(\.login) == ["pat-barrow"])
         #expect(try app.store.lastReviewRequests(in: pullRequest.repository)[stranger.id] == nil, "a refusal isn't kept")
+        #expect(app.tabs.lists.pullRequest(id: pullRequest.id)?.requestedReviewers == [], "nor named on its row")
 
         // The next request clears it.
         let kit = try #require(try await candidates(of: tab, matching: "vance").first)

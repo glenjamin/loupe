@@ -23,7 +23,8 @@ extension PullRequestSummary {
             baseRefOid: node.baseRefOid,
             commitCount: node.commitCount?.totalCount,
             commentCount: node.comments?.totalCount,
-            reviewThreadCount: node.reviewThreads?.totalCount
+            reviewThreadCount: node.reviewThreads?.totalCount,
+            requestedReviewers: node.reviewRequests?.nodes.map(\.reviewer)
         )
     }
 }
@@ -96,7 +97,7 @@ extension ReviewRequests {
     init(state: PullRequestState, requests: [NodesResponse.ReviewRequest], events: [NodesResponse.RequestEvent]) {
         self.init(
             state: state,
-            reviewers: requests.map { $0.requestedReviewer?.reviewer ?? .other },
+            reviewers: requests.map(\.reviewer),
             events: events.map { ReviewRequestEvent(reviewer: $0.requestedReviewer?.reviewer ?? .other, createdAt: $0.createdAt) }
         )
     }
@@ -135,6 +136,10 @@ struct NodesResponse: Decodable {
     struct ReviewRequest: Decodable {
         /// Null when the requested account has been deleted.
         let requestedReviewer: Reviewer?
+
+        var reviewer: RequestedReviewer {
+            requestedReviewer?.reviewer ?? .other
+        }
     }
 
     struct RequestEvent: Decodable {

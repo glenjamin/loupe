@@ -545,6 +545,12 @@ Suggestions are per PR, so they come from a small query of their own, made with 
 
 Each suggested row ends with a small tertiary "Suggested" caption, rather than a group heading: the list has no sections, and the caption stays with the row as typing filters the list. The login keeps its line and the full name truncates first, so the caption never squeezes the login.
 
+### A PR waiting on review names who's been asked
+
+Where a row or a PR's header said "Review required", it now says "Review requested: alice, devs" when reviews are pending: users by login, teams by slug, in GitHub's order, in the same amber badge. "Review required" stays for a PR that needs a review and has asked no one, which is the case worth acting on. A pending request is named even where the base branch doesn't require reviews, as who's been asked matters either way. Approved and Changes requested are unchanged, and To review still hides the badge, as every PR there waits on the viewer.
+
+The reviewers come from lookups by id, not the searches. A full page of Mine already takes 7–10 seconds against GitHub's 10-second limit, and with review requests in each row one such page failed. The to-review check of requests by id already runs every refresh, so it now takes the viewer's open PRs along in the same batches. A request made from Loupe names the reviewer on the row as soon as GitHub accepts it, rather than at the next refresh.
+
 ## Not yet decided
 
 Nothing is pending.

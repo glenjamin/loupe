@@ -440,7 +440,8 @@ public final class PullRequestTab: Identifiable {
 
     /// Asks `reviewer` to review, or to review again. They show as asked at once; the
     /// conversation is fetched again once GitHub agrees, and they're taken off if it refuses.
-    /// An accepted request is kept in the history that orders the candidates.
+    /// An accepted request is kept in the history that orders the candidates, and the PR's row
+    /// in the lists names them at once.
     public func requestReview(from reviewer: Reviewer) async {
         if conversation?.reviewRequests.contains(where: { $0.id == reviewer.id }) == true { return }
         conversation?.reviewRequests.append(reviewer)
@@ -453,6 +454,11 @@ public final class PullRequestTab: Identifiable {
             return
         }
         await candidates.recordRequest(of: reviewer, in: pullRequest.repository, on: id, store: store)
+        do {
+            try await lists.reviewRequested(of: RequestedReviewer(reviewer), on: id)
+        } catch {
+            log("Couldn't store the request of \(reviewer.login) on \(title): \(error)")
+        }
         await refreshConversation()
     }
 

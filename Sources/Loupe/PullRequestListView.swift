@@ -151,7 +151,8 @@ struct PullRequestColumn: View {
 struct PullRequestRow: View {
     let pullRequest: PullRequestSummary
     let showsAuthor: Bool
-    /// Off where every PR is awaiting the viewer's review, so the badge would say nothing.
+    /// Off where every PR is awaiting the viewer's review, so saying a review is required or
+    /// asked for would say nothing.
     let showsReviewRequired: Bool
     let isSelfReviewed: Bool
     /// Set on a PR whose request for review is old enough to be hidden by default.
@@ -178,8 +179,8 @@ struct PullRequestRow: View {
                 if showsAuthor, let author = pullRequest.author {
                     Text(author)
                 }
-                if let decision = pullRequest.reviewDecision, showsReviewRequired || decision != .reviewRequired {
-                    ReviewDecisionLabel(decision: decision)
+                if showsReviewRequired || [.approved, .changesRequested].contains(pullRequest.reviewDecision) {
+                    ReviewDecisionLabel(decision: pullRequest.reviewDecision, requestedReviewers: pullRequest.requestedReviewers)
                 }
                 if let checks = pullRequest.checks {
                     ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
@@ -266,17 +267,27 @@ struct SelfReviewedBadge: View {
     }
 }
 
+/// Where the PR's review stands: GitHub's verdict once reviewed, otherwise who's been asked,
+/// or that a review is required when no one has been.
 struct ReviewDecisionLabel: View {
-    let decision: ReviewDecision
+    /// Nil when the base branch doesn't require reviews.
+    let decision: ReviewDecision?
+    /// Nil until fetched.
+    let requestedReviewers: [RequestedReviewer]?
 
     var body: some View {
         switch decision {
         case .approved: Text("Approved").foregroundStyle(.diffSuccess)
         case .changesRequested: Text("Changes requested").foregroundStyle(.diffDanger)
-        case .reviewRequired:
-            Badge(text: "Review required", tint: .diffAttention)
-                .help("A review is required before this can be merged")
-        case .unknown: EmptyView()
+        case .reviewRequired, .unknown, nil:
+            let names = (requestedReviewers ?? []).compactMap(\.name)
+            if !names.isEmpty {
+                Badge(text: "Review requested: \(names.joined(separator: ", "))", tint: .diffAttention)
+                    .help(decision == .reviewRequired ? "Waiting on a review from those asked; one is required before this can be merged" : "Waiting on a review from those asked")
+            } else if decision == .reviewRequired {
+                Badge(text: "Review required", tint: .diffAttention)
+                    .help("A review is required before this can be merged")
+            }
         }
     }
 }

@@ -161,6 +161,20 @@ public final class PullRequestListModel {
         snapshot = try await store.updateStatuses(try await client.statuses(ofPullRequests: ids))
     }
 
+    /// Adds `reviewer` to those the PR with `id` waits on, once GitHub has accepted asking them
+    /// from here, so its row says so before the next refresh.
+    func reviewRequested(of reviewer: RequestedReviewer, on id: String) async throws {
+        guard var pullRequest = pullRequest(id: id) else { return }
+        var requested = pullRequest.requestedReviewers ?? []
+        guard !requested.contains(reviewer) else { return }
+        requested.append(reviewer)
+        snapshot = try await store.updateRequestedReviewers([id: requested])
+        if unlisted[id] != nil {
+            pullRequest.requestedReviewers = requested
+            unlisted[id] = pullRequest
+        }
+    }
+
     /// Nil until the repo's checkout has been looked for.
     public func checkout(for repository: String) -> CheckoutStatus? {
         checkouts[repository]
@@ -222,13 +236,18 @@ public final class PullRequestListModel {
 
     /// A PR stops matching `review-requested:@me` once reviewed, so changes since the last
     /// refresh never report it leaving; each to-review PR is checked directly instead. The same
-    /// check finds when each was last asked of the viewer, which search doesn't say.
+    /// check finds when each was last asked of the viewer, which search doesn't say. The viewer's
+    /// own open PRs are checked alongside, for who each waits on, as asking search for that
+    /// takes a full page past GitHub's time limit.
     private func checkReviewRequests() async throws {
         let ids = snapshot[.toReview].map(\.id)
-        guard !ids.isEmpty else { return }
+        let mine = snapshot[.mine].filter { $0.state == .open && !ids.contains($0.id) }.map(\.id)
+        guard !ids.isEmpty || !mine.isEmpty else { return }
         let login = try await viewerLogin()
-        let requests = try await client.reviewRequests(for: ids)
-        snapshot = try await store.updateReviewRequestTimes(requests.mapValues { $0.lastRequested(of: login) })
+        let requests = try await client.reviewRequests(for: ids + mine)
+        snapshot = try await store.updateRequestedReviewers(requests.mapValues(\.reviewers))
+        guard !ids.isEmpty else { return }
+        snapshot = try await store.updateReviewRequestTimes(requests.filter { ids.contains($0.key) }.mapValues { $0.lastRequested(of: login) })
         let fulfilled = ids.filter { requests[$0]?.awaitReview(from: login) != true }
         guard !fulfilled.isEmpty else { return }
         snapshot = try await store.remove(fulfilled, from: .toReview)

@@ -43,6 +43,9 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     /// When the viewer was last asked to review, as the to-review list's check found it. Nil
     /// until checked, or when GitHub's timeline had no request of the viewer to show.
     public let reviewRequestedAt: Date?
+    /// Who the PR's review waits on, in GitHub's order. Nil until looked up by id, as asking the
+    /// searches for it takes them past GitHub's time limit.
+    public var requestedReviewers: [RequestedReviewer]?
 
     public init(
         id: String,
@@ -68,7 +71,8 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         commitCount: Int? = nil,
         commentCount: Int? = nil,
         reviewThreadCount: Int? = nil,
-        reviewRequestedAt: Date? = nil
+        reviewRequestedAt: Date? = nil,
+        requestedReviewers: [RequestedReviewer]? = nil
     ) {
         self.id = id
         self.repository = repository
@@ -94,6 +98,7 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.commentCount = commentCount
         self.reviewThreadCount = reviewThreadCount
         self.reviewRequestedAt = reviewRequestedAt
+        self.requestedReviewers = requestedReviewers
     }
 }
 
@@ -176,6 +181,25 @@ public enum RequestedReviewer: Sendable, Hashable {
     case team(slug: String)
     /// A bot, mannequin or deleted account: never the viewer.
     case other
+
+    /// The request a review request from here makes: a team by its slug, as GitHub's own
+    /// requested reviewers name it.
+    public init(_ reviewer: Reviewer) {
+        switch reviewer.kind {
+        case .user: self = .user(login: reviewer.login)
+        case .team: self = .team(slug: String(reviewer.login.split(separator: "/").last ?? ""))
+        case .bot: self = .other
+        }
+    }
+
+    /// A user's login or a team's slug; nil for anything else, which isn't named.
+    public var name: String? {
+        switch self {
+        case let .user(login): login
+        case let .team(slug): slug
+        case .other: nil
+        }
+    }
 
     /// Whether this could be `login`: that user, or any team, as team membership isn't known.
     func mayBe(_ login: String) -> Bool {

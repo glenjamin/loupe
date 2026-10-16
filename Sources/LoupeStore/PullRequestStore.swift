@@ -132,6 +132,19 @@ public struct PullRequestStore: Sendable {
         }
     }
 
+    /// Replaces who each PR in `reviewers`, keyed by id, waits on for a review. PRs no longer
+    /// stored are left out.
+    @discardableResult
+    public func updateRequestedReviewers(_ reviewers: [String: [RequestedReviewer]]) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            for (id, requested) in reviewers {
+                let json = String(decoding: try JSONEncoder().encode(requested.map(StoredReviewer.init)), as: UTF8.self)
+                try db.execute(sql: "UPDATE pullRequest SET requestedReviewers = ? WHERE id = ?", arguments: [json, id])
+            }
+            return try Self.snapshot(db)
+        }
+    }
+
     /// The signed-in user's GitHub login, once it's been looked up.
     public func viewerLogin() throws -> String? {
         try database.read { db in try Setting.fetchOne(db, key: Setting.viewerLogin)?.value }
@@ -436,6 +449,12 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "isPending", .boolean).notNull().defaults(to: false)
             }
         }
+        // JSON; null until the PR is looked up by id, as searches don't fetch it.
+        migrator.registerMigration("Pull request requested reviewers") { db in
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "requestedReviewers", .text)
+            }
+        }
         return migrator
     }
 
@@ -518,6 +537,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let mergeable: String?
     let mergeStateStatus: String?
     let reviewRequestedAt: Date?
+    let requestedReviewers: [StoredReviewer]?
 
     /// Anything `pullRequest` lacks because only a lookup by id fetches it is kept from `stored`.
     init(_ pullRequest: PullRequestSummary, keepingLookupsFrom stored: PullRequestRow?) {
@@ -544,6 +564,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         mergeable = pullRequest.mergeable?.rawValue ?? stored?.mergeable
         mergeStateStatus = pullRequest.mergeStateStatus?.rawValue ?? stored?.mergeStateStatus
         reviewRequestedAt = pullRequest.reviewRequestedAt ?? stored?.reviewRequestedAt
+        requestedReviewers = pullRequest.requestedReviewers.map { $0.map(StoredReviewer.init) } ?? stored?.requestedReviewers
     }
 
     func summary(checkContexts: [CheckContext]) -> PullRequestSummary {
@@ -572,7 +593,8 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             commitCount: commitCount,
             commentCount: commentCount,
             reviewThreadCount: reviewThreadCount,
-            reviewRequestedAt: reviewRequestedAt
+            reviewRequestedAt: reviewRequestedAt,
+            requestedReviewers: requestedReviewers?.map(\.reviewer)
         )
     }
 }
@@ -598,6 +620,29 @@ private struct PullRequestCheckRow: Codable, FetchableRecord, PersistableRecord 
 
     var check: CheckContext {
         CheckContext(name: name, status: CheckStatus(rawValue: status) ?? .neutral, description: description, url: url)
+    }
+}
+
+/// A requested reviewer as kept in the `requestedReviewers` column's JSON.
+struct StoredReviewer: Codable {
+    /// "user", "team" or "other".
+    let kind: String
+    let name: String?
+
+    init(_ reviewer: RequestedReviewer) {
+        switch reviewer {
+        case let .user(login): (kind, name) = ("user", login)
+        case let .team(slug): (kind, name) = ("team", slug)
+        case .other: (kind, name) = ("other", nil)
+        }
+    }
+
+    var reviewer: RequestedReviewer {
+        switch (kind, name) {
+        case let ("user", login?): .user(login: login)
+        case let ("team", slug?): .team(slug: slug)
+        default: .other
+        }
     }
 }
 

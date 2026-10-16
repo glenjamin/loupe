@@ -313,6 +313,28 @@ struct PullRequestListTests {
         #expect(model.pullRequests(in: .toReview).count == 12)
     }
 
+    @Test func eachPullRequestSaysWhoItsReviewWaitsOn() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let store = try PullRequestStore.inMemory()
+        let model = try listModel(github, store: store)
+        await model.refresh()
+        let mine = try #require(model.pullRequests(in: .mine).first)
+        let toReview = try #require(model.pullRequests(in: .toReview).first)
+        #expect(mine.requestedReviewers == [])
+        #expect(toReview.requestedReviewers == [.user(login: FakeGitHub.viewer)])
+
+        try await github.edit(mine.id) { $0.requestedReviewers = [.user("kit-vance"), .team("devs")] }
+        await model.refresh()
+        let asked: [RequestedReviewer] = [.user(login: "kit-vance"), .team(slug: "devs")]
+        #expect(model.pullRequest(id: mine.id)?.requestedReviewers == asked, "in GitHub's order")
+        #expect(try listModel(github, store: store).pullRequest(id: mine.id)?.requestedReviewers == asked, "kept for the next launch")
+
+        // kit-vance reviews, which ends their request.
+        try await github.edit(mine.id) { $0.requestedReviewers = [.team("devs")] }
+        await model.refresh()
+        #expect(model.pullRequest(id: mine.id)?.requestedReviewers == [.team(slug: "devs")])
+    }
+
     @Test func aReviewRequestOverThreeMonthsOldIsHiddenAndCounted() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)

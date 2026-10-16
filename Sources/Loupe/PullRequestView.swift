@@ -195,9 +195,7 @@ struct PullRequestHeader: View {
                         ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
                         FailedCheckNames(state: checks, contexts: pullRequest.checkContexts)
                     }
-                    if let decision = pullRequest.reviewDecision {
-                        ReviewDecisionLabel(decision: decision)
-                    }
+                    ReviewDecisionLabel(decision: pullRequest.reviewDecision, requestedReviewers: pullRequest.requestedReviewers)
                     TimelineView(.everyMinute) { _ in
                         Text("updated \(pullRequest.updatedAt.formatted(.relative(presentation: .named)))")
                     }
