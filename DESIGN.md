@@ -653,6 +653,10 @@ Loupe could reply to threads, comment on lines and write a review's summary, but
 
 There's no "Comment…" in the header: its review controls show only on others' PRs, where "Comment" already submits a review, so a second "Comment" there would read as the same thing. The markdown is sent as typed with `addComment` (from introspection, never run live) and GitHub renders it; nothing empty is sent. As "The viewer's comments and review changes show at once, before GitHub answers" does for the rest, it shows at the end of the timeline at once, "Sending…" in place of its time and without reactions until GitHub has it, takes GitHub's copy from the mutation's answer, and is made again over any fetch that started too soon to have it. A refusal takes it away and opens the popover again with the draft and the reason.
 
+### ⌘⇧↩ sends a comment by its second button
+
+This extends "A new comment can start a review; ⌘↩ adds to the review only once one is pending". ⌘↩ kept a single comment as the default until a review was pending, so starting a review from the keyboard wasn't possible: the first comment of a review needed the mouse. Now ⌘⇧↩ sends by the composer's second button wherever it has one, so on a new line comment it starts a review until one is pending, and then posts a single comment. Each key keeps one meaning per state, the prominent button stays what ⌘↩ sends, and neither choice needs the mouse. The second button's tooltip names ⌘⇧↩ as the first's names ⌘↩, and the caption names both keys. Composers with one button (replies, the PR's comment, the description and the review summary) leave ⌘⇧↩ to the text view, as before.
+
 ## Not yet decided
 
 Nothing is pending.

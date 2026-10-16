@@ -101,6 +101,8 @@ struct MarkdownTextView: NSViewRepresentable {
     @Binding var text: String
     let isEditable: Bool
     let save: () -> Void
+    /// What ⌘⇧↩ does, if anything; without it the key is the text view's own.
+    var alternateSave: (() -> Void)?
     let cancel: () -> Void
     var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
@@ -127,6 +129,7 @@ struct MarkdownTextView: NSViewRepresentable {
         if textView.string != text { textView.string = text }
         textView.isEditable = isEditable
         textView.onSave = save
+        textView.onAlternateSave = alternateSave
         textView.onCancel = cancel
         // Typing can start straight away.
         if !context.coordinator.hasFocused, let window = textView.window {
@@ -150,16 +153,20 @@ struct MarkdownTextView: NSViewRepresentable {
     }
 }
 
-/// Takes ⌘↩ and Esc itself while it has focus, as a text view would otherwise insert a newline
-/// or offer completions.
+/// Takes ⌘↩, ⌘⇧↩ when given something to do with it, and Esc itself while it has focus, as a
+/// text view would otherwise insert a newline or offer completions.
 final class MarkdownEditingTextView: NSTextView {
     var onSave: () -> Void = {}
+    var onAlternateSave: (() -> Void)?
     var onCancel: () -> Void = {}
 
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if modifiers == .command, event.keyCode == returnKeyCode || event.keyCode == enterKeyCode {
+        let isReturn = event.keyCode == returnKeyCode || event.keyCode == enterKeyCode
+        if isReturn, modifiers == .command {
             onSave()
+        } else if isReturn, modifiers == [.command, .shift], let onAlternateSave {
+            onAlternateSave()
         } else {
             super.keyDown(with: event)
         }

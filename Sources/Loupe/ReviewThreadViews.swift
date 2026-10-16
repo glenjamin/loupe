@@ -75,7 +75,8 @@ private struct NewCommentCard: View {
     }
 
     /// Where the viewer can review, a single comment posted at once and one into their review,
-    /// as on github.com; ⌘↩ adds to a pending review, and otherwise posts at once.
+    /// as on github.com; ⌘↩ adds to a pending review, and otherwise posts at once, and ⌘⇧↩ does
+    /// the other.
     private var actions: [ComposerAction] {
         let atOnce = "Post this comment at once, not as part of a review"
         guard tab.canReview else {
@@ -96,7 +97,9 @@ private struct NewCommentCard: View {
 
     private var caption: String {
         guard tab.canReview else { return "Markdown. Posts at once, not as part of a review." }
-        return tab.pendingReview == nil ? "Markdown. ⌘↩ adds a single comment, posted at once." : "Markdown. ⌘↩ adds it to your pending review."
+        return tab.pendingReview == nil
+            ? "Markdown. ⌘↩ posts a single comment; ⌘⇧↩ starts a review."
+            : "Markdown. ⌘↩ adds to your review; ⌘⇧↩ posts a single comment."
     }
 }
 
@@ -546,8 +549,9 @@ struct ComposerAction {
 }
 
 /// A plain-text field for a comment in markdown, as the description's editor is: ⌘↩ sends by
-/// the first of `actions`, which is the prominent button, and Esc cancels, asking first if
-/// anything has been typed, unless it's given something else to do.
+/// the first of `actions`, which is the prominent button, ⌘⇧↩ by the second if there is one,
+/// and Esc cancels, asking first if anything has been typed, unless it's given something else
+/// to do.
 struct CommentComposer: View {
     @Bindable var draft: CommentDraft
     let caption: String
@@ -559,7 +563,7 @@ struct CommentComposer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            MarkdownTextView(text: $draft.text, isEditable: true, save: { send(actions.first) }, cancel: escape ?? cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize))
+            MarkdownTextView(text: $draft.text, isEditable: true, save: { send(actions.first) }, alternateSave: alternateSave, cancel: escape ?? cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize))
                 .frame(height: 96)
                 .background(Color(nsColor: .textBackgroundColor))
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))
@@ -580,7 +584,7 @@ struct CommentComposer: View {
                     } else {
                         Button(action.label) { send(action) }
                             .disabled(!draft.canSend)
-                            .help(action.help)
+                            .help(index == 1 ? "\(action.help) (⌘⇧↩)" : action.help)
                     }
                 }
             }
@@ -592,6 +596,12 @@ struct CommentComposer: View {
         } message: {
             Text("It hasn't been posted to GitHub.")
         }
+    }
+
+    private var alternateSave: (() -> Void)? {
+        guard actions.count > 1 else { return nil }
+        let action = actions[1]
+        return { send(action) }
     }
 
     private func send(_ action: ComposerAction?) {
