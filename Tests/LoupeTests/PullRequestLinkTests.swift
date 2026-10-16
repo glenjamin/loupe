@@ -50,4 +50,33 @@ struct PullRequestLinkTests {
     func anyOtherLinkIsNotAPullRequest(_ link: String) throws {
         #expect(PullRequestLink(url: try #require(URL(string: link))) == nil)
     }
+
+    @Test(arguments: [
+        ("https://github.com/tamarinworks/porter/pull/1522", "https://github.com/tamarinworks/porter/pull/1522?via=loupe"),
+        ("https://github.com/tamarinworks/porter/pull/1522/files?w=1", "https://github.com/tamarinworks/porter/pull/1522/files?w=1&via=loupe"),
+        ("https://github.com/tamarinworks/porter/pull/1522#discussion_r2412345678", "https://github.com/tamarinworks/porter/pull/1522?via=loupe#discussion_r2412345678"),
+        ("https://github.com/tamarinworks/porter/pull/1522/files?w=1#diff-abc", "https://github.com/tamarinworks/porter/pull/1522/files?w=1&via=loupe#diff-abc"),
+        ("https://github.com/search?q=a%26b+c", "https://github.com/search?q=a%26b+c&via=loupe"),
+        ("http://www.github.com/tamarinworks/porter/pull/1522", "http://www.github.com/tamarinworks/porter/pull/1522?via=loupe"),
+        ("https://github.com/tamarinworks/porter/pull/1522?via=loupe", "https://github.com/tamarinworks/porter/pull/1522?via=loupe"),
+    ])
+    func linksToGitHubAreMarkedAsLoupesOwnForTheBrowser(_ link: String, _ marked: String) throws {
+        #expect(browserURL(for: try #require(URL(string: link))).absoluteString == marked)
+    }
+
+    @Test(arguments: [
+        "https://example.com/tamarinworks/porter/pull/1522?w=1#top",
+        "https://gist.github.com/glenjamin/abc",
+        "https://app.circleci.com/pipelines/github/tamarinworks/porter/1",
+        "mailto:someone@example.com",
+    ])
+    func otherLinksGoToTheBrowserUnchanged(_ link: String) throws {
+        let url = try #require(URL(string: link))
+        #expect(browserURL(for: url) == url)
+    }
+
+    @Test func aMarkedLinkPastedBackStillOpensItsPullRequest() throws {
+        let marked = browserURL(for: try #require(URL(string: "https://github.com/tamarinworks/porter/pull/1522/files#discussion_r2412345678")))
+        #expect(PullRequestLink(url: marked) == PullRequestLink(repository: "tamarinworks/porter", number: 1522))
+    }
 }

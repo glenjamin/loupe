@@ -234,7 +234,7 @@ private struct WindowChrome: View {
                 ToolbarItemGroup {
                     if let tab {
                         let url = tab.pullRequest.url
-                        Button("Open on GitHub", systemImage: "safari") { NSWorkspace.shared.open(url) }
+                        Button("Open on GitHub", systemImage: "safari") { openInBrowser(url) }
                             .help("Open on GitHub")
                         Button("Copy Link", systemImage: "link") { copyLink(url) }
                             .keyboardShortcut("c", modifiers: [.command, .shift])

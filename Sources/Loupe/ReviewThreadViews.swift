@@ -188,7 +188,10 @@ private struct ThreadCard: View {
             // Links in comments follow the conversation's: a PR opens in its tab.
             .environment(\.openURL, OpenURLAction { [tab] url in
                 let inBrowserTab = NSApp.currentEvent?.modifierFlags.contains(.command) == true
-                guard !inBrowserTab, PullRequestLink(url: url) != nil else { return .systemAction }
+                guard !inBrowserTab, PullRequestLink(url: url) != nil else {
+                    openInBrowser(url)
+                    return .handled
+                }
                 followLink(url, inBrowserTab: false) { await tab.open($0) }
                 return .handled
             })

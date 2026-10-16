@@ -14,7 +14,7 @@ struct LoupeApp: App {
     init() {
         let windows = WindowManager(tabs: makeTabs())
         self.windows = windows
-        let links = IncomingLinks(bringForward: { windows.comeForward() }, openInBrowser: { NSWorkspace.shared.open($0) })
+        let links = IncomingLinks(bringForward: { windows.comeForward() }, openInBrowser: { openInBrowser($0) })
         AppDelegate.incomingLinks = links
         NotificationCenter.default.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {

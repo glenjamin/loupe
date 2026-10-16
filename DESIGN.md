@@ -567,6 +567,10 @@ The page runs no script, so these are links in a `loupe-thread://<action>/<threa
 
 An outdated thread, or one on a line the diff lacks, is shown where the diff already puts it, after the file's last row; one on a hidden file shows once that file's diff is made on demand. Only a thread the diff can't show at all, because there's no diff yet, the PR no longer changes its file, or it's on commits newer than the diff waiting for a reload, is said so in a note over the conversation; its reply is written in a sheet there with the same composer, so every thread can be answered.
 
+### Loupe marks the GitHub links it sends to the browser with `via=loupe`
+
+A link router such as Finicky sends github.com PR links to Loupe by matching the URL, and the only thing it knows about a link is the URL, so it also caught Loupe's own "Open on GitHub", ⌘-clicked links and checks, sending them straight back; a PR link Loupe couldn't open could bounce between the two forever. Every link Loupe sends to the browser goes through one function, which adds `via=loupe` to github.com URLs (kept before any `#` anchor, alongside any existing query), so a router can tell Loupe's own apart and let them through. GitHub ignores the parameter. Finicky's rewrites run before its handlers, so it can't strip the marker without its PR rule matching again; the browser shows it. A marked link given back to Loupe still opens its PR, as the query plays no part in naming one.
+
 ## Not yet decided
 
 Nothing is pending.

@@ -91,11 +91,11 @@ extension GitHubWebPage: WKNavigationDelegate, WKUIDelegate {
 func followLink(_ url: URL?, inBrowserTab: Bool, openPullRequest: @escaping @MainActor (PullRequestLink) async -> Bool) {
     guard let url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else { return }
     guard !inBrowserTab, let link = PullRequestLink(url: url) else {
-        NSWorkspace.shared.open(url)
+        openInBrowser(url)
         return
     }
     Task {
-        if await !openPullRequest(link) { NSWorkspace.shared.open(url) }
+        if await !openPullRequest(link) { openInBrowser(url) }
     }
 }
 

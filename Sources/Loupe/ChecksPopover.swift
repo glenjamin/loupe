@@ -175,7 +175,7 @@ private struct CheckRow: View {
     var body: some View {
         if let url = check.url.flatMap(URL.init(string:)) {
             Button {
-                NSWorkspace.shared.open(url)
+                openInBrowser(url)
                 onOpen()
             } label: {
                 label.background(isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 5))
