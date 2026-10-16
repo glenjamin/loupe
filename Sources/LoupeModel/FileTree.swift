@@ -39,6 +39,13 @@ public struct FileTree: Sendable, Equatable {
         public let children: [Node]
     }
 
+    /// A node as one line of the list, `depth` directories in from the left.
+    public struct Row: Sendable, Equatable, Identifiable {
+        public let node: Node
+        public let depth: Int
+        public var id: String { node.id }
+    }
+
     public let nodes: [Node]
 
     public init(paths: some Sequence<String>) {
@@ -54,9 +61,21 @@ public struct FileTree: Sendable, Equatable {
     public var files: [String] {
         nodes.flatMap(\.files)
     }
+
+    /// The nodes top to bottom as the list shows them, leaving out what's inside the directories
+    /// whose paths are in `collapsed`.
+    public func rows(collapsed: Set<String>) -> [Row] {
+        nodes.flatMap { $0.rows(depth: 0, collapsed: collapsed) }
+    }
 }
 
 private extension FileTree.Node {
+    func rows(depth: Int, collapsed: Set<String>) -> [FileTree.Row] {
+        let row = FileTree.Row(node: self, depth: depth)
+        guard case let .directory(directory) = self, !collapsed.contains(directory.path) else { return [row] }
+        return [row] + directory.children.flatMap { $0.rows(depth: depth + 1, collapsed: collapsed) }
+    }
+
     var files: [String] {
         switch self {
         case let .directory(directory): directory.children.flatMap(\.files)

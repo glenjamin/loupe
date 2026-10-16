@@ -507,6 +507,10 @@ The check waits 300ms for the selection to settle and is replaced by the next se
 
 The whole PR's choice in the commit picker, both the sidebar row and the first row of its list, reads "All N commits" (or "All 1 commit") rather than "All changes". The count says how much the picker can step through, which "All changes" didn't. Before the commits are listed it reads "All commits", there being no count yet.
 
+### The file tree steps in 12pt a level, drawn by Loupe rather than the list's outline
+
+The file tree's levels were `DisclosureGroup`s, so each took the list's own outline indent and disclosure chevron, and a file under a directory sat well to the right of the directory's own symbol. That spent the sidebar's narrow width on whitespace, where long names get cut short. github.com's tree steps in about 12px a level, with a small chevron on directories. The tree is now flattened into plain rows, each stepped in 12pt a level, and a directory row draws its own small chevron in a slot as wide as a file's tick slot, so in a PR's list a directory's folder symbol lines up with its sibling files' document symbols. Clicking anywhere on a directory row folds or opens it; directories still can't be selected.
+
 ## Not yet decided
 
 Nothing is pending.

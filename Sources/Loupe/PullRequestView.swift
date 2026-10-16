@@ -511,14 +511,14 @@ struct ReviewFileList: View {
     let changes: ReviewChanges?
     let selection: Binding<FileDiff.ID?>
     /// Directories folded shut, by tree; every one starts open.
-    @State private var collapsed: Set<String> = []
+    @State private var collapsed: [String: Set<String>] = [:]
 
     var body: some View {
         List(selection: selection) {
             if let changes {
                 let files = Dictionary(changes.files.map { ($0.path, $0) }) { first, _ in first }
                 Section {
-                    FileTreeRows(nodes: FileTree(paths: files.keys).nodes, tree: "review", collapsed: $collapsed) { path in
+                    FileTreeRows(tree: FileTree(paths: files.keys), collapsed: collapsed(in: "review")) { path in
                         if let file = files[path] {
                             row(path) { ReviewLineCounts(file: file) }
                         }
@@ -527,7 +527,7 @@ struct ReviewFileList: View {
                 if !changes.hidden.isEmpty {
                     let hidden = Dictionary(changes.hidden.map { ($0.path, $0) }) { first, _ in first }
                     Section {
-                        FileTreeRows(nodes: FileTree(paths: hidden.keys).nodes, tree: "hidden", collapsed: $collapsed) { path in
+                        FileTreeRows(tree: FileTree(paths: hidden.keys), collapsed: collapsed(in: "hidden")) { path in
                             if let file = hidden[path] {
                                 row(path, help: file.renamedFrom.map { "\($0) → \(file.path)" }) { HiddenFileChange(file: file) }
                             }
@@ -564,46 +564,58 @@ struct ReviewFileList: View {
             .help(help ?? path)
             .tag(Optional(path))
     }
+
+    private func collapsed(in tree: String) -> Binding<Set<String>> {
+        Binding { collapsed[tree] ?? [] } set: { collapsed[tree] = $0 }
+    }
 }
 
-/// A tree's nodes as list rows: each directory a disclosure row, open unless folded shut, and
-/// each file the row `file` makes for its path. Directories take no tag, so only files can be
-/// selected.
+/// A tree's nodes as list rows, each stepped in by its depth: each directory a row that folds
+/// it shut or opens it on a click, and each file the row `file` makes for its path. Directories
+/// take no tag, so only files can be selected.
 struct FileTreeRows<FileRow: View>: View {
-    let nodes: [FileTree.Node]
-    /// Tells apart the folded directories of trees sharing `collapsed`.
-    let tree: String
+    let tree: FileTree
+    /// The paths of the directories folded shut.
     @Binding var collapsed: Set<String>
     @ViewBuilder let file: (String) -> FileRow
 
     var body: some View {
-        ForEach(nodes) { node in
-            switch node {
-            case let .directory(directory):
-                DisclosureGroup(isExpanded: isExpanded(directory.path)) {
-                    FileTreeRows(nodes: directory.children, tree: tree, collapsed: $collapsed, file: file)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder").foregroundStyle(.secondary)
-                        Text(verbatim: directory.name)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                    .help(directory.path)
+        ForEach(tree.rows(collapsed: collapsed)) { row in
+            Group {
+                switch row.node {
+                case let .directory(directory):
+                    directoryRow(directory)
+                case let .file(path):
+                    file(path)
                 }
-            case let .file(path):
-                file(path)
             }
+            // About as far a level as github.com's tree steps in, to keep the sidebar's width for names.
+            .padding(.leading, CGFloat(row.depth) * 12)
         }
     }
 
-    private func isExpanded(_ path: String) -> Binding<Bool> {
-        let key = "\(tree):\(path)"
-        return Binding {
-            !collapsed.contains(key)
-        } set: { expanded in
-            if expanded { collapsed.remove(key) } else { collapsed.insert(key) }
+    private func directoryRow(_ directory: FileTree.Directory) -> some View {
+        let isCollapsed = collapsed.contains(directory.path)
+        return Button {
+            if isCollapsed { collapsed.remove(directory.path) } else { collapsed.insert(directory.path) }
+        } label: {
+            HStack(spacing: 6) {
+                // As wide as a file row's tick slot, so a directory's symbol lines up with its
+                // siblings'.
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14)
+                Image(systemName: "folder").foregroundStyle(.secondary)
+                Text(verbatim: directory.name)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .help(directory.path)
     }
 }
 

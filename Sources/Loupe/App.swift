@@ -164,7 +164,7 @@ struct FileList: View {
     var body: some View {
         let byPath = Dictionary(files.map { ($0.path, $0) }) { first, _ in first }
         List(selection: $selection) {
-            FileTreeRows(nodes: FileTree(paths: byPath.keys).nodes, tree: "files", collapsed: $collapsed) { path in
+            FileTreeRows(tree: FileTree(paths: byPath.keys), collapsed: $collapsed) { path in
                 if let file = byPath[path] {
                     FileRow(file: file).tag(Optional(path))
                 }
