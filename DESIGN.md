@@ -479,6 +479,10 @@ On anyone else's open PR, the header's right end, where the viewer's own PR has 
 
 This extends "New comments start from a "+" in the gutter and post at once". Where the viewer can review, the comment box has github.com's two buttons: "Add single comment", which posts at once over REST as before, and "Start a review", which becomes "Add review comment" once a review is pending. On the viewer's own PR it keeps its one Comment button, as there's no Review button there to finish a review with. ⌘↩ adds a single comment unless a review is pending, and then adds to the review; the prominent button is whichever ⌘↩ sends, and the caption says which. So the key keeps its old meaning until the viewer has chosen to review, and from then on doesn't post anything on its own while they're partway through one. This differs from github.com, whose green button is always the review's; a native default button is what Return sends, so the two are kept together.
 
+### ⌘1 shows the lists
+
+"Show Pull Requests" is now ⌘1, replacing ⌘§, and the PR tabs move along one: ⌘2–⌘8 pick the first to seventh PR tab, and ⌘9 still picks the strip's last item, which is the lists when no PR is open. ⌘§ didn't work well in practice. The lists are the first item in the strip, so numbering from them matches what's on screen, as browsers number tabs by position.
+
 ## Not yet decided
 
 Nothing is pending.

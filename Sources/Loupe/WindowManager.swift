@@ -72,10 +72,15 @@ final class WindowManager {
         render()
     }
 
-    /// Shows PR tab `number`, counting from 1; 9 is always the last, as in browsers.
+    /// Shows the strip's item `number`, counting from 1 with the lists first; 9 is always the
+    /// last, as in browsers.
     func selectTab(number: Int) {
-        let index = number == 9 ? tabs.tabs.count - 1 : number - 1
-        if tabs.tabs.indices.contains(index) { select(tabs.tabs[index].id) }
+        let index = number == 9 ? tabs.tabs.count - 1 : number - 2
+        if index < 0 {
+            showLists()
+        } else if tabs.tabs.indices.contains(index) {
+            select(tabs.tabs[index].id)
+        }
     }
 
     /// Shows the item `offset` places along, the lists counting as the first.
@@ -275,8 +280,8 @@ private struct ListsContent: View {
     }
 }
 
-/// The tab keys: ⌘W and ⌥⌘W close PR tabs, ⌘§ shows the lists, ⌘⇧[ and ⌘⇧] step through the
-/// strip, and ⌘1–⌘9 pick a PR tab. ⌃Tab is the window manager's key monitor.
+/// The tab keys: ⌘W and ⌥⌘W close PR tabs, ⌘⇧[ and ⌘⇧] step through the strip, and ⌘1–⌘9
+/// pick an item in it by position, ⌘1 being the lists. ⌃Tab is the window manager's key monitor.
 struct TabCommands: Commands {
     let windows: WindowManager
 
@@ -290,12 +295,12 @@ struct TabCommands: Commands {
         }
         CommandGroup(before: .windowArrangement) {
             Button("Show Pull Requests") { windows.showLists() }
-                .keyboardShortcut("§")
+                .keyboardShortcut("1")
             Button("Select Previous Tab") { windows.selectAdjacent(-1) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
             Button("Select Next Tab") { windows.selectAdjacent(1) }
                 .keyboardShortcut("]", modifiers: [.command, .shift])
-            ForEach(1..<9) { number in
+            ForEach(2..<9) { number in
                 Button("Select Tab \(number)") { windows.selectTab(number: number) }
                     .keyboardShortcut(KeyEquivalent(Character("\(number)")))
             }
