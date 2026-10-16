@@ -96,7 +96,7 @@ struct PullRequestColumn: View {
                 List(pullRequests, selection: $selection) { pullRequest in
                     let checkout = model.checkout(for: pullRequest.repository)
                     Button { model.open(pullRequest) } label: {
-                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, isSelfReviewed: model.isSelfReviewed(pullRequest))
+                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, isSelfReviewed: model.isSelfReviewed(pullRequest))
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -130,6 +130,8 @@ struct PullRequestColumn: View {
 struct PullRequestRow: View {
     let pullRequest: PullRequestSummary
     let showsAuthor: Bool
+    /// Off where every PR is awaiting the viewer's review, so the badge would say nothing.
+    let showsReviewRequired: Bool
     let isSelfReviewed: Bool
 
     var body: some View {
@@ -153,7 +155,7 @@ struct PullRequestRow: View {
                 if showsAuthor, let author = pullRequest.author {
                     Text(author)
                 }
-                if let decision = pullRequest.reviewDecision {
+                if let decision = pullRequest.reviewDecision, showsReviewRequired || decision != .reviewRequired {
                     ReviewDecisionLabel(decision: decision)
                 }
                 if let checks = pullRequest.checks {

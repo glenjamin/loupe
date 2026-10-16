@@ -433,6 +433,10 @@ The conversation's web view loads a whole new page for new content, which put th
 
 A noticed change on an open PR also looks up its checks and merge state, which the lookup by id leaves out. Before, an approval reached the review decision within a minute but `mergeStateStatus` stayed `BLOCKED` until the lists' next refresh, so the merge box said "Blocked by branch protection" on a PR that could merge. It reuses the status lookup the lists run after each refresh, as "Ready for review" already did, rather than widening the by-id query, so both stay one query each with known costs.
 
+### "Review required" isn't shown in the To review list
+
+Every PR in To review is there because a review is being asked of the viewer, so a "Review required" badge on each row said nothing and drew the eye in amber to every one alike. The To review list leaves it out; "Approved" and "Changes requested" still show there, as they say how others' reviews went. Mine and an open PR's header keep the badge, as there it's news.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.
