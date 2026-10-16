@@ -272,7 +272,7 @@ private struct ListsContent: View {
     }
 }
 
-/// The tab keys: ⌘W and ⌥⌘W close PR tabs, ⌘T shows the lists, ⌘⇧[ and ⌘⇧] step through the
+/// The tab keys: ⌘W and ⌥⌘W close PR tabs, ⌘§ shows the lists, ⌘⇧[ and ⌘⇧] step through the
 /// strip, and ⌘1–⌘9 pick a PR tab. ⌃Tab is the window manager's key monitor.
 struct TabCommands: Commands {
     let windows: WindowManager
@@ -287,7 +287,7 @@ struct TabCommands: Commands {
         }
         CommandGroup(before: .windowArrangement) {
             Button("Show Pull Requests") { windows.showLists() }
-                .keyboardShortcut("t")
+                .keyboardShortcut("§")
             Button("Select Previous Tab") { windows.selectAdjacent(-1) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
             Button("Select Next Tab") { windows.selectAdjacent(1) }

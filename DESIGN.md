@@ -459,6 +459,10 @@ The PR is hidden when the list is read, not removed from the store, so it stays 
 
 A request nobody acted on for two weeks is stale noise in a list meant for what to review next; GitHub's own list never prunes them, so they pile up. Glen's list on the day this was built held six such requests, the oldest a year old.
 
+### ⌘§ shows the lists
+
+"Show Pull Requests" is ⌘§ rather than ⌘T. The lists are tab 0 beside ⌘1–⌘9 for the PR tabs, and on the UK layout § is the key left of 1, so ⌘§ reads as "tab 0"; ⌘T means "new tab" everywhere else, which showing the lists isn't. ⌘T isn't kept alongside, as SwiftUI's menu commands can't carry a second key without a second, visible menu item.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.
