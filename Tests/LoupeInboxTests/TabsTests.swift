@@ -344,6 +344,99 @@ struct TabsTests {
         #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
     }
 
+    @Test func aReloadKeepsTheDiffShownUntilTheNewOneReplacesIt() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
+        let second = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        await app.tabs.lists.refresh()
+        let gate = StepGate(holding: .diffing)
+        tab.beforeStep = { await gate.pass($0) }
+
+        let reloading = Task { await tab.reload() }
+        await gate.reached()
+
+        #expect(tab.reloading == .diffing)
+        #expect(tab.isReplacingShownChanges)
+        #expect(tab.ready?.headOid == first, "the old diff stays while the new one is made")
+        #expect(tab.shown?.files.map(\.path) == ["app.go"])
+        #expect(tab.selectedFile == "app.go")
+        #expect(tab.pendingChange == nil, "the new commits aren't offered while they're being taken")
+
+        gate.release()
+        await reloading.value
+
+        #expect(tab.reloading == nil)
+        #expect(!tab.isReplacingShownChanges)
+        #expect(tab.ready?.headOid == second)
+        #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
+    }
+
+    @Test func aFirstLoadGoesThroughEachStepBeforeTheDiffIsReady() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, opened, _) = try await app.openDiffed(in: repo)
+        app.tabs.close(opened.id)
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        var steps: [DiffStep] = []
+        tab.beforeStep = { step in
+            steps.append(step)
+            guard case let .producing(shown) = tab.phase else {
+                Issue.record("expected the step to show, got \(tab.phase)")
+                return
+            }
+            #expect(shown == step)
+            #expect(tab.reloading == nil, "there's no diff yet to keep")
+        }
+
+        await tab.load()
+
+        #expect(steps == [.resolvingCheckout, .fetching, .diffing])
+        #expect(tab.ready?.changes.files.map(\.path) == ["app.go"])
+    }
+
+    @Test func pickingACommitKeepsTheChangesShownUntilItsOwnAreDiffed() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
+        let second = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        await app.tabs.lists.refresh()
+        await tab.reload()
+        var gate = StepGate(holding: .diffing)
+        tab.beforeStep = { await gate.pass($0) }
+
+        let picking = Task { await tab.showCommit(second) }
+        await gate.reached()
+
+        #expect(tab.pendingCommit == second)
+        #expect(tab.isReplacingShownChanges)
+        #expect(tab.shownCommit == nil, "the whole PR's changes are still shown")
+        #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
+        #expect(tab.selectedFile == "app.go")
+
+        gate.release()
+        await picking.value
+
+        #expect(tab.pendingCommit == nil)
+        #expect(!tab.isReplacingShownChanges)
+        #expect(tab.shownCommit == second)
+        #expect(tab.shown?.files.map(\.path) == ["README"])
+        #expect(tab.selectedFile == "README")
+
+        // A pick overtaken by another before its diff is ready isn't shown when it is.
+        gate = StepGate(holding: .diffing)
+        let overtaken = Task { await tab.showCommit(first) }
+        await gate.reached()
+        await tab.showCommit(nil)
+        #expect(tab.pendingCommit == nil)
+        #expect(tab.shownCommit == nil)
+        gate.release()
+        await overtaken.value
+        #expect(tab.shownCommit == nil, "the whole PR's changes were picked last")
+        #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
+    }
+
     @Test func eachChoiceOfChangesSaysHowMuchItChangesTheFilesToReview() async throws {
         let repo = try await FakeRepository()
         let app = try await App()
@@ -397,6 +490,23 @@ struct TabsTests {
         #expect(diff.change == .added)
         #expect(diff.hunks.flatMap(\.lines).map(\.text) == ["# lockfile"])
         #expect(tab.hiddenFileDiff(of: "vendor/example.com/lib/lib.go") == nil, "only the file asked for")
+    }
+
+    @Test func aHiddenFileKeepsItsLastDiffToShowWhileAnotherCommitsIsMade() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
+        _ = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        await app.tabs.lists.refresh()
+        await tab.reload()
+        #expect(tab.lastHiddenFileDiff(of: "yarn.lock") == nil, "never diffed")
+
+        tab.selectedFile = "yarn.lock"
+        await tab.diffHiddenFile("yarn.lock")
+        await tab.showCommit(first)
+
+        #expect(tab.hiddenFileDiff(of: "yarn.lock") == nil, "not yet diffed in this commit")
+        #expect(tab.lastHiddenFileDiff(of: "yarn.lock")?.hunks.flatMap(\.lines).map(\.text) == ["# lockfile"])
     }
 
     @Test func anUnchangedNotificationsPollChecksNothingAndWaitsAsLongAsGitHubAsks() async throws {
@@ -924,6 +1034,40 @@ private final class ShowRecorder {
 private final class OutsideWorld {
     var broughtForward = 0
     var browsed: [String] = []
+}
+
+/// Holds a tab's git work the first time it reaches one step, until released, so a test can
+/// look at the tab meanwhile.
+@MainActor
+private final class StepGate {
+    private let held: DiffStep
+    private var hasArrived = false
+    private var arrival: CheckedContinuation<Void, Never>?
+    private var waiting: CheckedContinuation<Void, Never>?
+
+    init(holding step: DiffStep) {
+        held = step
+    }
+
+    /// For the tab's `beforeStep`.
+    func pass(_ step: DiffStep) async {
+        guard step == held, !hasArrived else { return }
+        hasArrived = true
+        arrival?.resume()
+        arrival = nil
+        await withCheckedContinuation { waiting = $0 }
+    }
+
+    /// Returns once the work is held.
+    func reached() async {
+        if hasArrived { return }
+        await withCheckedContinuation { arrival = $0 }
+    }
+
+    func release() {
+        waiting?.resume()
+        waiting = nil
+    }
 }
 
 private extension PullRequestTab {

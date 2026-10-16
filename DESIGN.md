@@ -551,6 +551,14 @@ Where a row or a PR's header said "Review required", it now says "Review request
 
 The reviewers come from lookups by id, not the searches. A full page of Mine already takes 7–10 seconds against GitHub's 10-second limit, and with review requests in each row one such page failed. The to-review check of requests by id already runs every refresh, so it now takes the viewer's open PRs along in the same batches. A request made from Loupe names the reviewer on the row as soon as GitHub accepts it, rather than at the next refresh.
 
+### Loading keeps what's on screen, dimmed, until its replacement is ready
+
+A PR's first load is one wait, not three views: the detail pane shows a small spinner over what's happening in secondary text ("Finding the local checkout…", "Fetching #N from origin…", "Diffing…") and what it's happening to below in tertiary monospace (the repo, the repo and branch, the branches), with only the words changing between steps. The sidebar shows a small spinner and the step, said briefly, where the commit picker will appear, rather than an empty column. Text was chosen over a `redacted` skeleton of file rows because the number and shape of the files aren't known yet, and a skeleton would suggest a list that then jumps to a different one.
+
+Once a diff has been shown, nothing blanks it again. A reload, from the banner or on coming back to a tab with new commits, keeps the phase ready with the old diff while `reloading` says how far the new one has got; a failure or a lost checkout still replaces it, as before. Picking a commit leaves `shownCommit` and the changes alone while the commit is diffed, as `pendingCommit`, and switches both together once it's ready; a later pick overtakes an earlier one still diffing. Everything that reads the shown changes (threads, comment anchors, revealed context, unresolved counts) keeps describing what's actually on screen, rather than the new choice's range against the old content. While either is under way the file list and the diff take no clicks and are veiled, with a small spinner by the picker's chevron, and the picker names the commit picked. A hidden file whose diff for the shown changes isn't made yet shows its last diff from other changes the same way, or the centred wait if it has never been diffed.
+
+The veil waits 150ms before showing, so quick work such as a small commit's diff doesn't flicker, and lifts at once, so new content never shows dimmed. It's a half-opaque layer of the window's background colour over the content rather than `opacity` on it: AppKit-backed lists fade layer by layer, so rows showed through their own footer. Threads stay as placed for the shown diff while a reload is under way, as they do while new commits wait, since the new head's lines could put them on the wrong rows.
+
 ## Not yet decided
 
 Nothing is pending.

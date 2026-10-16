@@ -56,8 +56,10 @@ struct PullRequestView: View {
     @ViewBuilder
     private func content(_ pullRequest: PullRequestSummary) -> some View {
         switch tab.phase {
-        case .resolvingCheckout:
-            ProgressView("Finding the local checkout…")
+        case let .producing(step):
+            // One view through every step, only its words changing, so it reads as one wait.
+            LoadingLabel(title: step.title(of: pullRequest), detail: step.detail(of: pullRequest))
+                .animation(.default, value: step)
         case .noCheckout:
             ContentUnavailableView {
                 Label("No local checkout of \(pullRequest.repository)", systemImage: "folder.badge.questionmark")
@@ -70,14 +72,11 @@ struct PullRequestView: View {
                     }
                 }
             }
-        case .fetching:
-            ProgressView { Text(verbatim: "Fetching #\(pullRequest.number) from origin…") }
-        case .diffing:
-            ProgressView("Diffing…")
         case let .ready(diff):
             FileDetail(tab: tab)
                 // A new head can change a file under the same path.
                 .id(diff.headOid)
+                .dimmed(while: tab.isReplacingShownChanges)
         case let .failed(message):
             ContentUnavailableView {
                 Label("Couldn't produce the diff", systemImage: "exclamationmark.triangle")
@@ -98,12 +97,27 @@ struct ReviewSidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             ConversationRow(tab: tab)
-            if case let .ready(diff) = tab.phase {
+            switch tab.phase {
+            case let .ready(diff):
                 CommitPicker(tab: tab, commits: diff.commits)
                 Divider()
                 ReviewFileList(tab: tab, changes: shownChanges, selection: fileSelection)
                     .id(diff.headOid)
-            } else {
+                    .dimmed(while: tab.isReplacingShownChanges)
+            case let .producing(step):
+                // Where the commit picker will be, lined up with its label.
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(step.sidebarTitle)
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 5)
+                .animation(.default, value: step)
+                Spacer(minLength: 0)
+            case .noCheckout, .failed:
                 Spacer(minLength: 0)
             }
         }
@@ -301,8 +315,7 @@ struct FileDetail: View {
     private var detail: some View {
         switch tab.shownChanges {
         case .diffing, nil:
-            ProgressView("Diffing…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            LoadingLabel(title: "Diffing…")
         case let .failed(message):
             ContentUnavailableView {
                 Label("Couldn't diff this commit", systemImage: "exclamationmark.triangle")
@@ -326,20 +339,23 @@ struct FileDetail: View {
         }
     }
 
+    /// A hidden file's diff once made. Until then its diff last made, from other changes, stays
+    /// dimmed in the same place, so switching commit doesn't blank it; with none, a spinner.
     @ViewBuilder
     private func hiddenFile(_ file: ChangedFile) -> some View {
-        switch tab.hiddenFileDiff(of: file.path) {
-        case .diffing, nil:
-            ProgressView("Diffing…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case let .ready(diff):
-            diffView(diff)
-        case let .failed(message):
+        let state = tab.hiddenFileDiff(of: file.path)
+        let ready: FileDiff? = if case let .ready(diff)? = state { diff } else { nil }
+        if case let .failed(message)? = state {
             ContentUnavailableView {
                 Label("Couldn't diff \(file.path)", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(message).textSelection(.enabled)
             }
+        } else if let diff = ready ?? tab.lastHiddenFileDiff(of: file.path) {
+            diffView(diff)
+                .dimmed(while: ready == nil)
+        } else {
+            LoadingLabel(title: "Diffing…", detail: file.path)
         }
     }
 
@@ -398,6 +414,8 @@ struct CommitPicker: View {
                     Image(systemName: "clock.arrow.circlepath")
                 }
                 Spacer(minLength: 0)
+                DelayedSpinner(isActive: tab.isReplacingShownChanges)
+                    .help(tab.reloading == nil ? "Diffing…" : "Reloading the diff…")
                 Image(systemName: "chevron.down")
                     .imageScale(.small)
                     .foregroundStyle(.secondary)
@@ -424,8 +442,9 @@ struct CommitPicker: View {
         .padding([.horizontal, .bottom], 8)
     }
 
+    /// Names the commit picked at once, even while its changes are still being diffed.
     private var shownLabel: Text {
-        guard let commit = commits.first(where: { $0.oid == tab.shownCommit }) else { return Text(verbatim: allCommitsTitle(commits.count)) }
+        guard let commit = commits.first(where: { $0.oid == tab.pendingCommit ?? tab.shownCommit }) else { return Text(verbatim: allCommitsTitle(commits.count)) }
         return Text(verbatim: String(commit.oid.prefix(7))).monospaced() + Text(verbatim: "  \(commit.headline)")
     }
 }
@@ -459,8 +478,9 @@ struct CommitList: View {
         }
     }
 
+    /// The choice last picked, ticked even while it's still being diffed.
     private var shown: CommitChoice {
-        tab.shownCommit.map(CommitChoice.commit) ?? .all
+        (tab.pendingCommit ?? tab.shownCommit).map(CommitChoice.commit) ?? .all
     }
 
     private func row(_ choice: CommitChoice, title: String, oid: String?) -> some View {
@@ -834,5 +854,107 @@ private func allCommitsTitle(_ count: Int) -> String {
     case 0: "All commits"
     case 1: "All 1 commit"
     default: "All \(count) commits"
+    }
+}
+
+/// A wait for git, centred in the space it will fill: a small spinner over what's happening in
+/// secondary text, and what it's happening to below that.
+struct LoadingLabel: View {
+    let title: String
+    var detail: String?
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(verbatim: title)
+                .foregroundStyle(.secondary)
+            if let detail {
+                Text(verbatim: detail)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// A small spinner shown only once work has gone on a moment, so quick work doesn't flicker it.
+struct DelayedSpinner: View {
+    let isActive: Bool
+    @State private var isShown = false
+
+    var body: some View {
+        ProgressView()
+            .controlSize(.mini)
+            .opacity(isActive && isShown ? 1 : 0)
+            .frame(width: isActive ? nil : 0)
+            .task(id: isActive) { isShown = await settled(isActive) }
+    }
+}
+
+extension View {
+    /// Dims content that's about to be replaced and stops it taking clicks, until it is. The
+    /// dimming waits a moment, so quick work doesn't flicker it.
+    func dimmed(while isReplaced: Bool) -> some View {
+        modifier(DimmedWhileReplaced(isReplaced: isReplaced))
+    }
+}
+
+private struct DimmedWhileReplaced: ViewModifier {
+    let isReplaced: Bool
+    @State private var isDimmed = false
+
+    func body(content: Content) -> some View {
+        content
+            .allowsHitTesting(!isReplaced)
+            // A veil rather than opacity, which AppKit-backed lists apply layer by layer, so
+            // rows would show through their own footer. Lifted at once when replaced, so the
+            // new content never shows dimmed.
+            .overlay {
+                Color(nsColor: .windowBackgroundColor)
+                    .opacity(isReplaced && isDimmed ? 0.5 : 0)
+                    .animation(isReplaced && isDimmed ? .easeInOut(duration: 0.15) : nil, value: isReplaced && isDimmed)
+                    .allowsHitTesting(isReplaced)
+            }
+            .task(id: isReplaced) { isDimmed = await settled(isReplaced) }
+    }
+}
+
+/// `isActive` once it has stayed so for a moment, or false at once.
+@MainActor
+private func settled(_ isActive: Bool) async -> Bool {
+    guard isActive else { return false }
+    return (try? await Task.sleep(for: .milliseconds(150))) != nil
+}
+
+private extension DiffStep {
+    /// What the step is doing, said in the detail pane.
+    func title(of pullRequest: PullRequestSummary) -> String {
+        switch self {
+        case .resolvingCheckout: "Finding the local checkout…"
+        case .fetching: "Fetching #\(pullRequest.number) from origin…"
+        case .diffing: "Diffing…"
+        }
+    }
+
+    /// What the step works on, under its title.
+    func detail(of pullRequest: PullRequestSummary) -> String {
+        switch self {
+        case .resolvingCheckout: pullRequest.repository
+        case .fetching: "\(pullRequest.repository) · \(pullRequest.headRefName)"
+        case .diffing: "\(pullRequest.headRefName) → \(pullRequest.baseRefName)"
+        }
+    }
+
+    /// The step said briefly, for the sidebar.
+    var sidebarTitle: String {
+        switch self {
+        case .resolvingCheckout: "Finding the local checkout…"
+        case .fetching: "Fetching from origin…"
+        case .diffing: "Diffing…"
+        }
     }
 }

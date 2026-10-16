@@ -15,7 +15,10 @@ import Observation
 @MainActor
 public final class PullRequestTab: Identifiable {
     public let id: String
-    public private(set) var phase = ReviewPhase.resolvingCheckout
+    public private(set) var phase = ReviewPhase.producing(.resolvingCheckout)
+    /// While a ready diff is produced again, such as for new commits, how far that has got. The
+    /// diff stays as it was, still the phase's, until the new one replaces it.
+    public private(set) var reloading: DiffStep?
     /// The file shown, kept while switching between tabs.
     public var selectedFile: FileDiff.ID?
     /// The viewer's viewed state of each file, by path: as stored when the tab opened, then as
@@ -33,6 +36,15 @@ public final class PullRequestTab: Identifiable {
     public private(set) var isFetchingConversation = false
     /// Which commit's changes are shown, by oid, or nil for the whole PR's.
     public private(set) var shownCommit: String?
+    /// The commit picked to show next, by oid, while its changes are diffed. The changes shown
+    /// stay until they're ready, so they don't blank out for a moment.
+    public private(set) var pendingCommit: String?
+
+    /// Whether the changes shown are on their way out: being reloaded, or a commit's being
+    /// diffed to replace them.
+    public var isReplacingShownChanges: Bool {
+        reloading != nil || pendingCommit != nil
+    }
     /// Whether the list of commits to pick from is open, kept while switching between tabs.
     public var isPickingCommit = false
     /// Why GitHub refused the last request for a review, until another is made.
@@ -54,6 +66,9 @@ public final class PullRequestTab: Identifiable {
     var threadsOfShownDiff: [ReviewThread] = []
     /// The viewer's review being finished.
     public let reviewDraft = ReviewDraft()
+
+    /// Awaited as each step of git work starts; a snapshot run holds one there to draw it.
+    @ObservationIgnored public var beforeStep: @MainActor (DiffStep) async -> Void = { _ in }
 
     /// Opens a linked PR in its own tab; set by `TabsModel`.
     @ObservationIgnored var linkOpener: @MainActor (PullRequestLink) async -> Bool = { _ in false }
@@ -99,6 +114,8 @@ public final class PullRequestTab: Identifiable {
     private var countingCommits: Task<Void, Never>?
     /// Each hidden file's diff once asked for, by range and path.
     private var hiddenFileDiffs: [HiddenFileKey: DiffState<FileDiff>] = [:]
+    /// Each hidden file's latest diff, of whichever range, to show while another is made.
+    private var lastHiddenFileDiffs: [String: FileDiff] = [:]
 
     init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer, client: GitHubClient, candidates: ReviewerCandidates, sleep: @escaping @Sendable (Duration) async throws -> Void) {
         id = opened.id
@@ -153,10 +170,11 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// The review threads the diff places on its rows: the conversation's, except while new
-    /// commits wait for a reload, when they're as they were for the diff shown, as GitHub
-    /// places threads by the head's lines and the new head's could land on the wrong rows.
+    /// commits wait for a reload or are being reloaded, when they're as they were for the diff
+    /// shown, as GitHub places threads by the head's lines and the new head's could land on the
+    /// wrong rows.
     public var placedThreads: [ReviewThread] {
-        hasNewCommits ? threadsOfShownDiff : conversation?.threads ?? []
+        holdsPlacedThreads ? threadsOfShownDiff : conversation?.threads ?? []
     }
 
     /// Produces the diff and asks GitHub which files are viewed and for the conversation, unless
@@ -260,8 +278,8 @@ public final class PullRequestTab: Identifiable {
         return progress.isSelfReviewed(pullRequest, viewer: viewerLogin)
     }
 
-    /// The changes shown: the whole PR's, or the picked commit's once diffed. Nil until the
-    /// PR's diff is ready.
+    /// The changes shown: the whole PR's, or the shown commit's. Nil until the PR's diff is
+    /// ready.
     public var shownChanges: DiffState<ReviewChanges>? {
         guard case let .ready(review) = phase else { return nil }
         guard let commit = shownCommitRange(in: review) else { return .ready(review.changes) }
@@ -269,17 +287,29 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// Shows one commit's changes, by oid, or the whole PR's for nil, diffing the commit the
-    /// first time it's picked. Keeps the shown file if the commit changed it.
+    /// first time it's picked; until then it's pending and the changes shown stay. Keeps the
+    /// shown file if the commit changed it.
     public func showCommit(_ oid: String?) async {
         guard case let .ready(review) = phase, let checkout else { return }
-        shownCommit = review.commits.contains { $0.oid == oid } ? oid : nil
-        guard let range = shownCommitRange(in: review) else { return keepSelection(in: review.changes) }
+        guard let commit = review.commits.first(where: { $0.oid == oid }) else {
+            pendingCommit = nil
+            shownCommit = nil
+            return keepSelection(in: review.changes)
+        }
+        let range = commit.range
         switch commitChanges[range] {
-        case let .ready(changes): return keepSelection(in: changes)
-        case .diffing: return
-        case .failed, nil: break
+        case let .ready(changes):
+            pendingCommit = nil
+            shownCommit = commit.oid
+            return keepSelection(in: changes)
+        case .diffing:
+            pendingCommit = commit.oid
+            return
+        case .failed, nil:
+            pendingCommit = commit.oid
         }
         commitChanges[range] = .diffing
+        await beforeStep(.diffing)
         let state: DiffState<ReviewChanges>
         do {
             let diff = try await differ.diff(range, in: checkout)
@@ -289,7 +319,11 @@ public final class PullRequestTab: Identifiable {
             state = .failed(error.localizedDescription)
         }
         commitChanges[range] = state
-        if case let .ready(changes) = state, shownCommit == oid { keepSelection(in: changes) }
+        // Unless another choice, or a reload, has come since.
+        guard pendingCommit == commit.oid else { return }
+        pendingCommit = nil
+        shownCommit = commit.oid
+        if case let .ready(changes) = state { keepSelection(in: changes) }
     }
 
     /// How much a commit, by oid, or the whole PR for nil, changes the files to review: the
@@ -328,6 +362,12 @@ public final class PullRequestTab: Identifiable {
         shownRange.flatMap { hiddenFileDiffs[HiddenFileKey(range: $0, path: path)] }
     }
 
+    /// The hidden file's diff last made, of any range, to stand in while the shown changes' is
+    /// made. Nil if it hasn't been diffed.
+    public func lastHiddenFileDiff(of path: String) -> FileDiff? {
+        lastHiddenFileDiffs[path]
+    }
+
     /// Diffs a hidden file in the shown changes on its own, unless already done or underway.
     public func diffHiddenFile(_ path: String) async {
         guard let range = shownRange, let checkout, case let .ready(changes)? = shownChanges,
@@ -339,12 +379,14 @@ public final class PullRequestTab: Identifiable {
         case .failed, nil: break
         }
         hiddenFileDiffs[key] = .diffing
+        await beforeStep(.diffing)
         do {
             let text = try await differ.diff(of: file, in: range, checkout: checkout)
             let parsed = await Task.detached { DiffParser.parse(text) }.value
             // A change git shows no lines for, such as of mode alone, is still the file.
             let diff = parsed.first { $0.path == path } ?? FileDiff(path: path, change: file.change, isBinary: false, hunks: [])
             hiddenFileDiffs[key] = .ready(diff)
+            lastHiddenFileDiffs[path] = diff
         } catch {
             hiddenFileDiffs[key] = .failed(error.localizedDescription)
         }
@@ -639,9 +681,14 @@ public final class PullRequestTab: Identifiable {
     static let followDelay = Duration.seconds(2)
 
     /// Places the conversation's threads on the diff as they are now, unless new commits wait
-    /// for a reload.
+    /// for a reload or are being reloaded.
     func followPlacedThreads() {
-        if !hasNewCommits { threadsOfShownDiff = conversation?.threads ?? [] }
+        if !holdsPlacedThreads { threadsOfShownDiff = conversation?.threads ?? [] }
+    }
+
+    /// Whether the threads stay as placed for the diff shown, which is of an older head.
+    private var holdsPlacedThreads: Bool {
+        hasNewCommits || reloading != nil
     }
 
     /// Whether the PR's head has moved since its diff was produced.
@@ -719,18 +766,26 @@ public final class PullRequestTab: Identifiable {
         selectedFile = FileTree(paths: changes.files.map(\.path)).files.first ?? FileTree(paths: changes.hidden.map(\.path)).files.first
     }
 
+    /// Produces the diff of `pullRequest`. A diff already shown stays, its phase still ready,
+    /// while the new one is made, so a reload doesn't blank it; a failure replaces it.
     private func produce(_ pullRequest: PullRequestSummary) async {
-        phase = .resolvingCheckout
+        let replacesShownDiff = if case .ready = phase { true } else { false }
+        func start(_ step: DiffStep) async {
+            if replacesShownDiff { reloading = step } else { phase = .producing(step) }
+            await beforeStep(step)
+        }
+        defer { reloading = nil }
         do {
+            await start(.resolvingCheckout)
             guard let checkout = try await lists.resolveCheckout(for: pullRequest.repository) else {
                 phase = .noCheckout
                 // Looked for afresh when the tab is next shown, in case it has turned up.
                 seen = nil
                 return
             }
-            phase = .fetching
+            await start(.fetching)
             let fetched = try await differ.fetch(number: pullRequest.number, of: pullRequest.repository, baseRefName: pullRequest.baseRefName, baseRefOid: pullRequest.baseRefOid, in: checkout)
-            phase = .diffing
+            await start(.diffing)
             let diff = try await differ.diff(fetched, in: checkout)
             let files = await Task.detached { DiffParser.parse(diff.text) }.value
             // Bookkeeping only; a failure to record mustn't keep the diff from showing.
@@ -740,11 +795,13 @@ public final class PullRequestTab: Identifiable {
             let review = ReviewDiff(headOid: diff.headOid, mergeBase: diff.mergeBase, commits: diff.commits, changes: ReviewChanges(files: files, hidden: diff.hidden))
             self.checkout = checkout
             shownCommit = nil
+            pendingCommit = nil
             commitChanges = [:]
             commitStats = [:]
             hiddenFileDiffs = [:]
             contextExpansions.reset()
             keepSelection(in: review.changes)
+            reloading = nil
             followPlacedThreads()
             phase = .ready(review)
         } catch {
@@ -768,14 +825,22 @@ public enum ReviewSection: Sendable, Hashable {
 
 /// Where a tab's diff has got to.
 public enum ReviewPhase: Sendable {
-    case resolvingCheckout
+    /// Being produced for the first time, or after a failure.
+    case producing(DiffStep)
     /// No local checkout of the repo is known, so there's nothing to diff.
     case noCheckout
-    case fetching
-    case diffing
     case ready(ReviewDiff)
     /// Why it failed, including git's own message.
     case failed(String)
+}
+
+/// The steps of producing a PR's diff, in order. Diffing is also the one step of diffing a
+/// commit or a hidden file on demand.
+public enum DiffStep: Sendable, Equatable {
+    case resolvingCheckout
+    /// Fetching the PR's head, and its base, from origin.
+    case fetching
+    case diffing
 }
 
 public struct ReviewDiff: Sendable {

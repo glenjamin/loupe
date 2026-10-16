@@ -54,6 +54,10 @@ enum SnapshotRun {
         let tabs = windows.tabs
         let deadline = Date.now.addingTimeInterval(20)
         let started = Date.now
+        // LOUPE_SNAPSHOT_HOLD_PHASE=<resolving|fetching|diffing> holds each PR's first load at
+        // that step, before any tab is shown and starts one, so the wait can be drawn.
+        let hold = StepHold(step: environment["LOUPE_SNAPSHOT_HOLD_PHASE"].flatMap(DiffStep.init(named:)))
+        for tab in tabs.tabs { tab.beforeStep = { await hold.wait(at: $0) } }
         Task {
             let lists = tabs.lists
             await wait(until: deadline) { !lists.isLoading && (lists.error != nil || (lists.lastRefreshed ?? .distantPast) >= started) }
@@ -63,9 +67,9 @@ enum SnapshotRun {
             for tab in tabs.tabs { windows.select(tab.id) }
             windows.select(selected)
             for tab in tabs.tabs { Task { await tab.load() } }
-            await wait(until: deadline) { tabs.tabs.allSatisfy(\.phase.isSettled) }
+            await wait(until: deadline) { tabs.tabs.allSatisfy { $0.phase.isSettled(holding: hold.step) } }
             // LOUPE_SNAPSHOT_TAB picks each PR's section; a commit or file to show needs the files.
-            if environment["LOUPE_SNAPSHOT_COMMIT"] != nil || environment["LOUPE_SNAPSHOT_FILE"] != nil || environment["LOUPE_SNAPSHOT_OPEN_COMMITS"] == "1" {
+            if environment["LOUPE_SNAPSHOT_COMMIT"] != nil || environment["LOUPE_SNAPSHOT_FILE"] != nil || environment["LOUPE_SNAPSHOT_OPEN_COMMITS"] == "1" || environment["LOUPE_SNAPSHOT_HOLD_COMMIT"] != nil {
                 for tab in tabs.tabs { tab.section = .files }
             } else if let section = environment["LOUPE_SNAPSHOT_TAB"].flatMap(ReviewSection.init(named:)) {
                 for tab in tabs.tabs { tab.section = section }
@@ -212,6 +216,27 @@ enum SnapshotRun {
                 windows.select(tabs.selected)
                 try? await Task.sleep(for: .milliseconds(1500))
                 printSelectedFiles(of: tabs, when: "after clicking")
+            }
+            // LOUPE_SNAPSHOT_HOLD_COMMIT=<n or oid prefix> picks that commit on each PR and holds
+            // its diff, so the changes shown before stay, dimmed, beside the commit's name.
+            if let wanted = environment["LOUPE_SNAPSHOT_HOLD_COMMIT"] {
+                hold.step = .diffing
+                for tab in tabs.tabs {
+                    guard case .ready(let review) = tab.phase, let commit = review.commits.picked(by: wanted) else { continue }
+                    Task { await tab.showCommit(commit.oid) }
+                }
+            }
+            // LOUPE_SNAPSHOT_HOLD_RELOAD=1 reloads each PR's diff and holds it as it diffs, so the
+            // diff shown before stays, dimmed, as it would while new commits are taken.
+            if environment["LOUPE_SNAPSHOT_HOLD_RELOAD"] == "1" {
+                hold.step = .diffing
+                let reloading = tabs.tabs.filter { tab in
+                    guard case .ready = tab.phase else { return false }
+                    Task { await tab.reload() }
+                    return true
+                }
+                await wait(until: .now.addingTimeInterval(20)) { reloading.allSatisfy { $0.reloading == .diffing } }
+                for tab in reloading { print("\(tab.title): reloading, \(tab.reloading.map { "held at \($0)" } ?? "not held")") }
             }
             // A moment for the final state to be drawn.
             try? await Task.sleep(for: .milliseconds(500))
@@ -968,11 +993,38 @@ private extension ReviewSection {
 }
 
 private extension ReviewPhase {
-    /// Done, one way or another.
-    var isSettled: Bool {
+    /// Done, one way or another, or held at `held` to be drawn.
+    func isSettled(holding held: DiffStep?) -> Bool {
         switch self {
         case .ready, .failed, .noCheckout: true
-        case .resolvingCheckout, .fetching, .diffing: false
+        case let .producing(step): step == held
+        }
+    }
+}
+
+/// Holds git work at one step for good, from when it's set, so a snapshot run can draw what
+/// shows meanwhile. The run quits without ever letting it go.
+@MainActor
+private final class StepHold {
+    var step: DiffStep?
+
+    init(step: DiffStep?) {
+        self.step = step
+    }
+
+    func wait(at reached: DiffStep) async {
+        guard reached == step else { return }
+        try? await Task.sleep(for: .seconds(3600))
+    }
+}
+
+private extension DiffStep {
+    init?(named name: String) {
+        switch name {
+        case "resolving": self = .resolvingCheckout
+        case "fetching": self = .fetching
+        case "diffing": self = .diffing
+        default: return nil
         }
     }
 }
