@@ -631,6 +631,10 @@ Both versions are read with `git show` at the shown changes' base and head (an a
 
 Lockfiles stay hidden rather than moving to the files to review: they're derived from the manifests that are reviewed, and their changes are a consequence of those, so they don't count towards "N of M reviewed" or the self-review. Making them readable where they are lets a reviewer check what a bump brought in without making every lockfile something to tick off.
 
+### The fixtures and docs are anonymised, so the repo can be published
+
+The repo is being published, and its fixtures were captured from private PRs at work: their repos, people, titles, bodies, commit messages, branches, code and links, and the docs that named them. So every capture under `probe/` and the test fixtures were rewritten with one made-up organisation, its repos and its people, each real name always becoming the same made-up one across files, and the docs refer to the captures by those names. Ids, numbers, timestamps and shapes were kept, so the tests and the shapes they cover are unchanged. Every earlier commit carried the captured content too, so the git history was rewritten in place, each commit's tree scrubbed the same way, keeping the commits, messages and dates. Future captures are anonymised the same way, with the same names, before they're committed.
+
 ## Not yet decided
 
 Nothing is pending.

@@ -1,5 +1,7 @@
 # GitHub GraphQL probe
 
+These responses were captured from real private PRs and then anonymised before publishing: the organisation, repositories, people, titles, bodies, commit messages, branch names, code in diff hunks and links were replaced with made-up ones, consistently across the files, while ids, numbers, timestamps and shapes were kept. So the captures are described below by their made-up names, and the commands shown document each capture's shape but won't reproduce these files.
+
 Raw responses, captured 2026-10-14 with `gh api graphql`:
 
 - `pr-query.graphql` → `pr-marmot-14569.json` (6 files, 2 reviews, 1 review thread) and `pr-atrium-2912.json` (741 files, mostly `vendor/`). Run with `gh api graphql -F owner=tamarinworks -F name=marmot -F number=14569 -F query=@probe/pr-query.graphql`.
