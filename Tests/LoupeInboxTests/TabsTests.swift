@@ -370,15 +370,58 @@ struct TabsTests {
         #expect(tab.ready?.headOid == first, "the diff being read stays")
         #expect(try app.store.diffRecord(for: pullRequest.id)?.headRefOid == first)
         #expect(tab.selectedFile == "app.go")
-        #expect(app.delay.sleeps.isEmpty, "the rest waits for the reload too, as threads sit on the head's lines")
-        #expect(await app.conversations.pagesServed == pages)
+
+        // The rest of the PR follows GitHub while the reload waits.
+        try await app.delay.untilWaiting()
+        app.delay.elapse()
+        try await until { tab.conversation?.items.last?.event == .comment(bodyHTML: "<p>Pushed a fix</p>", isMinimized: false) && tab.isConversationSettled }
+        #expect(await app.conversations.pagesServed == pages + 1)
+        #expect(tab.pendingChange == .newCommits)
+        #expect(tab.ready?.headOid == first)
 
         await tab.reload()
 
         #expect(tab.pendingChange == nil)
         #expect(tab.ready?.headOid == second)
-        #expect(await app.conversations.pagesServed == pages + 1)
-        #expect(tab.conversation?.items.last?.event == .comment(bodyHTML: "<p>Pushed a fix</p>", isMinimized: false))
+        #expect(await app.conversations.pagesServed == pages + 2)
+    }
+
+    @Test func whileNewCommitsWaitTheDiffKeepsItsThreadsButTheViewersOwnShowAtOnce() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, _) = try await app.openDiffed(in: repo)
+        let threads = try #require(tab.conversation).threads.count
+        let asked = try await app.conversations.startThread(on: pullRequest.id, path: "app.go", line: 3, body: "Why hi?", by: "reviewer")
+        try await app.github.edit(pullRequest.id) { $0.reviewThreads.totalCount += 1 }
+        _ = await app.tabs.watchForChanges()
+        try await app.delay.untilWaiting()
+        app.delay.elapse()
+        try await until { tab.placedThreadIds == [asked] && tab.isConversationSettled }
+
+        // New commits, and a thread on the new head's lines.
+        _ = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        let later = try await app.conversations.startThread(on: pullRequest.id, path: "app.go", line: 1, body: "Rename the package?", by: "reviewer")
+        try await app.github.edit(pullRequest.id) { $0.reviewThreads.totalCount += 1 }
+        _ = await app.tabs.watchForChanges()
+        #expect(tab.pendingChange == .newCommits)
+        try await app.delay.untilWaiting()
+        app.delay.elapse()
+        try await until { tab.conversation?.threads.count == threads + 2 && tab.isConversationSettled }
+        #expect(tab.unresolvedThreadCount(of: "app.go") == 2, "the file list follows GitHub")
+        #expect(tab.placedThreadIds == [asked], "the diff's threads stay as they were for its head")
+
+        // The viewer's reply to a thread on the diff shown shows there at once.
+        let thread = try #require(tab.thread(asked))
+        tab.startReply(to: thread)
+        try #require(tab.threadActivity.replies[asked]).text = "Fixed"
+        await tab.sendReply(to: thread)
+        #expect(tab.placedThreadIds == [asked])
+        #expect(tab.placedThreads.first { $0.id == asked }?.comments.map(\.author?.login) == ["reviewer", FakeGitHub.viewer])
+
+        await tab.reload()
+
+        #expect(tab.pendingChange == nil)
+        #expect(tab.placedThreadIds == [asked, later])
     }
 
     @Test func dismissingNewCommitsKeepsTheDiffAndFollowsTheRestOfThePullRequest() async throws {
@@ -592,6 +635,12 @@ private extension PullRequestTab {
     /// The changes shown, once diffed.
     var shown: ReviewChanges? {
         if case let .ready(changes)? = shownChanges { changes } else { nil }
+    }
+
+    /// The threads the diff of app.go shows, on its lines or after them, by id.
+    var placedThreadIds: [String] {
+        guard let file = file("app.go"), let threads = threads(on: file) else { return [] }
+        return threads.anchored.flatMap(\.threads).map(\.id) + threads.elsewhere.map(\.id)
     }
 }
 

@@ -8,8 +8,8 @@ import Observation
 
 /// One open PR: its latest known details and its diff, produced from the local checkout and
 /// kept in memory, so switching back to its tab is instant. When new commits are pushed the
-/// diff stays as it is and they're offered as a reload, as github.com does; any other change
-/// on GitHub is fetched in the background.
+/// diff stays as it is, with the threads placed on it, and they're offered as a reload, as
+/// github.com does; everything else on GitHub is fetched in the background.
 @Observable
 @MainActor
 public final class PullRequestTab: Identifiable {
@@ -48,6 +48,9 @@ public final class PullRequestTab: Identifiable {
     public let contextExpansions: ContextExpansions
     /// What's been opened up among the review threads.
     public let threadActivity = ThreadActivity()
+    /// The review threads as last fetched while the diff was of the PR's head, which stay
+    /// placed on it while new commits wait for a reload.
+    var threadsOfShownDiff: [ReviewThread] = []
 
     /// Opens a linked PR in its own tab; set by `TabsModel`.
     @ObservationIgnored var linkOpener: @MainActor (PullRequestLink) async -> Bool = { _ in false }
@@ -108,6 +111,7 @@ public final class PullRequestTab: Identifiable {
         } catch {
             log("Couldn't read the conversation of \(opened.repository)#\(opened.number): \(error)")
         }
+        threadsOfShownDiff = conversation?.threads ?? []
         readViewerLogin()
         watchStoredPullRequest()
     }
@@ -135,6 +139,13 @@ public final class PullRequestTab: Identifiable {
     public var pendingChange: PendingChange? {
         guard let seen, pullRequest.headRefOid != seen.headRefOid else { return nil }
         return .newCommits
+    }
+
+    /// The review threads the diff places on its rows: the conversation's, except while new
+    /// commits wait for a reload, when they're as they were for the diff shown, as GitHub
+    /// places threads by the head's lines and the new head's could land on the wrong rows.
+    public var placedThreads: [ReviewThread] {
+        pendingChange == nil ? conversation?.threads ?? [] : threadsOfShownDiff
     }
 
     /// Produces the diff and asks GitHub which files are viewed and for the conversation, unless
@@ -181,11 +192,11 @@ public final class PullRequestTab: Identifiable {
         await retry()
     }
 
-    /// Keeps the diff as it is and stops offering the new commits, until more are pushed. The
-    /// rest of the PR then follows GitHub again.
+    /// Keeps the diff as it is and stops offering the new commits, until more are pushed. Its
+    /// threads then follow GitHub again.
     public func dismissPendingChange() {
         if seen != nil { seen = pullRequest }
-        followStoredChanges()
+        followPlacedThreads()
     }
 
     /// Records `directory` as the repo's checkout, if its origin is the repo, then produces the
@@ -518,6 +529,7 @@ public final class PullRequestTab: Identifiable {
         }
         conversation = fetched
         conversationError = nil
+        followPlacedThreads()
         do {
             try await store.replaceConversation(of: id, with: fetched, fetchedAt: .now)
         } catch {
@@ -539,9 +551,9 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// Fetches the conversation, its review threads with it, and the viewed states again once
-    /// the stored PR shows activity on GitHub since they were last asked for. A moved head
-    /// waits for the diff's reload instead, as the threads are placed by the head's lines.
-    /// Waits for a burst of changes to settle first, and never overlaps a fetch underway.
+    /// the stored PR shows activity on GitHub since they were last asked for, new commits
+    /// included. Waits for a burst of changes to settle first, and never overlaps a fetch
+    /// underway.
     private func followStoredChanges() {
         guard following == nil, loading == nil, hasUnfollowedActivity else { return }
         let sleep = sleep
@@ -564,14 +576,20 @@ public final class PullRequestTab: Identifiable {
         followStoredChanges()
     }
 
-    /// Whether the stored PR has activity not yet fetched, and no new commits waiting on a reload.
+    /// Whether the stored PR has activity not yet fetched.
     private var hasUnfollowedActivity: Bool {
-        guard let followed, pendingChange == nil else { return false }
+        guard let followed else { return false }
         return !pullRequest.hasSameActivity(as: followed)
     }
 
     /// How long a change waits for others before it's fetched.
     static let followDelay = Duration.seconds(2)
+
+    /// Places the conversation's threads on the diff as they are now, unless new commits wait
+    /// for a reload.
+    func followPlacedThreads() {
+        if pendingChange == nil { threadsOfShownDiff = conversation?.threads ?? [] }
+    }
 
     /// The lists may have stored the login since the tab opened; if not, GitHub is asked.
     private func learnViewerLogin() async {
@@ -642,6 +660,7 @@ public final class PullRequestTab: Identifiable {
             hiddenFileDiffs = [:]
             contextExpansions.reset()
             keepSelection(in: review.changes)
+            followPlacedThreads()
             phase = .ready(review)
         } catch {
             phase = .failed(error.localizedDescription)

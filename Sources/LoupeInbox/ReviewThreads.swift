@@ -70,13 +70,13 @@ public final class CommentDraft {
 }
 
 extension PullRequestTab {
-    /// The PR's review threads on `file`, as shown with any lines revealed around its hunks.
-    /// Nil when one commit's changes are shown: threads belong to the whole PR's diff.
+    /// The PR's review threads placed on `file`, as shown with any lines revealed around its
+    /// hunks. Nil when one commit's changes are shown: threads belong to the whole PR's diff.
     public func threads(on file: FileDiff) -> FileThreads? {
-        guard shownCommit == nil, let conversation else { return nil }
+        guard shownCommit == nil, conversation != nil else { return nil }
         var anchored: [LineThreads] = []
         var elsewhere: [ReviewThread] = []
-        for thread in conversation.threads where thread.path == file.path {
+        for thread in placedThreads where thread.path == file.path {
             guard !thread.isOutdated, !thread.isOnFile, let line = thread.line, file.has(line, on: thread.side) else {
                 elsewhere.append(thread)
                 continue
@@ -137,6 +137,7 @@ extension PullRequestTab {
         threadActivity.newCommentError = nil
         defer { comment.draft.isSending = false }
         let pullRequest = pullRequest
+        let known = Set((conversation?.threads ?? []).map(\.id) + threadsOfShownDiff.map(\.id))
         do {
             try await client.addReviewComment(
                 comment.draft.text, path: comment.anchor.path, line: comment.anchor.line, side: comment.anchor.side.rawValue,
@@ -147,7 +148,8 @@ extension PullRequestTab {
             return
         }
         if threadActivity.newComment?.draft === comment.draft { threadActivity.newComment = nil }
-        await refreshThreads()
+        let viewer = viewer
+        await refreshThreads { !known.contains($0.id) && $0.comments.first?.author?.login == viewer }
     }
 
     /// Opens a reply under the thread, keeping one already being written.
@@ -182,7 +184,7 @@ extension PullRequestTab {
             return
         }
         if threadActivity.replies[thread.id] === draft { threadActivity.replies[thread.id] = nil }
-        await refreshThreads()
+        await refreshThreads { $0.id == thread.id }
     }
 
     /// Resolves the thread, or unresolves it. The change shows at once, and is put back if
@@ -202,12 +204,13 @@ extension PullRequestTab {
             if resolved { threadActivity.expanded.insert(thread.id) }
             return
         }
-        await refreshThreads()
+        await refreshThreads { $0.id == thread.id }
     }
 
     /// Takes the PR's review threads from GitHub alone, which is much cheaper than the whole
-    /// conversation, and stores them. A failure keeps what's shown.
-    func refreshThreads() async {
+    /// conversation, and stores them. A failure keeps what's shown. While new commits wait for
+    /// a reload, only the threads the viewer just acted on change on the diff shown.
+    func refreshThreads(placing actedOn: (ReviewThread) -> Bool) async {
         let threads: [ReviewThread]
         do {
             threads = try await client.reviewThreads(ofPullRequest: id)
@@ -216,6 +219,13 @@ extension PullRequestTab {
             return
         }
         conversation?.threads = threads
+        if pendingChange == nil {
+            followPlacedThreads()
+        } else {
+            for thread in threads where actedOn(thread) {
+                threadsOfShownDiff.replaceOrAppend(thread)
+            }
+        }
         do {
             try await store.replaceThreads(of: id, with: threads)
         } catch {
@@ -223,10 +233,22 @@ extension PullRequestTab {
         }
     }
 
+    /// Changes the thread wherever it's shown: in the conversation and placed on the diff.
     private func updateThread(_ id: String, _ change: (inout ReviewThread) -> Void) {
+        if let index = threadsOfShownDiff.firstIndex(where: { $0.id == id }) { change(&threadsOfShownDiff[index]) }
         guard var conversation, let index = conversation.threads.firstIndex(where: { $0.id == id }) else { return }
         change(&conversation.threads[index])
         self.conversation = conversation
+    }
+}
+
+private extension [ReviewThread] {
+    mutating func replaceOrAppend(_ thread: ReviewThread) {
+        if let index = firstIndex(where: { $0.id == thread.id }) {
+            self[index] = thread
+        } else {
+            append(thread)
+        }
     }
 }
 
