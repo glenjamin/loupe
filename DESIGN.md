@@ -397,6 +397,14 @@ Loupe runs the first of `/opt/homebrew/bin/git` (Homebrew on Apple silicon), `/u
 
 Homebrew's git is new enough for `check-attr --source`, but the throwaway-index reading of `.gitattributes` stays, so Apple's git and Homebrew's behave alike and a machine without Homebrew needs nothing else.
 
+### The pull reveals its strip by growing the bottom inset, and its travel says where the end is
+
+This revises how "The pull reveals a hidden strip below the footer, and the fill follows once it shows" moves the view and tells that the drag has left the end; what the pull shows and when it fires stand. The clip view held its bounds past the scroll maximum against AppKit, and on a file that exactly fits the pane AppKit kept resetting them: on a trackpad the strip jumped in and out while the button filled with the content still, and a reset read as the view having left its end mid-drag, which disarmed the pull, so letting go did nothing.
+
+Now the pull adds what it has revealed to the scroll view's bottom inset and scrolls to the new maximum, so the view is held there by AppKit's own scrolling, not against it, and a short file is scrollable by exactly the revealed amount. While past the end the drag's moves go to the pull alone, not to AppKit, so nothing else moves the view. Letting go, armed or not, animates the view back to the footer's maximum in 0.2s and then drops the extra inset; momentum after a drag that ended in the pull is dropped, so it can't fling the document as it settles.
+
+Whether the view is at its end is read from its bounds only until a drag is past it; from then the pull's own travel says, so nothing AppKit does to the bounds can disarm it. Travel back at zero is leaving the end: the pull is undone, the fill empties, further moves scroll the document as usual, and coming back to the end is a scroll reaching it, so it dwells. The rubber band stays off for a PR's diff, as at the bottom it would add to the strip's movement and a drag scrolling into the end would leave AppKit mid-bounce under the inset; so the top doesn't bounce either.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

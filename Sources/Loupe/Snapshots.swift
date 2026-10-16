@@ -45,6 +45,8 @@ enum SnapshotRun {
     static let directory = ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_DIR"].map {
         URL(filePath: $0, directoryHint: .isDirectory)
     }
+    /// A run driving pulls with synthesised events, where a pull that fires only says so.
+    static let isRehearsingPulls = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_PULL_EVENTS"] != nil
 
     static func start(windows: WindowManager) {
         guard let directory else { return }
@@ -234,10 +236,12 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_SHOW_CHECKS"] == "1" {
                     for url in try await saveSnapshotsOfChecks(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
-                // LOUPE_SNAPSHOT_PULL=<points> pulls each shown diff that far past its end, without
-                // events, and snapshots the strip and the fill, then lets go.
-                if let travel = environment["LOUPE_SNAPSHOT_PULL"].flatMap(Double.init) {
-                    for url in try await saveSnapshotsOfPulls(CGFloat(travel), in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                // LOUPE_SNAPSHOT_PULL_EVENTS=<points> pulls each shown diff that far past its end
+                // with synthesised trackpad scroll events, and snapshots it halfway and at the end;
+                // LOUPE_SNAPSHOT_PULL_BACK=<points> then scrolls back that far before letting go.
+                if let travel = environment["LOUPE_SNAPSHOT_PULL_EVENTS"].flatMap(Double.init) {
+                    let back = environment["LOUPE_SNAPSHOT_PULL_BACK"].flatMap(Double.init) ?? 0
+                    for url in try await saveSnapshotsOfPulls(CGFloat(travel), back: CGFloat(back), in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
                 for url in try await saveSnapshotsOfAllTabs(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
             } catch {
@@ -537,10 +541,12 @@ private func saveSnapshotsOfChecks(in windows: WindowManager, to directory: URL)
     return written
 }
 
-/// Pulls each PR's shown diff `travel` past its end and writes `pull-<title>.png`, letting go
-/// after each without firing.
+/// Pulls each PR's shown diff `travel` past its end with trackpad scroll events sent through the
+/// scroll view, as the fingers would, from the diff scrolled to its end and at rest. Writes
+/// `pull-<title>.png` halfway and `armed-<title>.png` at the end, scrolls `back` that far if
+/// asked, and lets go, printing the pull and the clip view's bounds after each step.
 @MainActor
-private func saveSnapshotsOfPulls(_ travel: CGFloat, in windows: WindowManager, to directory: URL) async throws -> [URL] {
+private func saveSnapshotsOfPulls(_ travel: CGFloat, back: CGFloat, in windows: WindowManager, to directory: URL) async throws -> [URL] {
     guard let window = windows.mainWindow, let root = window.contentView else { return [] }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let selected = windows.tabs.selected
@@ -550,14 +556,87 @@ private func saveSnapshotsOfPulls(_ travel: CGFloat, in windows: WindowManager, 
         try? await Task.sleep(for: .milliseconds(500))
         window.layoutIfNeeded()
         guard let scroll = descendants(of: root).lazy.compactMap({ $0 as? OverscrollScrollView }).first(where: { !$0.isHiddenOrHasHiddenAncestor }) else { continue }
-        scroll.showPull(travel)
-        let url = directory.appending(path: "pull-\(sanitised(windows.title(of: tab.id))).png")
-        try await saveSnapshot(of: window, to: url)
-        scroll.letGo()
-        written.append(url)
+        let title = sanitised(windows.title(of: tab.id))
+        let clip = scroll.contentView
+        // Laying out the end can make a long document taller, so scroll again until it's there.
+        for _ in 0..<10 {
+            let far = NSRect(x: clip.bounds.minX, y: clip.documentRect.maxY + clip.contentInsets.bottom, width: clip.bounds.width, height: clip.bounds.height)
+            let end = clip.constrainBoundsRect(far).origin
+            if end == clip.bounds.origin { break }
+            clip.scroll(to: end)
+            scroll.reflectScrolledClipView(clip)
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        printPull(of: scroll, when: "\(title) at rest")
+        sendScroll(.began, by: 0, to: scroll, printing: true)
+        await dragScroll(travel / 2, on: scroll)
+        printPull(of: scroll, when: "halfway")
+        let halfway = directory.appending(path: "pull-\(title).png")
+        try await saveSnapshot(of: window, to: halfway)
+        await dragScroll(travel / 2, on: scroll)
+        printPull(of: scroll, when: "pulled")
+        let pulled = directory.appending(path: "armed-\(title).png")
+        try await saveSnapshot(of: window, to: pulled)
+        if back > 0 {
+            await dragScroll(-back, on: scroll)
+            printPull(of: scroll, when: "scrolled back")
+        }
+        sendScroll(.ended, by: 0, to: scroll)
+        printPull(of: scroll, when: "let go")
+        try? await Task.sleep(for: .milliseconds(500))
+        printPull(of: scroll, when: "settled")
+        written += [halfway, pulled]
     }
     windows.select(selected)
     return written
+}
+
+/// A trackpad's scroll phases, as `CGEventField.scrollWheelEventScrollPhase` takes them.
+private enum ScrollPhase: Int64 {
+    case began = 1
+    case changed = 2
+    case ended = 4
+}
+
+/// Moves the fingers `distance` points over the trackpad in small steps a few milliseconds apart,
+/// positive pulling the content up past the end.
+@MainActor
+private func dragScroll(_ distance: CGFloat, on scroll: NSScrollView) async {
+    let step: CGFloat = 4
+    var left = abs(distance)
+    while left > 0 {
+        let moved = min(step, left)
+        sendScroll(.changed, by: distance < 0 ? -moved : moved, to: scroll, printing: left == abs(distance))
+        left -= moved
+        try? await Task.sleep(for: .milliseconds(8))
+    }
+}
+
+/// Sends a continuous scroll event, as a trackpad makes, through the scroll view's
+/// `scrollWheel(with:)`. The event's own delta is the content's movement, so pulling past the
+/// end is negative.
+@MainActor
+private func sendScroll(_ phase: ScrollPhase, by pull: CGFloat, to scroll: NSScrollView, printing: Bool = false) {
+    let delta = Int32(-pull.rounded())
+    guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: delta, wheel2: 0, wheel3: 0) else { return }
+    cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+    cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase.rawValue)
+    cg.setIntegerValueField(.scrollWheelEventMomentumPhase, value: 0)
+    cg.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(delta))    // Stamped now, as a source-less event isn't, so the pull's dwell sees real time.
+    cg.timestamp = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+    guard let event = NSEvent(cgEvent: cg) else { return }
+    if printing {
+        print("  event: phase \(event.phase.rawValue) precise \(event.hasPreciseScrollingDeltas) scrollingDeltaY \(event.scrollingDeltaY) timestamp \(event.timestamp) uptime \(ProcessInfo.processInfo.systemUptime)")
+    }
+    scroll.scrollWheel(with: event)
+}
+
+@MainActor
+private func printPull(of scroll: OverscrollScrollView, when: String) {
+    let pull = scroll.currentPull()
+    let clip = scroll.contentView
+    let progress = String(format: "%.2f", pull.progress)
+    print("  \(when): travel \(pull.travel) revealed \(pull.revealed) progress \(progress) armed \(pull.isArmed) dragging \(pull.isDragging) | clip y \(clip.bounds.minY) maxY \(clip.bounds.maxY) document maxY \(clip.documentRect.maxY) inset \(clip.contentInsets.bottom)")
 }
 
 /// Lets the window settle and draw, then writes it to `url`.

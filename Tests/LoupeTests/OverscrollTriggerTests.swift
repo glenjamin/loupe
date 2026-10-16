@@ -70,28 +70,48 @@ struct OverscrollTriggerTests {
         fingers.touchDown(atEnd: true)
         fingers.pull(Self.armingTravel + 10, over: 0.1)
         #expect(fingers.trigger.isArmed)
-        // Back past the end and on up the document.
-        fingers.pull(-(Self.armingTravel + 10) - 5, over: 0.1)
-        fingers.leaveEnd(times: 10)
+        // Back past the end and on up the document, more than was pulled.
+        fingers.pull(-(Self.armingTravel + 10) - 50, over: 0.1)
         #expect(!fingers.trigger.isArmed)
         #expect(fingers.trigger.progress == 0)
         #expect(fingers.trigger.revealed == 0)
         #expect(fingers.lift() == false, "letting go back in the document doesn't fire")
     }
 
-    @Test func leavingTheEndUndoesThePullAndComingBackDwells() {
-        // However the view left the end while armed, the next moves undo the pull.
+    @Test func travelBackToZeroLeavesTheEndAndComingBackDwells() {
+        // The fingers' travel says where the end is during a drag: back at zero is back at the
+        // end, which undoes the pull however it was armed.
         var fingers = Fingers()
         fingers.touchDown(atEnd: true)
         fingers.pull(Self.armingTravel + 10, over: 0.1)
         #expect(fingers.trigger.isArmed)
-        fingers.leaveEnd(times: 1)
+        // Back to the end and a little on, as fingers going back to it do.
+        fingers.pull(-(Self.armingTravel + 11), over: 0.1)
+        #expect(fingers.trigger.travel == 0)
         #expect(!fingers.trigger.isArmed)
         #expect(fingers.trigger.progress == 0)
-        // Down to the end again is a scroll running into it, so it dwells.
+        #expect(fingers.trigger.revealed == 0)
+        // Out past the end again is a scroll reaching it, so it dwells, though the drag began
+        // at the end.
         fingers.pull(Self.armingTravel * 2, over: Self.dwell * 0.75)
         #expect(!fingers.trigger.isArmed)
-        #expect(fingers.lift() == false)
+        #expect(fingers.trigger.progress == 0)
+        fingers.rest(Self.dwell)
+        fingers.pull(Self.countedTravel + 2, over: 0.3)
+        #expect(fingers.trigger.isArmed, "and arms once the dwell has passed")
+        #expect(fingers.lift() == true)
+    }
+
+    @Test func pullingBackShortOfTheEndKeepsThePullGoing() {
+        // Short of zero the fingers are still past the end, so the pull isn't undone.
+        var fingers = Fingers()
+        fingers.touchDown(atEnd: true)
+        fingers.pull(Self.armingTravel + 10, over: 0.1)
+        fingers.pull(-(Self.armingTravel + 10) + 1, over: 0.1)
+        #expect(fingers.trigger.travel > 0)
+        fingers.pull(Self.armingTravel, over: 0.05)
+        #expect(fingers.trigger.isArmed, "counting on without dwelling again")
+        #expect(fingers.lift() == true)
     }
 
     @Test func theSamePullReachingTheEndMidScrollStillDwells() {
@@ -276,14 +296,6 @@ private struct Fingers {
     /// what's pulled next counts in full.
     mutating func holdPastTheEnd() {
         pull(OverscrollTrigger.leadIn, over: OverscrollTrigger.dwell * 1.5)
-    }
-
-    /// Moves the fingers this many frames with the view scrolled back into the document.
-    mutating func leaveEnd(times: Int) {
-        for _ in 0..<times {
-            time += Self.frame
-            trigger.leaveEnd()
-        }
     }
 
     mutating func rest(_ duration: TimeInterval) {

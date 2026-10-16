@@ -157,8 +157,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
         // with it, clipped like the text.
         scroll.contentView.addSubview(coordinator.footer)
         scroll.contentView.addSubview(coordinator.hint)
-        scroll.isAtEnd = { [weak coordinator] in coordinator?.isAtEnd ?? false }
-        scroll.onPull = { [weak coordinator] event in coordinator?.pull(event) }
+        scroll.onPull = { [weak coordinator] event in coordinator?.pull(event) ?? false }
+        scroll.currentPull = { [weak coordinator] in coordinator?.currentPull ?? OverscrollTrigger() }
         scroll.contentView.postsBoundsChangedNotifications = true
         coordinator.textView.postsFrameChangedNotifications = true
         coordinator.observe(scroll, clip: clip)
@@ -176,8 +176,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
         coordinator.textView.commentableAnchors = commentable
         coordinator.textView.onComment = onComment
         scroll.hasHorizontalScroller = !wrapLines
-        // A PR's diff moves past its end only as far as the pull reveals its strip; a plain diff
-        // keeps the rubber band.
+        // A PR's diff moves past its end only as far as the pull reveals its strip, which the
+        // rubber band would add to; a plain diff keeps the rubber band.
         scroll.verticalScrollElasticity = review == nil ? .allowed : .none
         coordinator.textView.wrapsLines = wrapLines
         // The same file shown anew, as when more of it is revealed, keeps the reader's place.
@@ -224,6 +224,11 @@ private struct DiffTextScrollView: NSViewRepresentable {
         var blockHeights: [String: CGFloat] = [:]
         private var blockViews: [String: NSHostingView<DiffBlockRoot>] = [:]
         private var trigger = OverscrollTrigger()
+        /// How far below the footer the view can scroll for the pull, as extra bottom inset: the
+        /// strip it has revealed while the fingers are down, kept while it settles back.
+        private var pullInset: CGFloat = 0
+        /// Counts settles, so one that's been overtaken doesn't end the next.
+        private var settles = 0
         private weak var scroll: NSScrollView?
         private weak var clip: FooterClipView?
         private var observers: [any NSObjectProtocol] = []
@@ -283,7 +288,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         /// Directly below the last row, across the visible width, so a short file has it
         /// straight after its content rather than at the bottom of the view. The content is
         /// inset at the bottom only as far as the footer needs to be scrolled to, leaving the
-        /// pull's strip below the end, out of view until pulled.
+        /// pull's strip below the end, out of view until the pull adds to the inset.
         func layoutFooter() {
             guard let scroll else { return }
             let clip = scroll.contentView.bounds
@@ -300,7 +305,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
             if footer.frame != frame { footer.frame = frame }
             let strip = NSRect(x: clip.minX, y: restingEnd(clipHeight: clip.height), width: clip.width, height: OverscrollTrigger.leadIn)
             if hint.frame != strip { hint.frame = strip }
-            let inset = review == nil ? 0 : max(0, frame.maxY - textView.frame.maxY)
+            let inset = review == nil ? 0 : max(0, frame.maxY - textView.frame.maxY) + pullInset
             if scroll.contentInsets.bottom != inset {
                 scroll.contentInsets.bottom = inset
                 // The scrollers keep to the whole height, over the footer too.
@@ -314,34 +319,44 @@ private struct DiffTextScrollView: NSViewRepresentable {
             return clip.maxY >= restingEnd(clipHeight: clip.height) - 1
         }
 
-        func pull(_ event: PullEvent) {
-            guard review != nil else { return }
+        /// Returns true when the pull moved the view, so AppKit mustn't scroll it as well.
+        func pull(_ event: PullEvent) -> Bool {
+            guard review != nil else { return false }
+            var moved = false
             switch event {
-            case .began(let atEnd):
-                trigger.beginDrag(atEnd: atEnd)
+            case .began:
+                stopSettling()
+                trigger.beginDrag(atEnd: isAtEnd)
             case .moved(let distance, let time):
+                // The view's bounds say where the end is only until the fingers are past it; from
+                // then until they're back the pull's travel says, and the pull moves the view.
+                let wasPast = trigger.travel > 0
+                guard trigger.isDragging, wasPast || isAtEnd else { break }
                 if trigger.pull(by: distance, at: time) {
                     NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
                 }
-                clip?.hold(pastEnd: trigger.revealed)
-            case .leftEnd:
-                trigger.leaveEnd()
-                clip?.hold(pastEnd: 0)
+                // Going back from the end at rest is the document's own scrolling.
+                moved = wasPast || distance > 0
+                if moved { reveal(trigger.revealed) }
             case .ended:
                 // Settles back even when it fires, as the next file comes only once it's marked.
-                clip?.settle()
-                if trigger.endDrag() { review?.markViewedAndAdvance() }
+                let fires = trigger.endDrag()
+                settle()
+                if fires { firePull() }
             case .cancelled:
-                clip?.settle()
                 trigger.cancelDrag()
+                settle()
             }
             showPull()
+            return moved
         }
+
+        var currentPull: OverscrollTrigger { trigger }
 
         /// Lets go of any pull at once, for a file about to be replaced.
         func dropPull() {
             trigger.cancelDrag()
-            clip?.drop()
+            stopSettling()
             showPull()
         }
 
@@ -349,6 +364,71 @@ private struct DiffTextScrollView: NSViewRepresentable {
             footerState.progress = trigger.progress
             footerState.isArmed = trigger.isArmed
             footerState.isPulling = trigger.isDragging
+        }
+
+        /// Grows the bottom inset by what the pull reveals and scrolls to the new end, so the view
+        /// is held there by AppKit's own scrolling rather than against it.
+        private func reveal(_ revealed: CGFloat) {
+            pullInset = revealed
+            layoutFooter()
+            guard let scroll, let clip else { return }
+            clip.scroll(to: NSPoint(x: clip.bounds.minX, y: endOrigin(of: clip)))
+            scroll.reflectScrolledClipView(clip)
+        }
+
+        /// Animates back to the end without the pull's inset, as the content springs back once a
+        /// pull lets go, and drops the inset once there.
+        private func settle() {
+            guard pullInset > 0, let clip else { return }
+            settles += 1
+            let settle = settles
+            let end = endOrigin(of: clip) - pullInset
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                clip.animator().setBoundsOrigin(NSPoint(x: clip.bounds.minX, y: end))
+            } completionHandler: { [weak self] in
+                Task { @MainActor in
+                    guard let self, self.settles == settle else { return }
+                    self.dropInset()
+                }
+            }
+        }
+
+        /// Ends a settle, or a pull, where it is and drops its inset at once, so it doesn't
+        /// fight a new pull or a new document.
+        private func stopSettling() {
+            guard pullInset > 0, let clip else { return }
+            settles += 1
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                clip.animator().setBoundsOrigin(clip.bounds.origin)
+            }
+            dropInset()
+        }
+
+        private func dropInset() {
+            pullInset = 0
+            layoutFooter()
+            guard let scroll, let clip else { return }
+            clip.scroll(to: clip.bounds.origin)
+            scroll.reflectScrolledClipView(clip)
+        }
+
+        /// Marks the file reviewed and moves on, as the footer's button does; a snapshot run
+        /// rehearsing pulls only says so, so nothing is written to GitHub.
+        private func firePull() {
+            if SnapshotRun.isRehearsingPulls {
+                print("pull fired: markViewedAndAdvance")
+                return
+            }
+            review?.markViewedAndAdvance()
+        }
+
+        /// The origin at the end of the document, insets included, as far as AppKit scrolls.
+        private func endOrigin(of clip: NSClipView) -> CGFloat {
+            let far = NSRect(x: clip.bounds.minX, y: clip.documentRect.maxY + clip.contentInsets.bottom, width: clip.bounds.width, height: clip.bounds.height)
+            return clip.constrainBoundsRect(far).minY
         }
 
         /// Where the bottom of the view rests when scrolled to the end, footer included.
@@ -371,62 +451,55 @@ private struct DiffTextScrollView: NSViewRepresentable {
 
 /// What a live trackpad drag does to the pull. Momentum and mouse wheels have no part in it.
 enum PullEvent {
-    /// The fingers touched down, with the view at its end or not.
-    case began(atEnd: Bool)
-    /// The fingers moved this far with the view at its end: positive pulls the content further
-    /// past it, negative back, at the event's timestamp.
+    case began
+    /// The fingers moved this far: positive pulls the content further past the end, negative
+    /// back, at the event's timestamp.
     case moved(CGFloat, at: TimeInterval)
-    /// The fingers moved with the view back in the document, away from its end.
-    case leftEnd
     case ended
     case cancelled
 }
 
-/// Reports a live trackpad drag's touch down, its travel while the view is at its end or leaving
-/// it, and its lift, leaving the scrolling to AppKit.
+/// Reports a live trackpad drag's touch down, travel and lift to the pull, and leaves the
+/// scrolling to AppKit except where the pull moved the view itself.
 final class OverscrollScrollView: NSScrollView {
-    var isAtEnd: () -> Bool = { false }
-    var onPull: (PullEvent) -> Void = { _ in }
+    /// Returns true when the pull moved the view for the event, so it isn't scrolled again.
+    var onPull: (PullEvent) -> Bool = { _ in false }
+    /// Where the pull stands, for a snapshot run to report.
+    var currentPull: () -> OverscrollTrigger = { OverscrollTrigger() }
+    /// Whether the drag's last move was the pull's, so the momentum after it is dropped rather
+    /// than flinging the document while the pull settles back.
+    private var pulledLast = false
+    private var dropsMomentum = false
 
     override func scrollWheel(with event: NSEvent) {
         let phase = event.phase
-        if phase.contains(.began) { onPull(.began(atEnd: isAtEnd())) }
-        // Checked before the event scrolls, so travel spent reaching the end doesn't count. The
+        if phase.contains(.began) {
+            dropsMomentum = false
+            pulledLast = false
+            _ = onPull(.began)
+        }
+        if !event.momentumPhase.isEmpty, dropsMomentum {
+            if event.momentumPhase.contains(.ended) { dropsMomentum = false }
+            return
+        }
+        // Asked before the event scrolls, so travel spent reaching the end doesn't count. The
         // delta already follows the content, natural scrolling or not; negative moves it up.
         if !phase.isDisjoint(with: [.began, .changed]), event.hasPreciseScrollingDeltas {
-            onPull(isAtEnd() ? .moved(-event.scrollingDeltaY, at: event.timestamp) : .leftEnd)
+            pulledLast = onPull(.moved(-event.scrollingDeltaY, at: event.timestamp))
+            if pulledLast { return }
         }
         super.scrollWheel(with: event)
-        if phase.contains(.ended) { onPull(.ended) }
-        if phase.contains(.cancelled) { onPull(.cancelled) }
-    }
-
-    /// Scrolls to the end and pulls `travel` past it from there, without events, so a snapshot
-    /// can show the pull; `letGo()` lets go without firing.
-    func showPull(_ travel: CGFloat) {
-        contentView.scroll(to: NSPoint(x: contentView.bounds.minX, y: contentView.documentRect.maxY + contentInsets.bottom))
-        reflectScrolledClipView(contentView)
-        onPull(.began(atEnd: true))
-        onPull(.moved(travel, at: ProcessInfo.processInfo.systemUptime))
-    }
-
-    func letGo() {
-        onPull(.cancelled)
+        if phase.contains(.ended) {
+            dropsMomentum = pulledLast
+            _ = onPull(.ended)
+        }
+        if phase.contains(.cancelled) { _ = onPull(.cancelled) }
     }
 }
 
 /// A clip view whose clicks also reach the views placed beside its document, such as the footer
-/// below the last row. A plain clip view hit-tests only within its document view's frame. It can
-/// also be held past the end of its document, which AppKit won't scroll to, to reveal what's
-/// placed below it, the way pull-to-refresh moves the content with the fingers.
+/// below the last row. A plain clip view hit-tests only within its document view's frame.
 final class FooterClipView: NSClipView {
-    /// How far past the end the pull holds the view, wherever AppKit tries to scroll it there.
-    private var heldPastEnd: CGFloat = 0
-    /// How far past the end the view may still be while it settles back after a pull.
-    private var settling: CGFloat = 0
-    /// Counts settles, so one that's been overtaken doesn't end the next.
-    private var settles = 0
-
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
         guard bounds.contains(local) else { return nil }
@@ -434,74 +507,6 @@ final class FooterClipView: NSClipView {
             if let hit = view.hitTest(local) { return hit }
         }
         return super.hitTest(point)
-    }
-
-    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
-        var rect = super.constrainBoundsRect(proposedBounds)
-        guard heldPastEnd > 0 || settling > 0 else { return rect }
-        let end = endOrigin(height: proposedBounds.height)
-        if heldPastEnd > 0, proposedBounds.minY >= end {
-            rect.origin.y = end + heldPastEnd
-        } else if proposedBounds.minY > end {
-            rect.origin.y = min(proposedBounds.minY, end + settling)
-        }
-        return rect
-    }
-
-    /// Holds the view `offset` past the end of the document, or at zero gives it back to AppKit,
-    /// where the drag that pulled back carries on scrolling it.
-    func hold(pastEnd offset: CGFloat) {
-        stopSettling()
-        heldPastEnd = offset
-        guard offset > 0 else { return }
-        scroll(to: NSPoint(x: bounds.minX, y: endOrigin(height: bounds.height) + offset))
-        enclosingScrollView?.reflectScrolledClipView(self)
-    }
-
-    /// Animates back to the end from past it, as the content springs back once a pull lets go.
-    func settle() {
-        let end = endOrigin(height: bounds.height)
-        heldPastEnd = 0
-        guard bounds.minY > end else { return }
-        settling = bounds.minY - end
-        settles += 1
-        let settle = settles
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            animator().setBoundsOrigin(NSPoint(x: bounds.minX, y: end))
-        } completionHandler: { [weak self] in
-            Task { @MainActor in
-                guard let self, self.settles == settle else { return }
-                self.settling = 0
-                self.enclosingScrollView?.reflectScrolledClipView(self)
-            }
-        }
-    }
-
-    /// Back within the document at once, for a document about to be replaced.
-    func drop() {
-        stopSettling()
-        heldPastEnd = 0
-        scroll(to: bounds.origin)
-        enclosingScrollView?.reflectScrolledClipView(self)
-    }
-
-    /// Ends a settle where it is, so it doesn't fight a new pull or a new document.
-    private func stopSettling() {
-        guard settling > 0 else { return }
-        settles += 1
-        settling = 0
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0
-            animator().setBoundsOrigin(bounds.origin)
-        }
-    }
-
-    /// The origin at the end of the document, as far as AppKit scrolls.
-    private func endOrigin(height: CGFloat) -> CGFloat {
-        let far = NSRect(x: bounds.minX, y: documentRect.maxY + contentInsets.bottom, width: bounds.width, height: height)
-        return super.constrainBoundsRect(far).minY
     }
 }
 

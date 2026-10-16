@@ -8,8 +8,9 @@ import Foundation
 /// scroll that runs into the end and spends its remaining travel there never arms. A drag that
 /// begins with the view already at its end has no such scroll behind it, so only the lead-in
 /// applies, and a quick deliberate pull from rest counts straight away. Crossing the target arms
-/// it, pulling back under disarms it, and lifting the fingers while armed fires it. Only a live
-/// drag counts, so momentum carrying on past the end never reveals, fills, arms or fires it.
+/// it, pulling back under disarms it, pulling back to the end undoes it, and lifting the fingers
+/// while armed fires it. Only a live drag counts, so momentum carrying on past the end never
+/// reveals, fills, arms or fires it.
 public struct OverscrollTrigger: Sendable, Equatable {
     /// How long the fingers must have been past the end, within one drag that reached it while
     /// scrolling, before any travel counts. Longer than the tail of a scroll that runs into the
@@ -68,8 +69,10 @@ public struct OverscrollTrigger: Sendable, Equatable {
     }
 
     /// The fingers moved `distance` points at `time` with the document at its end: positive pulls
-    /// the content further past the end, negative pulls it back. Returns true at the moment it
-    /// arms, for a haptic tap.
+    /// the content further past the end, negative pulls it back. Once past the end, every move of
+    /// the drag comes here, as the pull rather than the document's scrolling says where the end
+    /// is; travel back at zero has left the end, undoing the pull, so coming back dwells again.
+    /// Returns true at the moment it arms, for a haptic tap.
     public mutating func pull(by distance: CGFloat, at time: TimeInterval) -> Bool {
         guard isDragging else { return false }
         let wasArmed = isArmed
@@ -91,15 +94,6 @@ public struct OverscrollTrigger: Sendable, Equatable {
             if distance < 0 { beganAtEnd = false }
         }
         return isArmed && !wasArmed
-    }
-
-    /// The fingers moved with the document scrolled back from its end, so the pull is undone:
-    /// nothing is pulled or armed, and coming back to the end has to dwell again.
-    public mutating func leaveEnd() {
-        travel = 0
-        pastEndSince = nil
-        countsFrom = nil
-        beganAtEnd = false
     }
 
     /// The fingers have lifted. Returns true if it was armed, and so fires.
