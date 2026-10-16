@@ -104,7 +104,8 @@ enum SnapshotRun {
                 }
             }
             // LOUPE_SNAPSHOT_FILE picks the first file whose path contains it, hidden ones after
-            // the rest, to snapshot a given kind of file.
+            // the rest, to snapshot a given kind of file; a hidden npm lockfile's packages are
+            // compared too.
             if let wanted = environment["LOUPE_SNAPSHOT_FILE"] {
                 for tab in tabs.tabs {
                     guard case .ready(let changes)? = tab.shownChanges else { continue }
@@ -113,6 +114,7 @@ enum SnapshotRun {
                     } else if let file = changes.hidden.first(where: { $0.path.contains(wanted) }) {
                         tab.selectedFile = file.id
                         await tab.diffHiddenFile(file.path)
+                        await tab.comparePackageLock(file.path)
                     }
                 }
             }

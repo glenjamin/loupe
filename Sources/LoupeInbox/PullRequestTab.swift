@@ -133,6 +133,10 @@ public final class PullRequestTab: Identifiable {
     private var hiddenFileDiffs: [HiddenFileKey: DiffState<FileDiff>] = [:]
     /// Each hidden file's latest diff, of whichever range, to show while another is made.
     private var lastHiddenFileDiffs: [String: FileDiff] = [:]
+    /// Each hidden npm lockfile's package changes once asked for, by range and path.
+    private var packageLockChanges: [HiddenFileKey: DiffState<PackageLockChanges>] = [:]
+    /// The npm lockfiles shown as their diff rather than their package changes.
+    private var rawPackageLocks: Set<String> = []
 
     init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer, client: GitHubClient, candidates: ReviewerCandidates, sleep: @escaping @Sendable (Duration) async throws -> Void) {
         id = opened.id
@@ -406,6 +410,51 @@ public final class PullRequestTab: Identifiable {
             lastHiddenFileDiffs[path] = diff
         } catch {
             hiddenFileDiffs[key] = .failed(error.localizedDescription)
+        }
+    }
+
+    /// A hidden npm lockfile's package changes in the shown changes, once asked for.
+    public func packageLockChanges(of path: String) -> DiffState<PackageLockChanges>? {
+        shownRange.flatMap { packageLockChanges[HiddenFileKey(range: $0, path: path)] }
+    }
+
+    /// Compares a hidden npm lockfile's packages at the shown changes' base and head, unless
+    /// done or underway. A lockfile can be megabytes, so it's parsed off the main actor. A
+    /// failure, including a lockfile that won't parse, is kept to say why.
+    public func comparePackageLock(_ path: String) async {
+        guard PackageLockChanges.isPackageLock(path), let range = shownRange, let checkout, case let .ready(changes)? = shownChanges,
+              let file = changes.hidden.first(where: { $0.path == path })
+        else { return }
+        let key = HiddenFileKey(range: range, path: path)
+        switch packageLockChanges[key] {
+        case .ready, .diffing: return
+        case .failed, nil: break
+        }
+        packageLockChanges[key] = .diffing
+        let differ = differ
+        do {
+            // An added file has no base to compare with, and a deleted one no head.
+            async let base: String? = file.change == .added ? nil : differ.contents(of: file.renamedFrom ?? path, at: range.base, in: checkout)
+            async let head: String? = file.change == .deleted ? nil : differ.contents(of: path, at: range.head, in: checkout)
+            let (before, after) = try await (base, head)
+            let compared = try await Task.detached { try PackageLockChanges.compare(base: before, head: after) }.value
+            packageLockChanges[key] = .ready(compared)
+        } catch {
+            packageLockChanges[key] = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Whether a hidden npm lockfile shows its diff rather than its package changes, kept per
+    /// path while the tab lives.
+    public func showsRawDiff(of path: String) -> Bool {
+        rawPackageLocks.contains(path)
+    }
+
+    public func setShowsRawDiff(_ raw: Bool, path: String) {
+        if raw {
+            rawPackageLocks.insert(path)
+        } else {
+            rawPackageLocks.remove(path)
         }
     }
 
@@ -821,6 +870,7 @@ public final class PullRequestTab: Identifiable {
             commitChanges = [:]
             commitStats = [:]
             hiddenFileDiffs = [:]
+            packageLockChanges = [:]
             contextExpansions.reset()
             keepSelection(in: review.changes)
             reloading = nil

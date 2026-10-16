@@ -4,7 +4,8 @@ import SwiftUI
 
 /// One file's diff under a header naming it, in a bordered box as on GitHub. Clicking a row
 /// reports its comment anchor. A PR's file also has a "Reviewed" checkbox, and ends in a footer
-/// that marks it reviewed and moves on. A PR's markdown file can be shown rendered instead.
+/// that marks it reviewed and moves on. A PR's markdown file can be shown rendered instead, and
+/// a hidden npm lockfile as its package changes.
 /// With `expandable`, hunk headers have arrows that ask for more of the file around them.
 /// `blocks` are views laid between rows, such as review threads.
 struct DiffView: View {
@@ -12,6 +13,7 @@ struct DiffView: View {
     let onAnchorClick: (DiffAnchor) -> Void
     var review: FileReview?
     var markdown: MarkdownPreview?
+    var packageLock: PackageLockPreview?
     var expandable: ExpandableContext?
     var onExpand: (ContextExpansion) -> Void = { _ in }
     /// Hides the lines revealed in the file; nil while nothing is revealed.
@@ -23,9 +25,21 @@ struct DiffView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            FileHeader(file: file, review: review, markdown: markdown, onCollapse: onCollapse)
+            FileHeader(file: file, review: review, markdown: markdown, packageLock: packageLock, onCollapse: onCollapse)
             Divider()
-            // The rendering covers the diff rather than replacing it, so the diff keeps its place.
+            if let failure = packageLock?.failure {
+                Label("Couldn't compare the packages, so the diff shows: \(failure)", systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(failure)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                Divider()
+            }
+            // A rendering covers the diff rather than replacing it, so the diff keeps its place.
             ZStack {
                 DiffTextScrollView(
                     file: file, onAnchorClick: onAnchorClick, review: review, expandable: expandable, onExpand: onExpand, blocks: blocks,
@@ -33,6 +47,9 @@ struct DiffView: View {
                 )
                 if let markdown, markdown.isRendered {
                     RenderedMarkdownView(preview: markdown)
+                }
+                if let packageLock, packageLock.showsChanges {
+                    PackageLockChangesView(preview: packageLock)
                 }
             }
         }
@@ -47,6 +64,7 @@ private struct FileHeader: View {
     let file: FileDiff
     let review: FileReview?
     let markdown: MarkdownPreview?
+    let packageLock: PackageLockPreview?
     let onCollapse: (() -> Void)?
 
     var body: some View {
@@ -83,6 +101,17 @@ private struct FileHeader: View {
                 .controlSize(.small)
                 .fixedSize()
                 .help("Show the diff, or the file as GitHub renders it")
+            }
+            if let packageLock, packageLock.failure == nil {
+                Picker("Show", selection: Binding(get: { packageLock.showsRawDiff }, set: packageLock.setShowsRawDiff)) {
+                    Text("Changes").tag(false)
+                    Text("Raw diff").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                .help("Show the packages added, removed, updated and moved, or the lockfile's diff")
             }
             if let review {
                 // Checking it is finishing the file, so it moves on like the footer; unchecking stays.

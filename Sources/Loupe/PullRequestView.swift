@@ -385,6 +385,7 @@ struct FileDetail: View {
                 hiddenFile(file)
                     // Diffed only once shown, as a vendored file can be enormous.
                     .task(id: "\(tab.shownCommit ?? "")\0\(file.path)") { await tab.diffHiddenFile(file.path) }
+                    .task(id: "\(tab.shownCommit ?? "")\0\(file.path)") { await tab.comparePackageLock(file.path) }
             } else {
                 Text(changes.files.isEmpty && changes.hidden.isEmpty ? "No changes to review" : "No file selected")
                     .foregroundStyle(.secondary)
@@ -417,6 +418,7 @@ struct FileDetail: View {
         let shown = tab.expandedFile(file)
         return DiffView(
             file: shown, onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file), markdown: tab.markdownPreview(of: file),
+            packageLock: tab.packageLockPreview(of: file),
             expandable: tab.expandableContext(of: file), onExpand: { expansion in Task { await tab.expandContext(of: file, expansion) } },
             onCollapse: tab.hasRevealedContext(of: file) ? { tab.collapseContext(of: file) } : nil,
             blocks: tab.threads(on: shown).map { threadBlocks(for: $0, onFileAt: file.path, in: tab) } ?? [],
