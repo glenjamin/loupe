@@ -13,6 +13,12 @@ struct PullRequestLinkTests {
         "https://github.com/tamarinworks/porter/pull/1522/files?w=1#diff-abc",
         "http://www.github.com/tamarinworks/porter/pull/1522",
         "HTTPS://GitHub.com/tamarinworks/porter/pull/1522",
+        "loupe://github.com/tamarinworks/porter/pull/1522",
+        "loupe://github.com/tamarinworks/porter/pull/1522/files#discussion_r2412345678",
+        "loupe://www.github.com/tamarinworks/porter/pull/1522",
+        "LOUPE://GitHub.com/tamarinworks/porter/pull/1522",
+        "loupe:///tamarinworks/porter/pull/1522",
+        "loupe:///tamarinworks/porter/pull/1522/files",
     ])
     func findsThePullRequestWhicheverPartOfItALinkPointsAt(_ link: String) throws {
         let url = try #require(URL(string: link))
@@ -34,6 +40,12 @@ struct PullRequestLinkTests {
         "https://api.github.com/repos/tamarinworks/porter/pulls/1522",
         "https://example.com/tamarinworks/porter/pull/1522",
         "mailto:someone@example.com",
+        "ftp://github.com/tamarinworks/porter/pull/1522",
+        "loupe://example.com/tamarinworks/porter/pull/1522",
+        "loupe://tamarinworks/porter/pull/1522",
+        "loupe:///tamarinworks/porter/issues/1522",
+        "loupe:///tamarinworks/porter",
+        "loupe:",
     ])
     func anyOtherLinkIsNotAPullRequest(_ link: String) throws {
         #expect(PullRequestLink(url: try #require(URL(string: link))) == nil)

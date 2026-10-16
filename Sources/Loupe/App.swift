@@ -14,8 +14,13 @@ struct LoupeApp: App {
     init() {
         let windows = WindowManager(tabs: makeTabs())
         self.windows = windows
+        let links = IncomingLinks(bringForward: { windows.comeForward() }, openInBrowser: { NSWorkspace.shared.open($0) })
+        AppDelegate.incomingLinks = links
         NotificationCenter.default.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { windows.restore() }
+            MainActor.assumeIsolated {
+                windows.restore()
+                Task { await links.ready(windows.tabs) }
+            }
         }
     }
 
@@ -74,6 +79,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// Where links opened with Loupe go: `loupe://` ones, and https ones when Loupe is chosen for
+    /// them. Set by the PR window's app; a diff file's window takes none.
+    @MainActor static var incomingLinks: IncomingLinks?
+
+    /// Links can arrive before launch has finished, in which case they wait for the window.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let links = Self.incomingLinks else { return }
+        Task { await links.open(urls) }
+    }
 
     /// Run as a bare executable there's no Info.plist icon, so the Dock and About panel take it
     /// from here; once the Dock tile exists, that is.

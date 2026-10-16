@@ -13,11 +13,18 @@ public struct PullRequestLink: Sendable, Hashable {
     }
 
     /// From `https://github.com/<owner>/<name>/pull/<number>`, with or without anything after
-    /// it, such as `/files`, a query or a comment's `#issuecomment-…`. Nil for any other URL.
+    /// it, such as `/files`, a query or a comment's `#issuecomment-…`. Loupe's own scheme names a
+    /// PR the same way, as `loupe://github.com/…` (a GitHub link with its scheme swapped) or
+    /// `loupe:///<owner>/<name>/pull/<number>`. Nil for any other URL.
     public init?(url: URL) {
-        guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
-              let host = url.host()?.lowercased(), ["github.com", "www.github.com"].contains(host)
-        else { return nil }
+        guard let scheme = url.scheme?.lowercased() else { return nil }
+        let host = url.host()?.lowercased() ?? ""
+        let gitHubHosts = ["github.com", "www.github.com"]
+        switch scheme {
+        case "http", "https": guard gitHubHosts.contains(host) else { return nil }
+        case "loupe": guard host.isEmpty || gitHubHosts.contains(host) else { return nil }
+        default: return nil
+        }
         let parts = url.pathComponents.filter { $0 != "/" }
         guard parts.count >= 4, parts[2] == "pull",
               let number = Int(parts[3]), number > 0, parts[3].allSatisfy(\.isASCIIDigit),

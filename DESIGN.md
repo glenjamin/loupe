@@ -437,6 +437,12 @@ A noticed change on an open PR also looks up its checks and merge state, which t
 
 Every PR in To review is there because a review is being asked of the viewer, so a "Review required" badge on each row said nothing and drew the eye in amber to every one alike. The To review list leaves it out; "Approved" and "Changes requested" still show there, as they say how others' reviews went. Mine and an open PR's header keep the badge, as there it's news.
 
+### Links from other apps open in Loupe, which is an alternate https handler, not the browser
+
+This extends "Links to PRs open them in the app" to links clicked outside it. Most PRs reach a reviewer as links in Slack and mail, and each one opened in the browser leaves the review there rather than in Loupe. Loupe declares its own `loupe` URL scheme, and `https` with the `Alternate` handler rank. Taking over every https link as the default browser would put the rest of the web in an app that can only send it on, so Loupe never asks to be the default; instead a link router such as Finicky or Velja, which already chooses a browser per link, sends `github.com/*/pull/*` here, either rewritten to `loupe://` or by opening the https URL with Loupe. `open -a Loupe <url>` works the same way.
+
+A PR link is `loupe://github.com/<owner>/<repo>/pull/<number>`, which is exactly a GitHub link with its scheme swapped, as a router's rewrite produces, or the shorter `loupe:///<owner>/<repo>/pull/<number>`; anything after the number is allowed, as for links inside the app. Either brings the window forward, unhidden and unminimised, and opens or focuses the PR's tab as a link in a conversation does, stored PR at once, otherwise looked up by number. A PR GitHub won't show, or a failed lookup, opens the link's github.com page in the browser so the click isn't lost. An https link that isn't a PR goes to the default browser without bringing Loupe forward; a `loupe:` URL that names no PR is logged and dropped, as there's no page to send it to. Links that arrive while Loupe is launching wait until the window has been restored, then open in the order they came.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

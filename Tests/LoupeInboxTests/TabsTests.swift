@@ -86,6 +86,38 @@ struct TabsTests {
         #expect(app.tabs.selected == from.id)
     }
 
+    @Test func linksFromOtherAppsWaitForTheTabsThenOpenPullRequestsAndPassOtherPagesToTheBrowser() async throws {
+        let app = try await App()
+        let (first, second) = (app.toReview[0], app.toReview[1])
+        let outside = OutsideWorld()
+        let links = IncomingLinks(bringForward: { outside.broughtForward += 1 }, openInBrowser: { outside.browsed.append($0.absoluteString) })
+        let routed = try #require(URL(string: first.url.absoluteString.replacingOccurrences(of: "https:", with: "loupe:") + "/files"))
+        let path = second.url.path(percentEncoded: false)
+        let bare = try #require(URL(string: "loupe://\(path)"))
+
+        await links.open([routed, bare])
+        #expect(app.tabs.tabs.isEmpty, "nothing opens before launch has finished")
+        #expect(outside.broughtForward == 0)
+
+        await links.ready(app.tabs)
+        #expect(app.tabs.tabs.map(\.id) == [first.id, second.id], "in the order they arrived")
+        #expect(app.tabs.selected == second.id)
+        #expect(outside.broughtForward == 2)
+
+        let urls = [
+            "https://github.com/tamarinworks/porter/issues/1522",
+            "loupe:///tamarinworks/porter/pull/999999#issuecomment-1",
+            "loupe://example.com/nothing",
+        ]
+        await links.open(try urls.map { try #require(URL(string: $0)) })
+        #expect(outside.browsed == [
+            "https://github.com/tamarinworks/porter/issues/1522",
+            "https://github.com/tamarinworks/porter/pull/999999#issuecomment-1",
+        ], "a PR GitHub can't find goes to its page; a loupe link that names no PR is dropped")
+        #expect(outside.broughtForward == 3, "only for the PR")
+        #expect(app.tabs.tabs.map(\.id) == [first.id, second.id])
+    }
+
     @Test func closingAPullRequestsTabForgetsItForNextLaunchAndShowsItsNeighbour() async throws {
         let app = try await App()
         let (first, middle, last) = (app.toReview[0], app.toReview[1], app.toReview[2])
@@ -546,6 +578,14 @@ private struct App {
 @MainActor
 private final class ShowRecorder {
     var ids: [String] = []
+}
+
+/// What incoming links asked of the rest of the system: the window brought forward, and pages
+/// opened in the browser.
+@MainActor
+private final class OutsideWorld {
+    var broughtForward = 0
+    var browsed: [String] = []
 }
 
 private extension PullRequestTab {

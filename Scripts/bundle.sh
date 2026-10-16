@@ -38,6 +38,23 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <!-- loupe:// is Loupe's own. https is offered only as an alternate handler, so
+       a link router or "open -a Loupe" can send PR links here without Loupe
+       becoming the default browser. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>com.glenmailer.Loupe.pullrequest</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>CFBundleURLSchemes</key><array><string>loupe</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleURLName</key><string>com.glenmailer.Loupe.web</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleURLSchemes</key><array><string>https</string></array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST

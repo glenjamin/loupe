@@ -46,6 +46,16 @@ final class WindowManager {
     /// The window, once restored.
     var mainWindow: NSWindow? { window }
 
+    /// Makes Loupe the active app with its window in front, even if hidden or minimised, as for
+    /// a link clicked in another app. A snapshot run stays in the background.
+    func comeForward() {
+        guard SnapshotRun.directory == nil, let window else { return }
+        NSApp.unhide(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        bringForward(window)
+    }
+
     /// What the window is titled with `id` shown, nil being the lists.
     func title(of id: String?) -> String {
         id.flatMap(tabs.tab(id:))?.title ?? "Pull Requests"

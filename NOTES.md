@@ -109,6 +109,24 @@ Icon/render.sh
 sh Scripts/bundle.sh && open .build/Loupe.app   # the two steps separately
 ```
 
+### Opening PR links from other apps
+
+The bundle declares the `loupe` URL scheme, and `https` as an alternate handler only, so Loupe can be picked for a link without becoming the default browser (see "Links from other apps open in Loupe" in `DESIGN.md`). Launch Services learns the URL types when the bundle is registered, which opening it does, so `./start.sh` after a rebuild is enough. To force it without opening the app:
+
+```sh
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f .build/Loupe.app
+```
+
+To try it, with the bundle built and registered (each launches Loupe if it isn't running):
+
+```sh
+open 'loupe://github.com/tamarinworks/porter/pull/1522'
+open 'loupe:///tamarinworks/porter/pull/1522'
+open -a Loupe https://github.com/tamarinworks/porter/pull/1522
+```
+
+A router such as Finicky can send Slack's and mail's PR links here, either by rewriting `https://github.com/*/pull/*` to the same URL with the scheme `loupe`, or by opening those URLs with the app `com.glenmailer.Loupe`. The PR opens in its tab, looked up on GitHub if it isn't stored; a PR GitHub won't show goes to the browser, as does any other https link Loupe is given. A `loupe:` URL that names no PR is logged and dropped.
+
 ## Snapshots
 
 The app can draw its window to PNGs, title bar, toolbar and tab strip included, without screen-recording permission. The Debug menu has "Save Snapshot of Window…" (⌥⌘S) and "Snapshot All Tabs to Desktop".
