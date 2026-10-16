@@ -205,6 +205,7 @@ struct PullRequestHeader: View {
                     Text("\(pullRequest.headRefName) → \(pullRequest.baseRefName)")
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
+                    OpenInEditorButton(pullRequest: pullRequest, tab: tab)
                     if let checks = pullRequest.checks {
                         ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
                         FailedCheckNames(state: checks, contexts: pullRequest.checkContexts)
@@ -237,6 +238,52 @@ struct PullRequestHeader: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+}
+
+/// Checks the PR's branch out in its checkout and opens that in the repo's editor, with a
+/// spinner while git works. Success shows nothing more, as the editor coming up says it; a
+/// failure, or a branch not checked out quite as asked, says so in an alert.
+struct OpenInEditorButton: View {
+    let pullRequest: PullRequestSummary
+    let tab: PullRequestTab
+
+    var body: some View {
+        let launch = tab.editorLaunch
+        Button {
+            Task { await tab.openInEditor { editor, directory in try await open(directory, in: editor) } }
+        } label: {
+            HStack(spacing: 3) {
+                if launch.isSwitching {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "hammer")
+                }
+                Text(verbatim: "Open in \(tab.editor?.name ?? "Editor")")
+            }
+        }
+        .buttonStyle(.borderless)
+        .disabled(tab.editor == nil || launch.isSwitching)
+        .help(help)
+        .alert(
+            launch.report?.title ?? "",
+            isPresented: Binding(get: { launch.report != nil }, set: { if !$0 { launch.report = nil } }),
+            presenting: launch.report
+        ) { _ in
+            Button("OK") {}
+        } message: { report in
+            Text(report.message)
+        }
+    }
+
+    private var help: String {
+        guard let checkout = tab.editorCheckout, let editor = tab.editor else {
+            if case .noCheckout = tab.phase { return "There's no local checkout of \(pullRequest.repository) to open" }
+            return "Available once the diff has found the local checkout"
+        }
+        if tab.editorLaunch.isSwitching { return "Checking out \(pullRequest.headRefName)…" }
+        let path = (checkout.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+        return "Check out \(pullRequest.headRefName) in \(path) and open it in \(editor.name)"
     }
 }
 

@@ -238,6 +238,14 @@ enum SnapshotRun {
                 await wait(until: .now.addingTimeInterval(20)) { reloading.allSatisfy { $0.reloading == .diffing } }
                 for tab in reloading { print("\(tab.title): reloading, \(tab.reloading.map { "held at \($0)" } ?? "not held")") }
             }
+            // LOUPE_SNAPSHOT_EDITOR=1 prints what each PR's "Open in" button would do, as a dry
+            // run: nothing is fetched or switched and no editor is opened.
+            if environment["LOUPE_SNAPSHOT_EDITOR"] == "1" {
+                for tab in tabs.tabs {
+                    await tab.load()
+                    print(await editorPlan(for: tab))
+                }
+            }
             // A moment for the final state to be drawn.
             try? await Task.sleep(for: .milliseconds(500))
             do {
@@ -1073,4 +1081,22 @@ private extension DiffStep {
         default: return nil
         }
     }
+}
+
+/// What the PR's "Open in" button would do: the editor, branch and checkout, and whether the
+/// checkout is clean enough to switch, found with read-only git.
+@MainActor
+private func editorPlan(for tab: PullRequestTab) async -> String {
+    let pullRequest = tab.pullRequest
+    guard let checkout = tab.editorCheckout, let editor = tab.editor else {
+        return "\(tab.title): editor: no checkout resolved, button disabled"
+    }
+    let state: String
+    do {
+        try await CheckoutSwitcher().ensureClean(checkout)
+        state = "clean"
+    } catch {
+        state = "refused: \(error.localizedDescription)"
+    }
+    return "\(tab.title): editor: \(editor.name), branch \(pullRequest.headRefName), checkout \(checkout.path(percentEncoded: false)), \(state)"
 }

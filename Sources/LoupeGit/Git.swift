@@ -1,9 +1,9 @@
 import Foundation
 import os
 
-/// Runs git against a checkout. The checkouts are the user's working copies, so nothing here
-/// touches branches, the index or the working tree; the only ref written is Loupe's own
-/// `refs/loupe/` namespace.
+/// Runs git against a checkout. The checkouts are the user's working copies, so diffing never
+/// touches branches, the index or the working tree; the only ref it writes is Loupe's own
+/// `refs/loupe/` namespace. Only `CheckoutSwitcher`, when asked, switches branches.
 enum Git {
     /// The git Loupe runs: `LOUPE_GIT` if set, else Homebrew's (Apple silicon, then Intel), else
     /// Apple's. Homebrew's is newer and is the one the shell finds, so diffs match the terminal's.
