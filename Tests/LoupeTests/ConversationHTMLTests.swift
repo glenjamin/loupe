@@ -36,8 +36,8 @@ struct ConversationHTMLTests {
 
     @Test func resolvedAndOutdatedThreadsAreMarkedAndResolvedOnesStartFolded() throws {
         let page = try render(conversation)
-        #expect(page.contains(#"<details class="thread" open><summary><a class="thread-location" href="loupe-thread://show/t1" title="Show in the diff"><code>app/widget.go:12</code></a><a class="thread-show""#))
-        #expect(page.contains(#"<details class="thread resolved outdated"><summary><a class="thread-location" href="loupe-thread://show/t2" title="Show in the diff"><code>README.md:3</code></a> <span class="badge outdated">Outdated</span> <span class="badge resolved">Resolved</span>"#))
+        #expect(page.contains(#"<details class="thread" data-thread-id="t1" open><summary><a class="thread-location" href="loupe-thread://show/t1" title="Show in the diff"><code>app/widget.go:12</code></a><a class="thread-show""#))
+        #expect(page.contains(#"<details class="thread resolved outdated" data-thread-id="t2"><summary><a class="thread-location" href="loupe-thread://show/t2" title="Show in the diff"><code>README.md:3</code></a> <span class="badge outdated">Outdated</span> <span class="badge resolved">Resolved</span>"#))
     }
 
     @Test func eachThreadLinksToItsPlaceInTheDiffAndOffersWhatTheViewerMayDo() throws {

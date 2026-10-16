@@ -300,19 +300,53 @@ struct ThreadLinksTests {
         #expect(tab.threadActivity.unshown == nil)
     }
 
-    @Test func replyingFromTheConversationOpensTheComposerOnTheThreadInTheDiff() async throws {
+    @Test func replyingFromTheConversationWritesTheReplyThereAndSendsIt() async throws {
         let (app, tab, threadId) = try await ThreadsApp.withThread()
+        tab.section = .conversation
+        let selected = tab.selectedFile
 
         await tab.follow(ThreadLink(.reply, thread: threadId))
 
-        #expect(tab.section == .files)
-        #expect(tab.selectedFile == "app.go")
-        #expect(tab.threadActivity.revealing == threadId)
-        #expect(tab.threadActivity.replyingApart == nil, "written in the diff, not over the conversation")
+        #expect(tab.section == .conversation, "replied to where it's being read")
+        #expect(tab.selectedFile == selected)
+        #expect(tab.threadActivity.revealing == nil)
+        #expect(tab.threadActivity.replyingInConversation == threadId)
         let draft = try #require(tab.threadActivity.replies[threadId])
         draft.text = "Fixed"
         await tab.sendReply(to: try #require(tab.thread(threadId)))
+
         #expect(await app.conversations.repliesReceived.map(\.body) == ["Fixed"])
+        #expect(tab.threadActivity.replies[threadId] == nil, "closed once posted")
+        #expect(tab.threadActivity.replyingInConversation == nil)
+        #expect(tab.thread(threadId)?.comments.last?.bodyHTML == "<p dir=\"auto\">Fixed</p>", "the conversation shows it in its thread")
+        #expect(tab.section == .conversation)
+    }
+
+    @Test func aReplyPutAwayInTheConversationKeepsItsDraftOnTheThread() async throws {
+        let (app, tab, threadId) = try await ThreadsApp.withThread()
+        tab.section = .conversation
+        await tab.follow(ThreadLink(.reply, thread: threadId))
+        let draft = try #require(tab.threadActivity.replies[threadId])
+        draft.text = "Half a thought"
+
+        tab.threadActivity.closeConversationReply()
+        #expect(tab.threadActivity.replyingInConversation == nil)
+        #expect(tab.threadActivity.replies[threadId] === draft, "kept, so the diff shows it too")
+
+        await tab.follow(ThreadLink(.reply, thread: threadId))
+        #expect(tab.threadActivity.replyingInConversation == threadId)
+        #expect(tab.threadActivity.replies[threadId]?.text == "Half a thought", "opened again as it was left")
+
+        let thread = try #require(tab.thread(threadId))
+        await tab.showInDiff(thread)
+        #expect(tab.section == .files, "Show in diff still goes to its line")
+        #expect(tab.threadActivity.revealing == threadId)
+        #expect(tab.threadActivity.replyingInConversation == nil)
+        #expect(tab.threadActivity.replies[threadId]?.text == "Half a thought", "carried to the thread in the diff")
+
+        tab.cancelReply(to: thread)
+        #expect(tab.threadActivity.replies[threadId] == nil)
+        #expect(await app.conversations.repliesReceived.isEmpty)
     }
 
     @Test func aThreadTheDiffCantShowSaysWhyAndIsRepliedToOverTheConversation() async throws {
@@ -335,7 +369,7 @@ struct ThreadLinksTests {
 
         #expect(tab.section == .conversation)
         #expect(tab.threadActivity.unshown == nil)
-        #expect(tab.threadActivity.replyingApart?.threadId == gone)
+        #expect(tab.threadActivity.replyingInConversation == gone)
         let draft = try #require(tab.threadActivity.replies[gone])
         draft.text = "Yes, still needed"
         await tab.sendReply(to: try #require(tab.thread(gone)))

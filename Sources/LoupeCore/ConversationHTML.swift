@@ -116,7 +116,9 @@ public enum ConversationHTML {
             #"<div class="thread-comment">\#(avatar(reply.author, size: 24))<div><header>\#(login(reply.author)) \#(time(reply.createdAt, now: now))</header><div class="body">\#(minimizable(reply.bodyHTML, isMinimized: reply.isMinimized))</div></div></div>"#
         }.joined()
         let classes = ["thread", isResolved ? "resolved" : nil, isOutdated ? "outdated" : nil].compactMap { $0 }.joined(separator: " ")
-        return #"<details class="\#(classes)"\#(isResolved ? "" : " open")><summary>\#(place)\#(badges)\#(showInDiff)</summary>\#(hunk(comment.diffHunk))\#(replies)\#(actions)</details>"#
+        // The app finds the thread by its id, to put a reply to it beside it.
+        let id = thread.map { #" data-thread-id="\#(escape($0.id))""# } ?? ""
+        return #"<details class="\#(classes)"\#(id)\#(isResolved ? "" : " open")><summary>\#(place)\#(badges)\#(showInDiff)</summary>\#(hunk(comment.diffHunk))\#(replies)\#(actions)</details>"#
     }
 
     /// Reply, and resolve or unresolve, where the viewer may; a thread in the viewer's pending

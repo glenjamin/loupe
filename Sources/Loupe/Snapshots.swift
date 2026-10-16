@@ -748,13 +748,15 @@ private func saveSnapshotsOfReviewerPickers(in windows: WindowManager, to direct
 /// On each PR with review threads, scrolls its conversation to the first thread's "Show in diff",
 /// or its "Reply…" when `replying`, and writes `thread-conversation-<title>.png`; then clicks it
 /// in the page, so it goes through the web view's navigation as a real click does, prints where
-/// that left the tab, and writes `thread-<title>.png`. Nothing is typed or sent.
+/// that left the tab and where any reply opened, and writes `thread-<title>.png` with a reply's
+/// popover moved back by its thread. Nothing is typed or sent.
 @MainActor
 private func saveSnapshotsOfShownThreads(replying: Bool, in windows: WindowManager, to directory: URL) async throws -> [URL] {
     guard let window = windows.mainWindow else { return [] }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let selected = windows.tabs.selected
-    let link = replying ? "a.thread-reply" : "a.thread-show"
+    // A reply is clicked where a reader can see it, in a thread that isn't folded away.
+    let link = replying ? "details[open] > .thread-actions > a.thread-reply" : "a.thread-show"
     var written: [URL] = []
     for tab in windows.tabs.tabs where tab.conversation?.threads.isEmpty == false {
         tab.section = .conversation
@@ -777,9 +779,15 @@ private func saveSnapshotsOfShownThreads(replying: Bool, in windows: WindowManag
         _ = try? await page.webView.evaluateJavaScript("document.querySelector('\(link)').click()", in: nil, contentWorld: .defaultClient)
         try? await Task.sleep(for: .milliseconds(1200))
         let activity = tab.threadActivity
-        print("\(tab.title): clicked \(link); section \(tab.section), file \(tab.selectedFile ?? "none"), still to reveal \(activity.revealing ?? "nothing"), replies open \(activity.replies.count), unshown \(activity.unshown?.reason ?? activity.replyingApart?.reason ?? "none")")
+        let reply = page.replyPopover.map { "in a popover by \($0.threadId)" } ?? activity.replyingInConversation.map { "in a sheet for \($0)" } ?? "none"
+        print("\(tab.title): clicked \(link); section \(tab.section), file \(tab.selectedFile ?? "none"), still to reveal \(activity.revealing ?? "nothing"), replies open \(activity.replies.count), reply over the conversation \(reply), unshown \(activity.unshown?.reason ?? "none")")
+        if let popover = page.replyPopover?.popover {
+            placePopover(under: page.webView.convert(popover.positioningRect, to: nil), in: window)
+        }
         let shown = directory.appending(path: "thread-\(title).png")
         try await saveSnapshot(of: window, to: shown)
+        page.closeReply()
+        activity.closeConversationReply()
         written += [conversation, shown]
     }
     windows.select(selected)
@@ -988,10 +996,17 @@ private func drawWebViews(in root: NSView, onto rep: NSBitmapImageRep) async {
 /// during a snapshot run, so AppKit has moved the popover onto one, away from it.
 @MainActor
 private func placePopover(under view: NSView, in window: NSWindow) {
+    placePopover(under: view.convert(view.bounds, to: nil), in: window)
+}
+
+/// Moves the open popover to just under `anchor`, in the window's coordinates, or just over it
+/// when there's no room under it, as AppKit does on screen.
+@MainActor
+private func placePopover(under anchor: NSRect, in window: NSWindow) {
     guard let popover = window.childWindows?.first(where: \.isVisible) else { return }
-    let anchor = view.convert(view.bounds, to: nil)
     let x = min(max(anchor.midX - popover.frame.width / 2, 0), window.frame.width - popover.frame.width)
-    popover.setFrameTopLeftPoint(NSPoint(x: window.frame.minX + x, y: window.frame.minY + anchor.minY))
+    let top = anchor.minY >= popover.frame.height ? anchor.minY : anchor.maxY + popover.frame.height
+    popover.setFrameTopLeftPoint(NSPoint(x: window.frame.minX + x, y: window.frame.minY + top))
 }
 
 /// Draws the content of `window`'s visible child windows, such as an open popover, over where

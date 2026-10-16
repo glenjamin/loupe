@@ -583,6 +583,12 @@ This extends "Reviews are submitted as on github.com: a pending review, then "Fi
 
 The header's "N pending comments" is now a plain button opening a popover, "Your pending review", that lists every pending comment in the diff's order (file, then line, with those on a whole file or off the diff after a file's lines): its `path:line`, then for a reply "replying to @login:" and the first line of the comment before it in its thread, or for a new thread the line of code it's on, then the first three lines of the comment as plain text. Clicking a row closes the popover and shows the thread in the diff through the same path as the conversation's "Show in diff"; each row has the same "Delete…", and the footer has "Discard review with N pending comments…", so a review can be pruned from one place without hunting through files. The Summary popover keeps the same discard button, renamed from "Abandon review" to say what goes with it; both ask first.
 
+### A thread is replied to where it's read, in a popover by it
+
+This revises "The conversation's threads link to the diff, where they're replied to". Jumping to the diff to answer took the reader away from the conversation they were reading through, and answering several threads meant going back and forth for each. "Reply…" in the conversation now opens a popover by the thread, on its "Reply…" row, with the thread's comments and the same composer and send path as the diff's threads; the section stays on the conversation, and once sent the page reloads with the reply in its thread, keeping its place. This goes for every thread, so the separate sheet for threads the diff can't show is gone.
+
+The page still runs no script of its own: the app asks the web view in its own script world where the thread is, by a `data-thread-id` on it, and shows an `NSPopover` at that rect. If the thread can't be found in view, the reply opens in a sheet over the conversation instead. Esc, or a click elsewhere, puts the popover away and keeps the draft on the thread, where "Reply…" opens it again and the diff shows it too; Cancel drops it, asking first as elsewhere. "Show in diff", on the thread and quietly in the popover, is still the way to the line, and carries any draft there.
+
 ## Not yet decided
 
 Nothing is pending.

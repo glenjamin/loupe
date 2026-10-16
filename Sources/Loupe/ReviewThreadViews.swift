@@ -312,7 +312,7 @@ struct UnshownThreadNote: View {
                 .help("Show the file without the conversation")
             }
             if let thread, thread.viewerCanReply, !thread.isPending {
-                Button("Reply…") { Task { await tab.showInDiff(thread, replying: true) } }
+                Button("Reply…") { tab.replyInConversation(to: thread) }
                     .help("Reply to this conversation here; it posts at once, not as part of a review")
             }
             Button("Dismiss", systemImage: "xmark") { tab.threadActivity.dismissUnshown() }
@@ -330,23 +330,29 @@ struct UnshownThreadNote: View {
     }
 }
 
-/// A reply to a thread the diff can't show, written over the conversation: the thread's
-/// comments, then the composer the diff's threads use, which sends the same way.
-struct ApartReplySheet: View {
+/// A reply to a thread written over the conversation, by the thread or in a sheet: the
+/// thread's comments, then the composer the diff's threads use, which sends the same way. Esc
+/// puts it away with the draft kept on the thread.
+struct ConversationReply: View {
     let tab: PullRequestTab
-    let unshown: UnshownThread
+    let threadId: String
 
     var body: some View {
         let activity = tab.threadActivity
         VStack(alignment: .leading, spacing: 10) {
-            if let thread = tab.reviewThread(unshown.threadId) {
-                VStack(alignment: .leading, spacing: 2) {
+            if let thread = tab.reviewThread(threadId) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text(verbatim: "Reply on \(place(of: thread))")
                         .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.head)
                         .textSelection(.enabled)
-                    Text(verbatim: "It can't be shown in the diff: \(unshown.reason).")
+                    Spacer(minLength: 0)
+                    Button("Show in diff") { Task { await tab.showInDiff(thread) } }
+                        .buttonStyle(.plain)
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .help("Show this conversation on its line in the diff, keeping the reply")
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
@@ -369,7 +375,7 @@ struct ApartReplySheet: View {
                         .help(error)
                 }
                 if let draft = activity.replies[thread.id] {
-                    ReplyComposer(tab: tab, thread: thread, draft: draft)
+                    ReplyComposer(tab: tab, thread: thread, draft: draft, escape: { activity.closeConversationReply() })
                         .font(.callout)
                 }
             }
@@ -384,12 +390,15 @@ private struct ReplyComposer: View {
     let tab: PullRequestTab
     let thread: ReviewThread
     let draft: CommentDraft
+    /// What Esc does instead of cancelling, if anything.
+    var escape: (() -> Void)?
 
     var body: some View {
         CommentComposer(
             draft: draft, caption: "Markdown. Posts at once, not as part of a review.",
             actions: [ComposerAction(label: "Reply", help: "Reply at once, not as part of a review") { Task { await tab.sendReply(to: thread) } }],
-            cancel: { tab.cancelReply(to: thread) }
+            cancel: { tab.cancelReply(to: thread) },
+            escape: escape
         )
     }
 }
@@ -488,17 +497,19 @@ struct ComposerAction {
 
 /// A plain-text field for a comment in markdown, as the description's editor is: ⌘↩ sends by
 /// the first of `actions`, which is the prominent button, and Esc cancels, asking first if
-/// anything has been typed.
+/// anything has been typed, unless it's given something else to do.
 struct CommentComposer: View {
     @Bindable var draft: CommentDraft
     let caption: String
     let actions: [ComposerAction]
     let cancel: () -> Void
+    /// What Esc does instead of cancelling, such as putting a floating composer away.
+    var escape: (() -> Void)?
     @State private var confirmsDiscard = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            MarkdownTextView(text: $draft.text, isEditable: !draft.isSending, save: { send(actions.first) }, cancel: cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize))
+            MarkdownTextView(text: $draft.text, isEditable: !draft.isSending, save: { send(actions.first) }, cancel: escape ?? cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize))
                 .frame(height: 96)
                 .background(Color(nsColor: .textBackgroundColor))
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))

@@ -48,8 +48,9 @@ public final class ThreadActivity {
     public var highlighted: String?
     /// The thread the conversation last asked to show that the diff can't, and why.
     public internal(set) var unshown: UnshownThread?
-    /// A thread the diff can't show being replied to over the conversation instead.
-    public internal(set) var replyingApart: UnshownThread?
+    /// The thread, by id, whose reply is being written over the conversation, by its place in
+    /// the page; its draft is in `replies`, as the diff's are.
+    public internal(set) var replyingInConversation: String?
 
     init() {}
 
@@ -58,11 +59,15 @@ public final class ThreadActivity {
         if revealing == id { revealing = nil }
     }
 
-    /// Stops offering, or writing a reply to, a thread the diff can't show; the reply's draft
-    /// itself is closed as any other is.
+    /// Stops saying a thread can't be shown in the diff.
     public func dismissUnshown() {
         unshown = nil
-        replyingApart = nil
+    }
+
+    /// Puts away the reply being written over the conversation, keeping its draft on the
+    /// thread, where the diff shows it and the conversation's "Reply…" opens it again.
+    public func closeConversationReply() {
+        replyingInConversation = nil
     }
 }
 
@@ -106,30 +111,23 @@ extension PullRequestTab {
     public func follow(_ link: ThreadLink) async {
         guard let thread = reviewThread(link.threadId) else { return }
         switch link.action {
-        case .show: await showInDiff(thread, replying: false)
-        case .reply: await showInDiff(thread, replying: true)
+        case .show: await showInDiff(thread)
+        case .reply: replyInConversation(to: thread)
         case .resolve: await setResolved(true, thread: thread)
         case .unresolve: await setResolved(false, thread: thread)
         }
     }
 
     /// Shows the thread where the diff places it, in the whole PR's changes: its file selected,
-    /// the files shown, and the thread opened, marked and scrolled into view once drawn, with a
-    /// reply started if `replying`. One the diff can't show is said so over the conversation,
-    /// its file selected if the PR changes it, and a reply to it is written there instead.
-    public func showInDiff(_ thread: ReviewThread, replying: Bool) async {
+    /// the files shown, and the thread opened, marked and scrolled into view once drawn. One the
+    /// diff can't show is said so over the conversation, its file selected if the PR changes it.
+    public func showInDiff(_ thread: ReviewThread) async {
         threadActivity.dismissUnshown()
-        let canReply = replying && thread.viewerCanReply && !thread.isPending
+        threadActivity.closeConversationReply()
         if let reason = whyDiffCannotShow(thread) {
             let isFileSelected = isInChanges(thread.path)
             if isFileSelected { selectedFile = thread.path }
-            let unshown = UnshownThread(threadId: thread.id, reason: reason, isFileSelected: isFileSelected)
-            if canReply {
-                startReply(to: thread)
-                threadActivity.replyingApart = unshown
-            } else {
-                threadActivity.unshown = unshown
-            }
+            threadActivity.unshown = UnshownThread(threadId: thread.id, reason: reason, isFileSelected: isFileSelected)
             return
         }
         if shownCommit != nil { await showCommit(nil) }
@@ -138,7 +136,15 @@ extension PullRequestTab {
         if thread.isResolved { threadActivity.expanded.insert(thread.id) }
         threadActivity.revealing = thread.id
         threadActivity.highlighted = thread.id
-        if canReply { startReply(to: thread) }
+    }
+
+    /// Opens a reply to the thread over the conversation, where it's being read, keeping one
+    /// already being written to it, whether the diff can show the thread or not.
+    public func replyInConversation(to thread: ReviewThread) {
+        guard thread.viewerCanReply, !thread.isPending else { return }
+        threadActivity.dismissUnshown()
+        startReply(to: thread)
+        threadActivity.replyingInConversation = thread.id
     }
 
     /// The thread with this id, as last fetched.
@@ -239,6 +245,7 @@ extension PullRequestTab {
         guard threadActivity.replies[thread.id]?.isSending != true else { return }
         threadActivity.replies[thread.id] = nil
         threadActivity.errors[thread.id] = nil
+        if threadActivity.replyingInConversation == thread.id { threadActivity.closeConversationReply() }
     }
 
     /// Posts the thread's reply at once, then fetches the threads again to show it as GitHub
@@ -259,7 +266,10 @@ extension PullRequestTab {
             threadActivity.errors[thread.id] = "Couldn't reply: \(error.localizedDescription)"
             return
         }
-        if threadActivity.replies[thread.id] === draft { threadActivity.replies[thread.id] = nil }
+        if threadActivity.replies[thread.id] === draft {
+            threadActivity.replies[thread.id] = nil
+            if threadActivity.replyingInConversation == thread.id { threadActivity.closeConversationReply() }
+        }
         await refreshThreads { $0.id == thread.id }
     }
 
