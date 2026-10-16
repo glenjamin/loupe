@@ -109,6 +109,53 @@ struct ConversationHTMLTests {
         #expect(CommentLink(url: try #require(URL(string: "loupe-thread://new"))) == nil)
     }
 
+    @Test func whatTheViewerMayEditOffersAnEditByItsHeader() throws {
+        #expect(editLinks(in: try render(conversation)).isEmpty, "nothing GitHub doesn't let them edit")
+        var editable = conversation
+        editable.items[0].viewerCanUpdate = true
+        editable.items[3].viewerCanUpdate = true
+        for index in editable.threads[0].comments.indices.dropFirst() { editable.threads[0].comments[index].viewerCanUpdate = true }
+        let page = try render(editable)
+
+        #expect(editLinks(in: page) == ["c1", "r1", "rc3", "rc4"], "a comment, a review's summary, and thread comments, pending or not")
+        #expect(page.contains(#"<header><a class="comment-edit" href="loupe-comment://edit/c1" data-edit-comment="c1">Edit</a><strong>mallory&lt;script&gt;</strong> commented"#))
+    }
+
+    @Test func whatTheViewerMayDeleteOffersADeletionBesideItsEdit() throws {
+        var deletable = conversation
+        deletable.items[0].viewerCanDelete = true
+        deletable.items[0].viewerCanUpdate = true
+        deletable.items[3].viewerCanDelete = true
+        deletable.threads[0].comments[1].viewerCanDelete = true
+        let page = try render(deletable)
+
+        #expect(deletionLinks(in: page) == ["c1", "rc3", "rc4"], "comments and thread comments, the viewer's pending one too, but not a review")
+        #expect(page.contains(#"<header><a class="comment-delete" href="loupe-comment://delete/c1">Delete</a><a class="comment-edit" href="loupe-comment://edit/c1" data-edit-comment="c1">Edit</a><strong>"#))
+    }
+
+    @Test func anEditOnItsWayShowsAsSavingWithNoEditOffered() throws {
+        var saving = conversation
+        saving.items[0].viewerCanUpdate = true
+        saving.items[0].isSaving = true
+        saving.items[0].event = .comment(bodyHTML: "<p>Nicer, see #1</p>", isMinimized: false)
+        saving.threads[0].comments[1].viewerCanUpdate = true
+        saving.threads[0].comments[1].isSaving = true
+        let page = try render(saving)
+        #expect(page.contains(#"<strong>mallory&lt;script&gt;</strong> commented <span class="muted saving">Saving…</span></header><div class="body"><p>Nicer, see #1</p>"#))
+        #expect(page.contains(#"<strong>octocat</strong> <span class="muted saving">Saving…</span></header><div class="body"><p>Because.</p>"#))
+        #expect(!page.contains("loupe-comment://edit"))
+    }
+
+    @Test func anEditLinkCarriesAnyId() throws {
+        let link = CommentLink(editing: "IC_kwDO/a+b=")
+        #expect(CommentLink(url: link.url) == link)
+        #expect(CommentLink(url: try #require(URL(string: "loupe-comment://edit/"))) == nil)
+        let deletion = CommentLink(deleting: "IC_kwDO/a+b=")
+        #expect(CommentLink(url: deletion.url) == deletion && deletion != link)
+        #expect(CommentLink(url: try #require(URL(string: "loupe-comment://delete/"))) == nil)
+        #expect(CommentLink(url: try #require(URL(string: "loupe-comment://hide/c1"))) == nil)
+    }
+
     @Test func aCommentOnItsWayShowsAsSendingWithNothingToReactTo() throws {
         var sending = conversation
         sending.items.append(TimelineItem(id: "loupe-sending-1", date: now, actor: Participant(login: "viewer", avatarURL: nil), event: .comment(bodyHTML: "<p>On its way</p>", isMinimized: false), isSending: true))
@@ -169,4 +216,18 @@ private func templates() throws -> (String, String) {
 /// Every link's target in the page, in order.
 private func hrefs(in page: String) -> [URL] {
     page.matches(of: /href="([^"]*)"/).compactMap { URL(string: String($0.1)) }
+}
+
+/// The ids of what the page offers to edit, in order.
+private func editLinks(in page: String) -> [String] {
+    hrefs(in: page).compactMap(CommentLink.init(url:)).compactMap { link in
+        if case let .edit(id) = link.target { id } else { nil }
+    }
+}
+
+/// The ids of what the page offers to delete, in order.
+private func deletionLinks(in page: String) -> [String] {
+    hrefs(in: page).compactMap(CommentLink.init(url:)).compactMap { link in
+        if case let .delete(id) = link.target { id } else { nil }
+    }
 }

@@ -222,7 +222,19 @@ private struct PendingCommentRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            DeletePendingCommentButton(tab: tab, thread: pending.thread, comment: pending.comment)
+            if tab.canEdit(pending.comment.id) {
+                // Edited where it's read, in its thread on the diff.
+                Button("Edit…") {
+                    close()
+                    Task {
+                        await tab.follow(ThreadLink(.show, thread: pending.thread.id))
+                        await tab.startEdit(of: pending.comment.id)
+                    }
+                }
+                .controlSize(.small)
+                .help("Edit this comment in its thread on the diff")
+            }
+            DeleteCommentButton(tab: tab, thread: pending.thread, comment: pending.comment)
         }
         .font(.callout)
         .padding(.horizontal, 10)

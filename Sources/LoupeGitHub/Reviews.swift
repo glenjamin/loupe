@@ -142,7 +142,7 @@ extension GitHubClient {
     static let postedCommentFragment = """
 
         fragment PostedComment on PullRequestReviewComment {
-          id databaseId bodyHTML createdAt state author { login avatarUrl }
+          id databaseId bodyHTML createdAt state viewerCanUpdate viewerCanDelete author { login avatarUrl }
         }
         """
 }
@@ -247,10 +247,15 @@ private struct CommentNode: Decodable {
     let bodyHTML: String
     let createdAt: Date
     let state: String?
+    let viewerCanUpdate: Bool?
+    let viewerCanDelete: Bool?
     let author: AuthorNode?
 
     var comment: ThreadComment {
-        ThreadComment(id: id, databaseId: databaseId, author: author?.participant, createdAt: createdAt, bodyHTML: bodyHTML, isMinimized: false, isPending: state == "PENDING")
+        ThreadComment(
+            id: id, databaseId: databaseId, author: author?.participant, createdAt: createdAt, bodyHTML: bodyHTML, isMinimized: false,
+            isPending: state == "PENDING", viewerCanUpdate: viewerCanUpdate ?? false, viewerCanDelete: viewerCanDelete ?? false
+        )
     }
 }
 

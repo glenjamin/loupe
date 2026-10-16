@@ -7,6 +7,8 @@
                     "bodyHTML": "<p dir=\"auto\">Thanks, this reads well now.</p>",
                     "createdAt": "2026-10-16T14:20:07Z",
                     "isMinimized": false,
+                    "viewerCanUpdate": true,
+                    "viewerCanDelete": true,
                     "author": {
                         "login": "glenjamin",
                         "avatarUrl": "https://avatars.githubusercontent.com/u/151272?v=4"

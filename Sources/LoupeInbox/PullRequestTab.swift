@@ -72,6 +72,8 @@ public final class PullRequestTab: Identifiable {
     public let threadActivity = ThreadActivity()
     /// The comment being written on the PR itself, in its conversation.
     public let conversationComment = ConversationComment()
+    /// The viewer's comments and review summaries being edited.
+    public let commentEdits = CommentEdits()
     /// Checking the PR's branch out to open the checkout in an editor.
     public let editorLaunch = EditorLaunch()
     /// The review threads as last fetched while the diff was of the PR's head, which stay
@@ -110,7 +112,7 @@ public final class PullRequestTab: Identifiable {
     @ObservationIgnored private var suggesting: Task<Void, Never>?
     /// The signed-in user's login, which decides whether the PR is theirs. Read from the store,
     /// or looked up once and stored if nothing has yet.
-    private var viewerLogin: String?
+    public private(set) var viewerLogin: String?
     /// How many changes to each path's viewed state are on their way to GitHub.
     private var settingViewed: [String: Int] = [:]
     /// The PR as it was when its diff was last asked for, success or not, or when its new

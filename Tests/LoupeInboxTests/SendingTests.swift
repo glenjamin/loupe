@@ -67,7 +67,7 @@ struct SendingTests {
     @Test func aCommentOnThePullRequestShowsAtTheEndAtOnceAndTakesGitHubsCopy() async throws {
         let (app, tab) = try await openConversation()
         let itemCount = try #require(tab.conversation?.items.count)
-        tab.follow(CommentLink())
+        await tab.follow(CommentLink())
         let draft = try #require(tab.conversationComment.draft)
         #expect(tab.conversationComment.isOpen)
         draft.text = "  \n"
@@ -75,7 +75,7 @@ struct SendingTests {
         #expect(await app.conversations.conversationCommentsReceived.isEmpty, "nothing is sent empty")
         draft.text = "Thanks, this reads <well> now"
         tab.conversationComment.close()
-        tab.follow(CommentLink())
+        await tab.follow(CommentLink())
         #expect(tab.conversationComment.draft === draft, "put away, it opens again as it was")
 
         await app.conversations.hold(.conversationComment)
@@ -113,7 +113,7 @@ struct SendingTests {
         let before = tab.conversation
         await app.conversations.refuseConversationComments()
         await app.conversations.hold(.conversationComment)
-        tab.follow(CommentLink())
+        await tab.follow(CommentLink())
         let draft = try #require(tab.conversationComment.draft)
         draft.text = "Could this wait for the next release?"
 

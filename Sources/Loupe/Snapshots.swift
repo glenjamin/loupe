@@ -331,6 +331,12 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_COMMENT_PR"] == "1" {
                     for url in try await saveSnapshotsOfConversationComments(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_EDIT_COMMENT=1 opens the editor on each PR's first comment the
+                // viewer may edit, in its diff card and by the conversation's "Edit", fetching its
+                // markdown (read-only), and snapshots both. Nothing is typed or saved.
+                if environment["LOUPE_SNAPSHOT_EDIT_COMMENT"] == "1" {
+                    for url in try await saveSnapshotsOfCommentEdits(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_REACTIONS=1 scrolls each conversation to its first reaction and
                 // opens the picker beside it, and snapshots it. Nothing is clicked or sent.
                 if environment["LOUPE_SNAPSHOT_REACTIONS"] == "1" {
@@ -869,6 +875,78 @@ private func saveSnapshotsOfConversationComments(in windows: WindowManager, to d
         try await saveSnapshot(of: window, to: url)
         page.closeComment()
         tab.cancelConversationComment()
+        written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
+/// On each PR with a comment the viewer may edit, opens the editor in place on the first such
+/// thread comment the diff shows, its markdown fetched from GitHub, and writes
+/// `edit-diff-<title>.png`; then clicks the conversation's first "Edit" in the page, so it goes
+/// through the web view's navigation as a real click does, prints where the edit opened and
+/// writes `edit-<title>.png` with its popover moved back by the link. Nothing is typed or saved.
+@MainActor
+private func saveSnapshotsOfCommentEdits(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    let link = "a[data-edit-comment]"
+    var written: [URL] = []
+    for tab in windows.tabs.tabs {
+        let title = sanitised(windows.title(of: tab.id))
+        windows.select(tab.id)
+        // What the viewer may edit is known only from a conversation fetched since GitHub was
+        // asked for it, so wait for a fetch underway.
+        let fetched = Date.now.addingTimeInterval(20)
+        while Date.now < fetched, tab.conversation == nil || tab.isFetchingConversation { try? await Task.sleep(for: .milliseconds(100)) }
+        guard tab.conversation != nil else {
+            print("\(tab.title): no conversation")
+            continue
+        }
+        let onDiff = tab.placedThreads.lazy.compactMap { thread in thread.comments.first { tab.canEdit($0.id) }.map { (thread, $0) } }.first
+        if let (thread, comment) = onDiff {
+            await tab.showInDiff(thread)
+            if tab.threadActivity.unshown == nil {
+                await tab.startEdit(of: comment.id)
+                try? await Task.sleep(for: .milliseconds(1500))
+                print("\(tab.title): editing \(comment.id) on the diff, \(String(describing: tab.commentEdits.edits[comment.id]?.phase))")
+                let url = directory.appending(path: "edit-diff-\(title).png")
+                try await saveSnapshot(of: window, to: url)
+                written.append(url)
+            } else {
+                print("\(tab.title): \(comment.id) can't be shown in the diff")
+                tab.threadActivity.dismissUnshown()
+            }
+            tab.cancelEdit(of: comment.id)
+        } else {
+            print("\(tab.title): no comment to edit on the diff")
+        }
+        tab.section = .conversation
+        let page = ConversationPage.page(for: tab)
+        let deadline = Date.now.addingTimeInterval(10)
+        while Date.now < deadline, !page.isLoaded { try? await Task.sleep(for: .milliseconds(100)) }
+        try? await Task.sleep(for: .milliseconds(300))
+        let found = try? await page.webView.evaluateJavaScript(
+            "(() => { const link = document.querySelector('\(link)'); if (!link) return null; for (let thread = link.closest('details'); thread; thread = thread.parentElement.closest('details')) thread.open = true; link.scrollIntoView({ block: 'center' }); return link.dataset.editComment })()",
+            in: nil, contentWorld: .defaultClient
+        )
+        guard let commentId = found as? String else {
+            print("\(tab.title): no \(link) to click")
+            continue
+        }
+        try? await Task.sleep(for: .milliseconds(500))
+        _ = try? await page.webView.evaluateJavaScript("document.querySelector('\(link)').click()", in: nil, contentWorld: .defaultClient)
+        try? await Task.sleep(for: .milliseconds(1500))
+        let edits = tab.commentEdits
+        print("\(tab.title): clicked Edit of \(commentId); editing over the conversation \(edits.editingInConversation ?? "none"), \(String(describing: edits.edits[commentId]?.phase)), \(page.editPopover == nil ? "no popover" : "in a popover by the link")")
+        if let popover = page.editPopover?.popover {
+            placePopover(under: page.webView.convert(popover.positioningRect, to: nil), in: window)
+        }
+        let url = directory.appending(path: "edit-\(title).png")
+        try await saveSnapshot(of: window, to: url)
+        page.closeEdit()
+        tab.cancelEdit(of: commentId)
         written.append(url)
     }
     windows.select(selected)

@@ -499,6 +499,18 @@ public struct PullRequestStore: Sendable {
             }
             try db.execute(sql: "DELETE FROM listRefresh WHERE list = ?", arguments: [PullRequestList.toReview.rawValue])
         }
+        // Which comments and reviews the viewer may edit or delete, and their edits shown
+        // before GitHub has answered for them. A conversation stored before offers neither until
+        // it's next fetched.
+        migrator.registerMigration("Comment edits") { db in
+            for table in ["threadComment", "timelineItem"] {
+                try db.alter(table: table) { t in
+                    t.add(column: "viewerCanUpdate", .boolean).notNull().defaults(to: false)
+                    t.add(column: "viewerCanDelete", .boolean).notNull().defaults(to: false)
+                    t.add(column: "isSaving", .boolean).notNull().defaults(to: false)
+                }
+            }
+        }
         return migrator
     }
 

@@ -10,7 +10,8 @@ import WebKit
 /// a conversation's page has loaded, a native wait or failure covers it, as the diff's does. A
 /// thread the page asks to show that the diff can't is said so over it. A thread's reply is
 /// written in a popover by the thread, or in a sheet if the page has lost sight of it. A
-/// comment on the PR is written in a popover by the page's "Add a comment…".
+/// comment on the PR is written in a popover by the page's "Add a comment…", and an edit of the
+/// viewer's comment or review in one by its "Edit"; its "Delete" asks first, in an alert.
 struct ConversationView: View {
     let page: ConversationPage
     let pullRequest: PullRequestSummary
@@ -55,6 +56,48 @@ struct ConversationView: View {
                 // the draft, for "Add a comment…" to open again.
                 if await !page.showComment() { page.tab?.conversationComment.close() }
             }
+            .task(id: editing) {
+                guard let editing else { return page.closeEdit() }
+                // A page with no such "Edit" in it to put it by puts it away, keeping the edit,
+                // for the link to open again.
+                if await !page.showEdit(of: editing) { page.tab?.commentEdits.closeConversationEdit() }
+            }
+            .alert("Delete this comment?", isPresented: isConfirmingDeletion) {
+                Button("Delete", role: .destructive) {
+                    // Taken now, as closing the alert forgets which comment it asked about.
+                    guard let tab = page.tab, let id = tab.commentEdits.confirmingDeletion else { return }
+                    Task { await tab.deleteFromConversation(id) }
+                }
+                Button("Keep", role: .cancel) { page.tab?.commentEdits.keepComment() }
+            } message: {
+                Text("It'll be gone from GitHub for everyone.")
+            }
+            .alert(Text(verbatim: page.tab?.commentEdits.deletionError ?? ""), isPresented: hasDeletionError) {
+                Button("OK", role: .cancel) { page.tab?.commentEdits.dismissDeletionError() }
+            }
+    }
+
+    /// Whether a "Delete" in the page is being confirmed while it's shown.
+    private var isConfirmingDeletion: Binding<Bool> {
+        Binding(
+            get: { isShown && page.tab?.commentEdits.confirmingDeletion != nil },
+            set: { if !$0 { page.tab?.commentEdits.keepComment() } }
+        )
+    }
+
+    /// Whether GitHub's refusal of a deletion asked for in the page is to be shown.
+    private var hasDeletionError: Binding<Bool> {
+        Binding(
+            get: { isShown && page.tab?.commentEdits.deletionError != nil },
+            set: { if !$0 { page.tab?.commentEdits.dismissDeletionError() } }
+        )
+    }
+
+    /// What's being edited over the page while it's shown, until it's saved, dropped or put
+    /// away.
+    private var editing: String? {
+        guard isShown, let edits = page.tab?.commentEdits, let id = edits.editingInConversation, edits.edits[id] != nil else { return nil }
+        return id
     }
 
     /// Whether a comment on the PR is being written over the page while it's shown, until it's
@@ -140,6 +183,8 @@ final class ConversationPage: GitHubWebPage {
     @ObservationIgnored private(set) var replyPopover: (threadId: String, popover: NSPopover)?
     /// The open comment on the PR's popover.
     @ObservationIgnored private(set) var commentPopover: NSPopover?
+    /// The open edit's popover, and the id of what it edits.
+    @ObservationIgnored private(set) var editPopover: (commentId: String, popover: NSPopover)?
 
     private static let pages = NSMapTable<PullRequestTab, ConversationPage>.weakToStrongObjects()
 
@@ -151,7 +196,7 @@ final class ConversationPage: GitHubWebPage {
         page.openPullRequestLink = { [weak tab] in await tab?.open($0) ?? false }
         page.openThreadLink = { [weak tab] link in Task { await tab?.follow(link) } }
         page.openReactionLink = { [weak tab] link in Task { await tab?.react(link) } }
-        page.openCommentLink = { [weak tab] link in tab?.follow(link) }
+        page.openCommentLink = { [weak tab] link in Task { await tab?.follow(link) } }
         pages.setObject(page, forKey: tab)
         return page
     }
@@ -272,17 +317,56 @@ final class ConversationPage: GitHubWebPage {
         commentPopover.close()
     }
 
+    /// Shows the edit of the comment or review with `commentId` in a popover by its "Edit",
+    /// scrolling that into view if it isn't, unless the page has none; returns whether it could.
+    func showEdit(of commentId: String) async -> Bool {
+        if let editPopover, editPopover.commentId == commentId, editPopover.popover.isShown { return true }
+        closeEdit()
+        guard let tab, let rect = await rectOfEditLink(commentId) else { return false }
+        let hosting = NSHostingController(rootView: ConversationEditView(tab: tab, commentId: commentId))
+        hosting.sizingOptions = .preferredContentSize
+        let popover = NSPopover()
+        // A click elsewhere puts it away, as Esc does, keeping the edit.
+        popover.behavior = .transient
+        popover.contentViewController = hosting
+        popover.delegate = self
+        popover.show(relativeTo: rect, of: webView, preferredEdge: .minY)
+        editPopover = (commentId, popover)
+        return true
+    }
+
+    /// Closes the edit's popover, if it's open, leaving the edit as it is.
+    func closeEdit() {
+        guard let editPopover else { return }
+        self.editPopover = nil
+        // Closed for the edit's sake, so it's not taken as the reader putting it away.
+        editPopover.popover.delegate = nil
+        editPopover.popover.close()
+    }
+
     /// Where "Add a comment…" sits in the web view, scrolled into view if need be; nil if the
     /// page has none.
     private func rectOfCommentLink() async -> NSRect? {
+        await rectOfLink("[data-new-comment]")
+    }
+
+    /// Where the "Edit" of the comment or review with `commentId` sits in the web view, scrolled
+    /// into view if need be; nil if the page has none.
+    private func rectOfEditLink(_ commentId: String) async -> NSRect? {
+        await rectOfLink(#"[data-edit-comment="${CSS.escape(id)}"]"#, id: commentId)
+    }
+
+    /// Where the first element matching `selector` sits in the web view, scrolled into view if
+    /// need be; `${CSS.escape(id)}` in the selector is filled from `id`.
+    private func rectOfLink(_ selector: String, id: String = "") async -> NSRect? {
         let script = """
-            const link = document.querySelector('[data-new-comment]');
+            const link = document.querySelector(`\(selector)`);
             if (!link) return null;
             link.scrollIntoView({ block: 'nearest' });
             const rect = link.getBoundingClientRect();
             return [rect.left, rect.top, rect.width, rect.height];
             """
-        let found = try? await webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .defaultClient)
+        let found = try? await webView.callAsyncJavaScript(script, arguments: ["id": id], in: nil, contentWorld: .defaultClient)
         guard let values = found as? [Double], values.count == 4 else { return nil }
         return viewRect(left: values[0], top: values[1], width: values[2], height: values[3])
     }
@@ -322,11 +406,17 @@ final class ConversationPage: GitHubWebPage {
 }
 
 extension ConversationPage: NSPopoverDelegate {
-    /// A popover closed by Esc or a click elsewhere puts the reply or comment away, its draft kept.
+    /// A popover closed by Esc or a click elsewhere puts the reply, comment or edit away, its
+    /// draft kept.
     func popoverDidClose(_ notification: Notification) {
         if let commentPopover, notification.object as? NSPopover === commentPopover {
             self.commentPopover = nil
             tab?.conversationComment.close()
+            return
+        }
+        if let editPopover, notification.object as? NSPopover === editPopover.popover {
+            self.editPopover = nil
+            if tab?.commentEdits.editingInConversation == editPopover.commentId { tab?.commentEdits.closeConversationEdit() }
             return
         }
         guard let replyPopover else { return }

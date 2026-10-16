@@ -126,6 +126,9 @@ time { color: var(--muted); }
 .thread-location:hover code { color: var(--link); }
 .thread-show { float: right; margin-left: 12px; font-size: 12px; line-height: 20px; color: var(--muted); }
 .thread-show:hover { color: var(--link); }
+/* Editing or deleting the viewer's own comment or summary, quietly at the end of its header. */
+.comment-edit, .comment-delete { float: right; margin-left: 12px; font-size: 12px; line-height: 20px; color: var(--muted); }
+.comment-edit:hover, .comment-delete:hover { color: var(--link); }
 .thread-actions {
   display: flex;
   gap: 8px;

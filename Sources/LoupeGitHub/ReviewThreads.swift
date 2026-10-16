@@ -77,10 +77,11 @@ private struct RESTComment: Decodable {
         return try decoder.decode(RESTComment.self, from: data)
     }
 
+    /// The viewer's own, just posted, so theirs to edit and delete; REST doesn't say so itself.
     var comment: ThreadComment {
         ThreadComment(
             id: node_id, databaseId: id, author: user.map { Participant(login: $0.login, avatarURL: $0.avatar_url) },
-            createdAt: created_at, bodyHTML: body_html, isMinimized: false
+            createdAt: created_at, bodyHTML: body_html, isMinimized: false, viewerCanUpdate: true, viewerCanDelete: true
         )
     }
 }

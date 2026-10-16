@@ -22,7 +22,7 @@ struct OwnChange {
         /// `reviewId`'s, if known.
         case comment(ThreadComment, thread: ReviewThread, startsThread: Bool, reviewId: String?)
         case resolved(threadId: String, Bool, by: String?)
-        /// One of the viewer's pending comments deleted.
+        /// One of the viewer's comments deleted: in a thread, pending or not, or on the PR itself.
         case deleted(commentId: String)
         /// The viewer's pending review abandoned, with its comments.
         case discarded(reviewId: String)
@@ -31,6 +31,9 @@ struct OwnChange {
         case submitted(TimelineItem)
         /// A comment on the PR itself, at the end of the timeline.
         case conversationComment(TimelineItem)
+        /// The body of the viewer's comment, thread comment or review with `id` edited: as
+        /// plain paragraphs while saving, then GitHub's rendering.
+        case edited(id: String, bodyHTML: String, isSaving: Bool)
     }
 
     /// What a change replaced in the conversation, and on the diff where its threads were held.
@@ -147,6 +150,21 @@ extension PullRequestTab {
         ownChanges[index].answeredBefore = fetchesStarted
         guard let at = conversation?.items.firstIndex(where: { $0.id == provisionalId }) else { return }
         conversation?.items[at] = posted
+    }
+
+    /// GitHub has the edit: its rendering takes the place of the plain text shown while it was
+    /// saved, and is what's made again over a fetch that started too soon to have it.
+    func confirm(_ change: Int, edit bodyHTML: String) {
+        guard let index = ownChanges.firstIndex(where: { $0.id == change }), case let .edited(id, _, _) = ownChanges[index].kind else { return }
+        let saved = OwnChange.Kind.edited(id: id, bodyHTML: bodyHTML, isSaving: false)
+        ownChanges[index].kind = saved
+        ownChanges[index].answeredBefore = fetchesStarted
+        conversation?.make(saved)
+        if holdsPlacedThreads {
+            threadsOfShownDiff.make(saved)
+        } else {
+            followPlacedThreads()
+        }
     }
 
     /// GitHub has carried out the change as made, so it's made again only over a fetch that
@@ -272,7 +290,7 @@ extension Conversation {
         case .resolved:
             threads.make(change)
         case let .deleted(commentId):
-            guard let deleted = threads.comment(commentId) else { return }
+            guard let deleted = threads.comment(commentId) else { return items.removeAll { $0.id == commentId } }
             threads.make(change)
             if deleted.isPending { pendingReview?.commentCount -= 1 }
             removeFromTimeline(commentId)
@@ -290,6 +308,28 @@ extension Conversation {
         case let .conversationComment(comment):
             guard !items.contains(where: { $0.id == comment.id }) else { return }
             items.append(comment)
+        case let .edited(id, bodyHTML, isSaving):
+            threads.make(change)
+            for index in items.indices {
+                switch items[index].event {
+                case let .comment(_, isMinimized) where items[index].id == id:
+                    items[index].event = .comment(bodyHTML: bodyHTML, isMinimized: isMinimized)
+                    items[index].isSaving = isSaving
+                case let .review(state, _, comments) where items[index].id == id:
+                    items[index].event = .review(state: state, bodyHTML: bodyHTML, comments: comments)
+                    items[index].isSaving = isSaving
+                case let .review(state, reviewBody, comments) where comments.contains(where: { $0.id == id }):
+                    // A thread comment shows in the timeline too, in the review that started it.
+                    let edited = comments.map { comment in
+                        var comment = comment
+                        if comment.id == id { comment.bodyHTML = bodyHTML }
+                        return comment
+                    }
+                    items[index].event = .review(state: state, bodyHTML: reviewBody, comments: edited)
+                default:
+                    break
+                }
+            }
         }
     }
 
@@ -386,6 +426,12 @@ extension [ReviewThread] {
             }
         case .conversationComment:
             break
+        case let .edited(id, bodyHTML, isSaving):
+            for index in indices {
+                guard let at = self[index].comments.firstIndex(where: { $0.id == id }) else { continue }
+                self[index].comments[at].bodyHTML = bodyHTML
+                self[index].comments[at].isSaving = isSaving
+            }
         }
     }
 
@@ -462,7 +508,7 @@ private func diffHunk(endingOn anchor: DiffAnchor, in file: FileDiff) -> String 
 }
 
 /// `text` as HTML paragraphs, escaped, a blank line between each, until GitHub renders it.
-private func plainParagraphs(_ text: String) -> String {
+func plainParagraphs(_ text: String) -> String {
     let escaped = text
         .replacingOccurrences(of: "&", with: "&amp;")
         .replacingOccurrences(of: "<", with: "&lt;")

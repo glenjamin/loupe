@@ -14,7 +14,7 @@ extension GitHubClient {
     /// Asks for the fields the conversation's timeline asks of an issue comment.
     static let addCommentMutation = """
         mutation($input: AddCommentInput!) {
-          addComment(input: $input) { commentEdge { node { id bodyHTML createdAt isMinimized author { login avatarUrl } \(reactionGroupsField) } } }
+          addComment(input: $input) { commentEdge { node { id bodyHTML createdAt isMinimized viewerCanUpdate viewerCanDelete author { login avatarUrl } \(reactionGroupsField) } } }
         }
         """
 }
@@ -45,11 +45,16 @@ private struct CommentNode: Decodable {
     let bodyHTML: String
     let createdAt: Date
     let isMinimized: Bool
+    let viewerCanUpdate: Bool?
+    let viewerCanDelete: Bool?
     let author: AuthorNode?
     let reactionGroups: [ReactionGroupNode]?
 
     var item: TimelineItem {
-        TimelineItem(id: id, date: createdAt, actor: author?.participant, event: .comment(bodyHTML: bodyHTML, isMinimized: isMinimized), reactions: reactionGroups.shown)
+        TimelineItem(
+            id: id, date: createdAt, actor: author?.participant, event: .comment(bodyHTML: bodyHTML, isMinimized: isMinimized),
+            reactions: reactionGroups.shown, viewerCanUpdate: viewerCanUpdate ?? false, viewerCanDelete: viewerCanDelete ?? false
+        )
     }
 }
 

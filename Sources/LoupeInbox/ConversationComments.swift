@@ -25,9 +25,14 @@ public final class ConversationComment {
 }
 
 extension PullRequestTab {
-    /// Acts on the conversation page's "Add a comment…".
-    public func follow(_ link: CommentLink) {
-        startConversationComment()
+    /// Acts on the conversation page's "Add a comment…", or "Edit" or "Delete" on a comment or
+    /// review, returning once an edit's markdown has arrived or failed.
+    public func follow(_ link: CommentLink) async {
+        switch link.target {
+        case .new: startConversationComment()
+        case let .edit(id): await editInConversation(id)
+        case let .delete(id): askToDelete(id)
+        }
     }
 
     /// Opens a comment on the PR over the conversation, keeping one already being written.

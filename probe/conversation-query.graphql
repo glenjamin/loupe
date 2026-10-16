@@ -10,9 +10,9 @@ query($id: ID!, $after: String) {
         pageInfo { hasNextPage endCursor }
         nodes {
           __typename
-          ... on IssueComment { id bodyHTML createdAt isMinimized author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } } }
+          ... on IssueComment { id bodyHTML createdAt isMinimized viewerCanUpdate viewerCanDelete author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } } }
           ... on PullRequestReview {
-            id state bodyHTML createdAt submittedAt author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } }
+            id state bodyHTML createdAt submittedAt viewerCanUpdate author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } }
             comments(first: 50) { nodes { id bodyHTML path line originalLine diffHunk outdated isMinimized replyTo { id } } }
           }
           ... on PullRequestCommit { id commit { oid messageHeadline committedDate author { name user { login avatarUrl } } } }
@@ -50,5 +50,5 @@ fragment ReviewThread on PullRequestReviewThread {
   viewerCanReply viewerCanResolve viewerCanUnresolve
   resolvedBy { login }
   firstComment: comments(first: 1) { nodes { diffHunk } }
-  comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } } } }
+  comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason viewerCanUpdate viewerCanDelete author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } } } }
 }

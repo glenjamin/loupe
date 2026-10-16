@@ -200,12 +200,18 @@ private struct TimelineItemRow: Codable, FetchableRecord, PersistableRecord {
     /// A commit's headline, the branch merged into, or the reviewer asked.
     var detail: String?
     let isSending: Bool
+    let viewerCanUpdate: Bool
+    let viewerCanDelete: Bool
+    let isSaving: Bool
 
     init(_ item: TimelineItem, pullRequestId: String, position: Int) {
         self.pullRequestId = pullRequestId
         id = item.id
         self.position = position
         isSending = item.isSending
+        viewerCanUpdate = item.viewerCanUpdate
+        viewerCanDelete = item.viewerCanDelete
+        isSaving = item.isSaving
         date = item.date
         actorLogin = item.actor?.login
         actorAvatarUrl = item.actor?.avatarURL
@@ -257,7 +263,7 @@ private struct TimelineItemRow: Codable, FetchableRecord, PersistableRecord {
         case "reviewRequested": event = .reviewRequested(reviewer: detail)
         default: return nil
         }
-        return TimelineItem(id: id, date: date, actor: participant(actorLogin, actorAvatarUrl), event: event, isSending: isSending)
+        return TimelineItem(id: id, date: date, actor: participant(actorLogin, actorAvatarUrl), event: event, isSending: isSending, viewerCanUpdate: viewerCanUpdate, viewerCanDelete: viewerCanDelete, isSaving: isSaving)
     }
 }
 
@@ -364,6 +370,9 @@ private struct ThreadCommentRow: Codable, FetchableRecord, PersistableRecord {
     let minimizedReason: String?
     let isPending: Bool
     let isSending: Bool
+    let viewerCanUpdate: Bool
+    let viewerCanDelete: Bool
+    let isSaving: Bool
 
     init(_ comment: ThreadComment, threadId: String, pullRequestId: String, position: Int) {
         self.pullRequestId = pullRequestId
@@ -379,10 +388,17 @@ private struct ThreadCommentRow: Codable, FetchableRecord, PersistableRecord {
         minimizedReason = comment.minimizedReason
         isPending = comment.isPending
         isSending = comment.isSending
+        viewerCanUpdate = comment.viewerCanUpdate
+        viewerCanDelete = comment.viewerCanDelete
+        isSaving = comment.isSaving
     }
 
     var comment: ThreadComment {
-        ThreadComment(id: id, databaseId: databaseId, author: participant(authorLogin, authorAvatarUrl), createdAt: createdAt, bodyHTML: bodyHTML, isMinimized: isMinimized, minimizedReason: minimizedReason, isPending: isPending, isSending: isSending)
+        ThreadComment(
+            id: id, databaseId: databaseId, author: participant(authorLogin, authorAvatarUrl), createdAt: createdAt, bodyHTML: bodyHTML, isMinimized: isMinimized,
+            minimizedReason: minimizedReason, isPending: isPending, isSending: isSending, viewerCanUpdate: viewerCanUpdate,
+            viewerCanDelete: viewerCanDelete, isSaving: isSaving
+        )
     }
 }
 

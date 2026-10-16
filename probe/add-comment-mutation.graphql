@@ -6,5 +6,5 @@
 # written by hand in the schema's shape.
 # variables: {"input": {"subjectId": "PR_…", "body": "…"}}
 mutation($input: AddCommentInput!) {
-  addComment(input: $input) { commentEdge { node { id bodyHTML createdAt isMinimized author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } } } } }
+  addComment(input: $input) { commentEdge { node { id bodyHTML createdAt isMinimized viewerCanUpdate viewerCanDelete author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } } } } }
 }

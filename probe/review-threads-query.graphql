@@ -13,5 +13,5 @@ fragment ReviewThread on PullRequestReviewThread {
   viewerCanReply viewerCanResolve viewerCanUnresolve
   resolvedBy { login }
   firstComment: comments(first: 1) { nodes { diffHunk } }
-  comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason author { login avatarUrl } } }
+  comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason viewerCanUpdate viewerCanDelete author { login avatarUrl } } }
 }

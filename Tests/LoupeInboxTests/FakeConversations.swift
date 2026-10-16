@@ -24,7 +24,13 @@ import Testing
 /// description, comments, reviews and thread comments carry GitHub's eight reaction groups;
 /// tests can react as others do, and the viewer's reactions are added and taken away with
 /// `addReaction` and `removeReaction`, or refused. The viewer's comments on a PR itself, with
-/// `addComment`, go at the end of its timeline, or are refused.
+/// `addComment`, go at the end of its timeline, or are refused. Each comment, thread comment
+/// and review says whether the viewer may edit it, as only their own may be; its markdown can be
+/// asked for by id (for the captured ones, which came without it, their rendering with the tags
+/// taken out), and the viewer's are edited with `updatePullRequestReviewComment`,
+/// `updateIssueComment` and `updatePullRequestReview`, which render them afresh, or refused.
+/// Each comment says whether the viewer may delete it, as only their own may be; the viewer's
+/// comments on a PR go with `deleteIssueComment`, or are refused.
 actor FakeConversations {
     /// Each PR's conversation, less its timeline, in GitHub's JSON shape.
     private var nodes: [String: [String: Any]] = [:]
@@ -60,8 +66,22 @@ actor FakeConversations {
     /// page and the threads alone, held once answered, so they land with what GitHub had when
     /// they were asked for.
     enum Gate: Hashable {
-        case comment, reply, resolve, addToReview, submit, discard, deleteComment, conversationComment
+        case comment, reply, resolve, addToReview, submit, discard, deleteComment, conversationComment, edit, deleteConversationComment
         case conversation, threads
+    }
+
+    /// The markdown of each comment, thread comment and review made here, by id.
+    private var markdown: [String: String] = [:]
+    private var commentEditsRefused = false
+    /// Every edit received, in order.
+    private(set) var editsReceived: [EditInput] = []
+    /// The id of each comment on a PR the viewer asked to delete, in order.
+    private(set) var conversationCommentDeletions: [String] = []
+
+    struct EditInput: Equatable {
+        let mutation: String
+        let id: String
+        let body: String
     }
 
     /// Kinds of request held until released.
@@ -171,19 +191,37 @@ actor FakeConversations {
         try loadPeople()
     }
 
-    /// Adds a comment to the end of the PR's timeline.
-    func comment(_ bodyHTML: String, on id: String, by login: String = "octocat") {
+    /// Adds a comment to the end of the PR's timeline, returning its id; with its `markdown`,
+    /// that's what editing it starts from.
+    @discardableResult
+    func comment(_ bodyHTML: String, on id: String, by login: String = "octocat", markdown: String? = nil) -> String {
         let index = timelines[id, default: []].count
+        let commentId = "IC_fake_\(index)"
         timelines[id, default: []].append([
             "__typename": "IssueComment",
-            "id": "IC_fake_\(index)",
+            "id": commentId,
             "bodyHTML": bodyHTML,
             "createdAt": Date.now.formatted(.iso8601),
             "isMinimized": false,
+            "viewerCanUpdate": login == FakeGitHub.viewer,
+            "viewerCanDelete": login == FakeGitHub.viewer,
             "author": ["login": login, "avatarUrl": "https://avatars.githubusercontent.com/u/583231?v=4"],
             "reactionGroups": noReactions,
         ])
+        if let markdown { self.markdown[commentId] = markdown }
+        return commentId
     }
+
+    /// The markdown of the comment, thread comment or review with `id`, as GitHub has it now.
+    func markdown(of id: String) -> String? {
+        if let written = markdown[id] { return written }
+        if let pending = pendingReviews.values.first(where: { $0.id == id }) { return pending.body }
+        return node(withId: id).flatMap { $0["bodyHTML"] as? String }.map { $0.replacing(/<[^>]+>/, with: "") }
+    }
+
+    /// Refuses edits of comments and reviews, and deletions of comments on the PR, as for a PR
+    /// the token can't write to.
+    func refuseCommentEdits() { commentEditsRefused = true }
 
     /// Reacts with `content` to the description, comment, review or thread comment with
     /// `subjectId`, as `login` does on github.com.
@@ -360,6 +398,15 @@ actor FakeConversations {
             await pass(.discard)
             return try deleteReview(variables, url)
         }
+        if query.contains("PullRequestReviewComment { body }") { return try commentBody(variables, url) }
+        if query.contains("deleteIssueComment(") {
+            await pass(.deleteConversationComment)
+            return try deleteIssueComment(variables, url)
+        }
+        for mutation in EditMutation.allCases where query.contains("\(mutation.rawValue)(") {
+            await pass(.edit)
+            return try edit(mutation, variables, url)
+        }
         if query.contains("suggestedReviewers") { return try suggestedReviewers(variables, url) }
         let id = try #require(variables["id"] as? String)
         guard var node = nodes[id], let timeline = timelines[id] else {
@@ -507,7 +554,7 @@ actor FakeConversations {
             return (try JSONSerialization.data(withJSONObject: refusal), fakeResponse(url, status: 200))
         }
         guard timelines[id] != nil else { return try refusal(unresolved: id, mutation: "addComment", url) }
-        comment("<p dir=\"auto\">\(escaped(body))</p>", on: id, by: FakeGitHub.viewer)
+        comment("<p dir=\"auto\">\(escaped(body))</p>", on: id, by: FakeGitHub.viewer, markdown: body)
         var node = try #require(timelines[id]?.last)
         node["__typename"] = nil
         let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/add-comment.json"))) as? [String: Any])
@@ -698,6 +745,10 @@ actor FakeConversations {
         guard let id = nodes.keys.first(where: { threads(of: $0).contains { comments(of: $0).contains { $0["id"] as? String == commentId } } }) else {
             return try refusal(unresolved: commentId, mutation: "deletePullRequestReviewComment", url)
         }
+        guard node(withId: commentId)?["viewerCanDelete"] as? Bool == true else {
+            return try forbidden("deletePullRequestReviewComment", "\(FakeGitHub.viewer) does not have the correct permissions to execute `DeletePullRequestReviewComment`", url)
+        }
+        removeFromTimelines(commentId)
         setThreads(threads(of: id).compactMap { thread in
             var thread = thread
             let comments = comments(of: thread).filter { $0["id"] as? String != commentId }
@@ -720,17 +771,20 @@ actor FakeConversations {
         let state = ["APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED"][event] ?? "COMMENTED"
         try review(state, by: FakeGitHub.viewer, on: id)
         let index = timelines[id, default: []].count
+        let submittedId = reviewId ?? "PRR_fake_timeline_\(index)"
         timelines[id, default: []].append([
             "__typename": "PullRequestReview",
-            "id": reviewId ?? "PRR_fake_timeline_\(index)",
+            "id": submittedId,
             "state": state,
             "bodyHTML": body.isEmpty ? "" : "<p dir=\"auto\">\(escaped(body))</p>",
             "createdAt": Date.now.formatted(.iso8601),
             "submittedAt": Date.now.formatted(.iso8601),
+            "viewerCanUpdate": true,
             "author": ["login": FakeGitHub.viewer, "avatarUrl": "https://avatars.githubusercontent.com/u/151272?v=4"],
             "comments": ["nodes": []],
             "reactionGroups": noReactions,
         ])
+        markdown[submittedId] = body
         guard let github, state != "COMMENTED" else { return state }
         try await github.edit(id) { $0.reviewDecision = state }
         return state
@@ -934,17 +988,168 @@ actor FakeConversations {
     /// `body` as one paragraph and the next REST id.
     private func threadComment(_ body: String, by login: String, pending: Bool = false) -> [String: Any] {
         commentCount += 1
+        let id = "PRRC_fake_\(commentCount)"
+        markdown[id] = body
         return [
-            "id": "PRRC_fake_\(commentCount)",
+            "id": id,
             "databaseId": 900_000 + commentCount,
             "bodyHTML": "<p dir=\"auto\">\(escaped(body))</p>",
             "createdAt": Date.now.formatted(.iso8601),
             "isMinimized": false,
             "minimizedReason": NSNull(),
             "state": pending ? "PENDING" : "SUBMITTED",
+            "viewerCanUpdate": login == FakeGitHub.viewer,
+            "viewerCanDelete": login == FakeGitHub.viewer,
             "author": ["login": login, "avatarUrl": "https://avatars.githubusercontent.com/u/583231?v=4"],
             "reactionGroups": noReactions,
         ]
+    }
+
+    /// The three edits, by mutation name, each taking its own kind of thing.
+    enum EditMutation: String, CaseIterable {
+        case reviewComment = "updatePullRequestReviewComment"
+        case issueComment = "updateIssueComment"
+        case review = "updatePullRequestReview"
+
+        /// The input's field naming what's edited.
+        var idField: String {
+            switch self {
+            case .reviewComment: "pullRequestReviewCommentId"
+            case .issueComment: "id"
+            case .review: "pullRequestReviewId"
+            }
+        }
+
+        /// The payload's field holding what was edited, and the probe answering in its shape.
+        var payloadField: String {
+            switch self {
+            case .reviewComment: "pullRequestReviewComment"
+            case .issueComment: "issueComment"
+            case .review: "pullRequestReview"
+            }
+        }
+
+        var probe: String {
+            switch self {
+            case .reviewComment: "probe/edit-review-comment.json"
+            case .issueComment: "probe/edit-issue-comment.json"
+            case .review: "probe/edit-review.json"
+            }
+        }
+    }
+
+    /// The markdown of a comment or review asked for by id, in `probe/edit-comment-body.json`'s
+    /// shape; an id GitHub doesn't know has no node.
+    private func commentBody(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
+        let id = try #require(variables["id"] as? String)
+        let node: Any = markdown(of: id).map { ["body": $0] } ?? NSNull()
+        return (try JSONSerialization.data(withJSONObject: ["data": ["node": node]]), fakeResponse(url, status: 200))
+    }
+
+    /// The viewer's edit of a comment's or review's body, which GitHub renders afresh wherever
+    /// it shows, answered in the shape of the mutation's probe. Someone else's, or the wrong
+    /// mutation for what the id names, is refused, as GitHub refuses them.
+    private func edit(_ mutation: EditMutation, _ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
+        let input = try #require(variables["input"] as? [String: Any])
+        let id = try #require(input[mutation.idField] as? String)
+        let body = try #require(input["body"] as? String)
+        editsReceived.append(EditInput(mutation: mutation.rawValue, id: id, body: body))
+        if commentEditsRefused { return try forbidden(mutation.rawValue, "Resource not accessible by personal access token", url) }
+        let pendingReview = pendingReviews.first { $0.value.id == id }?.key
+        let node = node(withId: id)
+        guard pendingReview != nil || node != nil else { return try refusal(unresolved: id, mutation: mutation.rawValue, url) }
+        guard pendingReview != nil || (node?["viewerCanUpdate"] as? Bool == true && editMutation(for: id) == mutation) else {
+            return try forbidden(mutation.rawValue, "\(FakeGitHub.viewer) does not have the correct permissions to execute `\(mutation.rawValue)`", url)
+        }
+        let bodyHTML = rendered(body)
+        markdown[id] = body
+        if let pendingReview { pendingReviews[pendingReview]?.body = body }
+        setBodyHTML(bodyHTML, of: id)
+        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: mutation.probe))) as? [String: Any])
+        var payload = try #require((probe["data"] as? [String: Any])?[mutation.rawValue] as? [String: Any])
+        var edited = try #require(payload[mutation.payloadField] as? [String: Any])
+        edited["id"] = id
+        edited["bodyHTML"] = bodyHTML
+        payload[mutation.payloadField] = edited
+        return (try JSONSerialization.data(withJSONObject: ["data": [mutation.rawValue: payload]]), fakeResponse(url, status: 200))
+    }
+
+    /// The comment, thread comment or review with `id`, wherever it is.
+    private func node(withId id: String) -> [String: Any]? {
+        for pullRequest in nodes.keys {
+            for thread in threads(of: pullRequest) {
+                if let comment = comments(of: thread).first(where: { $0["id"] as? String == id }) { return comment }
+            }
+        }
+        return timelines.values.lazy.compactMap { $0.first { $0["id"] as? String == id } }.first
+    }
+
+    /// The mutation that edits what `id` names.
+    private func editMutation(for id: String) -> EditMutation? {
+        guard let node = node(withId: id) else { return nil }
+        switch node["__typename"] as? String {
+        case "IssueComment": return .issueComment
+        case "PullRequestReview": return .review
+        default: return .reviewComment
+        }
+    }
+
+    /// Gives what `id` names a new rendering, in its thread and wherever the timeline shows it.
+    private func setBodyHTML(_ bodyHTML: String, of id: String) {
+        for pullRequest in nodes.keys {
+            setThreads(threads(of: pullRequest).map { thread in
+                var thread = thread
+                thread["comments"] = ["nodes": comments(of: thread).map { $0["id"] as? String == id ? $0.merging(["bodyHTML": bodyHTML]) { $1 } : $0 }]
+                return thread
+            }, of: pullRequest)
+        }
+        for (pullRequest, timeline) in timelines {
+            timelines[pullRequest] = timeline.map { item in
+                var item = item
+                if item["id"] as? String == id { item["bodyHTML"] = bodyHTML }
+                if let reviewComments = (item["comments"] as? [String: Any])?["nodes"] as? [[String: Any]] {
+                    item["comments"] = ["nodes": reviewComments.map { $0["id"] as? String == id ? $0.merging(["bodyHTML": bodyHTML]) { $1 } : $0 }]
+                }
+                return item
+            }
+        }
+    }
+
+    /// Deletes the viewer's comment on a PR, answered in `probe/delete-issue-comment.json`'s
+    /// shape; someone else's is refused, as GitHub refuses it.
+    private func deleteIssueComment(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
+        let input = try #require(variables["input"] as? [String: Any])
+        let id = try #require(input["id"] as? String)
+        conversationCommentDeletions.append(id)
+        if commentEditsRefused { return try forbidden("deleteIssueComment", "Resource not accessible by personal access token", url) }
+        guard let node = node(withId: id), node["__typename"] as? String == "IssueComment" else { return try refusal(unresolved: id, mutation: "deleteIssueComment", url) }
+        guard node["viewerCanDelete"] as? Bool == true else {
+            return try forbidden("deleteIssueComment", "\(FakeGitHub.viewer) does not have the correct permissions to execute `DeleteIssueComment`", url)
+        }
+        removeFromTimelines(id)
+        let probe = try Data(contentsOf: projectRoot.appending(path: "probe/delete-issue-comment.json"))
+        return (probe, fakeResponse(url, status: 200))
+    }
+
+    /// Takes what `id` names out of every timeline, and out of the review that holds it.
+    private func removeFromTimelines(_ id: String) {
+        for (pullRequest, timeline) in timelines {
+            timelines[pullRequest] = timeline.filter { $0["id"] as? String != id }.map { item in
+                var item = item
+                if let reviewComments = (item["comments"] as? [String: Any])?["nodes"] as? [[String: Any]] {
+                    item["comments"] = ["nodes": reviewComments.filter { $0["id"] as? String != id }]
+                }
+                return item
+            }
+        }
+    }
+
+    private func forbidden(_ mutation: String, _ message: String, _ url: URL) throws -> (Data, HTTPURLResponse) {
+        let refusal: [String: Any] = [
+            "data": [mutation: NSNull()],
+            "errors": [["type": "FORBIDDEN", "path": [mutation], "message": message]],
+        ]
+        return (try JSONSerialization.data(withJSONObject: refusal), fakeResponse(url, status: 200))
     }
 
     /// The viewer's reaction, added or taken away as GitHub does: asking for what's already so
@@ -1018,7 +1223,12 @@ actor FakeConversations {
     /// Sets the description and GitHub's rendering of it, a paragraph per block of lines.
     private func setBody(_ body: String, on node: inout [String: Any]) {
         node["body"] = body
-        node["bodyHTML"] = escaped(body).replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n\n").map { "<p dir=\"auto\">\($0)</p>" }.joined(separator: "\n")
+        node["bodyHTML"] = rendered(body)
+    }
+
+    /// GitHub's rendering of `body`, a paragraph per block of lines.
+    private func rendered(_ body: String) -> String {
+        escaped(body).replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n\n").map { "<p dir=\"auto\">\($0)</p>" }.joined(separator: "\n")
     }
 
     private func escaped(_ text: String) -> String {
@@ -1067,6 +1277,7 @@ struct FakePullRequestDetails: HTTPTransport {
             "timelineItems", "reviewThreads", "resolveReviewThread(", "requestReviews(", "assignableUsers(", "teams(", "updatePullRequest(", "PullRequest { body }", "suggestedReviewers",
             "addPullRequestReview", "submitPullRequestReview(", "deletePullRequestReview(", "deletePullRequestReviewComment(",
             "addReaction(", "removeReaction(", "addComment(",
+            "PullRequestReviewComment { body }", "updatePullRequestReviewComment(", "updateIssueComment(", "updatePullRequestReview(", "deleteIssueComment(",
         ].contains { query.contains($0) }
         return isConversation ? try await conversations.send(request) : try await viewed.send(request)
     }

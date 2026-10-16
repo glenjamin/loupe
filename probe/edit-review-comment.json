@@ -1,0 +1,10 @@
+{
+    "data": {
+        "updatePullRequestReviewComment": {
+            "pullRequestReviewComment": {
+                "id": "PRRC_kwDOCPShyc79P5gT",
+                "bodyHTML": "<p dir=\"auto\">do we still need this fallback now that every caller passes a batch?</p>"
+            }
+        }
+    }
+}

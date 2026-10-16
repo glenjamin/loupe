@@ -49,6 +49,8 @@
                                         "isMinimized": false,
                                         "minimizedReason": null,
                                         "state": "PENDING",
+                                        "viewerCanUpdate": true,
+                                        "viewerCanDelete": true,
                                         "author": {
                                             "login": "glenjamin",
                                             "avatarUrl": "https://avatars.githubusercontent.com/u/151272?u=8a3688637befe674727827e9c2050c7c5b016c26&v=4"
@@ -90,6 +92,8 @@
                                         "isMinimized": false,
                                         "minimizedReason": null,
                                         "state": "PENDING",
+                                        "viewerCanUpdate": true,
+                                        "viewerCanDelete": true,
                                         "author": {
                                             "login": "glenjamin",
                                             "avatarUrl": "https://avatars.githubusercontent.com/u/151272?u=8a3688637befe674727827e9c2050c7c5b016c26&v=4"

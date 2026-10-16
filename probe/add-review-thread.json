@@ -11,6 +11,8 @@
                             "bodyHTML": "<p dir=\"auto\">And this name?</p>",
                             "createdAt": "2026-10-16T11:02:41Z",
                             "state": "PENDING",
+                            "viewerCanUpdate": true,
+                            "viewerCanDelete": true,
                             "author": {
                                 "login": "glenjamin",
                                 "avatarUrl": "https://avatars.githubusercontent.com/u/151272?v=4"

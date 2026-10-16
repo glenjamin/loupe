@@ -42,5 +42,5 @@ fragment PostedReview on PullRequestReview {
 
 # A comment as a thread shows it; `state` is PENDING while its review is.
 fragment PostedComment on PullRequestReviewComment {
-  id databaseId bodyHTML createdAt state author { login avatarUrl }
+  id databaseId bodyHTML createdAt state viewerCanUpdate viewerCanDelete author { login avatarUrl }
 }

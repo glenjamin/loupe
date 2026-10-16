@@ -130,14 +130,26 @@ public struct TimelineItem: Sendable, Equatable, Identifiable {
     public var reactions: [ReactionGroup]
     /// The viewer's own, shown before GitHub has answered for it.
     public var isSending: Bool
+    /// Whether GitHub lets the viewer edit the comment's or review's body.
+    public var viewerCanUpdate: Bool
+    /// Whether GitHub lets the viewer delete the comment.
+    public var viewerCanDelete: Bool
+    /// The viewer's edit of its body, shown before GitHub has answered for it.
+    public var isSaving: Bool
 
-    public init(id: String, date: Date, actor: Participant?, event: TimelineEvent, reactions: [ReactionGroup] = [], isSending: Bool = false) {
+    public init(
+        id: String, date: Date, actor: Participant?, event: TimelineEvent, reactions: [ReactionGroup] = [], isSending: Bool = false, viewerCanUpdate: Bool = false,
+        viewerCanDelete: Bool = false, isSaving: Bool = false
+    ) {
         self.id = id
         self.date = date
         self.actor = actor
         self.event = event
         self.reactions = reactions
         self.isSending = isSending
+        self.viewerCanUpdate = viewerCanUpdate
+        self.viewerCanDelete = viewerCanDelete
+        self.isSaving = isSaving
     }
 }
 
@@ -284,8 +296,18 @@ public struct ThreadComment: Sendable, Equatable, Identifiable {
     /// The viewer's own, shown before GitHub has answered for it, with a provisional id and
     /// its text as a plain paragraph until GitHub renders it.
     public var isSending: Bool
+    /// Whether GitHub lets the viewer edit it.
+    public var viewerCanUpdate: Bool
+    /// Whether GitHub lets the viewer delete it.
+    public var viewerCanDelete: Bool
+    /// The viewer's edit of it, shown before GitHub has answered for it, its text as plain
+    /// paragraphs until GitHub renders it.
+    public var isSaving: Bool
 
-    public init(id: String, databaseId: Int? = nil, author: Participant?, createdAt: Date, bodyHTML: String, isMinimized: Bool, minimizedReason: String? = nil, isPending: Bool = false, reactions: [ReactionGroup] = [], isSending: Bool = false) {
+    public init(
+        id: String, databaseId: Int? = nil, author: Participant?, createdAt: Date, bodyHTML: String, isMinimized: Bool, minimizedReason: String? = nil,
+        isPending: Bool = false, reactions: [ReactionGroup] = [], isSending: Bool = false, viewerCanUpdate: Bool = false, viewerCanDelete: Bool = false, isSaving: Bool = false
+    ) {
         self.id = id
         self.databaseId = databaseId
         self.author = author
@@ -296,6 +318,9 @@ public struct ThreadComment: Sendable, Equatable, Identifiable {
         self.isPending = isPending
         self.reactions = reactions
         self.isSending = isSending
+        self.viewerCanUpdate = viewerCanUpdate
+        self.viewerCanDelete = viewerCanDelete
+        self.isSaving = isSaving
     }
 }
 

@@ -1,0 +1,41 @@
+# Editing a comment's or review's body, and deleting a comment on the PR itself. None of these
+# was run: the mutations change the PR, and all were written from the public schema with no
+# network, so none was introspected here. Their answers, `edit-comment-body.json`,
+# `edit-review-comment.json`, `edit-issue-comment.json`, `edit-review.json` and
+# `delete-issue-comment.json`, are written by hand in the schema's shape. A thread comment is
+# deleted with `delete-review-comment-mutation.graphql`.
+
+# The markdown to start an edit from, fetched afresh by node id: whichever of the three it is.
+# variables: {"id": "PRRC_…"}
+query($id: ID!) {
+  node(id: $id) { ... on IssueComment { body } ... on PullRequestReviewComment { body } ... on PullRequestReview { body } }
+}
+
+# A comment in a review thread, pending or submitted. UpdatePullRequestReviewCommentInput is
+# { pullRequestReviewCommentId, body, clientMutationId }; the payload has
+# `pullRequestReviewComment` and `clientMutationId`.
+# variables: {"input": {"pullRequestReviewCommentId": "PRRC_…", "body": "…"}}
+mutation($input: UpdatePullRequestReviewCommentInput!) {
+  updatePullRequestReviewComment(input: $input) { pullRequestReviewComment { id bodyHTML } }
+}
+
+# A comment in the PR's conversation. UpdateIssueCommentInput is { id, body,
+# clientMutationId }; the payload has `issueComment` and `clientMutationId`.
+# variables: {"input": {"id": "IC_…", "body": "…"}}
+mutation($input: UpdateIssueCommentInput!) {
+  updateIssueComment(input: $input) { issueComment { id bodyHTML } }
+}
+
+# A review's summary. UpdatePullRequestReviewInput is { pullRequestReviewId, body,
+# clientMutationId }; the payload has `pullRequestReview` and `clientMutationId`.
+# variables: {"input": {"pullRequestReviewId": "PRR_…", "body": "…"}}
+mutation($input: UpdatePullRequestReviewInput!) {
+  updatePullRequestReview(input: $input) { pullRequestReview { id bodyHTML } }
+}
+
+# A comment in the PR's conversation, deleted. DeleteIssueCommentInput is { id,
+# clientMutationId }; the payload has only `clientMutationId`, the comment being gone.
+# variables: {"input": {"id": "IC_…"}}
+mutation($input: DeleteIssueCommentInput!) {
+  deleteIssueComment(input: $input) { clientMutationId }
+}

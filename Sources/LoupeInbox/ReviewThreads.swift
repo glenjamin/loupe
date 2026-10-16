@@ -92,17 +92,24 @@ public struct NewComment {
 @MainActor
 public final class CommentDraft {
     public var text = ""
+    /// The markdown as GitHub had it, for a draft editing a comment rather than writing one.
+    public internal(set) var original: String?
 
     init() {}
 
-    /// Whether there's anything to send.
+    /// Whether there's anything to send: some text, and for an edit, a change.
     public var canSend: Bool {
-        hasText
+        hasText && text != original
     }
 
-    /// Whether closing it would lose something typed.
+    /// Whether there's any text in it, besides whitespace.
     public var hasText: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Whether closing it would lose something typed: any text, or for an edit, any change.
+    public var hasChanges: Bool {
+        original.map { text != $0 } ?? hasText
     }
 }
 

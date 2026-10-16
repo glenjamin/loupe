@@ -54,7 +54,12 @@ public enum ConversationHTML {
         case let .comment(bodyHTML, isMinimized):
             // One on its way to GitHub can't be reacted to until GitHub has it.
             let reactions = item.isSending ? "" : reactions(item.reactions, to: item.id)
-            return card(author: item.actor, action: "commented", date: item.date, now: now, isSending: item.isSending, body: minimizable(bodyHTML, isMinimized: isMinimized), reactions: reactions)
+            let isSettled = !item.isSending && !item.isSaving
+            let edit = commentActions(item.id, canEdit: item.viewerCanUpdate && isSettled, canDelete: item.viewerCanDelete && isSettled)
+            return card(
+                author: item.actor, action: "commented", date: item.date, now: now, isSending: item.isSending, isSaving: item.isSaving, edit: edit,
+                body: minimizable(bodyHTML, isMinimized: isMinimized), reactions: reactions
+            )
         case let .review(state, bodyHTML, comments):
             // Replies are shown in their threads, under the review that started them.
             let started = comments.filter { $0.replyTo == nil }
@@ -63,7 +68,12 @@ public enum ConversationHTML {
             // the viewer's pending review takes none until it's submitted, nor one on its way.
             let summaryReactions = bodyHTML.isEmpty || state == .pending || item.isSending ? "" : reactions(item.reactions, to: item.id)
             let body = (bodyHTML.isEmpty ? "" : bodyHTML + summaryReactions) + started.map { thread(for: $0, in: threads[$0.id], reviewer: item.actor, date: item.date, now: now) }.joined()
-            return card(author: item.actor, action: reviewAction(state), date: item.date, now: now, isSending: item.isSending, badge: reviewBadge(state), body: body, kind: "review")
+            // Only a submitted summary is edited here; a pending one is written in "Finish your review".
+            let edit = item.viewerCanUpdate && !bodyHTML.isEmpty && state != .pending && !item.isSending && !item.isSaving ? editLink(item.id) : ""
+            return card(
+                author: item.actor, action: reviewAction(state), date: item.date, now: now, isSending: item.isSending, isSaving: item.isSaving, edit: edit,
+                badge: reviewBadge(state), body: body, kind: "review"
+            )
         case .commit:
             return ""
         case let .forcePushed(before, after):
@@ -82,10 +92,13 @@ public enum ConversationHTML {
         }
     }
 
-    private static func card(author: Participant?, action: String, date: Date, now: Date, isSending: Bool = false, badge: String = "", body: String, kind: String = "comment", reactions: String = "") -> String {
+    private static func card(
+        author: Participant?, action: String, date: Date, now: Date, isSending: Bool = false, isSaving: Bool = false, edit: String = "", badge: String = "",
+        body: String, kind: String = "comment", reactions: String = ""
+    ) -> String {
         """
         <article class="item \(kind)">\(avatar(author, size: 40))<div class="card">\
-        <header>\(login(author)) \(escape(action))\(badge) \(isSending ? sending : time(date, now: now))</header>\
+        <header>\(edit)\(login(author)) \(escape(action))\(badge) \(isSending ? sending : isSaving ? saving : time(date, now: now))</header>\
         \(body.isEmpty ? "" : #"<div class="body">\#(body)</div>"#)\(reactions)</div></article>
 
         """
@@ -113,7 +126,10 @@ public enum ConversationHTML {
         if isResolved { badges += #" <span class="badge resolved">Resolved</span>"# }
         let comments = thread?.comments ?? [ThreadComment(id: comment.id, author: reviewer, createdAt: date, bodyHTML: comment.bodyHTML, isMinimized: comment.isMinimized)]
         let replies = comments.map { reply in
-            #"<div class="thread-comment">\#(avatar(reply.author, size: 24))<div><header>\#(login(reply.author)) \#(reply.isSending ? sending : time(reply.createdAt, now: now))</header><div class="body">\#(minimizable(reply.bodyHTML, isMinimized: reply.isMinimized))</div>\#(reply.isPending || reply.isSending ? "" : reactions(reply.reactions, to: reply.id))</div></div>"#
+            let isSettled = !reply.isSending && !reply.isSaving
+            let edit = commentActions(reply.id, canEdit: reply.viewerCanUpdate && isSettled, canDelete: (reply.viewerCanDelete || reply.isPending) && isSettled)
+            let when = reply.isSending ? sending : reply.isSaving ? saving : time(reply.createdAt, now: now)
+            return #"<div class="thread-comment">\#(avatar(reply.author, size: 24))<div><header>\#(edit)\#(login(reply.author)) \#(when)</header><div class="body">\#(minimizable(reply.bodyHTML, isMinimized: reply.isMinimized))</div>\#(reply.isPending || reply.isSending ? "" : reactions(reply.reactions, to: reply.id))</div></div>"#
         }.joined()
         let classes = ["thread", isResolved ? "resolved" : nil, isOutdated ? "outdated" : nil].compactMap { $0 }.joined(separator: " ")
         // The app finds the thread by its id, to put a reply to it beside it.
@@ -215,6 +231,23 @@ public enum ConversationHTML {
 
     /// In place of the time of the viewer's comment or review on its way to GitHub.
     private static let sending = #"<span class="muted sending">Sending…</span>"#
+
+    /// In place of the time of the viewer's comment or review while their edit of it is on its
+    /// way to GitHub.
+    private static let saving = #"<span class="muted saving">Saving…</span>"#
+
+    /// Edits the viewer's comment or review with `id`, as a `CommentLink` the app follows; the
+    /// app finds it by its `data-edit-comment`, to put the editor by it.
+    private static func editLink(_ id: String) -> String {
+        #"<a class="comment-edit" href="\#(escape(CommentLink(editing: id).url.absoluteString))" data-edit-comment="\#(escape(id))">Edit</a>"#
+    }
+
+    /// "Edit" and "Delete" for the viewer's comment with `id`, as far as they may; floated to
+    /// the end of its header, Delete last.
+    private static func commentActions(_ id: String, canEdit: Bool, canDelete: Bool) -> String {
+        let delete = canDelete ? #"<a class="comment-delete" href="\#(escape(CommentLink(deleting: id).url.absoluteString))">Delete</a>"# : ""
+        return delete + (canEdit ? editLink(id) : "")
+    }
 
     private static func time(_ date: Date, now: Date) -> String {
         let relative = date.formatted(.relative(presentation: .named).locale(Locale(identifier: "en_US")))
@@ -360,21 +393,73 @@ public struct ReactionLink: Sendable, Equatable {
     private static let idCharacters = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
 }
 
-/// The link at the foot of the conversation page that opens a comment on the PR itself, as
-/// github.com's box there does. Caught by its web view as `ThreadLink`s are.
+/// A link in the conversation page that writes a comment: at its foot, one on the PR itself, as
+/// github.com's box there does, or on one of the viewer's comments or reviews, an edit of it.
+/// Caught by its web view as `ThreadLink`s are.
 public struct CommentLink: Sendable, Equatable {
-    public init() {}
-
-    /// The link a page names, if it's this one.
-    public init?(url: URL) {
-        guard url.scheme == Self.scheme, url.host() == "new" else { return nil }
+    public enum Target: Sendable, Equatable {
+        case new
+        /// The GraphQL id of the comment, thread comment or review to edit.
+        case edit(String)
+        /// The GraphQL id of the comment or thread comment to delete.
+        case delete(String)
     }
 
-    /// `loupe-comment://new`.
+    public let target: Target
+
+    /// A new comment on the PR.
+    public init() {
+        target = .new
+    }
+
+    /// An edit of the comment or review with `id`.
+    public init(editing id: String) {
+        target = .edit(id)
+    }
+
+    /// A deletion of the comment with `id`.
+    public init(deleting id: String) {
+        target = .delete(id)
+    }
+
+    /// The link a page names, if it's one of these.
+    public init?(url: URL) {
+        guard url.scheme == Self.scheme else { return nil }
+        switch url.host() {
+        case "new":
+            self.init()
+        case "edit", "delete":
+            let id = String(url.path(percentEncoded: false).trimmingPrefix("/"))
+            guard !id.isEmpty else { return nil }
+            self.init(target: url.host() == "edit" ? .edit(id) : .delete(id))
+        default:
+            return nil
+        }
+    }
+
+    private init(target: Target) {
+        self.target = target
+    }
+
+    /// `loupe-comment://new`, `loupe-comment://edit/<id>` or `loupe-comment://delete/<id>`.
     public var url: URL {
-        // Fixed, so this always parses.
-        URL(string: "\(Self.scheme)://new")!
+        switch target {
+        case .new:
+            // Fixed, so this always parses.
+            return URL(string: "\(Self.scheme)://new")!
+        case let .edit(id):
+            return Self.url("edit", id)
+        case let .delete(id):
+            return Self.url("delete", id)
+        }
     }
 
     private static let scheme = "loupe-comment"
+    private static let idCharacters = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+
+    private static func url(_ action: String, _ id: String) -> URL {
+        let encoded = id.addingPercentEncoding(withAllowedCharacters: idCharacters) ?? id
+        // Only the id varies, and it's percent-encoded, so this always parses.
+        return URL(string: "\(scheme)://\(action)/\(encoded)")!
+    }
 }

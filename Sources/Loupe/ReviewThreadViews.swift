@@ -423,6 +423,88 @@ struct ConversationCommentView: View {
     }
 }
 
+/// An edit of one of the viewer's comments or review summaries written over the conversation,
+/// by its "Edit": the editor the diff's thread comments use. Esc puts it away with the edit
+/// kept for the link to open again.
+struct ConversationEditView: View {
+    let tab: PullRequestTab
+    let commentId: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(verbatim: title)
+                .font(.headline)
+            if let edit = tab.commentEdits.edits[commentId] {
+                CommentEditor(tab: tab, edit: edit, escape: { tab.commentEdits.closeConversationEdit() })
+                    .font(.callout)
+            }
+        }
+        .padding(16)
+        .frame(width: 560)
+    }
+
+    /// Whose it is, as GitHub also lets a repo's admins edit others' comments.
+    private var title: String {
+        let item = tab.conversation?.items.first { $0.id == commentId }
+        let author = item?.actor ?? tab.conversation?.threads.lazy.flatMap(\.comments).first { $0.id == commentId }?.author
+        let whose = author.map { $0.login == tab.viewerLogin ? "your" : "\($0.login)'s" } ?? "the"
+        guard let item, case .review = item.event else { return "Edit \(whose) comment" }
+        return "Edit \(whose) review's summary"
+    }
+}
+
+/// An edit of a comment's or review's body: a spinner until its markdown arrives from GitHub,
+/// then the composer, saving at once. Why the last save was refused shows over it.
+struct CommentEditor: View {
+    let tab: PullRequestTab
+    let edit: CommentEdit
+    /// What Esc does instead of cancelling, if anything.
+    var escape: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let error = edit.error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.diffDanger)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                    .help(error)
+            }
+            switch edit.phase {
+            case .fetching:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Getting the comment from GitHub…")
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("Cancel") { tab.cancelEdit(of: edit.commentId) }
+                        .controlSize(.small)
+                }
+                .frame(height: 96)
+            case let .fetchFailed(reason):
+                HStack(spacing: 8) {
+                    Label("Couldn't get the comment from GitHub: \(reason)", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.diffDanger)
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 0)
+                    Button("Cancel") { tab.cancelEdit(of: edit.commentId) }
+                    Button("Retry") { Task { await tab.retryFetch(of: edit) } }
+                }
+                .controlSize(.small)
+                .frame(minHeight: 96)
+            case .editing:
+                CommentComposer(
+                    draft: edit.draft, caption: "Markdown. Saves to GitHub at once.",
+                    actions: [ComposerAction(label: "Save", help: "Save your edit to GitHub") { Task { await tab.saveEdit(of: edit.commentId) } }],
+                    cancel: { tab.cancelEdit(of: edit.commentId) },
+                    escape: escape
+                )
+            }
+        }
+    }
+}
+
 /// A reply being written to a thread, which posts at once rather than into a review.
 private struct ReplyComposer: View {
     let tab: PullRequestTab
@@ -442,7 +524,8 @@ private struct ReplyComposer: View {
 }
 
 /// One comment: who wrote it and when, over its body. A hidden one is a line saying so, which
-/// shows it when clicked. One in the viewer's pending review can be deleted, after asking.
+/// shows it when clicked. One the viewer may edit is edited in place of its body, and one they
+/// may delete can be, after asking.
 private struct CommentView: View {
     let tab: PullRequestTab
     let thread: ReviewThread
@@ -466,14 +549,15 @@ private struct CommentView: View {
             .padding(.vertical, 6)
             .help("Show this hidden comment")
         } else {
+            let edit = tab.commentEdits.edits[comment.id]
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(verbatim: author).fontWeight(.semibold)
-                    if comment.isSending {
+                    if comment.isSending || comment.isSaving {
                         ProgressView().controlSize(.mini)
-                        Text("Sending…")
+                        Text(comment.isSending ? "Sending…" : "Saving…")
                             .foregroundStyle(.secondary)
-                            .help("On its way to GitHub")
+                            .help(comment.isSending ? "On its way to GitHub" : "Your edit is on its way to GitHub")
                     } else {
                         TimelineView(.everyMinute) { _ in
                             Text(verbatim: comment.createdAt.formatted(.relative(presentation: .named)))
@@ -483,15 +567,23 @@ private struct CommentView: View {
                     }
                     if comment.isPending {
                         PendingBadge()
-                        Spacer(minLength: 0)
-                        // GitHub has to know of it before it can be deleted.
-                        if !comment.isSending {
-                            DeletePendingCommentButton(tab: tab, thread: thread, comment: comment)
-                        }
+                    }
+                    Spacer(minLength: 0)
+                    if edit == nil, tab.canEdit(comment.id) {
+                        Button("Edit…") { Task { await tab.startEdit(of: comment.id) } }
+                            .controlSize(.small)
+                            .help("Edit this comment")
+                    }
+                    if tab.canDelete(comment.id) || tab.threadActivity.deleting.contains(comment.id) {
+                        DeleteCommentButton(tab: tab, thread: thread, comment: comment)
                     }
                 }
                 .font(.callout)
-                CommentBody(blocks: commentBlocks(comment.bodyHTML))
+                if let edit {
+                    CommentEditor(tab: tab, edit: edit)
+                } else {
+                    CommentBody(blocks: commentBlocks(comment.bodyHTML))
+                }
                 // A pending comment can't be reacted to until its review is submitted, nor one
                 // GitHub doesn't have yet.
                 if !comment.isPending, !comment.isSending {
@@ -514,8 +606,8 @@ private struct CommentView: View {
     }
 }
 
-/// Deletes one of the viewer's pending comments after asking, with a spinner while it goes.
-struct DeletePendingCommentButton: View {
+/// Deletes one of the viewer's comments after asking, with a spinner while it goes.
+struct DeleteCommentButton: View {
     let tab: PullRequestTab
     let thread: ReviewThread
     let comment: ThreadComment
@@ -530,13 +622,13 @@ struct DeletePendingCommentButton: View {
             Button("Delete…") { confirmsDelete = true }
                 .controlSize(.small)
                 .disabled(isDeleting)
-                .help("Delete this comment from your pending review")
+                .help(comment.isPending ? "Delete this comment from your pending review" : "Delete this comment from GitHub")
         }
-        .alert("Delete this pending comment?", isPresented: $confirmsDelete) {
-            Button("Delete", role: .destructive) { Task { await tab.deletePendingComment(comment, in: thread) } }
+        .alert(comment.isPending ? "Delete this pending comment?" : "Delete this comment?", isPresented: $confirmsDelete) {
+            Button("Delete", role: .destructive) { Task { await tab.deleteComment(comment, in: thread) } }
             Button("Keep", role: .cancel) {}
         } message: {
-            Text("It's in your review, not yet submitted, so no one else has seen it.")
+            Text(comment.isPending ? "It's in your review, not yet submitted, so no one else has seen it." : "It'll be gone from GitHub for everyone.")
         }
     }
 }
@@ -550,8 +642,8 @@ struct ComposerAction {
 
 /// A plain-text field for a comment in markdown, as the description's editor is: ⌘↩ sends by
 /// the first of `actions`, which is the prominent button, ⌘⇧↩ by the second if there is one,
-/// and Esc cancels, asking first if anything has been typed, unless it's given something else
-/// to do.
+/// and Esc cancels, asking first if anything has been typed, or for an edit changed, unless
+/// it's given something else to do.
 struct CommentComposer: View {
     @Bindable var draft: CommentDraft
     let caption: String
@@ -590,12 +682,16 @@ struct CommentComposer: View {
             }
             .controlSize(.small)
         }
-        .alert("Discard this comment?", isPresented: $confirmsDiscard) {
+        .alert(isEdit ? "Discard your changes?" : "Discard this comment?", isPresented: $confirmsDiscard) {
             Button("Discard", role: .destructive, action: cancel)
             Button("Keep Writing", role: .cancel) {}
         } message: {
-            Text("It hasn't been posted to GitHub.")
+            Text(isEdit ? "The comment stays as it is on GitHub." : "It hasn't been posted to GitHub.")
         }
+    }
+
+    private var isEdit: Bool {
+        draft.original != nil
     }
 
     private var alternateSave: (() -> Void)? {
@@ -609,7 +705,7 @@ struct CommentComposer: View {
     }
 
     private func cancelAsking() {
-        if draft.hasText {
+        if draft.hasChanges {
             confirmsDiscard = true
         } else {
             cancel()

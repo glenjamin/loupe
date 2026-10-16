@@ -19,6 +19,8 @@
                             "bodyHTML": "<p dir=\"auto\">Nit: rename</p>",
                             "createdAt": "2026-10-16T10:48:12Z",
                             "state": "SUBMITTED",
+                            "viewerCanUpdate": true,
+                            "viewerCanDelete": true,
                             "author": {
                                 "login": "glenjamin",
                                 "avatarUrl": "https://avatars.githubusercontent.com/u/151272?v=4"
