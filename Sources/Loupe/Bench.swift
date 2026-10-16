@@ -15,10 +15,9 @@ enum Bench {
         }
         let lineCount = text.utf8.reduce(0) { $1 == UInt8(ascii: "\n") ? $0 + 1 : $0 }
         let (files, parseTime) = measure { DiffParser.parse(text) }
-        let (parts, coldFilterTime) = measure { PathFilter.default.partition(files) }
-        let (_, filterTime) = measure { PathFilter.default.partition(files) }
+        let (parts, filterTime) = measure { PathFilter.default.partition(files) }
         print("parse: \(lineCount) diff lines, \(files.count) files in \(ms(parseTime))")
-        print("hide vendored: \(parts.excluded.count) of \(files.count) in \(ms(filterTime)), \(ms(coldFilterTime)) loading Linguist's data first")
+        print("hide vendored and lockfiles: \(parts.excluded.count) of \(files.count) in \(ms(filterTime))")
 
         let candidates = fileFilter.map { filter in files.filter { $0.path.contains(filter) } } ?? files
         guard let file = candidates.max(by: { $0.rowCount < $1.rowCount }) else {

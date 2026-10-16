@@ -83,23 +83,22 @@ struct DiffParserTests {
         #expect(last.newLine == thread.line)
     }
 
-    @Test func hidesVendoredCodeAndLockfilesAsGitHubDoes() {
+    @Test func hidesARootVendorTreeAndLockfiles() {
         let paths = [
-            "vendor/github.com/pkg/errors/errors.go", "tools/vendor/b.go", "web/node_modules/x/index.js", "static/js/jquery.min.js",
-            "go.sum", "web/package-lock.json", "src/vendor.go", "main.go", "docs/setup.md",
+            "vendor/github.com/x/y.go", "go.sum", "web/package-lock.json",
+            "pkg/vendor/x.go", "src/vendor.go", "main.go", "docs/setup.md",
         ]
         let filter = PathFilter.default
-        #expect(paths.filter { filter.excludes($0) } == Array(paths.prefix(6)))
+        #expect(paths.filter { filter.excludes($0) } == Array(paths.prefix(3)))
     }
 
-    @Test func keepsReviewWorthyPathsLinguistCallsVendored() {
+    @Test func reviewsPathsLinguistsVendorListNames() {
         let kept = [
+            "cache/cache.go", "cache/cache_test.go", "node_modules/a/b.js", "dist/app.js", "static/js/jquery.min.js",
             "integration/voip/testdata/golden-recipe.json", ".github/workflows/ci.yml", ".gitignore",
             "spec/fixtures/users.json", "src/types.d.ts", "Jenkinsfile",
         ]
         #expect(kept.filter { PathFilter.default.excludes($0) } == [])
-        // Each pattern on the keep-list must still exist in Linguist's list, or an update has changed it.
-        #expect(PathFilter.reviewedDespiteLinguist.subtracting(PathFilter.linguistVendorPatterns) == [])
     }
 
     @Test func hidesDocumentationOnlyWhenAsked() {
@@ -111,6 +110,7 @@ struct DiffParserTests {
     @Test func letsGitAttributesOverrideLinguistsRules() {
         let filter = PathFilter.default
         #expect(filter.excludes("gen/schema.go", attributes: LinguistAttributes(generated: true)))
+        #expect(filter.excludes("third_party/lib/x.go", attributes: LinguistAttributes(vendored: true)))
         #expect(!filter.excludes("vendor/patched/lib.go", attributes: LinguistAttributes(vendored: false)))
         #expect(!filter.excludes("go.sum", attributes: LinguistAttributes(generated: false)))
     }

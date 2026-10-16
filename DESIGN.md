@@ -619,6 +619,10 @@ The collapsed picker now ends with the shown choice's diff-stat (`15 files  +259
 
 In the picker and its list the `+A` and `−D` are now green and red, as each file's counts are in the file list, so the size and kind of a change read at a glance and look the same wherever lines are counted. The file count stays secondary text, being context rather than a change.
 
+### Only a root `vendor/` is hidden as vendored
+
+This reverses the use of Linguist's vendor list in "Languages and hidden files follow GitHub Linguist's data" and "Linguist's vendor list is narrowed for review". GitHub doesn't hide vendored files in a PR's diff at all, only generated ones, so there was no github.com behaviour being matched. Linguist's list is for language statistics and names ordinary source directories: its first pattern, `(^|/)cache/`, hid a Go repo's `cache` package, `cache/cache.go` and its tests, under "Vendored, lockfiles and generated". Pruning the list pattern by pattern would keep turning up more such cases, and the one vendored case that occurs in the repos reviewed is a Go dependency tree in a top-level `vendor/`. So Loupe now hides as vendored only paths under the repository's root `vendor/`; `node_modules/`, `dist/`, minified bundles and a nested `vendor/` are all reviewed. A `.gitattributes` `linguist-vendored` attribute can still hide any path, or keep one under `vendor/`, as before. Lockfiles, generated code and the optional documentation list are unchanged, and `vendor.json` is no longer fetched from Linguist.
+
 ## Not yet decided
 
 Nothing is pending.
