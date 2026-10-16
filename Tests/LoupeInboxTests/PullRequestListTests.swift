@@ -71,12 +71,13 @@ struct PullRequestListTests {
         await model.refresh()
 
         let mine = model.pullRequests(in: .mine)
-        let failing = try #require(mine.first { $0.repository == "tamarinworks/gatehouse" && $0.number == 172 })
-        #expect(failing.checks == .failure)
-        #expect(failing.checkContexts.listed == """
-            2 of 5 checks failed
-            ✗ codecov/patch — 76.92% of diff hit (target 98.23%)
-            ✗ codecov/project — 96.01% (-2.22%) compared to 8b4635f
+        // GitHub's rollup says failure, but only through Codecov's tolerated failures.
+        let covered = try #require(mine.first { $0.repository == "tamarinworks/gatehouse" && $0.number == 172 })
+        #expect(covered.checks == .success)
+        #expect(covered.checkContexts.listed == """
+            3 of 5 checks passed, 2 coverage failures ignored
+            (✗) codecov/patch — 76.92% of diff hit (target 98.23%)
+            (✗) codecov/project — 96.01% (-2.22%) compared to 8b4635f
             ✓ ci/circleci: build — Your tests passed on CircleCI!
             ✓ ci/circleci: lint — Your tests passed on CircleCI!
             ✓ ci/circleci: test — Your tests passed on CircleCI!
@@ -123,7 +124,7 @@ struct PullRequestListTests {
             .status("ci/circleci: build", "SUCCESS", description: "Your tests passed on CircleCI!"),
             .status("ci/circleci: test", "PENDING", description: "CircleCI is running your tests"),
             .checkRun("codecov/project", status: "COMPLETED", conclusion: "SKIPPED"),
-            .checkRun("codecov/patch", status: "COMPLETED", conclusion: "FAILURE", title: "80.00% of diff hit (target 90.00%)"),
+            .checkRun("codecov/patch", status: "COMPLETED", conclusion: "FAILURE", title: "60.00% of diff hit (target 90.00%)"),
         ])
         await model.refresh()
 
@@ -132,11 +133,80 @@ struct PullRequestListTests {
         #expect(after.checks == .failure)
         #expect(after.checkContexts.listed == """
             1 of 4 checks failed
-            ✗ codecov/patch — 80.00% of diff hit (target 90.00%)
+            ✗ codecov/patch — 60.00% of diff hit (target 90.00%)
             ● ci/circleci: test — CircleCI is running your tests
             ✓ ci/circleci: build — Your tests passed on CircleCI!
             – codecov/project
             """)
+    }
+
+    @Test func codecovsProjectCheckFailingAloneLeavesTheChecksPassed() async throws {
+        let shown = try await checksShown(state: "FAILURE", [
+            .status("ci/circleci: build", "SUCCESS"),
+            .checkRun("codecov/project", status: "COMPLETED", conclusion: "FAILURE", title: "96.01% (-2.22%) compared to 8b4635f"),
+            .checkRun("codecov/patch", status: "COMPLETED", conclusion: "SUCCESS", title: "100.00% of diff hit (target 96.01%)"),
+        ])
+        #expect(shown.checks == .success)
+        #expect(shown.checkContexts.failedCheckNames.isEmpty)
+    }
+
+    @Test func codecovsPatchCheckFailingCountsOnlyBelowTheCoverageWorthALook() async throws {
+        let covered = try await checksShown(state: "FAILURE", [
+            .status("ci/circleci: build", "SUCCESS"),
+            .checkRun("codecov/patch", status: "COMPLETED", conclusion: "FAILURE", title: "76.92% of diff hit (target 98.23%)"),
+        ])
+        #expect(covered.checks == .success)
+
+        let uncovered = try await checksShown(state: "FAILURE", [
+            .status("ci/circleci: build", "SUCCESS"),
+            .checkRun("codecov/patch", status: "COMPLETED", conclusion: "FAILURE", title: "65.00% of diff hit (target 98.23%)"),
+            .checkRun("codecov/project", status: "COMPLETED", conclusion: "FAILURE", title: "96.01% (-2.22%) compared to 8b4635f"),
+        ])
+        #expect(uncovered.checks == .failure)
+        #expect(uncovered.checkContexts.failedCheckNames == ["patch"])
+        #expect(uncovered.checkContexts.summary == "1 of 3 checks failed")
+    }
+
+    @Test func codecovsPatchCheckFailingWithoutItsCoverageStillFails() async throws {
+        let shown = try await checksShown(state: "FAILURE", [
+            .status("ci/circleci: build", "SUCCESS"),
+            .checkRun("codecov/patch", status: "COMPLETED", conclusion: "FAILURE"),
+        ])
+        #expect(shown.checks == .failure)
+    }
+
+    @Test func aRealFailureAlongsideCodecovsStillFails() async throws {
+        let shown = try await checksShown(state: "FAILURE", [
+            .status("ci/circleci: build", "FAILURE", description: "Your tests failed on CircleCI"),
+            .checkRun("codecov/project", status: "COMPLETED", conclusion: "FAILURE", title: "96.01% (-2.22%) compared to 8b4635f"),
+            .checkRun("codecov/patch", status: "COMPLETED", conclusion: "FAILURE", title: "76.92% of diff hit (target 98.23%)"),
+        ])
+        #expect(shown.checks == .failure)
+        #expect(shown.checkContexts.failedCheckNames == ["build"])
+        #expect(shown.checkContexts.listed == """
+            1 of 3 checks failed
+            ✗ ci/circleci: build — Your tests failed on CircleCI
+            (✗) codecov/project — 96.01% (-2.22%) compared to 8b4635f
+            (✗) codecov/patch — 76.92% of diff hit (target 98.23%)
+            """)
+    }
+
+    @Test func aToleratedFailureWhileAnotherCheckRunsLeavesTheChecksPending() async throws {
+        let shown = try await checksShown(state: "FAILURE", [
+            .status("ci/circleci: test", "PENDING", description: "CircleCI is running your tests"),
+            .checkRun("codecov/project", status: "COMPLETED", conclusion: "FAILURE", title: "96.01% (-2.22%) compared to 8b4635f"),
+        ])
+        #expect(shown.checks == .pending)
+        #expect(shown.checkContexts.listed == """
+            1 of 2 checks pending
+            ● ci/circleci: test — CircleCI is running your tests
+            (✗) codecov/project — 96.01% (-2.22%) compared to 8b4635f
+            """)
+    }
+
+    @Test func aFailureWithNoChecksFetchedToExplainItStaysFailed() async throws {
+        let shown = try await checksShown(state: "FAILURE", [])
+        #expect(shown.checks == .failure)
     }
 
     @Test func showsTheListsStoredByThePreviousRunBeforeRefreshing() async throws {
@@ -390,6 +460,19 @@ struct PullRequestListTests {
     }
 }
 
+/// The PR as listed after a refresh that finds GitHub reporting `state` over `contexts` for
+/// its head commit.
+@MainActor
+private func checksShown(state: String, _ contexts: [FakeCheckContext]) async throws -> PullRequestSummary {
+    let github = try FakeGitHub(fixture: "pr-list.json")
+    let model = try listModel(github)
+    await model.refresh()
+    let id = try #require(model.pullRequests(in: .toReview).first).id
+    try await github.setChecks(of: id, state: state, contexts)
+    await model.refresh()
+    return try #require(model.pullRequests(in: .toReview).first { $0.id == id })
+}
+
 @MainActor
 private func listModel(
     _ github: FakeGitHub,
@@ -453,7 +536,8 @@ private extension [CheckContext] {
     /// The summary over a line per check in the order they're listed, to compare at a glance.
     var listed: String {
         ([summary ?? ""] + failingFirst.map { check in
-            let line = "\(check.status.glyph) \(check.name)"
+            let glyph = check.isToleratedFailure ? "(\(check.status.glyph))" : check.status.glyph
+            let line = "\(glyph) \(check.name)"
             guard let description = check.description, !description.isEmpty else { return line }
             return "\(line) — \(description)"
         }).joined(separator: "\n")

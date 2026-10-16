@@ -199,7 +199,7 @@ private struct CheckRow: View {
 
     private var label: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            CheckStatusGlyph(status: check.status)
+            CheckStatusGlyph(check: check)
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
                 Text(verbatim: check.name)
@@ -219,14 +219,16 @@ private struct CheckRow: View {
     }
 }
 
-/// One check's outcome as a coloured glyph, matching the overall one.
+/// One check's outcome as a coloured glyph, matching the overall one. A tolerated failure's
+/// cross is in the secondary colour, as it doesn't make the checks fail.
 private struct CheckStatusGlyph: View {
-    let status: CheckStatus
+    let check: CheckContext
 
     var body: some View {
         Group {
-            switch status {
+            switch check.status {
             case .success: Image(systemName: "checkmark").foregroundStyle(.diffSuccess)
+            case .failure where check.isToleratedFailure: Image(systemName: "xmark").foregroundStyle(.secondary)
             case .failure: Image(systemName: "xmark").foregroundStyle(.diffDanger)
             case .pending: Image(systemName: "clock").foregroundStyle(.orange)
             case .neutral: Image(systemName: "minus").foregroundStyle(.secondary)

@@ -494,7 +494,8 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             mergedAt: mergedAt,
             closedAt: closedAt,
             reviewDecision: reviewDecision.map(ReviewDecision.init(lenientRawValue:)),
-            checks: checkState.map(CheckState.init(lenientRawValue:)),
+            // GitHub's rollup is stored as given; the tolerated Codecov failures are let off here.
+            checks: checkState.map { CheckState(lenientRawValue: $0).tolerating(checkContexts) },
             checkContexts: checkContexts,
             mergeable: mergeable.map(MergeableState.init(lenientRawValue:)),
             mergeStateStatus: mergeStateStatus.map(MergeStateStatus.init(lenientRawValue:)),
