@@ -523,6 +523,14 @@ This revises the "Finish your review" popover of "Reviews are submitted as on gi
 
 The popover put a radio group and a second button between the reviewer and the verdict: deciding to approve meant opening it, picking Approve and clicking Submit. Most reviews here end in a verdict with little or no summary, so the verdict is now the one click, and the summary is the optional step taken first. The button is "Summary…" rather than "Comment", because github.com calls the `COMMENT` verdict "Comment", so a "Comment" button beside "Submit" would read as a fourth way to submit; the ellipsis says it opens something. There's no confirmation on the verdicts, as on github.com's Submit, and no key for them: ⌘↩ belongs to the comment box and the summary field.
 
+### The viewed tick sits just before a file's counts
+
+This revises where the tick goes in "The file list has no checkbox, only the tick". The tick for a viewed file now sits at the trailing end, just before its `+A −D`, in a slot kept empty when it isn't viewed so marking a file doesn't shift the row. In the leading slot it sat apart from everything else about the file, ahead of a name it pushed right; the trailing edge already holds the file's numbers, so the tick reads with them as another fact about the file.
+
+The leading space stays, empty, as wide as a directory's chevron, so a file's document symbol still lines up with its sibling folders'. Without it, folders sat the chevron's width left of their sibling files, as in Finder and on github.com, but those step in about a chevron's width a level; at 12pt a file then sat left of its own parent folder's symbol and read as the parent's sibling.
+
+Directory rows can't be selected, by click or by the arrow keys. The tree's `ForEach` tags each row with its id, a string like a file's path, so the list took a directory row as selectable: the arrow keys stopped on it and set the selection to the directory, which named no file and left "No file selected". A directory row is now marked selection-disabled, so a click on it only folds or opens it and the arrow keys pass over it.
+
 ## Not yet decided
 
 Nothing is pending.

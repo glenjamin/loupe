@@ -600,8 +600,8 @@ struct FileTreeRows<FileRow: View>: View {
             if isCollapsed { collapsed.remove(directory.path) } else { collapsed.insert(directory.path) }
         } label: {
             HStack(spacing: 6) {
-                // As wide as a file row's tick slot, so a directory's symbol lines up with its
-                // siblings'.
+                // As wide as a file row's leading space, so a directory's symbol lines up with
+                // its siblings'.
                 Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -615,13 +615,17 @@ struct FileTreeRows<FileRow: View>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // The ForEach tags every row with its id, so without this the list would select a
+        // directory, which has nothing to show.
+        .selectionDisabled()
+        .background(DirectoryRowMarker())
         .help(directory.path)
     }
 }
 
-/// A file in the list on one line: ticked and dimmed once viewed, its name and open
-/// conversations, flagged when it has changed since being viewed, and `trailing` at the end.
-/// The tick's slot is kept when there's no tick, so names line up down the list.
+/// A file in the list on one line: its name and open conversations, dimmed once viewed, flagged
+/// when it has changed since being viewed, then a tick once viewed and `trailing` at the end.
+/// The tick's slot is kept when there's no tick, so marking a file doesn't shift its row.
 struct ReviewFileRow<Trailing: View>: View {
     let path: String
     let unresolvedThreads: Int
@@ -630,16 +634,9 @@ struct ReviewFileRow<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            // A clear view holds the slot, as an empty one takes no room in a stack.
-            Color.clear
-                .frame(width: 14, height: 14)
-                .overlay {
-                    if state.isViewed {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.diffSuccess)
-                    }
-                }
+            // As wide as a directory's chevron, so a file's symbol lines up with its sibling
+            // folders' and sits right of its parent's.
+            Color.clear.frame(width: 14, height: 14)
             HStack(spacing: 6) {
                 FileName(path: path)
                 UnresolvedThreadCount(count: unresolvedThreads)
@@ -656,6 +653,16 @@ struct ReviewFileRow<Trailing: View>: View {
                     .fixedSize()
             }
             Spacer(minLength: 4)
+            // A clear view holds the slot, as an empty one takes no room in a stack.
+            Color.clear
+                .frame(width: 14, height: 14)
+                .overlay {
+                    if state.isViewed {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.diffSuccess)
+                    }
+                }
             trailing
                 .fixedSize()
                 .opacity(state.isViewed ? 0.5 : 1)
@@ -765,6 +772,14 @@ struct CommitPickerMarker: NSViewRepresentable {
 
 /// An empty view behind the Conversation row, so a snapshot run can find where it is.
 struct ConversationRowMarker: NSViewRepresentable {
+    final class Marker: NSView {}
+
+    func makeNSView(context: Context) -> Marker { Marker() }
+    func updateNSView(_ view: Marker, context: Context) {}
+}
+
+/// Marks a directory row in the file tree, so a snapshot run can find it to click.
+struct DirectoryRowMarker: NSViewRepresentable {
     final class Marker: NSView {}
 
     func makeNSView(context: Context) -> Marker { Marker() }

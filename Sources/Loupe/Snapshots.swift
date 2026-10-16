@@ -226,6 +226,11 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_CLICK_CONVERSATION"] == "1" {
                     for url in try await saveSnapshotsAfterClickingConversation(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_CLICK_FOLDER=1 shows each PR's files, clicks the last directory
+                // row drawn in its tree, then arrows down the list, printing the selected file each time.
+                if environment["LOUPE_SNAPSHOT_CLICK_FOLDER"] == "1" {
+                    for url in try await saveSnapshotsAfterClickingFolder(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_SHOW_STALE=1 clicks the To review column's caption to list the
                 // requests hidden for their age, and snapshots the result.
                 if environment["LOUPE_SNAPSHOT_SHOW_STALE"] == "1" {
@@ -484,6 +489,56 @@ private func saveSnapshotsAfterClickingConversation(in windows: WindowManager, t
         try? await Task.sleep(for: .milliseconds(300))
         print("clicking Conversation at \(point) switched \(windows.title(of: tab.id)) from \(before) to \(tab.section)")
         let url = directory.appending(path: "conversation-\(sanitised(windows.title(of: tab.id))).png")
+        try await saveSnapshot(of: window, to: url)
+        written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
+/// Shows each PR's files, clicks the last directory row drawn in its tree through the window as
+/// the mouse would, then presses ↓ a few times in the list, printing the selected file and the list's
+/// row count after each, and writes `folder-<title>.png`.
+@MainActor
+private func saveSnapshotsAfterClickingFolder(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs {
+        tab.section = .files
+        windows.select(tab.id)
+        try? await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+        guard let root = window.contentView,
+              let row = descendants(of: root).last(where: { $0 is DirectoryRowMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }),
+              let table = sequence(first: row, next: \.superview).first(where: { $0 is NSTableView }) as? NSTableView
+        else { continue }
+        let title = windows.title(of: tab.id)
+        func report(_ when: String) {
+            print("\(title) \(when): selected \(tab.selectedFile ?? "none"), \(table.numberOfRows) rows, table row \(table.selectedRow)")
+        }
+        report("before clicking a folder")
+        let point = row.convert(NSPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil)
+        // The mouse-up is queued first, so a tracking loop started by the mouse-down finds it.
+        let events = [NSEvent.EventType.leftMouseUp, .leftMouseDown].compactMap { type in
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+        }
+        guard events.count == 2 else { continue }
+        NSApp.postEvent(events[0], atStart: false)
+        window.sendEvent(events[1])
+        try? await Task.sleep(for: .milliseconds(300))
+        report("after clicking a folder")
+        window.makeFirstResponder(table)
+        let down = String(UnicodeScalar(UInt16(NSDownArrowFunctionKey)).map(Character.init) ?? " ")
+        for press in 1...4 {
+            if let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.numericPad, .function], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: down, charactersIgnoringModifiers: down, isARepeat: false, keyCode: 125) {
+                window.sendEvent(key)
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            report("after ↓ \(press)")
+        }
+        let url = directory.appending(path: "folder-\(sanitised(title)).png")
         try await saveSnapshot(of: window, to: url)
         written.append(url)
     }
