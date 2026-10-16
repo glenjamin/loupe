@@ -121,15 +121,22 @@ public final class TabsModel {
 
     /// Checks the shown PR and its merge state on GitHub once the selection settles, unless it
     /// was checked moments ago; run whenever a PR is shown and when the app comes to the front.
+    /// The viewer has just come to it, so new commits are reloaded rather than offered: at once
+    /// when they came while the viewer was away, otherwise when the check finds them.
     public func checkShownForChanges() {
         shownCheck?.cancel()
         shownCheck = nil
-        guard let id = selected else { return }
+        guard let id = selected, let shown = tab(id: id) else { return }
+        if shown.reloadsOnReturn {
+            // Not cancelled by moving on, so the reload is ready when the viewer comes back.
+            catchUp(shown)
+            return
+        }
         shownCheck = Task { [weak self, showDelay] in
             do { try await showDelay(Self.showSettle) } catch { return }
-            guard let self, !Task.isCancelled, selected == id, let tab = tab(id: id) else { return }
+            guard let self, !Task.isCancelled, selected == id else { return }
             if let last = lastChecked[id], ContinuousClock.now - last < Self.recheckInterval { return }
-            await checkForChanges(to: [tab])
+            await catchUp(shown).value
         }
     }
 
@@ -206,6 +213,12 @@ public final class TabsModel {
         } catch {
             log("Couldn't check open PRs for changes: \(error.localizedDescription)")
         }
+    }
+
+    /// Checks the PR the viewer has just come to, reloading its diff if it has new commits.
+    @discardableResult
+    private func catchUp(_ tab: PullRequestTab) -> Task<Void, Never> {
+        tab.catchUp { [weak self] in await self?.checkForChanges(to: [tab]) }
     }
 
     /// How long the selection must stay put before the shown PR is checked, so flicking through

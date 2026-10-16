@@ -7,9 +7,10 @@ import LoupeStore
 import Observation
 
 /// One open PR: its latest known details and its diff, produced from the local checkout and
-/// kept in memory, so switching back to its tab is instant. When new commits are pushed the
-/// diff stays as it is, with the threads placed on it, and they're offered as a reload, as
-/// github.com does; everything else on GitHub is fetched in the background.
+/// kept in memory, so switching back to its tab is instant. When new commits are pushed while
+/// it's being read the diff stays as it is, with the threads placed on it, and they're offered
+/// as a reload, as github.com does; coming back to the tab takes them at once. Everything else
+/// on GitHub is fetched in the background.
 @Observable
 @MainActor
 public final class PullRequestTab: Identifiable {
@@ -73,6 +74,9 @@ public final class PullRequestTab: Identifiable {
     /// The PR as it was when its diff was last asked for, success or not, or when its new
     /// commits were last dismissed. Nil until the diff is asked for.
     private var seen: PullRequestSummary?
+    /// The check underway as the viewer comes to the tab, while which new commits are about to
+    /// be reloaded rather than offered.
+    private var catchingUp: Task<Void, Never>?
     private var loading: Task<Void, Never>?
     /// The PR as it was when its conversation and viewed states were last asked for, to tell
     /// when GitHub has more. Nil until they're first asked for.
@@ -136,10 +140,11 @@ public final class PullRequestTab: Identifiable {
         return "\(name) #\(pullRequest.number)"
     }
 
-    /// How the PR has changed on GitHub since its diff was produced, if in a way that needs
-    /// the diff reloading: nil while the diff is still of the PR's head.
+    /// How the PR has changed on GitHub since its diff was produced, if in a way that waits for
+    /// the viewer to reload the diff: nil while the diff is still of the PR's head, or while
+    /// it's about to be reloaded without asking.
     public var pendingChange: PendingChange? {
-        guard let seen, pullRequest.headRefOid != seen.headRefOid else { return nil }
+        guard hasNewCommits, catchingUp == nil else { return nil }
         return .newCommits
     }
 
@@ -147,7 +152,7 @@ public final class PullRequestTab: Identifiable {
     /// commits wait for a reload, when they're as they were for the diff shown, as GitHub
     /// places threads by the head's lines and the new head's could land on the wrong rows.
     public var placedThreads: [ReviewThread] {
-        pendingChange == nil ? conversation?.threads ?? [] : threadsOfShownDiff
+        hasNewCommits ? threadsOfShownDiff : conversation?.threads ?? []
     }
 
     /// Produces the diff and asks GitHub which files are viewed and for the conversation, unless
@@ -192,6 +197,28 @@ public final class PullRequestTab: Identifiable {
             log("Couldn't check \(title) for changes: \(error)")
         }
         await retry()
+    }
+
+    /// Checks the PR with `check` as the viewer comes to the tab, then reloads the diff if it
+    /// has new commits rather than offering them, as none of them is being read yet; any already
+    /// waiting stop being offered at once. A comment being written on a line keeps them offered
+    /// instead, as the new head could move its line. Joins a catch-up already underway.
+    @discardableResult
+    func catchUp(checking check: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+        if let catchingUp { return catchingUp }
+        guard !isWritingOnLine else { return Task { await check() } }
+        let task = Task {
+            await check()
+            catchingUp = nil
+            if hasNewCommits { await retry() }
+        }
+        catchingUp = task
+        return task
+    }
+
+    /// Whether new commits wait for a reload that coming back to the tab can make at once.
+    var reloadsOnReturn: Bool {
+        hasNewCommits && !isWritingOnLine
     }
 
     /// Keeps the diff as it is and stops offering the new commits, until more are pushed. Its
@@ -590,7 +617,20 @@ public final class PullRequestTab: Identifiable {
     /// Places the conversation's threads on the diff as they are now, unless new commits wait
     /// for a reload.
     func followPlacedThreads() {
-        if pendingChange == nil { threadsOfShownDiff = conversation?.threads ?? [] }
+        if !hasNewCommits { threadsOfShownDiff = conversation?.threads ?? [] }
+    }
+
+    /// Whether the PR's head has moved since its diff was produced.
+    private var hasNewCommits: Bool {
+        guard let seen else { return false }
+        return pullRequest.headRefOid != seen.headRefOid
+    }
+
+    /// Whether a comment with something typed, or on its way, is open on a line of the diff,
+    /// which a reload could put on a different line.
+    private var isWritingOnLine: Bool {
+        guard let draft = threadActivity.newComment?.draft else { return false }
+        return draft.hasText || draft.isSending
     }
 
     /// The lists may have stored the login since the tab opened; if not, GitHub is asked.

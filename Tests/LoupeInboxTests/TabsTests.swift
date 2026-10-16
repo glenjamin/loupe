@@ -676,6 +676,99 @@ struct TabsTests {
         #expect(await app.github.statusLookups.last == [pullRequest.id], "only the shown PR, not the lists")
     }
 
+    @Test func comingBackToATabWithNewCommitsWaitingReloadsItAtOnce() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, _) = try await app.openDiffed(in: repo)
+        let second = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        _ = await app.tabs.watchForChanges()
+        #expect(tab.pendingChange == .newCommits)
+        app.tabs.select(nil)
+        let (lookups, settles) = (await app.github.pullRequestLookups.count, app.showDelay.sleeps.count)
+
+        app.tabs.select(pullRequest.id)
+
+        #expect(tab.pendingChange == nil, "not offered, as none of them is being read yet")
+        try await until { tab.ready?.headOid == second }
+        #expect(tab.pendingChange == nil)
+        #expect(tab.selectedFile == "app.go")
+        #expect(app.showDelay.sleeps.count == settles, "without waiting for the selection to settle")
+        #expect(await app.github.pullRequestLookups.dropFirst(lookups) == [[pullRequest.id]], "looked up once, by the reload")
+
+        // Likewise for commits offered while the tab was read, once the app comes to the front.
+        let third = try await app.pushCommit(["README": "An app that says hello.\n"], to: pullRequest, in: repo)
+        _ = await app.tabs.watchForChanges()
+        #expect(tab.pendingChange == .newCommits)
+        app.tabs.checkShownForChanges()
+        try await until { tab.ready?.headOid == third }
+        #expect(tab.pendingChange == nil)
+    }
+
+    @Test func newCommitsFoundByCheckingATabAsItsShownAreReloadedRatherThanOffered() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
+        let second = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        app.tabs.select(nil)
+        let lookups = await app.github.pullRequestLookups.count
+
+        app.tabs.select(pullRequest.id)
+        try await until { app.showDelay.sleeps.count == 2 }
+        #expect(tab.ready?.headOid == first, "not known until checked")
+        app.showDelay.elapse()
+
+        var offered = false
+        try await until {
+            offered = offered || tab.pendingChange != nil
+            return tab.ready?.headOid == second
+        }
+        #expect(!offered, "no banner on the way")
+        #expect(await app.github.pullRequestLookups.dropFirst(lookups) == [[pullRequest.id]], "the reload doesn't look it up again")
+    }
+
+    @Test func newCommitsFoundWhileATabIsReadAreOfferedRatherThanReloaded() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let statuses = await app.github.statusLookups.count
+        let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
+        try await app.showDelay.untilWaiting()
+        app.showDelay.elapse()
+        try await app.untilStatusLookups(reach: statuses + 1)
+        #expect(tab.pendingChange == nil, "checked as it was shown, with nothing new")
+
+        _ = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        _ = await app.tabs.watchForChanges()
+
+        #expect(tab.pendingChange == .newCommits)
+        #expect(tab.ready?.headOid == first, "the diff being read stays")
+        #expect(try app.store.diffRecord(for: pullRequest.id)?.headRefOid == first)
+    }
+
+    @Test func aCommentBeingWrittenOnALineKeepsNewCommitsOfferedOnComingBack() async throws {
+        let repo = try await FakeRepository()
+        let app = try await App()
+        let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
+        let second = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
+        _ = await app.tabs.watchForChanges()
+        tab.startComment(at: DiffAnchor(path: "app.go", side: .right, line: 3))
+        try #require(tab.threadActivity.newComment?.draft).text = "Why hi?"
+
+        app.tabs.select(nil)
+        app.tabs.select(pullRequest.id)
+        app.tabs.checkShownForChanges()
+        try await until { app.showDelay.sleeps.count == 3 }
+        app.showDelay.elapse()
+
+        #expect(tab.pendingChange == .newCommits, "the new head could move the comment's line")
+        #expect(tab.ready?.headOid == first)
+        #expect(tab.threadActivity.newComment?.draft.text == "Why hi?")
+
+        tab.cancelComment()
+        app.tabs.checkShownForChanges()
+        try await until { tab.ready?.headOid == second }
+        #expect(tab.pendingChange == nil)
+    }
+
     @Test func aTabWithoutACheckoutSaysSoAndAGitFailureShowsGitsMessage() async throws {
         let repo = try await FakeRepository()
         let app = try await App()

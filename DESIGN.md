@@ -531,6 +531,12 @@ The leading space stays, empty, as wide as a directory's chevron, so a file's do
 
 Directory rows can't be selected, by click or by the arrow keys. The tree's `ForEach` tags each row with its id, a string like a file's path, so the list took a directory row as selectable: the arrow keys stopped on it and set the selection to the directory, which named no file and left "No file selected". A directory row is now marked selection-disabled, so a click on it only folds or opens it and the arrow keys pass over it.
 
+### Coming back to a PR reloads its new commits; the banner is only for a PR being read
+
+This narrows "Open PRs learn of changes from notifications, and offer a reload". The banner exists so the diff doesn't move under a reviewer partway through it, which only happens while they're looking at it. Anyone coming to a tab, by picking it in the strip, ⌃Tab, opening or linking to the PR, closing the shown tab next to it, or bringing the window or app to the front, isn't partway through anything yet, so new commits are reloaded rather than offered. Commits already waiting are reloaded at once, without waiting for the selection to settle; the reload's own lookup of the PR is the check, so focusing doesn't ask GitHub twice. Otherwise the check made as the tab is shown reloads any it finds. New commits the background watcher finds while the tab is in front still bring the banner, and coming back to it later takes them.
+
+While that check is underway the banner stays hidden and the threads stay as placed for the diff shown, so arriving never flashes a banner that's about to go. A line comment with something typed in it keeps the banner instead: the comment is anchored by line number, so a reload would put it under whatever the new head has on that line, or after the file's last row if the new diff lacks the line, and sending it would post on that line of the new head. Replies follow their thread by id and the description and review summary aren't on the diff, so none of those hold a reload back.
+
 ## Not yet decided
 
 Nothing is pending.

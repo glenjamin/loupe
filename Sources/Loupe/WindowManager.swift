@@ -188,7 +188,7 @@ final class WindowManager {
 
     /// Keeps the lists refreshed, and watches open PRs for changes unless this is a snapshot run,
     /// which shouldn't wait on GitHub's notifications. Coming back to the app or its window also
-    /// checks the shown PR.
+    /// checks the shown PR and reloads any new commits, which were only offered while it was read.
     private func startRefreshing() {
         Task { await tabs.lists.keepRefreshed() }
         if SnapshotRun.directory == nil { Task { await tabs.keepWatchingForChanges() } }
