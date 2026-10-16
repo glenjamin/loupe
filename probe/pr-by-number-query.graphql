@@ -5,6 +5,17 @@ query($owner: String!, $name: String!, $number: Int!) {
       commitCount: commits { totalCount }
       comments { totalCount }
       reviewThreads { totalCount }
+      reviewRequests(first: 50) {
+        nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
+      }
+      requestEvents: timelineItems(last: 20, itemTypes: [REVIEW_REQUESTED_EVENT]) {
+        nodes {
+          ... on ReviewRequestedEvent {
+            createdAt
+            requestedReviewer { __typename ... on User { login } ... on Team { slug } }
+          }
+        }
+      }
     }
   }
 }

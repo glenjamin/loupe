@@ -60,6 +60,8 @@ struct TabsTests {
         #expect(opened.pullRequest.state == .merged)
         #expect(app.tabs.tabs.map(\.id) == [from.id, opened.id])
 
+        #expect(!app.tabs.lists.pullRequests(in: .mine, includingClosed: true).contains { $0.id == opened.id }, "the viewer's, but merged")
+
         #expect(await tab.open(link))
         #expect(await app.github.numberLookups.count == 1, "known now, so not looked up again")
 
@@ -68,6 +70,73 @@ struct TabsTests {
         let nextRun = try app.relaunch()
         #expect(nextRun.tabs.map(\.id) == [from.id, opened.id])
         #expect(nextRun.tabs[1].pullRequest.title == "Read gauge cache status from gazette")
+    }
+
+    @Test func aLinkToTheViewersNewPullRequestPutsItInMineAtOnce() async throws {
+        let app = try await App()
+        let created = try await app.github.openPullRequest(number: 2001, by: FakeGitHub.viewer)
+        let searches = await app.github.searches
+
+        #expect(await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number)))
+
+        #expect(app.tabs.lists.pullRequests(in: .mine).contains { $0.id == created.id })
+        #expect(!app.tabs.lists.pullRequests(in: .toReview).contains { $0.id == created.id })
+        #expect(await app.github.searches == searches, "without waiting for the lists' refresh")
+    }
+
+    @Test func aLinkToANewPullRequestAskingForTheViewersReviewPutsItInToReviewWithTheRequestsDate() async throws {
+        let app = try await App()
+        let created = try await app.github.openPullRequest(number: 2002, by: "kit-vance", asking: [.user(FakeGitHub.viewer)])
+        let requested = try #require(created.requestEvents.last).createdAt
+
+        #expect(await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number)))
+
+        let listed = try #require(app.toReview.first { $0.id == created.id })
+        #expect(listed.reviewRequestedAt == wholeSeconds(requested))
+        #expect(!app.tabs.lists.pullRequests(in: .mine).contains { $0.id == created.id })
+    }
+
+    @Test func aLinkToANewPullRequestAskingATeamsReviewPutsItInToReviewAndARefreshKeepsIt() async throws {
+        let app = try await App()
+        let created = try await app.github.openPullRequest(number: 2005, by: "kit-vance", asking: [.team("backend")])
+
+        #expect(await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number)))
+        #expect(app.toReview.contains { $0.id == created.id }, "any team might be the viewer's")
+
+        await app.tabs.lists.refresh()
+
+        #expect(await !app.github.pullRequests(in: .toReview).contains { $0.id == created.id }, "not a team the viewer is in, so search never finds it")
+        #expect(app.tabs.lists.error == nil)
+        #expect(app.toReview.contains { $0.id == created.id })
+    }
+
+    @Test func aLinkToANewPullRequestAskingNeitherForTheViewerNorByThemLeavesItUnlisted() async throws {
+        let app = try await App()
+        let created = try await app.github.openPullRequest(number: 2003, by: "kit-vance", asking: [.user("pat-barrow")])
+
+        #expect(await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number)))
+
+        #expect(app.tabs.tab(id: created.id) != nil)
+        for list in PullRequestList.allCases {
+            #expect(!app.tabs.lists.pullRequests(in: list, includingClosed: true).contains { $0.id == created.id })
+        }
+    }
+
+    @Test func aNotificationThatAnOpenPullRequestNowAsksForTheViewersReviewPutsItInToReview() async throws {
+        let app = try await App()
+        let created = try await app.github.openPullRequest(number: 2004, by: "kit-vance")
+        #expect(await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number)))
+        #expect(!app.toReview.contains { $0.id == created.id })
+
+        try await app.github.requestReview(of: created.id)
+        _ = await app.tabs.watchForChanges()
+
+        #expect(await app.github.pullRequestLookups.last == [created.id])
+        let listed = try #require(app.toReview.first { $0.id == created.id })
+        #expect(listed.reviewRequestedAt != nil)
+
+        await app.tabs.lists.refresh()
+        #expect(app.toReview.contains { $0.id == created.id }, "the search agrees")
     }
 
     @Test func aLinkGitHubCantResolveOrAnsweredWithAFailureIsLeftForTheBrowser() async throws {
@@ -676,6 +745,11 @@ private extension PullRequestTab {
         guard let file = file("app.go"), let threads = threads(on: file) else { return [] }
         return threads.anchored.flatMap(\.threads).map(\.id) + threads.elsewhere.map(\.id)
     }
+}
+
+/// `date` as GitHub reports it, to the second.
+private func wholeSeconds(_ date: Date) -> Date {
+    Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
 }
 
 /// A link to the PR on github.com, as its description or a comment would link to it, with

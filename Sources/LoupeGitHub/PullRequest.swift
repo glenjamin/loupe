@@ -59,10 +59,12 @@ struct SearchPageResponse: Decodable {
         let author: Login?
         let repository: Repository
         let commits: Connection<CommitNode>
-        /// Only when looked up by id.
+        /// Only when looked up by id or number.
         let commitCount: Count?
         let comments: Count?
         let reviewThreads: Count?
+        let reviewRequests: Connection<NodesResponse.ReviewRequest>?
+        let requestEvents: Connection<NodesResponse.RequestEvent>?
     }
 
     struct Login: Decodable { let login: String }
@@ -74,12 +76,28 @@ struct SearchPageResponse: Decodable {
     struct Rollup: Decodable { let state: CheckState }
 }
 
+/// A PR as looked up by id or number, with who its review waits on and its latest requests
+/// for review, which say which of the start screen's lists it belongs in.
+public struct PullRequestLookup: Sendable, Equatable {
+    public let pullRequest: PullRequestSummary
+    public let reviewRequests: ReviewRequests
+
+    init(_ node: SearchPageResponse.PullRequestNode) {
+        pullRequest = PullRequestSummary(node)
+        reviewRequests = ReviewRequests(state: node.state, requests: node.reviewRequests?.nodes ?? [], events: node.requestEvents?.nodes ?? [])
+    }
+}
+
 extension ReviewRequests {
     init(_ node: NodesResponse.PullRequestNode) {
+        self.init(state: node.state, requests: node.reviewRequests.nodes, events: node.requestEvents.nodes)
+    }
+
+    init(state: PullRequestState, requests: [NodesResponse.ReviewRequest], events: [NodesResponse.RequestEvent]) {
         self.init(
-            state: node.state,
-            reviewers: node.reviewRequests.nodes.map { $0.requestedReviewer?.reviewer ?? .other },
-            events: node.requestEvents.nodes.map { ReviewRequestEvent(reviewer: $0.requestedReviewer?.reviewer ?? .other, createdAt: $0.createdAt) }
+            state: state,
+            reviewers: requests.map { $0.requestedReviewer?.reviewer ?? .other },
+            events: events.map { ReviewRequestEvent(reviewer: $0.requestedReviewer?.reviewer ?? .other, createdAt: $0.createdAt) }
         )
     }
 }

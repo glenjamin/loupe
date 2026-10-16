@@ -135,25 +135,23 @@ public final class PullRequestListModel {
         return unlisted.values.first(where: matches)
     }
 
-    /// Looks up the PR numbered `number` in `repository` on GitHub, for one stored nowhere yet,
-    /// and keeps it as checked directly. Nil when GitHub has no such PR the viewer can see.
+    /// Looks up the PR numbered `number` in `repository` on GitHub, for one stored nowhere yet.
+    /// It joins the lists it belongs in at once, rather than at their next refresh; otherwise
+    /// it's kept as checked directly. Nil when GitHub has no such PR the viewer can see.
     func lookUpPullRequest(repository: String, number: Int) async throws -> PullRequestSummary? {
         guard let found = try await client.pullRequest(repository: repository, number: number) else { return nil }
-        let listed = PullRequestList.allCases.contains { list in snapshot[list].contains { $0.id == found.id } }
-        if !listed { unlisted[found.id] = found }
-        return found
+        try await placeInLists([found])
+        return pullRequest(id: found.pullRequest.id) ?? found.pullRequest
     }
 
     /// Looks up the PRs with `ids` on GitHub directly, rather than waiting for the lists'
-    /// refresh, and stores them, so their windows see what changed.
+    /// refresh, and stores them, so their windows see what changed. One newly asking for the
+    /// viewer's review joins To review at once.
     public func checkForChanges(to ids: [String]) async throws {
         guard !ids.isEmpty else { return }
         let found = try await client.pullRequests(ids: ids)
-        snapshot = try await store.update(found)
-        for pullRequest in found {
-            let listed = PullRequestList.allCases.contains { list in snapshot[list].contains { $0.id == pullRequest.id } }
-            unlisted[pullRequest.id] = listed ? nil : pullRequest
-        }
+        snapshot = try await store.update(found.map(\.pullRequest))
+        try await placeInLists(found)
     }
 
     /// Looks up the checks, merge state and review decision of the listed PRs with `ids` on
@@ -236,6 +234,30 @@ public final class PullRequestListModel {
         snapshot = try await store.remove(fulfilled, from: .toReview)
     }
 
+    /// Adds each looked-up PR to the lists it belongs in but isn't yet, as the searches would
+    /// once they see it, and records when the viewer was last asked to review those in To
+    /// review. The rest are kept as checked directly. Nothing is taken out of a list here; the
+    /// refresh's own checks do that.
+    private func placeInLists(_ lookups: [PullRequestLookup]) async throws {
+        let login = try await viewerLogin()
+        for lookup in lookups {
+            let id = lookup.pullRequest.id
+            let joining = Self.lists(for: lookup, viewer: login).filter { list in !snapshot[list].contains { $0.id == id } }
+            guard !joining.isEmpty else { continue }
+            snapshot = try await store.add(lookup.pullRequest, to: joining, at: now())
+        }
+        let requested = lookups.filter { lookup in snapshot[.toReview].contains { $0.id == lookup.pullRequest.id } }
+        if !requested.isEmpty {
+            let times = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.lastRequested(of: login)) }) { $1 }
+            snapshot = try await store.updateReviewRequestTimes(times)
+        }
+        for lookup in lookups {
+            let id = lookup.pullRequest.id
+            let listed = PullRequestList.allCases.contains { list in snapshot[list].contains { $0.id == id } }
+            unlisted[id] = listed ? nil : lookup.pullRequest
+        }
+    }
+
     private func viewerLogin() async throws -> String {
         if let login = try store.viewerLogin() {
             viewer = login
@@ -307,6 +329,14 @@ public final class PullRequestListModel {
 
     private func listed(in list: PullRequestList, includingClosed: Bool) -> [PullRequestSummary] {
         includingClosed ? snapshot[list] : snapshot[list].filter { $0.state == .open }
+    }
+
+    /// The lists the PR belongs in by what their searches match on: open and by the viewer for
+    /// Mine, open and waiting on the viewer's review (or any team's) for To review.
+    private static func lists(for lookup: PullRequestLookup, viewer login: String) -> [PullRequestList] {
+        let pullRequest = lookup.pullRequest
+        let isMine = pullRequest.state == .open && pullRequest.author?.caseInsensitiveCompare(login) == .orderedSame
+        return [isMine ? .mine : nil, lookup.reviewRequests.awaitReview(from: login) ? .toReview : nil].compactMap(\.self)
     }
 
     /// Whether `pullRequest` waits on a review request older than `staleRequestAge`. GitHub

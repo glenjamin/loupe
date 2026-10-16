@@ -7,7 +7,8 @@ import Testing
 /// merged PR in neither list from `probe/pr-by-number.json`. Like GitHub's GraphQL API it
 /// rejects requests without the expected token, caps page sizes, pages with cursors, matches
 /// searches by author, review request, state and update time, looks up nodes by id and PRs by
-/// repo and number, serves each PR's checks and mergeability as captured in `probe/pr-status.json`,
+/// repo and number with who their review is asked of, serves each PR's checks and mergeability
+/// as captured in `probe/pr-status.json`,
 /// and bumps a PR's update time when it changes, though not when its checks do. Like its REST notifications, a
 /// change to a PR notifies the viewer, who participates in every PR here, and a poll with
 /// `If-Modified-Since` no older than the newest notification gets a 304. Tests can change PRs,
@@ -28,6 +29,8 @@ actor FakeGitHub: HTTPTransport {
 
     /// In the order search returns them.
     private var pullRequests: [FakePullRequest]
+    /// The merged PR in neither list, which new PRs are made from.
+    private let unlistedPullRequest: FakePullRequest
     private let viewerTeams: Set<String>
     private let maxPageSize: Int
     private var failure: Failure?
@@ -74,7 +77,8 @@ actor FakeGitHub: HTTPTransport {
         }
         pullRequests = reversed ? all.reversed() : all
         let unlisted = try Data(contentsOf: projectRoot.appending(path: "probe/pr-by-number.json"))
-        pullRequests.append(try JSONDecoder().decode(NumberProbe.self, from: unlisted).data.repository.pullRequest)
+        unlistedPullRequest = try JSONDecoder().decode(NumberProbe.self, from: unlisted).data.repository.pullRequest
+        pullRequests.append(unlistedPullRequest)
         self.viewerTeams = viewerTeams
         self.maxPageSize = maxPageSize
     }
@@ -107,6 +111,30 @@ actor FakeGitHub: HTTPTransport {
         // A second on from the last at least, so each change reaches a poll that saw the last;
         // HTTP dates are whole seconds.
         notified[id] = max(.now, (notified.values.max() ?? Self.quietSince) + 1)
+    }
+
+    /// Opens PR `number` by `author` in the unlisted PR's repo, asking `reviewers` to review it,
+    /// as just made: in neither of the viewer's lists until their searches next ask.
+    @discardableResult
+    func openPullRequest(number: Int, by author: String, asking reviewers: [FakePullRequest.Reviewer] = []) throws -> FakePullRequest {
+        var pullRequest = unlistedPullRequest
+        pullRequest.id = "PR_new_\(number)"
+        pullRequest.number = number
+        pullRequest.url = "https://github.com/\(pullRequest.repository.nameWithOwner)/pull/\(number)"
+        pullRequest.title = "New PR \(number)"
+        pullRequest.author = .init(login: author)
+        pullRequest.state = "OPEN"
+        pullRequest.mergedAt = nil
+        pullRequest.closedAt = nil
+        pullRequest.reviewDecision = "REVIEW_REQUIRED"
+        pullRequest.requestedReviewers = []
+        pullRequest.requestEvents = []
+        pullRequests.append(pullRequest)
+        try edit(pullRequest.id) { _ in }
+        for reviewer in reviewers {
+            try requestReview(of: pullRequest.id, from: reviewer)
+        }
+        return try #require(pullRequests.first { $0.id == pullRequest.id })
     }
 
     /// Asks `reviewer` to review the PR with `id` at `date`, as a request or re-request, which
@@ -218,10 +246,10 @@ actor FakeGitHub: HTTPTransport {
             pullRequest(in: "\(owner)/\(name)", number: number)
         } else if let ids = body.variables.ids, body.query.contains("contexts") {
             try statuses(ids)
+        } else if let ids = body.variables.ids, body.query.contains("fragment PullRequestRow") {
+            try pullRequestRows(ids)
         } else if let ids = body.variables.ids, body.query.contains("reviewRequests") {
             try reviewRequests(ids)
-        } else if let ids = body.variables.ids {
-            try pullRequestRows(ids)
         } else if body.variables.query != nil {
             try search(body.variables)
         } else {
@@ -280,26 +308,26 @@ actor FakeGitHub: HTTPTransport {
         return (try JSONSerialization.data(withJSONObject: threads), httpResponse(url, status: 200, headers: headers))
     }
 
-    private func pullRequestRows(_ ids: [String]) throws -> Envelope<[String: [FakePullRequest?]]> {
+    private func pullRequestRows(_ ids: [String]) throws -> Envelope<[String: [LookupNode?]]> {
         #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
         pullRequestLookups.append(ids)
-        return Envelope(data: ["nodes": ids.map { id in pullRequests.first { $0.id == id } }])
+        return Envelope(data: ["nodes": ids.map { id in pullRequests.first { $0.id == id }.map(LookupNode.init) }])
     }
 
     /// As GitHub answers: a null repo when it has no PRs here, a null PR when none has that
     /// number, each with a `NOT_FOUND` error.
-    private func pullRequest(in repository: String, number: Int) -> Envelope<[String: [String: FakePullRequest?]?]> {
+    private func pullRequest(in repository: String, number: Int) -> Envelope<[String: [String: LookupNode?]?]> {
         numberLookups.append("\(repository)#\(number)")
         let inRepository = pullRequests.filter { $0.repository.nameWithOwner.caseInsensitiveCompare(repository) == .orderedSame }
         guard !inRepository.isEmpty else {
-            let error = Envelope<[String: [String: FakePullRequest?]?]>.GraphQLError(type: "NOT_FOUND", path: ["repository"], message: "Could not resolve to a Repository with the name '\(repository)'.")
+            let error = Envelope<[String: [String: LookupNode?]?]>.GraphQLError(type: "NOT_FOUND", path: ["repository"], message: "Could not resolve to a Repository with the name '\(repository)'.")
             return Envelope(data: ["repository": nil], errors: [error])
         }
         guard let found = inRepository.first(where: { $0.number == number }) else {
-            let error = Envelope<[String: [String: FakePullRequest?]?]>.GraphQLError(type: "NOT_FOUND", path: ["repository", "pullRequest"], message: "Could not resolve to a PullRequest with the number of \(number).")
+            let error = Envelope<[String: [String: LookupNode?]?]>.GraphQLError(type: "NOT_FOUND", path: ["repository", "pullRequest"], message: "Could not resolve to a PullRequest with the number of \(number).")
             return Envelope(data: ["repository": ["pullRequest": nil]], errors: [error])
         }
-        return Envelope(data: ["repository": ["pullRequest": found]])
+        return Envelope(data: ["repository": ["pullRequest": LookupNode(pullRequest: found)]])
     }
 
     private func statuses(_ ids: [String]) throws -> Envelope<StatusPayload> {
@@ -366,15 +394,7 @@ actor FakeGitHub: HTTPTransport {
         #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
         let nodes = ids.map { id in
             pullRequests.first { $0.id == id }.map { pullRequest in
-                NodesPayload.Node(
-                    id: id,
-                    state: pullRequest.state,
-                    reviewRequests: .init(nodes: pullRequest.requestedReviewers.map { .init(requestedReviewer: .init($0)) }),
-                    // The query asks for the last 20, oldest first, as GitHub returns them.
-                    requestEvents: .init(nodes: pullRequest.requestEvents.sorted { $0.createdAt < $1.createdAt }.suffix(20).map { event in
-                        .init(createdAt: event.createdAt.formatted(.iso8601), requestedReviewer: .init(event.reviewer))
-                    })
-                )
+                NodesPayload.Node(id: id, state: pullRequest.state, reviewRequests: pullRequest.reviewRequestNodes, requestEvents: pullRequest.requestEventNodes)
             }
         }
         let missing = zip(ids, nodes).enumerated().compactMap { index, pair in
@@ -404,10 +424,10 @@ actor FakeGitHub: HTTPTransport {
 
 /// A search result node, in GitHub's JSON shape, plus who its review is requested from.
 struct FakePullRequest: Codable, Sendable {
-    let id: String
-    let number: Int
+    var id: String
+    var number: Int
     var title: String
-    let url: String
+    var url: String
     var isDraft: Bool
     var state: String
     var mergedAt: String?
@@ -418,7 +438,7 @@ struct FakePullRequest: Codable, Sendable {
     let baseRefName: String
     var headRefOid: String
     var baseRefOid: String
-    let author: Login?
+    var author: Login?
     let repository: Repository
     var commits: Commits
     var commitCount: Count
@@ -481,6 +501,30 @@ struct FakePullRequest: Codable, Sendable {
         commitCount = try container.decodeIfPresent(Count.self, forKey: .commitCount) ?? Count(totalCount: 1)
         comments = try container.decodeIfPresent(Count.self, forKey: .comments) ?? Count(totalCount: 0)
         reviewThreads = try container.decodeIfPresent(Count.self, forKey: .reviewThreads) ?? Count(totalCount: 0)
+        // Only a lookup by id or number asks who the PR's review is asked of.
+        let requests = try decoder.container(keyedBy: ReviewRequestKeys.self)
+        requestedReviewers = try requests.decodeIfPresent(NodesPayload.Connection<NodesPayload.Request>.self, forKey: .reviewRequests)?.nodes
+            .compactMap { $0.requestedReviewer.fake } ?? []
+        requestEvents = try requests.decodeIfPresent(NodesPayload.Connection<NodesPayload.Event>.self, forKey: .requestEvents)?.nodes
+            .compactMap { event in try event.requestedReviewer.fake.map { RequestEvent(reviewer: $0, createdAt: try Date(event.createdAt, strategy: .iso8601)) } } ?? []
+    }
+}
+
+/// The fields only a lookup of a PR by id or number asks for, beside a search node's.
+private enum ReviewRequestKeys: String, CodingKey {
+    case reviewRequests, requestEvents
+}
+
+private extension FakePullRequest {
+    var reviewRequestNodes: NodesPayload.Connection<NodesPayload.Request> {
+        .init(nodes: requestedReviewers.map { .init(requestedReviewer: .init($0)) })
+    }
+
+    /// The last 20, oldest first, as GitHub returns them to the app's query.
+    var requestEventNodes: NodesPayload.Connection<NodesPayload.Event> {
+        .init(nodes: requestEvents.sorted { $0.createdAt < $1.createdAt }.suffix(20).map { event in
+            .init(createdAt: event.createdAt.formatted(.iso8601), requestedReviewer: .init(event.reviewer))
+        })
     }
 }
 
@@ -695,6 +739,15 @@ private struct NodesPayload: Encodable {
             self.login = login
             self.slug = slug
         }
+
+        /// Nil for a bot or anything else that's never the viewer.
+        var fake: FakePullRequest.Reviewer? {
+            switch __typename {
+            case "User": login.map(FakePullRequest.Reviewer.user)
+            case "Team": slug.map(FakePullRequest.Reviewer.team)
+            default: nil
+            }
+        }
     }
 }
 
@@ -720,6 +773,19 @@ private struct SearchNode: Encodable {
         try container.encodeNil(forKey: .commitCount)
         try container.encodeNil(forKey: .comments)
         try container.encodeNil(forKey: .reviewThreads)
+    }
+}
+
+/// A PR as the app looks it up by id or number: a search node's fields, the counts, and who
+/// its review is asked of.
+private struct LookupNode: Encodable {
+    let pullRequest: FakePullRequest
+
+    func encode(to encoder: any Encoder) throws {
+        try pullRequest.encode(to: encoder)
+        var container = encoder.container(keyedBy: ReviewRequestKeys.self)
+        try container.encode(pullRequest.reviewRequestNodes, forKey: .reviewRequests)
+        try container.encode(pullRequest.requestEventNodes, forKey: .requestEvents)
     }
 }
 

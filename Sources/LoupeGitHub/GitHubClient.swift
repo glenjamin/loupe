@@ -58,24 +58,24 @@ public struct GitHubClient: Sendable {
     /// The PRs with `ids` as they are now, looked up directly rather than searched for, so an
     /// open PR's changes can be noticed whichever list it's in, if any. PRs GitHub no longer has
     /// (or no longer shows the user) are left out.
-    public func pullRequests(ids: [String]) async throws -> [PullRequestSummary] {
-        var pullRequests: [PullRequestSummary] = []
+    public func pullRequests(ids: [String]) async throws -> [PullRequestLookup] {
+        var pullRequests: [PullRequestLookup] = []
         for start in stride(from: 0, to: ids.count, by: Self.pageSize) {
             let batch = Array(ids[start..<min(start + Self.pageSize, ids.count)])
             let response: PullRequestNodesResponse = try await query(Self.pullRequestNodesQuery, variables: NodesVariables(ids: batch), allowingMissingNodes: true)
-            pullRequests += response.nodes.compactMap { $0.map(PullRequestSummary.init) }
+            pullRequests += response.nodes.compactMap { $0.map(PullRequestLookup.init) }
         }
         return pullRequests
     }
 
     /// The PR numbered `number` in `repository` (`owner/name`) as it is now, as a link names it.
     /// Nil when GitHub has no such PR, or doesn't show it to the viewer.
-    public func pullRequest(repository: String, number: Int) async throws -> PullRequestSummary? {
+    public func pullRequest(repository: String, number: Int) async throws -> PullRequestLookup? {
         let parts = repository.split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count == 2 else { return nil }
         let variables = PullRequestNumberVariables(owner: String(parts[0]), name: String(parts[1]), number: number)
         let response: PullRequestByNumberResponse = try await query(Self.pullRequestByNumberQuery, variables: variables, allowingMissingNodes: true)
-        return response.repository?.pullRequest.map(PullRequestSummary.init)
+        return response.repository?.pullRequest.map(PullRequestLookup.init)
     }
 
     /// The viewer's viewed state of every file in the PR with `id`, keyed by path. GitHub lists
@@ -152,17 +152,22 @@ public struct GitHubClient: Sendable {
             ... on PullRequest {
               id
               state
-              reviewRequests(first: 50) {
-                nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
-              }
-              requestEvents: timelineItems(last: 20, itemTypes: [REVIEW_REQUESTED_EVENT]) {
-                nodes {
-                  ... on ReviewRequestedEvent {
-                    createdAt
-                    requestedReviewer { __typename ... on User { login } ... on Team { slug } }
-                  }
-                }
-              }
+              \(reviewRequestFields)
+            }
+          }
+        }
+        """
+
+    /// Who the PR's review waits on, and its latest requests for review, re-requests included.
+    static let reviewRequestFields = """
+        reviewRequests(first: 50) {
+          nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
+        }
+        requestEvents: timelineItems(last: 20, itemTypes: [REVIEW_REQUESTED_EVENT]) {
+          nodes {
+            ... on ReviewRequestedEvent {
+              createdAt
+              requestedReviewer { __typename ... on User { login } ... on Team { slug } }
             }
           }
         }
@@ -178,7 +183,8 @@ public struct GitHubClient: Sendable {
         """ + pullRequestRowFragment
 
     /// Counts are asked for only here: on a full page of search results they take the request
-    /// past GitHub's time limit.
+    /// past GitHub's time limit. The review requests say which lists the PR belongs in without
+    /// waiting for the searches.
     static let pullRequestNodesQuery = """
         query($ids: [ID!]!) {
           nodes(ids: $ids) {
@@ -187,6 +193,7 @@ public struct GitHubClient: Sendable {
               commitCount: commits { totalCount }
               comments { totalCount }
               reviewThreads { totalCount }
+              \(reviewRequestFields)
             }
           }
         }
@@ -201,6 +208,7 @@ public struct GitHubClient: Sendable {
               commitCount: commits { totalCount }
               comments { totalCount }
               reviewThreads { totalCount }
+              \(reviewRequestFields)
             }
           }
         }

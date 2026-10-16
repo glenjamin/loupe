@@ -72,6 +72,20 @@ public struct PullRequestStore: Sendable {
         }
     }
 
+    /// Stores the PR and puts it in each of `lists`, as looking it up showed it belongs there
+    /// before their searches have. Their refresh times are left alone, so the next refresh asks
+    /// for changes since the last one as before, and only a full load can take it out unseen.
+    @discardableResult
+    public func add(_ pullRequest: PullRequestSummary, to lists: [PullRequestList], at confirmedAt: Date) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            try Self.upsert(pullRequest, db)
+            for list in lists {
+                try ListMembership(list: list.rawValue, pullRequestId: pullRequest.id, confirmedAt: confirmedAt).upsert(db)
+            }
+            return try Self.snapshot(db)
+        }
+    }
+
     /// Updates the stored rows of `pullRequests`, as looked up directly rather than through a
     /// list, leaving which lists they're in alone. PRs no longer stored are left out, as nothing
     /// shows them.

@@ -489,6 +489,14 @@ A review request now counts as stale after three months rather than two weeks. T
 
 Two weeks hid almost everything on Glen's list, including requests that were merely slow. Three months separates the requests nobody means to act on from the ones still in play, and the toggle keeps the rest one click away rather than out of reach. Listing them after the recent ones keeps the top of the list as it was, so showing them never pushes a live request down.
 
+### A PR looked up on its own joins the lists it belongs in at once
+
+A PR looked up by number for a link, or by id for an open tab's check on a notification or the minute's timer, is put in the lists its data says it belongs in, without waiting for their searches: Mine when it's open and the viewer wrote it, To review when it's open and asks for the viewer's review or any team's, the same rule the to-review check already applies. Both lookups now ask for the PR's pending review requests and latest request events alongside its row, in the one request, rather than a second lookup after it. A PR joining To review this way gets its `reviewRequestedAt` from those events, so the two-week rule has the request's own date. A PR in neither list is kept as checked directly, as before; a closed or merged one, the viewer's included, joins neither, as the lists' full loads only ask for open PRs.
+
+The searches only ever key on the author and the requested reviewers, and a viewed PR tells us both, so waiting for the next refresh, up to three minutes, only delayed what was already known. A review requested a minute ago now shows in To review as soon as the PR is opened from the link, or as soon as a notification brings an open tab's check.
+
+Nothing is taken out of a list this way; the refresh's check of fulfilled requests still does that. A refresh doesn't undo the addition before a search has seen the PR: one asking for changes only adds and updates what its search returns, leaving other rows alone, so the PR stays until a search reports it or the to-review check finds its request gone. Only a full load, before a list has ever loaded or while its rows predate commit oids, replaces the list wholesale, and its search asks for every open PR in the list, which a freshly requested PR is among. A request of a team the viewer isn't in never shows in the search, but stays, as the to-review check keeps any team's request.
+
 ## Not yet decided
 
 Nothing is pending.
