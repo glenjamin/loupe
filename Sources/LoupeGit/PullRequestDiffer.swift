@@ -195,16 +195,16 @@ public struct PullRequestDiffer: Sendable {
     /// path only its content can decide, by its first lines. Those are read from git as the range
     /// leaves the file, or for a deleted one as it was before, all in one run however many ranges.
     private func hiddenPaths(changedIn changes: [DiffRange: [String]], checkout: URL) async throws -> [DiffRange: Set<String>] {
-        let attributes = try await linguistAttributes(of: Set(changes.values.joined()).sorted(), in: checkout)
+        let attributes = try await linguistAttributes(of: changes, in: checkout)
         var hidden: [DiffRange: Set<String>] = [:]
-        var undecided: [(range: DiffRange, path: String, lines: Int)] = []
+        var undecided: [(range: DiffRange, path: String, lines: Int, attributes: LinguistAttributes)] = []
         for (range, paths) in changes {
             for path in paths {
-                let given = attributes[path] ?? LinguistAttributes()
+                let given = attributes[range.head]?[path] ?? LinguistAttributes()
                 if filter.excludes(path, attributes: given) {
                     hidden[range, default: []].insert(path)
                 } else if let lines = filter.linesNeeded(toDecide: path, attributes: given) {
-                    undecided.append((range, path, lines))
+                    undecided.append((range, path, lines, given))
                 }
             }
         }
@@ -216,17 +216,82 @@ public struct PullRequestDiffer: Sendable {
             let before = try await Git.firstLines(of: deleted.map { ("\(undecided[$0].range.base):\(undecided[$0].path)", undecided[$0].lines) }, in: checkout, timeout: localTimeout)
             for (index, head) in zip(deleted, before) { heads[index] = head }
         }
-        for (file, head) in zip(undecided, heads) where filter.excludes(file.path, attributes: attributes[file.path] ?? LinguistAttributes(), head: head) {
+        for (file, head) in zip(undecided, heads) where filter.excludes(file.path, attributes: file.attributes, head: head) {
             hidden[file.range, default: []].insert(file.path)
         }
         return hidden
     }
 
-    /// The `linguist-*` attributes the checkout's `.gitattributes` gives each path.
-    private func linguistAttributes(of paths: [String], in checkout: URL) async throws -> [String: LinguistAttributes] {
+    /// The `linguist-*` attributes each range's head gives its paths, by head oid. They're read
+    /// from that commit's `.gitattributes` files, as GitHub reads them, since the checkout's
+    /// working tree can be on any branch. A path deleted at the head takes the head's too.
+    private func linguistAttributes(of changes: [DiffRange: [String]], in checkout: URL) async throws -> [String: [String: LinguistAttributes]] {
+        var pathsByHead: [String: Set<String>] = [:]
+        for (range, paths) in changes where !paths.isEmpty {
+            pathsByHead[range.head, default: []].formUnion(paths)
+        }
+        guard !pathsByHead.isEmpty else { return [:] }
+        let files = try await attributeFiles(at: pathsByHead, in: checkout)
+        return try await withThrowingTaskGroup(of: (String, [String: LinguistAttributes]).self) { group in
+            var attributes: [String: [String: LinguistAttributes]] = [:]
+            var pending = pathsByHead[...]
+            func startNext() {
+                guard let (head, paths) = pending.popFirst() else { return }
+                group.addTask { (head, try await linguistAttributes(of: paths.sorted(), given: files[head] ?? [], in: checkout)) }
+            }
+            for _ in 0..<Self.concurrentRuns { startNext() }
+            while let (head, given) = try await group.next() {
+                attributes[head] = given
+                startNext()
+            }
+            return attributes
+        }
+    }
+
+    /// The `.gitattributes` files at each head that could apply to its paths, those in the
+    /// paths' directories and above, all found by one `git cat-file --batch-check`.
+    private func attributeFiles(at pathsByHead: [String: Set<String>], in checkout: URL) async throws -> [String: [AttributeFile]] {
+        var candidates: [(head: String, path: String)] = []
+        for (head, paths) in pathsByHead {
+            var directories: Set<Substring> = [""]
+            for path in paths {
+                var directory = path[...]
+                while let slash = directory.lastIndex(of: "/") {
+                    directory = directory[..<slash]
+                    guard directories.insert(directory).inserted else { break }
+                }
+            }
+            for directory in directories {
+                let file = directory.isEmpty ? ".gitattributes" : "\(directory)/.gitattributes"
+                // Batch input is one name per line.
+                if !file.contains("\n") { candidates.append((head, file)) }
+            }
+        }
+        let input = Data(candidates.map { "\($0.head):\($0.path)\n" }.joined().utf8)
+        let output = try await git(["cat-file", "--batch-check=%(objecttype) %(objectname)"], in: checkout, input: input)
+        var files: [String: [AttributeFile]] = [:]
+        for (candidate, line) in zip(candidates, output.split(separator: "\n", omittingEmptySubsequences: false)) {
+            let fields = line.split(separator: " ")
+            guard fields.count == 2, fields[0] == "blob" else { continue }
+            files[candidate.head, default: []].append(AttributeFile(path: candidate.path, oid: String(fields[1])))
+        }
+        return files
+    }
+
+    /// The `linguist-*` attributes `files` give each path. git before 2.40 can't read attributes
+    /// from a commit, so they're put in an index of their own, outside the checkout, for
+    /// `check-attr --cached` to read in place of the working tree's.
+    private func linguistAttributes(of paths: [String], given files: [AttributeFile], in checkout: URL) async throws -> [String: LinguistAttributes] {
         guard !paths.isEmpty else { return [:] }
+        let index = FileManager.default.temporaryDirectory.appending(path: "loupe-attributes-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: index) }
+        let environment = ["GIT_INDEX_FILE": index.path(percentEncoded: false)]
+        if !files.isEmpty {
+            let entries = Data(files.map { "100644 blob \($0.oid)\t\($0.path)\0" }.joined().utf8)
+            _ = try await Git.run(["-c", "core.splitIndex=false", "update-index", "-z", "--index-info"], in: checkout, input: entries, environment: environment, timeout: localTimeout)
+        }
         let input = Data(paths.map { $0 + "\0" }.joined().utf8)
-        let output = try await Git.run(["check-attr", "-z", "--stdin", "linguist-generated", "linguist-vendored", "linguist-documentation"], in: checkout, input: input, timeout: localTimeout)
+        let output = try await Git.run(["check-attr", "--cached", "-z", "--stdin", "linguist-generated", "linguist-vendored", "linguist-documentation"], in: checkout, input: input, environment: environment, timeout: localTimeout)
         let fields = output.split(separator: "\0", omittingEmptySubsequences: false)
         var attributes: [String: LinguistAttributes] = [:]
         for start in stride(from: 0, to: fields.count - 2, by: 3) {
@@ -310,6 +375,12 @@ private struct LineCount: Sendable {
     let additions: Int
     let deletions: Int
     let isBinary: Bool
+}
+
+/// A `.gitattributes` file in some commit, by its path from the repo's root.
+private struct AttributeFile: Sendable {
+    let path: String
+    let oid: String
 }
 
 /// The fewest paths that cover every hidden path and no kept one: each hidden path's highest

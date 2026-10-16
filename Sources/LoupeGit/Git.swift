@@ -20,12 +20,12 @@ enum Git {
         let url: String
     }
 
-    /// git's stdout, given `input` on stdin. Runs on a background queue, as it blocks until git
-    /// exits, and kills git if it outlasts `timeout`.
-    static func run(_ arguments: [String], in directory: URL, input: Data? = nil, timeout: Duration = .seconds(30)) async throws -> String {
+    /// git's stdout, given `input` on stdin and `environment` added to its own. Runs on a
+    /// background queue, as it blocks until git exits, and kills git if it outlasts `timeout`.
+    static func run(_ arguments: [String], in directory: URL, input: Data? = nil, environment: [String: String] = [:], timeout: Duration = .seconds(30)) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(with: Result { try runBlocking(arguments, in: directory, input: input, timeout: timeout) })
+                continuation.resume(with: Result { try runBlocking(arguments, in: directory, input: input, environment: environment, timeout: timeout) })
             }
         }
     }
@@ -59,18 +59,19 @@ enum Git {
         return objects.map { $0.name.contains("\n") ? nil : answers.next() ?? nil }
     }
 
-    private static func runBlocking(_ arguments: [String], in directory: URL, input: Data?, timeout: Duration) throws -> String {
-        try runBlocking(arguments, in: directory, input: input, timeout: timeout) { String(decoding: $0.readDataToEndOfFile(), as: UTF8.self) }
+    private static func runBlocking(_ arguments: [String], in directory: URL, input: Data?, environment: [String: String], timeout: Duration) throws -> String {
+        try runBlocking(arguments, in: directory, input: input, environment: environment, timeout: timeout) { String(decoding: $0.readDataToEndOfFile(), as: UTF8.self) }
     }
 
     /// Runs git, handing its stdout to `read` as it comes, and returns what that makes of it.
-    private static func runBlocking<Output>(_ arguments: [String], in directory: URL, input: Data?, timeout: Duration, read: (FileHandle) throws -> Output) throws -> Output {
+    private static func runBlocking<Output>(_ arguments: [String], in directory: URL, input: Data?, environment extra: [String: String] = [:], timeout: Duration, read: (FileHandle) throws -> Output) throws -> Output {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/git")
         process.arguments = ["-C", directory.path(percentEncoded: false)] + arguments
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
         environment["GIT_OPTIONAL_LOCKS"] = "0"
+        environment.merge(extra) { $1 }
         process.environment = environment
         let stdout = Pipe()
         let stderr = Pipe()

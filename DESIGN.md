@@ -383,6 +383,12 @@ The sidebar's files are a tree, as github.com's "Files changed" tree is: directo
 
 The "Vendored, lockfiles and generated" section is a second tree under its own header, so a generated `.pb.go` still sits under its directory; its rows say added, deleted, renamed or copied before their counts at the trailing end. Moving on to the next file not viewed, and the file a PR opens on, follow the tree's order rather than git's, so they go down the list as shown; git sorts `a/b.txt` before `a/c/d.txt`, the tree the other way round. The diff file mode (`swift run Loupe <diff>`) uses the same tree.
 
+### `.gitattributes` is read at the head of the changes shown, not from the working tree
+
+This supersedes the checkout's own `.gitattributes` in "Languages and hidden files follow GitHub Linguist's data" and the fetch entry's `:(attr:…)` note. A PR that marked `client/src/generated/**` as `linguist-generated` still had those files listed for review, because `git check-attr` reads the working tree's `.gitattributes`, and the checkout is the user's own, on whatever branch it was left on. GitHub reads attributes from the PR's head commit, and Loupe hides what GitHub hides, so the `linguist-*` attributes now come from the `.gitattributes` files at the head of the changes shown: the PR's head for all its changes, the commit itself for a picked commit and for each commit's stats. A file deleted at the head takes the head's attributes too, as GitHub's diff does; its first lines are still read at the base, as before.
+
+`git check-attr --source=<commit>` would do this directly, but needs git 2.40, and Loupe runs `/usr/bin/git`, which Command Line Tools ships as 2.39. So the `.gitattributes` blobs that could apply (one in each changed path's directory and above) are found with one `git cat-file --batch-check` for every head at once, written into a throwaway index file in the temporary directory (`GIT_INDEX_FILE`, `update-index --index-info`), and read with `check-attr --cached`, which ignores the working tree. The checkout's index, working tree and refs are untouched; `$GIT_DIR/info/attributes` and the user's global attributes still apply, as they did. Each head costs two short git runs, a few at a time across the commit picker's commits.
+
 ## Not yet decided
 
 - Review submission: pending review via `addPullRequestReview`, threads via `addPullRequestReviewThread`, then `submitPullRequestReview`.

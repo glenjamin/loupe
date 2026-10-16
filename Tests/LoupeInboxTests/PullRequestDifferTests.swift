@@ -201,6 +201,47 @@ struct PullRequestDifferTests {
         ])
     }
 
+    @Test func readsAttributesFromTheHeadOfTheChangesShownNotTheCheckout() async throws {
+        let repo = try await FakeRepository()
+        let branchPoint = try await repo.git(["rev-parse", "HEAD"], in: repo.checkout)
+        try await repo.switchTo("feature", creatingFrom: "main")
+        try await repo.commit([
+            "client/app.ts": "export const app = 1\n",
+            "client/generated/schema.json": "{}\n",
+        ], message: "Add the client")
+        try await repo.commit(["client/.gitattributes": "generated/** linguist-generated\n"], message: "Mark the client's generated code")
+        try await repo.push(asPullRequest: 12)
+
+        let differ = PullRequestDiffer()
+        let fetched = try await differ.fetch(number: 12, of: "tamarinworks/app", baseRefName: "main", baseRefOid: branchPoint, in: repo.checkout)
+        let diff = try await differ.diff(fetched, in: repo.checkout)
+
+        // The checkout is still on main, which has no `client/.gitattributes`.
+        #expect(DiffParser.parse(diff.text).map(\.path).sorted() == ["client/.gitattributes", "client/app.ts"])
+        #expect(diff.hidden.map(\.path) == ["client/generated/schema.json"])
+        // The first commit is shown as it was, before the attribute existed.
+        let stats = try await differ.stats(of: diff.commits.map(\.range), in: repo.checkout)
+        #expect(diff.commits.map { stats[$0.range] } == [
+            DiffStat(files: 2, additions: 2, deletions: 0),
+            DiffStat(files: 1, additions: 1, deletions: 0),
+        ])
+    }
+
+    @Test func attributesOnlyTheCheckoutsWorkingTreeHasDoNotHideAnything() async throws {
+        let repo = try await FakeRepository()
+        try await repo.switchTo("feature", creatingFrom: "main")
+        try await repo.commit(["app.go": "package app // changed\n"], message: "Change the app")
+        try await repo.push(asPullRequest: 13)
+        try "app.go linguist-generated\n".write(to: repo.checkout.appending(path: ".gitattributes"), atomically: true, encoding: .utf8)
+
+        let differ = PullRequestDiffer()
+        let fetched = try await differ.fetch(number: 13, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout)
+        let diff = try await differ.diff(fetched, in: repo.checkout)
+
+        #expect(DiffParser.parse(diff.text).map(\.path) == ["app.go"])
+        #expect(diff.hidden.isEmpty)
+    }
+
     @Test func fetchesTheBaseBranchWhenItsCommitIsUnknown() async throws {
         let repo = try await FakeRepository()
         try await repo.switchTo("feature", creatingFrom: "main")
