@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The app's tabs are its own, so the Window menu offers no native window tabs.
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
+        TextEditingKeys.start()
         // Before any window shows, so a snapshot run is never activated by one.
         if SnapshotRun.directory != nil { NSApp.setActivationPolicy(.accessory) }
     }

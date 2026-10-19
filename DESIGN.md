@@ -799,6 +799,12 @@ If GitHub has no such PR the viewer can see, or the lookup fails, the tab stays,
 
 The link's tab isn't stored, as the `openTab` table holds PRs by id and there's no id until GitHub answers; the PR is stored with its tab, in the link's place, once found. While the link's tab is shown, the lists are stored as shown, so quitting mid-lookup reopens on the lists and the link is lost, which is rare and cheap to click again. Anything after the PR's number in the link, such as `/files` or a comment's anchor, is still not acted on, as before.
 
+### The text-editing keys belong to the text that has the focus
+
+⌘↓ in a comment marked the file reviewed and showed the next one, as the Review menu's shortcut took the key before the text could, so it never went to the comment's end. Now, wherever text has the focus (a markdown box, Write or Preview, a field's editor, a search field), the keys that move through or delete text go to it first, ahead of every menu shortcut and the app's own key monitors: the arrows, Home, End, Page Up and Down, ⌫ and ⌦, with any modifiers, and ⌃ with a letter, macOS's Emacs-style bindings. So ⌘↑ and ⌘↓, ⌘← and ⌘→, ⌥↑ and ⌥↓, their ⇧ selections, ⌥⌫ and ⌘⌫, ⌃A and ⌃E do what they do in any Mac text, and ⌥← and ⌥→ still move by code words, as the box's own `keyDown` still gets them. The plain keys the review uses, `]`, ⇧V and `r`, already stood aside while text could be typed, and do so now while a box is previewing too, as it still has the focus.
+
+It's one key monitor, `TextEditingKeys`, which hands such a key to the window to deliver to the focused text, past the menus, rather than each box catching keys or each shortcut checking the focus, so a new shortcut or text field can't bring the problem back. ⌘↓ stays the menu's shortcut, shown there, for the diff. Everything else goes the usual way: ⌘↩, Esc and Tab, so a dialog's default and cancel buttons and ⌃Tab's tab switching still work from a field; ⌘⇧[ and ⌘⇧], ⌘1 to ⌘9 and ⌘W, which no text uses, stay the tabs' everywhere; and ⌘A was always the Edit menu's Select All, sent to the focused text.
+
 ## Not yet decided
 
 Nothing is pending.

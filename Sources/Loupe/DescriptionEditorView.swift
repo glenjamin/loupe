@@ -177,7 +177,7 @@ struct MarkdownTextView: NSViewRepresentable {
 /// rather than natural-language ones, as comments are mostly about code; with ⇧ they select.
 /// ⌘⇧P switches to and from a preview while it has focus, ahead of any menu's use of the key;
 /// under a preview it ignores every other key, so the hidden text and selection stay as they were.
-final class MarkdownEditingTextView: NSTextView {
+final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
     var onSave: () -> Void = {}
     var onAlternateSave: (() -> Void)?
     var onCancel: () -> Void = {}

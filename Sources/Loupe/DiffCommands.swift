@@ -1,4 +1,5 @@
 import AppKit
+import LoupeCore
 import LoupeInbox
 import SwiftUI
 
@@ -46,7 +47,7 @@ enum DiffSettings {
 
 /// Which PR the window shows, and so which PR the review keys act on. ⌘↓ and `]` mark the shown
 /// file viewed and show the next one, and ⇧V toggles it, unless the focus is somewhere text can
-/// be typed. `r` quotes text selected in a comment into a reply, in either section.
+/// be typed, where `TextEditingKeys` gives ⌘↓ to the text ahead of the menu. `r` quotes text selected in a comment into a reply, in either section.
 @Observable
 @MainActor
 final class ReviewWindows {
@@ -75,7 +76,7 @@ final class ReviewWindows {
     private func handle(_ event: NSEvent) -> Bool {
         if let window = event.window, window.isKeyWindow, quote(event, in: window) { return true }
         guard let window = event.window, window === self.window, window.isKeyWindow, let tab = shownTab,
-              tab.section == .files, let path = tab.selectedFile, !isTyping(in: window)
+              tab.section == .files, let path = tab.selectedFile, !TextEditingKeys.isTyping(in: window)
         else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
         let key = event.charactersIgnoringModifiers ?? ""
@@ -96,18 +97,11 @@ final class ReviewWindows {
     /// has nothing to type into.
     func quote(_ event: NSEvent, in window: NSWindow) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
-        guard event.charactersIgnoringModifiers == "r", modifiers.isEmpty, let tab = shownTab, !isTyping(in: window) else { return false }
+        guard event.charactersIgnoringModifiers == "r", modifiers.isEmpty, let tab = shownTab, !TextEditingKeys.isTyping(in: window) else { return false }
         if quoteSelectedComment(in: window, of: tab) { return true }
         guard tab.section == .conversation, let page = ConversationPage.existingPage(for: tab),
               let responder = window.firstResponder as? NSView, responder.isDescendant(of: page.webView) else { return false }
         Task { await page.quoteSelection() }
         return true
     }
-}
-
-/// Whether the focus is in a field or editor that takes typing, such as the find bar.
-@MainActor
-private func isTyping(in window: NSWindow) -> Bool {
-    guard let text = window.firstResponder as? NSTextView else { return false }
-    return text.isEditable
 }
