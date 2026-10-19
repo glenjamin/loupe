@@ -520,6 +520,138 @@ struct PullRequestListTests {
 
         let shown = try #require(model.pullRequests(in: .toReview).first { $0.id == approved.id })
         #expect(model.verdict(on: shown, in: .toReview) == .approved)
+        #expect(model.reviewMark(on: shown, in: .toReview)?.kind == .approved, "with the viewer's latest review")
+    }
+
+    @Test func pullRequestsAwaitingAFirstReviewSayNothingOfOne() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+
+        let toReview = model.pullRequests(in: .toReview)
+        #expect(!toReview.isEmpty)
+        #expect(toReview.allSatisfy { model.reviewMark(on: $0, in: .toReview) == nil })
+        #expect(model.pullRequests(in: .mine).allSatisfy { model.reviewMark(on: $0, in: .mine) == nil })
+    }
+
+    @Test func anApprovalSaysSoUntilCommitsArePushedOnTopOfIt() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let approved = try #require(model.pullRequests(in: .toReview).first)
+        try await github.review(approved.id, "APPROVED")
+        await model.refresh()
+
+        let checked = try #require(model.pullRequest(id: approved.id))
+        let unchanged = try #require(model.reviewMark(on: checked, in: .toReview))
+        #expect(unchanged.kind == .approved)
+        #expect(!unchanged.isUpdated, "nothing pushed since")
+
+        await github.passTime(60)
+        try await github.push(to: approved.id, commits: 2)
+        await model.refresh()
+
+        let shown = try #require(model.pullRequest(id: approved.id))
+        let updated = try #require(model.reviewMark(on: shown, in: .toReview))
+        #expect(updated.kind == .approved, "the verdict still shows")
+        #expect(updated.updates.count == 1)
+        guard case let .commits(count, lastCommittedAt) = try #require(updated.updates.first) else {
+            Issue.record("expected commits since, got \(updated.updates)")
+            return
+        }
+        #expect(count == 2)
+        #expect(try #require(lastCommittedAt) > (try #require(updated.reviewedAt)))
+        #expect(model.verdict(on: shown, in: .toReview) == .approved, "still waiting on its author or a merge")
+    }
+
+    @Test func aCommentSaysTheViewerReviewedUntilSomethingIsPushed() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let commented = try #require(model.pullRequests(in: .toReview).first)
+        try await github.review(commented.id, "COMMENTED")
+        await model.refresh()
+
+        var shown = try #require(model.pullRequest(id: commented.id))
+        let unchanged = try #require(model.reviewMark(on: shown, in: .toReview))
+        #expect(unchanged.kind == .commented)
+        #expect(!unchanged.isUpdated, "the request it still has came before the comment")
+        #expect(model.verdict(on: shown, in: .toReview) == nil, "still waiting on the viewer")
+
+        await github.passTime(60)
+        try await github.push(to: commented.id)
+        await model.refresh()
+
+        shown = try #require(model.pullRequest(id: commented.id))
+        let pushed = try #require(model.reviewMark(on: shown, in: .toReview))
+        #expect(pushed.kind == .commented)
+        guard case .commits(1, _) = try #require(pushed.updates.first) else {
+            Issue.record("expected a commit since, got \(pushed.updates)")
+            return
+        }
+
+        await github.passTime(60)
+        try await github.forcePush(commented.id)
+        await model.refresh()
+
+        shown = try #require(model.pullRequest(id: commented.id))
+        let forcePushed = try #require(model.reviewMark(on: shown, in: .toReview))
+        guard case let .forcePushed(at) = try #require(forcePushed.updates.first) else {
+            Issue.record("expected a force-push since, got \(forcePushed.updates)")
+            return
+        }
+        #expect(at > (try #require(forcePushed.reviewedAt)))
+    }
+
+    @Test func askingTheViewerAgainAfterTheirReviewCountsAsAnUpdate() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let approved = try #require(model.pullRequests(in: .toReview).first)
+        try await github.review(approved.id, "APPROVED")
+        await model.refresh()
+
+        await github.passTime(60)
+        try await github.requestReview(of: approved.id)
+        await model.refresh()
+
+        let shown = try #require(model.pullRequest(id: approved.id))
+        let mark = try #require(model.reviewMark(on: shown, in: .toReview))
+        #expect(mark.kind == .approved, "what the viewer said last time still shows")
+        #expect(mark.updates == [.reRequested(at: try #require(shown.reviewRequestedAt))])
+        #expect(model.verdict(on: shown, in: .toReview) == nil, "back among those awaiting the viewer")
+    }
+
+    @Test func theCheckReadsACommentOnlyReviewAndTheForcePushSinceAsGitHubAnswers() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        await github.fail(with: try .fixture("review-requests.json"))
+        let atrium2202 = "PR_kwDODst66c6unjHc"
+
+        let requests = try await github.client().reviewRequests(for: [atrium2202, "PR_kwDOB75F5s7-Gq3V"])
+
+        let reviewed = try #require(requests[atrium2202]?.viewerLatestReview)
+        #expect(reviewed.state == .commented)
+        #expect(reviewed.commitOid == "051572930114d87f8dcc78cf71d087d1a6d76fa7")
+        #expect(reviewed.commitsSince == nil, "force-pushed away from the reviewed commit")
+        #expect(reviewed.forcePushedAt == (try Date("2025-10-28T16:28:53Z", strategy: .iso8601)), "the last push after the review")
+        #expect(requests["PR_kwDOB75F5s7-Gq3V"]?.viewerLatestReview == nil, "not reviewed")
+    }
+
+    @Test func aReviewDoesNotChangeWhenARequestIsHiddenAsStale() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let commented = try #require(model.pullRequests(in: .toReview).first)
+        try await github.setRequestEvents(of: commented.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(100))])
+        try await github.review(commented.id, "COMMENTED")
+        await model.refresh()
+
+        let shown = try #require(model.pullRequest(id: commented.id))
+        #expect(model.isStale(shown, in: .toReview), "the request's age decides, as before")
+        #expect(model.staleCount(in: .toReview) == 1)
+        #expect(!model.pullRequests(in: .toReview).contains { $0.id == commented.id })
+        #expect(model.pullRequests(in: .toReview, includingStale: true).last?.id == commented.id)
+        #expect(model.reviewMark(on: shown, in: .toReview)?.kind == .commented, "labelled once shown")
     }
 
     @Test func eachPullRequestSaysWhoItsReviewWaitsOn() async throws {

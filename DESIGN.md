@@ -861,6 +861,14 @@ On the viewer's own open PR whose parent is still open, the merge slot adds "Mer
 
 The stack migration forgets both lists' refresh times, so their next refreshes are full loads that fill the new columns.
 
+### To review marks what the viewer has reviewed, and what's been updated since
+
+Glen asked for To review's rows he's reviewed to say so, and to say something different once the PR has been updated in response. The chip that said "You approved" or "You requested changes" only where that verdict was why the PR was listed now shows on any row the viewer has reviewed. A review that only commented reads "You commented", in the same form as the other two and in secondary grey, as it's no verdict. Once the PR's been updated since the viewer's latest review, the chip goes on to say "· updated" in the attention colour, as "N commits since" is in the merge slot: "You approved · updated". One chip keeps the verdict readable while marking what needs another look, where a second chip would crowd a row that already has GitHub's verdict, the checks and conflicts. The tooltip has the detail: when the viewer reviewed, and since then how many commits were pushed and when the newest was committed, when it was force-pushed, and when they were asked again. A row awaiting the viewer's first review has no chip, as before.
+
+"Updated" is anything pushed since the viewer's latest review (the head isn't the commit they reviewed, force-pushes included), or a request of the viewer by name made since it, GitHub's re-request button being the author asking them to look again. A request of a team doesn't count, as the viewer may not be in it. It's counted from the viewer's latest review of any kind, so approving, then commenting on a later push, says "You approved" without "updated". A dismissed verdict with no review since reads "You reviewed". Grouping, ordering and the month's rule are unchanged: a PR approved and since pushed to stays among those the viewer gave a verdict on, and a re-request puts it back among those awaiting them, now saying what they said last time.
+
+The data comes from the to-review check by id, which now also asks for `viewerLatestReview` (GitHub's `latestReviews` left a comment-only review out on the PR it was tried on), the last 30 commits and the last 5 force-pushes; lookups by id and number ask the same. The check works out the commits on top of the reviewed one and the latest force-push after it, and stores them on the PR's row with the review, as a row has no list of commits. A commit's `committedDate` stands in for when it was pushed, which a rebase can leave earlier; a force-push's time is GitHub's own. A review submitted from Loupe updates the row at once, comments included. `PullRequestSummary.viewerVerdict` and `ViewerVerdict.summary(now:)` went, as the old chip was their only use.
+
 ## Not yet decided
 
 Nothing is pending.

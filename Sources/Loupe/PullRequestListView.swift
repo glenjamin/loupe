@@ -100,7 +100,7 @@ struct PullRequestColumn: View {
                     let pullRequest = listed.pullRequest
                     let checkout = model.checkout(for: pullRequest.repository)
                     Button { model.open(pullRequest) } label: {
-                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, isSelfReviewed: model.isSelfReviewed(pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent)
+                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, isSelfReviewed: model.isSelfReviewed(pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent, reviewMark: model.reviewMark(on: pullRequest, in: list))
                             .padding(.leading, CGFloat(listed.depth) * Self.stackIndent)
                     }
                     .buttonStyle(.plain)
@@ -167,6 +167,8 @@ struct PullRequestRow: View {
     var verdict: ReviewState? = nil
     /// The open PR it's stacked on, if any.
     var stackedOn: PullRequestSummary? = nil
+    /// Set in To review where the viewer has reviewed the PR.
+    var reviewMark: ViewerReviewMark? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -192,9 +194,9 @@ struct PullRequestRow: View {
                 if showsAuthor, let author = pullRequest.author {
                     Text(author)
                 }
-                if let verdict {
+                if let reviewMark {
                     TimelineView(.everyMinute) { context in
-                        ViewerVerdictBadge(verdict: verdict, detail: pullRequest.viewerVerdict, now: context.date)
+                        ViewerReviewBadge(mark: reviewMark, now: context.date)
                     }
                 }
                 // GitHub's verdict repeats the viewer's when they're the same.
@@ -233,14 +235,21 @@ struct PullRequestRow: View {
 struct Badge: View {
     let text: String
     let tint: Color
+    /// Said after the text, in the attention colour, for what's changed about it.
+    var aside: String? = nil
 
     var body: some View {
-        Text(text)
+        label
             .font(.caption2.weight(.semibold))
             .foregroundStyle(tint)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(.quaternary, in: Capsule())
+    }
+
+    private var label: Text {
+        guard let aside else { return Text(text) }
+        return Text(text) + Text(verbatim: " · \(aside)").foregroundStyle(.diffAttention)
     }
 }
 
@@ -291,31 +300,76 @@ struct SelfReviewedBadge: View {
     }
 }
 
-/// The viewer's own approval or request for changes on a PR in To review, so the list reads as
-/// what needs them apart from what waits to be merged or on its author. Its tooltip says when,
-/// and whether the PR has changed since, where that's known.
-struct ViewerVerdictBadge: View {
-    let verdict: ReviewState
-    /// Nil until the to-review check has said when and on which head.
-    let detail: ViewerVerdict?
+/// What the viewer's reviews of a PR in To review come to: "You approved", "You requested
+/// changes" or "You commented", with "· updated" once there's been a push or a request to look
+/// again since their latest review, so what needs another look stands out while the verdict
+/// stays readable. Its tooltip says when, and what's changed.
+struct ViewerReviewBadge: View {
+    let mark: ViewerReviewMark
     /// What the tooltip's "N ago" is from.
     var now: Date = .now
 
     var body: some View {
-        switch verdict {
-        case .approved:
-            Badge(text: "You approved", tint: .diffSuccess)
-                .help("\(summary ?? "You approved this"); it's waiting to be merged")
-        case .changesRequested:
-            Badge(text: "You requested changes", tint: .diffDanger)
-                .help("\(summary ?? "You requested changes"); it's waiting on its author")
-        default:
-            EmptyView()
+        Badge(text: title, tint: tint, aside: mark.isUpdated ? "updated" : nil)
+            .help(tooltip)
+    }
+
+    private var title: String {
+        switch mark.kind {
+        case .approved: "You approved"
+        case .changesRequested: "You requested changes"
+        case .commented: "You commented"
+        case .dismissed: "You reviewed"
         }
     }
 
-    private var summary: String? {
-        detail.flatMap { $0.state == verdict ? $0.summary(now: now) : nil }
+    private var tint: Color {
+        switch mark.kind {
+        case .approved: .diffSuccess
+        case .changesRequested: .diffDanger
+        case .commented, .dismissed: .secondary
+        }
+    }
+
+    /// e.g. "You approved this 2 days ago. Since then: 2 commits pushed, the newest committed
+    /// 3 hours ago; you were asked to review it again 1 hour ago."
+    private var tooltip: String {
+        var said = switch mark.kind {
+        case .approved: "You approved this"
+        case .changesRequested: "You requested changes"
+        case .commented: "You commented on this"
+        case .dismissed: "You reviewed this"
+        }
+        said += when(mark.givenAt)
+        if let reviewedAt = mark.reviewedAt, reviewedAt != mark.givenAt {
+            said += ", and last reviewed it\(when(reviewedAt))"
+        }
+        if mark.kind == .dismissed {
+            said += ", but your review was dismissed"
+        }
+        guard mark.isUpdated else {
+            return switch mark.kind {
+            case .approved: "\(said), with no changes since; it's waiting to be merged"
+            case .changesRequested: "\(said), with no changes since; it's waiting on its author"
+            case .commented, .dismissed: "\(said), with no changes since"
+            }
+        }
+        return "\(said). Since then: \(mark.updates.map(describe).joined(separator: "; "))."
+    }
+
+    private func describe(_ update: ViewerReviewMark.Update) -> String {
+        switch update {
+        case let .commits(count, lastCommittedAt):
+            guard count > 1 else { return "a commit pushed" + (lastCommittedAt.map { ", committed\(when($0))" } ?? "") }
+            return "\(count) commits pushed" + (lastCommittedAt.map { ", the newest committed\(when($0))" } ?? "")
+        case let .forcePushed(at): return "force-pushed\(when(at))"
+        case .changed: return "new commits pushed"
+        case let .reRequested(at): return "you were asked to review it again\(when(at))"
+        }
+    }
+
+    private func when(_ date: Date?) -> String {
+        date.map { " \($0.recentOrDated(now: now))" } ?? ""
     }
 }
 

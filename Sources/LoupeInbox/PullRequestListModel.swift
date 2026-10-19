@@ -124,6 +124,14 @@ public final class PullRequestListModel {
         return pullRequest.standingVerdict(of: viewer)
     }
 
+    /// What the viewer's reviews of a PR in `list` come to, so its row can say they've reviewed
+    /// it and whether it's been updated since. Nil anywhere but To review, or where they haven't
+    /// reviewed it.
+    public func reviewMark(on pullRequest: PullRequestSummary, in list: PullRequestList) -> ViewerReviewMark? {
+        guard list == .toReview, let viewer else { return nil }
+        return pullRequest.viewerReviewMark(viewer: viewer)
+    }
+
     /// How many PRs `pullRequests(in:includingClosed:)` leaves out as stale.
     public func staleCount(in list: PullRequestList, includingClosed: Bool = false) -> Int {
         listed(in: list, includingClosed: includingClosed).count { isStale($0, in: list) }
@@ -212,10 +220,13 @@ public final class PullRequestListModel {
         }
     }
 
-    /// Records the viewer's approval or request for changes on the PR with `id`, once GitHub has
-    /// accepted it from here, so its row says so before the next refresh. It answers their
+    /// Records the viewer's review of the PR with `id`, once GitHub has accepted it from here, so
+    /// its row says so before the next refresh. An approval or request for changes answers their
     /// request for review, as on GitHub.
     func viewerGave(_ verdict: ReviewVerdict, on id: String) async throws {
+        let head = pullRequest(id: id)?.headRefOid
+        let latest = ViewerLatestReview(state: verdict.state, submittedAt: verdict.submittedAt, commitOid: verdict.commitOid, commitsSince: verdict.commitOid == head ? 0 : nil)
+        snapshot = try await store.updateViewerLatestReviews([id: latest])
         guard verdict.state.isVerdict else { return }
         if let requested = pullRequest(id: id)?.requestedReviewers, requested.contains(where: { $0.isUser(verdict.login) }) {
             snapshot = try await store.updateRequestedReviewers([id: requested.filter { !$0.isUser(verdict.login) }])
@@ -306,6 +317,7 @@ public final class PullRequestListModel {
         let toReview = requests.filter { ids.contains($0.key) }
         checked = try await store.updateReviewRequestTimes(toReview.mapValues { $0.lastRequested(of: login) })
         checked = try await store.updateViewerReviews(toReview.mapValues { $0.latestVerdictReview(by: login) })
+        checked = try await store.updateViewerLatestReviews(toReview.mapValues(\.viewerLatestReview))
         let leaving = ids.filter { requests[$0]?.belongsInToReview(of: login) != true }
         guard !leaving.isEmpty else { return checked }
         return try await store.remove(leaving, from: .toReview)
@@ -329,6 +341,8 @@ public final class PullRequestListModel {
             snapshot = try await store.updateReviewRequestTimes(times)
             let verdicts = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.latestVerdictReview(by: login)) }) { $1 }
             snapshot = try await store.updateViewerReviews(verdicts)
+            let latest = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.viewerLatestReview) }) { $1 }
+            snapshot = try await store.updateViewerLatestReviews(latest)
         }
         for lookup in lookups {
             let id = lookup.pullRequest.id

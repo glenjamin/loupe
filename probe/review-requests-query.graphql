@@ -14,7 +14,12 @@ query($ids: [ID!]!) {
           }
         }
       }
-      latestOpinionatedReviews(first: 50) { nodes { state author { login } } }
+      latestOpinionatedReviews(first: 50) { nodes { state submittedAt commit { oid } author { login } } }
+      viewerLatestReview { state submittedAt commit { oid } }
+      recentCommits: commits(last: 30) { nodes { commit { oid committedDate } } }
+      forcePushes: timelineItems(last: 5, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
+        nodes { ... on HeadRefForcePushedEvent { createdAt } }
+      }
     }
   }
 }

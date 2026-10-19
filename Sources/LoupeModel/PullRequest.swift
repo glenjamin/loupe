@@ -61,6 +61,9 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     /// not GitHub has linked them in a stack. Nil when there's none, or on rows stored before it
     /// was fetched.
     public let stackParentId: String?
+    /// The viewer's latest submitted review of any kind, and what's happened to the PR since,
+    /// as the to-review list's check found it. Nil until checked, or when they haven't reviewed.
+    public let viewerLatestReview: ViewerLatestReview?
 
     public init(
         id: String,
@@ -93,7 +96,8 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         viewerReviewCommitOid: String? = nil,
         stackId: String? = nil,
         stackPosition: Int? = nil,
-        stackParentId: String? = nil
+        stackParentId: String? = nil,
+        viewerLatestReview: ViewerLatestReview? = nil
     ) {
         self.id = id
         self.repository = repository
@@ -126,6 +130,7 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.stackId = stackId
         self.stackPosition = stackPosition
         self.stackParentId = stackParentId
+        self.viewerLatestReview = viewerLatestReview
     }
 
     /// The approval or request for changes `login` has made and still stands by, while they
@@ -184,12 +189,15 @@ public struct ReviewRequests: Sendable, Equatable {
     public let events: [ReviewRequestEvent]
     /// Each reviewer's latest approval or request for changes, as dismissed if it was.
     public let verdicts: [ReviewVerdict]
+    /// The viewer's latest submitted review of any kind, nil if they haven't made one.
+    public let viewerLatestReview: ViewerLatestReview?
 
-    public init(state: PullRequestState, reviewers: [RequestedReviewer], events: [ReviewRequestEvent] = [], verdicts: [ReviewVerdict] = []) {
+    public init(state: PullRequestState, reviewers: [RequestedReviewer], events: [ReviewRequestEvent] = [], verdicts: [ReviewVerdict] = [], viewerLatestReview: ViewerLatestReview? = nil) {
         self.state = state
         self.reviewers = reviewers
         self.events = events
         self.verdicts = verdicts
+        self.viewerLatestReview = viewerLatestReview
     }
 
     /// The state of `login`'s latest approval or request for changes, nil if they've given

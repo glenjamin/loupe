@@ -13,6 +13,7 @@ import Testing
 /// and bumps a PR's update time when it changes, though not when its checks do. Like its REST notifications, a
 /// change to a PR notifies the viewer, who participates in every PR here, and a poll with
 /// `If-Modified-Since` no older than the newest notification gets a 304. Tests can change PRs,
+/// push commits to them or force-push them,
 /// set the poll interval, refuse notifications, or make every GraphQL request fail.
 actor FakeGitHub: HTTPTransport {
     enum Failure {
@@ -122,6 +123,11 @@ actor FakeGitHub: HTTPTransport {
         let index = try #require(pullRequests.firstIndex { $0.id == id })
         let previous = updatedAt(pullRequests[index])
         try change(&pullRequests[index])
+        // A head set directly is a commit pushed on top, unless the PR already had it.
+        let head = pullRequests[index].headRefOid
+        if !pullRequests[index].history.contains(where: { $0.oid == head }) {
+            pullRequests[index].history.append(.init(oid: head, committedDate: .now + timePassed))
+        }
         // A second on from the last at least, as the update time is in whole seconds and a test's
         // changes come quicker than a person's.
         pullRequests[index].updatedAt = max(.now + timePassed, previous + 1).formatted(.iso8601)
@@ -179,6 +185,33 @@ actor FakeGitHub: HTTPTransport {
         try edit(id) { pullRequest in
             pullRequest.reviews.append(.init(login: login, state: state, submittedAt: submittedAt, commit: commit ?? pullRequest.headRefOid))
             if state != "COMMENTED" { pullRequest.requestedReviewers.removeAll { $0 == .user(login) } }
+        }
+    }
+
+    /// Pushes `count` new commits on top of the PR's head, returning the new head.
+    @discardableResult
+    func push(to id: String, commits count: Int = 1) throws -> String {
+        let pushedAt = Date.now + timePassed
+        let start = try #require(pullRequests.first { $0.id == id }).history.count
+        let pushed = (start..<start + count).map { fakeOid("\(id) commit \($0)") }
+        let head = try #require(pushed.last)
+        try edit(id) { pullRequest in
+            pullRequest.history += pushed.map { .init(oid: $0, committedDate: pushedAt) }
+            pullRequest.headRefOid = head
+            pullRequest.commitCount.totalCount += count
+        }
+        return head
+    }
+
+    /// Force-pushes a single new commit as the PR's branch, replacing what was there.
+    func forcePush(_ id: String) throws {
+        let pushedAt = Date.now + timePassed
+        try edit(id) { pullRequest in
+            let head = fakeOid("\(id) rewritten \(pullRequest.forcePushes.count)")
+            pullRequest.history = [.init(oid: head, committedDate: pushedAt)]
+            pullRequest.forcePushes.append(pushedAt)
+            pullRequest.headRefOid = head
+            pullRequest.commitCount.totalCount = 1
         }
     }
 
@@ -538,7 +571,8 @@ actor FakeGitHub: HTTPTransport {
             pullRequests.first { $0.id == id }.map { pullRequest in
                 NodesPayload.Node(
                     id: id, state: pullRequest.state, reviewRequests: pullRequest.reviewRequestNodes, requestEvents: pullRequest.requestEventNodes,
-                    latestOpinionatedReviews: pullRequest.verdictNodes
+                    latestOpinionatedReviews: pullRequest.verdictNodes, viewerLatestReview: pullRequest.viewerLatestReviewNode,
+                    recentCommits: pullRequest.recentCommitNodes, forcePushes: pullRequest.forcePushNodes
                 )
             }
         }
@@ -604,6 +638,15 @@ struct FakePullRequest: Codable, Sendable {
     /// The GitHub stack it's in and its place there, 1 at the bottom.
     var stackId: String?
     var stackPosition: Int?
+    /// The PR's commits, oldest first, the head last.
+    var history: [HistoryCommit] = []
+    /// When the branch was force-pushed, oldest first.
+    var forcePushes: [Date] = []
+
+    struct HistoryCommit: Sendable {
+        let oid: String
+        let committedDate: Date
+    }
 
     enum Reviewer: Sendable, Equatable {
         case user(String)
@@ -676,12 +719,13 @@ struct FakePullRequest: Codable, Sendable {
         let entry = try stack.decodeIfPresent(StackEntry.self, forKey: .stackEntry)
         stackId = entry?.stack.id
         stackPosition = entry?.position
+        history = [HistoryCommit(oid: headRefOid, committedDate: (try? Date(updatedAt, strategy: .iso8601)) ?? .now)]
     }
 }
 
 /// The fields only a lookup of a PR by id or number asks for, beside a search node's.
 private enum ReviewRequestKeys: String, CodingKey {
-    case reviewRequests, requestEvents, latestOpinionatedReviews
+    case reviewRequests, requestEvents, latestOpinionatedReviews, viewerLatestReview, recentCommits, forcePushes
 }
 
 /// The stack fields every row has, which the fake works out from its PRs when it serves them.
@@ -757,6 +801,23 @@ private extension FakePullRequest {
         .init(nodes: requestEvents.sorted { $0.createdAt < $1.createdAt }.suffix(20).map { event in
             .init(createdAt: event.createdAt.formatted(.iso8601), requestedReviewer: .init(event.reviewer))
         })
+    }
+
+    /// The viewer's latest submitted review of any kind, comments included.
+    var viewerLatestReviewNode: NodesPayload.LatestReview? {
+        reviews.last { $0.login == FakeGitHub.viewer && $0.state != "PENDING" }.map { review in
+            .init(state: review.state, submittedAt: review.submittedAt?.formatted(.iso8601), commit: review.commit.map { .init(oid: $0) })
+        }
+    }
+
+    /// The last 30 commits, oldest first, as the app's query asks for them.
+    var recentCommitNodes: NodesPayload.Connection<NodesPayload.CommitNode> {
+        .init(nodes: history.suffix(30).map { .init(commit: .init(oid: $0.oid, committedDate: $0.committedDate.formatted(.iso8601))) })
+    }
+
+    /// The last 5 force-pushes, oldest first.
+    var forcePushNodes: NodesPayload.Connection<NodesPayload.ForcePush> {
+        .init(nodes: forcePushes.suffix(5).map { .init(createdAt: $0.formatted(.iso8601)) })
     }
 }
 
@@ -971,9 +1032,29 @@ private struct NodesPayload: Encodable {
         let reviewRequests: Connection<Request>
         let requestEvents: Connection<Event>
         let latestOpinionatedReviews: Connection<Verdict>
+        let viewerLatestReview: LatestReview?
+        let recentCommits: Connection<CommitNode>
+        let forcePushes: Connection<ForcePush>
     }
 
     struct Connection<Element: Codable>: Codable { let nodes: [Element] }
+
+    struct LatestReview: Codable {
+        let state: String
+        let submittedAt: String?
+        let commit: Verdict.Commit?
+    }
+
+    struct CommitNode: Codable {
+        let commit: Commit
+
+        struct Commit: Codable {
+            let oid: String
+            let committedDate: String
+        }
+    }
+
+    struct ForcePush: Codable { let createdAt: String }
 
     struct Verdict: Codable {
         let state: String
@@ -1049,7 +1130,8 @@ private struct SearchNode: Encodable {
 }
 
 /// A PR as the app looks it up by id or number: a search node's fields, the counts, who its
-/// review is asked of and each reviewer's latest verdict.
+/// review is asked of, each reviewer's latest verdict and the viewer's latest review with what's
+/// happened since.
 private struct LookupNode: Encodable {
     let pullRequest: FakePullRequest
     /// The open PR whose head is its base branch.
@@ -1062,6 +1144,9 @@ private struct LookupNode: Encodable {
         try container.encode(pullRequest.reviewRequestNodes, forKey: .reviewRequests)
         try container.encode(pullRequest.requestEventNodes, forKey: .requestEvents)
         try container.encode(pullRequest.verdictNodes, forKey: .latestOpinionatedReviews)
+        try container.encode(pullRequest.viewerLatestReviewNode, forKey: .viewerLatestReview)
+        try container.encode(pullRequest.recentCommitNodes, forKey: .recentCommits)
+        try container.encode(pullRequest.forcePushNodes, forKey: .forcePushes)
     }
 }
 

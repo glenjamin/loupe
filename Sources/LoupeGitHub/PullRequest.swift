@@ -74,6 +74,9 @@ struct SearchPageResponse: Decodable {
         let stackEntry: StackEntry?
         /// Null when the base branch has been deleted.
         let baseRef: BaseRef?
+        let viewerLatestReview: NodesResponse.LatestReview?
+        let recentCommits: Connection<NodesResponse.RecentCommit>?
+        let forcePushes: Connection<NodesResponse.ForcePush>?
     }
 
     struct StackEntry: Decodable {
@@ -111,24 +114,39 @@ public struct PullRequestLookup: Sendable, Equatable {
             state: node.state,
             requests: node.reviewRequests?.nodes ?? [],
             events: node.requestEvents?.nodes ?? [],
-            verdicts: node.latestOpinionatedReviews?.nodes ?? []
+            verdicts: node.latestOpinionatedReviews?.nodes ?? [],
+            viewerLatestReview: node.viewerLatestReview,
+            commits: node.recentCommits?.nodes ?? [],
+            forcePushes: node.forcePushes?.nodes ?? []
         )
     }
 }
 
 extension ReviewRequests {
     init(_ node: NodesResponse.PullRequestNode) {
-        self.init(state: node.state, requests: node.reviewRequests.nodes, events: node.requestEvents.nodes, verdicts: node.latestOpinionatedReviews.nodes)
+        self.init(
+            state: node.state, requests: node.reviewRequests.nodes, events: node.requestEvents.nodes, verdicts: node.latestOpinionatedReviews.nodes,
+            viewerLatestReview: node.viewerLatestReview, commits: node.recentCommits.nodes, forcePushes: node.forcePushes.nodes
+        )
     }
 
-    init(state: PullRequestState, requests: [NodesResponse.ReviewRequest], events: [NodesResponse.RequestEvent], verdicts: [NodesResponse.Verdict]) {
+    init(
+        state: PullRequestState,
+        requests: [NodesResponse.ReviewRequest],
+        events: [NodesResponse.RequestEvent],
+        verdicts: [NodesResponse.Verdict],
+        viewerLatestReview: NodesResponse.LatestReview?,
+        commits: [NodesResponse.RecentCommit],
+        forcePushes: [NodesResponse.ForcePush]
+    ) {
         self.init(
             state: state,
             reviewers: requests.map(\.reviewer),
             events: events.map { ReviewRequestEvent(reviewer: $0.requestedReviewer?.reviewer ?? .other, createdAt: $0.createdAt) },
             verdicts: verdicts.compactMap { verdict in
                 verdict.author.map { ReviewVerdict(login: $0.login, state: verdict.state, submittedAt: verdict.submittedAt, commitOid: verdict.commit?.oid) }
-            }
+            },
+            viewerLatestReview: viewerLatestReview.flatMap { $0.since(commits: commits, forcePushes: forcePushes) }
         )
     }
 }
@@ -162,6 +180,46 @@ struct NodesResponse: Decodable {
         let reviewRequests: SearchPageResponse.Connection<ReviewRequest>
         let requestEvents: SearchPageResponse.Connection<RequestEvent>
         let latestOpinionatedReviews: SearchPageResponse.Connection<Verdict>
+        let viewerLatestReview: LatestReview?
+        let recentCommits: SearchPageResponse.Connection<RecentCommit>
+        let forcePushes: SearchPageResponse.Connection<ForcePush>
+    }
+
+    /// The viewer's latest review, of any kind.
+    struct LatestReview: Decodable {
+        let state: ReviewState
+        let submittedAt: Date?
+        /// Null where its commit is gone from the repo.
+        let commit: Verdict.Commit?
+
+        /// What's happened since, from the PR's latest commits, oldest first, and force-pushes.
+        /// Nil for a review not yet submitted.
+        func since(commits: [RecentCommit], forcePushes: [ForcePush]) -> ViewerLatestReview? {
+            guard state != .pending else { return nil }
+            let reviewed = commit.flatMap { commit in commits.lastIndex { $0.commit.oid == commit.oid } }
+            let pushedSince = forcePushes.map(\.createdAt).filter { pushed in submittedAt.map { pushed > $0 } ?? false }
+            return ViewerLatestReview(
+                state: state,
+                submittedAt: submittedAt,
+                commitOid: commit?.oid,
+                commitsSince: reviewed.map { commits.count - 1 - $0 },
+                lastCommittedAt: commits.last?.commit.committedDate,
+                forcePushedAt: pushedSince.max()
+            )
+        }
+    }
+
+    struct RecentCommit: Decodable {
+        let commit: Commit
+
+        struct Commit: Decodable {
+            let oid: String
+            let committedDate: Date?
+        }
+    }
+
+    struct ForcePush: Decodable {
+        let createdAt: Date
     }
 
     struct Verdict: Decodable {

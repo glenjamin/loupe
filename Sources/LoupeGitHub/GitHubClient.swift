@@ -169,8 +169,11 @@ public struct GitHubClient: Sendable {
         }
         """
 
-    /// Who the PR's review waits on, its latest requests for review, re-requests included, and
-    /// each reviewer's latest approval or request for changes.
+    /// Who the PR's review waits on, its latest requests for review, re-requests included, each
+    /// reviewer's latest approval or request for changes, and the viewer's latest review of any
+    /// kind with the commits and force-pushes that say what's happened since. `latestReviews`
+    /// leaves out a reviewer's comment-only reviews, so the viewer's comes from
+    /// `viewerLatestReview`.
     static let reviewRequestFields = """
         reviewRequests(first: 50) {
           nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
@@ -184,6 +187,11 @@ public struct GitHubClient: Sendable {
           }
         }
         latestOpinionatedReviews(first: 50) { nodes { state submittedAt commit { oid } author { login } } }
+        viewerLatestReview { state submittedAt commit { oid } }
+        recentCommits: commits(last: 30) { nodes { commit { oid committedDate } } }
+        forcePushes: timelineItems(last: 5, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
+          nodes { ... on HeadRefForcePushedEvent { createdAt } }
+        }
         """
 
     static let searchPageQuery = """

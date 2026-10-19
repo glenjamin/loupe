@@ -193,18 +193,6 @@ extension ViewerVerdict {
     var tint: Color {
         state == .approved ? .diffSuccess : .diffDanger
     }
-
-    /// For a tooltip: what, when and whether it's changed since, e.g. "You approved this 2 days
-    /// ago, with no changes since".
-    func summary(now: Date = .now) -> String {
-        let when = submittedAt.map { " \($0.recentOrDated(now: now))" } ?? ""
-        let since = switch since {
-        case .unchanged: ", with no changes since"
-        case .commits, .changed: ", and it's changed since"
-        case nil: ""
-        }
-        return "\(title) this\(when)\(since)"
-    }
 }
 
 extension ViewerVerdict.Since: CustomStringConvertible {

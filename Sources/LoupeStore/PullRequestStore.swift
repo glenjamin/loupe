@@ -175,6 +175,26 @@ public struct PullRequestStore: Sendable {
         }
     }
 
+    /// Records the viewer's latest submitted review of any kind on each PR in `reviews`, keyed
+    /// by id, with what's happened since, nil where they haven't reviewed it. PRs no longer
+    /// stored are left out.
+    @discardableResult
+    public func updateViewerLatestReviews(_ reviews: [String: ViewerLatestReview?]) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            for (id, review) in reviews {
+                try db.execute(
+                    sql: """
+                        UPDATE pullRequest SET viewerLatestReviewState = ?, viewerLatestReviewedAt = ?, viewerLatestReviewCommitOid = ?,
+                            commitsSinceViewerReview = ?, lastCommittedAt = ?, forcePushedSinceViewerReviewAt = ?
+                        WHERE id = ?
+                        """,
+                    arguments: [review?.state.rawValue, review?.submittedAt, review?.commitOid, review?.commitsSince, review?.lastCommittedAt, review?.forcePushedAt, id]
+                )
+            }
+            return try Self.snapshot(db)
+        }
+    }
+
     /// The signed-in user's GitHub login, once it's been looked up.
     public func viewerLogin() throws -> String? {
         try database.read { db in try Setting.fetchOne(db, key: Setting.viewerLogin)?.value }
@@ -570,6 +590,19 @@ public struct PullRequestStore: Sendable {
             }
             try db.execute(sql: "DELETE FROM listRefresh")
         }
+        // The viewer's latest review of any kind and what's happened since, so To review can say
+        // they've reviewed a PR and whether it's been updated since: null until the to-review
+        // check next runs.
+        migrator.registerMigration("Viewer latest reviews") { db in
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "viewerLatestReviewState", .text)
+                t.add(column: "viewerLatestReviewedAt", .datetime)
+                t.add(column: "viewerLatestReviewCommitOid", .text)
+                t.add(column: "commitsSinceViewerReview", .integer)
+                t.add(column: "lastCommittedAt", .datetime)
+                t.add(column: "forcePushedSinceViewerReviewAt", .datetime)
+            }
+        }
         return migrator
     }
 
@@ -672,6 +705,12 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let stackId: String?
     let stackPosition: Int?
     let stackParentId: String?
+    let viewerLatestReviewState: String?
+    let viewerLatestReviewedAt: Date?
+    let viewerLatestReviewCommitOid: String?
+    let commitsSinceViewerReview: Int?
+    let lastCommittedAt: Date?
+    let forcePushedSinceViewerReviewAt: Date?
 
     /// Anything `pullRequest` lacks because only a lookup by id fetches it is kept from `stored`.
     init(_ pullRequest: PullRequestSummary, keepingLookupsFrom stored: PullRequestRow?) {
@@ -706,6 +745,13 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         stackId = pullRequest.stackId
         stackPosition = pullRequest.stackPosition
         stackParentId = pullRequest.stackParentId
+        let latest = pullRequest.viewerLatestReview
+        viewerLatestReviewState = latest?.state.rawValue ?? stored?.viewerLatestReviewState
+        viewerLatestReviewedAt = latest == nil ? stored?.viewerLatestReviewedAt : latest?.submittedAt
+        viewerLatestReviewCommitOid = latest == nil ? stored?.viewerLatestReviewCommitOid : latest?.commitOid
+        commitsSinceViewerReview = latest == nil ? stored?.commitsSinceViewerReview : latest?.commitsSince
+        lastCommittedAt = latest == nil ? stored?.lastCommittedAt : latest?.lastCommittedAt
+        forcePushedSinceViewerReviewAt = latest == nil ? stored?.forcePushedSinceViewerReviewAt : latest?.forcePushedAt
     }
 
     func summary(checkContexts: [CheckContext]) -> PullRequestSummary {
@@ -741,7 +787,17 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             viewerReviewCommitOid: viewerReviewCommitOid,
             stackId: stackId,
             stackPosition: stackPosition,
-            stackParentId: stackParentId
+            stackParentId: stackParentId,
+            viewerLatestReview: viewerLatestReviewState.map { state in
+                ViewerLatestReview(
+                    state: ReviewState(lenientRawValue: state),
+                    submittedAt: viewerLatestReviewedAt,
+                    commitOid: viewerLatestReviewCommitOid,
+                    commitsSince: commitsSinceViewerReview,
+                    lastCommittedAt: lastCommittedAt,
+                    forcePushedAt: forcePushedSinceViewerReviewAt
+                )
+            }
         )
     }
 }

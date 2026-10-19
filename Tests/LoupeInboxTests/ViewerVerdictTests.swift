@@ -80,12 +80,14 @@ struct ViewerVerdictTests {
         #expect(tab.viewerVerdict?.state == .approved && tab.viewerVerdict?.since == .unchanged, "as GitHub has it once fetched")
         let row = try #require(app.tabs.lists.pullRequest(id: tab.id))
         #expect(app.tabs.lists.verdict(on: row, in: .toReview) == .approved, "the list's row says so too")
-        #expect(row.viewerVerdict?.commitOid == first && row.viewerVerdict?.since == .unchanged)
-        #expect(row.viewerVerdict?.submittedAt != nil)
+        let mark = try #require(app.tabs.lists.reviewMark(on: row, in: .toReview))
+        #expect(mark.kind == .approved && !mark.isUpdated)
+        #expect(row.viewerReviewCommitOid == first && mark.givenAt != nil)
 
         let nextRun = app.relaunch()
         await nextRun.lists.refresh()
-        #expect(nextRun.lists.pullRequest(id: tab.id)?.viewerVerdict?.since == .unchanged, "as the refresh's check finds it")
+        let checked = try #require(nextRun.lists.pullRequest(id: tab.id))
+        #expect(nextRun.lists.reviewMark(on: checked, in: .toReview)?.isUpdated == false, "as the refresh's check finds it")
         nextRun.open(pullRequest)
         #expect(nextRun.tab(id: tab.id)?.viewerVerdict?.state == .approved, "from the stored conversation")
     }
@@ -120,11 +122,16 @@ struct ViewerVerdictTests {
 
         var row = try #require(app.tabs.lists.pullRequest(id: pullRequest.id))
         #expect(app.tabs.lists.verdict(on: row, in: .toReview) == .approved)
-        #expect(row.viewerVerdict?.commitOid == first && row.viewerVerdict?.since == .unchanged)
+        #expect(app.tabs.lists.reviewMark(on: row, in: .toReview)?.isUpdated == false)
 
         _ = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest)
         row = try #require(app.tabs.lists.pullRequest(id: pullRequest.id))
-        #expect(row.viewerVerdict?.since == .changed)
+        let mark = try #require(app.tabs.lists.reviewMark(on: row, in: .toReview))
+        #expect(mark.kind == .approved)
+        guard case .commits(1, _) = try #require(mark.updates.first) else {
+            Issue.record("expected one commit since, got \(mark.updates)")
+            return
+        }
     }
 }
 
