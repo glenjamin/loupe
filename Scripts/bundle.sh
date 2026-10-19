@@ -5,15 +5,20 @@
 # argument of "snapshot" builds LoupeSnapshot.app instead, for snapshot runs:
 # its own name and bundle id and no URL types, so Launch Services, AppleScript
 # and "open -a Loupe" never mistake it for the real app, and building it never
-# touches Loupe.app.
+# touches Loupe.app. Loupe.app builds in its own scratch path, so start.sh
+# never waits on SwiftPM's lock while a test run or snapshot build holds .build.
 set -eu
 
 config=${1:-debug}
 case ${2:-} in
-  "") app=.build/Loupe.app name=Loupe id=com.glenmailer.Loupe ;;
+  "")
+    app=.build/Loupe.app name=Loupe id=com.glenmailer.Loupe
+    scratch=.build/app
+    ;;
   snapshot)
     app=.build/LoupeSnapshot.app name="Loupe Snapshot"
     id=com.glenmailer.Loupe.snapshot
+    scratch=.build
     ;;
   *) echo "usage: Scripts/bundle.sh [debug|release] [snapshot]" >&2; exit 2 ;;
 esac
@@ -21,10 +26,10 @@ cd "$(dirname "$0")/.."
 # CodeEditLanguages ships prebuilt grammars whose debug info points at the
 # maintainer's machine; the linker warns about each one. Nothing else is hidden.
 log=$(mktemp)
-if ! swift build -c "$config" >"$log" 2>&1; then cat "$log"; rm -f "$log"; exit 1; fi
+if ! swift build --scratch-path "$scratch" -c "$config" >"$log" 2>&1; then cat "$log"; rm -f "$log"; exit 1; fi
 grep -v "unable to open object file: No such file or directory" "$log" || true
 rm -f "$log"
-bin=$(swift build -c "$config" --show-bin-path)
+bin=$(swift build --scratch-path "$scratch" -c "$config" --show-bin-path)
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"

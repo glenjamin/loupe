@@ -129,6 +129,8 @@ sh Scripts/bundle.sh && open .build/Loupe.app   # the two steps separately
 
 `start.sh` first quits the Loupe running from this checkout's `.build/Loupe.app`, found by its executable's path and asked to quit by pid, and waits until it has exited and Launch Services no longer lists it before opening the new build; an `open` sent while the old one is still exiting is handed to it and fails with `_LSOpenURLsWithCompletionHandler() failed with error -600`. If it hasn't quit within 10 seconds (it may be asking something), the script says so and stops without opening. Snapshot runs and other checkouts' bundles are left alone.
 
+`Scripts/bundle.sh` builds `Loupe.app` with its own SwiftPM scratch path, `.build/app`, so `start.sh` never waits on the lock a `swift build` or `swift test` holds on `.build` (a long test run, say). It has its own build products, so its first build in a checkout is a full one. Snapshot bundles still build in `.build`, sharing products with `swift test`. The bundle stays at `.build/Loupe.app`.
+
 ### Opening PR links from other apps
 
 The bundle declares the `loupe` URL scheme, and `https` as an alternate handler only, so Loupe can be picked for a link without becoming the default browser (see "Links from other apps open in Loupe" in `DESIGN.md`). Launch Services learns the URL types when the bundle is registered, which opening it does, so `./start.sh` after a rebuild is enough. To force it without opening the app:
