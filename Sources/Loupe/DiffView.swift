@@ -73,6 +73,7 @@ private struct FileHeader: View {
     let packageLock: PackageLockPreview?
     let image: ImagePreview?
     let onCollapse: (() -> Void)?
+    @AppStorage(DiffSettings.splitDiffKey) private var splitDiff = DiffSettings.splitDiffDefault
 
     var body: some View {
         HStack(spacing: 10) {
@@ -98,6 +99,12 @@ private struct FileHeader: View {
                     .buttonStyle(.borderless)
                     .help("Hide the revealed lines")
             }
+            Button(splitDiff ? "Show Unified" : "Show Split", systemImage: splitDiff ? "rectangle.split.2x1.fill" : "rectangle.split.2x1") {
+                splitDiff.toggle()
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .help(splitDiff ? "Show the old and new lines in one column (⌃⌘S)" : "Show the old lines beside the new, where the view is wide enough (⌃⌘S)")
             if let markdown {
                 Picker("Show", selection: Binding(get: { markdown.isRendered }, set: markdown.setRendered)) {
                     Text("Source").tag(false)
@@ -189,6 +196,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
     let commentable: Set<DiffAnchor>?
     let onComment: (DiffAnchor) -> Void
     @AppStorage(DiffSettings.wrapLinesKey) var wrapLines = DiffSettings.wrapLinesDefault
+    @AppStorage(DiffSettings.splitDiffKey) var splitDiff = DiffSettings.splitDiffDefault
 
     func makeNSView(context: Context) -> NSScrollView {
         let coordinator = context.coordinator
@@ -207,6 +215,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         scroll.onPull = { [weak coordinator] event in coordinator?.pull(event) ?? false }
         scroll.currentPull = { [weak coordinator] in coordinator?.currentPull ?? OverscrollTrigger() }
         scroll.contentView.postsBoundsChangedNotifications = true
+        scroll.contentView.postsFrameChangedNotifications = true
         coordinator.textView.postsFrameChangedNotifications = true
         coordinator.observe(scroll, clip: clip)
         return scroll
@@ -222,19 +231,26 @@ private struct DiffTextScrollView: NSViewRepresentable {
         coordinator.textView.onExpand = onExpand
         coordinator.textView.commentableAnchors = commentable
         coordinator.textView.onComment = onComment
-        scroll.hasHorizontalScroller = !wrapLines
         // A PR's diff moves past its end only as far as the pull reveals its strip, which the
         // rubber band would add to; a plain diff keeps the rubber band.
         scroll.verticalScrollElasticity = review == nil ? .allowed : .none
         coordinator.textView.wrapsLines = wrapLines
+        coordinator.prefersSplit = splitDiff
+        coordinator.file = file
+        let layout = coordinator.layout(for: file)
+        // A split diff always wraps, so it never scrolls sideways.
+        scroll.hasHorizontalScroller = !wrapLines && layout == .unified
         // The same file shown anew, as when more of it is revealed, keeps the reader's place.
-        let shown = ShownDiff(path: file.path, headers: file.hunks.map(\.header), expandable: expandable, blocks: blocks.map(\.id))
+        let shown = ShownDiff(path: file.path, headers: file.hunks.map(\.header), expandable: expandable, blocks: blocks.map(\.id), layout: layout)
+        coordinator.render = { [blocks, expandable] coordinator, layout in
+            let sized = blocks.map { DiffBlock(id: $0.id, placement: $0.placement, height: coordinator.blockHeights[$0.id] ?? Coordinator.estimatedBlockHeight) }
+            return RenderedDiff(file: file, expandable: expandable, blocks: sized, layout: layout)
+        }
         if coordinator.shown != shown {
             let isSameFile = coordinator.shown?.path == file.path
             coordinator.shown = shown
             if !isSameFile { coordinator.dropPull() }
-            let sized = blocks.map { DiffBlock(id: $0.id, placement: $0.placement, height: coordinator.blockHeights[$0.id] ?? Coordinator.estimatedBlockHeight) }
-            coordinator.textView.show(RenderedDiff(file: file, expandable: expandable, blocks: sized), keepingPlace: isSameFile)
+            coordinator.show(layout, keepingPlace: isSameFile)
         }
         coordinator.showBlocks(blocks)
         if let block = blocks.first(where: { $0.reveal != nil }) {
@@ -254,6 +270,11 @@ private struct DiffTextScrollView: NSViewRepresentable {
         let textView = DiffTextView.make()
         var shown: ShownDiff?
         var review: FileReview?
+        /// Whether split is chosen; the view shows unified where split doesn't fit.
+        var prefersSplit = false
+        var file: FileDiff?
+        /// Renders the shown file in a layout, for when the view's width changes which fits.
+        var render: ((Coordinator, DiffLayout) -> RenderedDiff)?
         let footerState = ReviewFooterState()
         lazy var footer: NSHostingView<ReviewFooter> = {
             let view = NSHostingView(rootView: ReviewFooter(state: footerState) { [weak self] in
@@ -311,6 +332,30 @@ private struct DiffTextScrollView: NSViewRepresentable {
             layoutFooter()
         }
 
+        /// Split when it's chosen and fits the view's width; before the view has a width, as
+        /// chosen, so a diff isn't rendered twice on opening.
+        func layout(for file: FileDiff) -> DiffLayout {
+            guard prefersSplit else { return .unified }
+            let width = scroll?.contentView.bounds.width ?? 0
+            return width == 0 || DiffLayout.splitFits(file, width: width) ? .split : .unified
+        }
+
+        func show(_ layout: DiffLayout, keepingPlace: Bool) {
+            guard let render else { return }
+            textView.show(render(self, layout), keepingPlace: keepingPlace)
+            scroll?.hasHorizontalScroller = !textView.wrapsLines && layout == .unified
+        }
+
+        /// Shows the file split or unified again when the view's width changes which fits.
+        private func widthChanged() {
+            guard let file, var shown else { return }
+            let layout = layout(for: file)
+            guard layout != shown.layout else { return }
+            shown.layout = layout
+            self.shown = shown
+            show(layout, keepingPlace: true)
+        }
+
         /// Scrolls the block into view, and again as blocks measure themselves for a moment
         /// after, as each one above it that does moves it.
         func reveal(_ id: String) {
@@ -337,6 +382,9 @@ private struct DiffTextScrollView: NSViewRepresentable {
                         self?.textView.layoutBlocks()
                         self?.layoutFooter()
                     }
+                },
+                center.addObserver(forName: NSView.frameDidChangeNotification, object: scroll.contentView, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.widthChanged() }
                 },
                 center.addObserver(forName: NSView.frameDidChangeNotification, object: textView, queue: .main) { [weak self] _ in
                     MainActor.assumeIsolated {
@@ -674,6 +722,7 @@ private struct ShownDiff: Equatable {
     let expandable: ExpandableContext?
     /// The ids of the blocks laid between rows, which say where each goes.
     let blocks: [String]
+    var layout: DiffLayout
 }
 
 /// A view to lay between a diff's rows, such as the review threads on a line. Its id names it

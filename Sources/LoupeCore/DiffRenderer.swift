@@ -18,10 +18,29 @@ public struct DiffAnchor: Sendable, Hashable, CustomStringConvertible {
 }
 
 /// What each rendered row is, so the view can paint full-width backgrounds and resolve clicks.
+/// In a split diff each side of a row is a row of its own here.
 public enum RowKind: Int, Sendable {
     case context, addition, deletion, hunkHeader
     /// Empty space held for a view laid over the text, such as a review thread.
     case block
+    /// A split diff's side with no line, beside one the other side has.
+    case empty
+}
+
+/// How a diff's lines are laid out: one column with old and new numbers, or the old file on the
+/// left beside the new on the right, as github.com's Unified and Split.
+public enum DiffLayout: String, Sendable {
+    case unified, split
+
+    /// Whether a split diff of `file` fits in a view this wide: each side needs room for its
+    /// gutter and a useful run of code, padding either end included, else unified is shown instead.
+    public static func splitFits(_ file: FileDiff, width: CGFloat, fontSize: CGFloat = 12) -> Bool {
+        let style = Style(fontSize: fontSize, gutterColumns: file.splitGutterColumns)
+        return width / 2 >= style.codeStart + style.digit * CGFloat(minimumSplitColumns) + DiffTextView.linePadding * 2
+    }
+
+    /// The fewest columns of code a split side can show before unified is shown instead.
+    static let minimumSplitColumns = 50
 }
 
 /// Space in a diff for a view laid over it, such as a review thread under the line it's on.
@@ -58,15 +77,27 @@ public extension NSAttributedString.Key {
     static let diffExpansion = NSAttributedString.Key("Loupe.diffExpansion")
     /// Marks a row held for a `DiffBlock`, holding its id.
     static let diffBlock = NSAttributedString.Key("Loupe.diffBlock")
+    /// Marks a split diff's left side of a row with 0 and its right with 1, terminators included.
+    static let diffSplitSide = NSAttributedString.Key("Loupe.diffSplitSide")
+    /// How far a wrapped row's continuation lines hang in from the start of its line.
+    static let diffHangingIndent = NSAttributedString.Key("Loupe.diffHangingIndent")
 }
 
-/// One file's diff as a single attributed string, with a gutter of old/new line numbers.
+/// Ends a split row's left side, so both sides share the row's paragraph while the right
+/// starts a line of its own.
+public let splitSideSeparator: unichar = 0x2028
+
+/// One file's diff as a single attributed string, with a gutter of old/new line numbers, or
+/// laid out split, each row's old line beside its new one.
 public struct RenderedDiff {
     public let text: NSAttributedString
-    /// UTF-16 offset where each row starts, ascending.
+    public let layout: DiffLayout
+    /// UTF-16 offset where each row starts, ascending. Each side of a split row is a row here.
     public let rowStarts: [Int]
-    /// The anchor for each row; nil for hunk headers.
+    /// The anchor for each row; nil for hunk headers, blocks and a split diff's empty sides.
     public let rowAnchors: [DiffAnchor?]
+    /// The side each row is on in a split diff; nil for unified rows and those across both sides.
+    public let rowSides: [DiffAnchor.Side?]
     /// The row of each hunk's header, in order.
     public let hunkRows: [Int]
     /// The row after the last hunk that reveals more of the file, when there's more to reveal.
@@ -75,30 +106,36 @@ public struct RenderedDiff {
     public let syntax: SyntaxPlan?
     /// The row held for each block, by the block's id.
     public let blockRows: [String: Int]
+    /// The length of each row's gutter, so its code can be found.
+    private let gutterLengths: [Int]
 
     /// With `expandable`, hunk headers carry controls that reveal the unchanged lines around
     /// them, as GitHub's expand arrows do. Each of `blocks` gets an empty row of its height,
-    /// left out of copies, for a view to be laid over.
-    public init(file: FileDiff, fontSize: CGFloat = 12, expandable: ExpandableContext? = nil, blocks: [DiffBlock] = []) {
+    /// left out of copies, for a view to be laid over; in a split diff it spans both sides,
+    /// under the row its line is on, as on github.com.
+    public init(file: FileDiff, fontSize: CGFloat = 12, expandable: ExpandableContext? = nil, blocks: [DiffBlock] = [], layout: DiffLayout = .unified) {
         let width = max(3, String(file.maxLineNumber).count)
-        // Two right-aligned numbers and the marker, two spaces apart, then a tab out to the code.
-        let style = Style(fontSize: fontSize, gutterColumns: width * 2 + 5)
+        // Unified: two right-aligned numbers and the marker, two spaces apart, then a tab out to
+        // the code. Split: each side has its own number and marker.
+        let style = layout == .split ? Style(fontSize: fontSize, gutterColumns: file.splitGutterColumns, split: true) : Style(fontSize: fontSize, gutterColumns: width * 2 + 5)
         let out = NSMutableString()
         var rows: [(start: Int, length: Int, gutter: Int, kind: RowKind)] = []
         var anchors: [DiffAnchor?] = []
+        var sides: [DiffAnchor.Side?] = []
         var hunkRows: [Int] = []
         var controls: [(range: NSRange, control: ExpansionControl)] = []
         var syntax = SyntaxLanguage(path: file.path).map(SyntaxPlan.init)
         rows.reserveCapacity(file.rowCount)
         anchors.reserveCapacity(file.rowCount)
 
-        func addRow(gutter: String, body: String, kind: RowKind, anchor: DiffAnchor?) {
+        func addRow(gutter: String, body: String, kind: RowKind, anchor: DiffAnchor?, side: DiffAnchor.Side? = nil, terminator: String = "\n") {
             let start = out.length
             out.append(gutter)
             out.append(body)
-            out.append("\n")
+            out.append(terminator)
             rows.append((start, out.length - start, (gutter as NSString).length, kind))
             anchors.append(anchor)
+            sides.append(side)
         }
 
         func addHeaderRow(body: String, controls offered: [ExpansionControl]) {
@@ -121,37 +158,74 @@ public struct RenderedDiff {
             out.append(" \n")
             rows.append((start, 2, 2, .block))
             anchors.append(nil)
+            sides.append(nil)
             blockHeights.append((NSRange(location: start, length: 2), block.id, block.height))
         }
 
         var emphasis: [NSRange] = []
+        let separator = String(utf16CodeUnits: [splitSideSeparator], count: 1)
 
         for (index, hunk) in file.hunks.enumerated() {
             hunkRows.append(rows.count)
             addHeaderRow(body: hunk.header, controls: expandable == nil ? [] : ExpansionControl.above(hunk: index, in: file))
-            // Blocks can come between lines, so each line's row is kept to pair modified lines.
-            var lineRows: [Int] = []
+            // Blocks can come between lines, so each line's row is kept to pair modified lines:
+            // in a split diff, the side a changed line is on.
+            var lineRows = [Int](repeating: 0, count: hunk.lines.count)
             let enclosing = syntax == nil ? nil : enclosingLine(of: hunk)
             var newSide = SyntaxPlan.Side(context: enclosing)
             var oldSide = SyntaxPlan.Side(context: enclosing)
-            for line in hunk.lines {
-                let numbers = pad(line.oldLine, width) + "  " + pad(line.newLine, width) + "  "
-                let body = displayText(line)
-                switch line.kind {
-                case .context(_, let new):
-                    addRow(gutter: numbers + " \t", body: body, kind: .context, anchor: DiffAnchor(path: file.path, side: .right, line: new))
-                case .addition(let new):
-                    addRow(gutter: numbers + "+\t", body: body, kind: .addition, anchor: DiffAnchor(path: file.path, side: .right, line: new))
-                case .deletion(let old):
-                    addRow(gutter: numbers + "-\t", body: body, kind: .deletion, anchor: DiffAnchor(path: file.path, side: .left, line: old))
+            // Where a row has its code, for highlighting.
+            func code(ofRow row: Int) -> (target: Int, length: Int) {
+                (rows[row].start + rows[row].gutter, rows[row].length - rows[row].gutter - 1)
+            }
+
+            switch layout {
+            case .unified:
+                for (position, line) in hunk.lines.enumerated() {
+                    let numbers = pad(line.oldLine, width) + "  " + pad(line.newLine, width) + "  "
+                    let body = displayText(line)
+                    switch line.kind {
+                    case .context(_, let new):
+                        addRow(gutter: numbers + " \t", body: body, kind: .context, anchor: DiffAnchor(path: file.path, side: .right, line: new))
+                    case .addition(let new):
+                        addRow(gutter: numbers + "+\t", body: body, kind: .addition, anchor: DiffAnchor(path: file.path, side: .right, line: new))
+                    case .deletion(let old):
+                        addRow(gutter: numbers + "-\t", body: body, kind: .deletion, anchor: DiffAnchor(path: file.path, side: .left, line: old))
+                    }
+                    lineRows[position] = rows.count - 1
+                    if syntax != nil {
+                        let code = code(ofRow: rows.count - 1)
+                        if line.newLine != nil { newSide.append(line.text, mappedTo: code.target, length: code.length) }
+                        if line.oldLine != nil { oldSide.append(line.text, mappedTo: line.isDeletion ? code.target : nil, length: code.length) }
+                    }
+                    for block in unplaced.take(after: line) { addBlockRow(block) }
                 }
-                lineRows.append(rows.count - 1)
-                if syntax != nil, let row = rows.last {
-                    let code = (target: row.start + row.gutter, length: row.length - row.gutter - 1)
-                    if line.newLine != nil { newSide.append(line.text, mappedTo: code.target, length: code.length) }
-                    if line.oldLine != nil { oldSide.append(line.text, mappedTo: line.isDeletion ? code.target : nil, length: code.length) }
+            case .split:
+                // Each side of a row, old then new, ends a line of its own; the row is one paragraph.
+                func addSide(_ position: Int?, side: DiffAnchor.Side, terminator: String) {
+                    guard let position else {
+                        return addRow(gutter: "", body: "", kind: .empty, anchor: nil, side: side, terminator: terminator)
+                    }
+                    let line = hunk.lines[position]
+                    let number = side == .left ? line.oldLine : line.newLine
+                    let marker = line.isAddition ? "+" : line.isDeletion ? "-" : " "
+                    let kind: RowKind = line.isAddition ? .addition : line.isDeletion ? .deletion : .context
+                    addRow(gutter: pad(number, width) + "  " + marker + "\t", body: displayText(line), kind: kind,
+                           anchor: number.map { DiffAnchor(path: file.path, side: side, line: $0) }, side: side, terminator: terminator)
+                    if side == .right || line.isDeletion { lineRows[position] = rows.count - 1 }
+                    if syntax != nil {
+                        let code = code(ofRow: rows.count - 1)
+                        if side == .left { oldSide.append(line.text, mappedTo: code.target, length: code.length) }
+                        else { newSide.append(line.text, mappedTo: code.target, length: code.length) }
+                    }
                 }
-                for block in unplaced.take(after: line) { addBlockRow(block) }
+                for (old, new) in splitRows(hunk.lines) {
+                    addSide(old, side: .left, terminator: separator)
+                    addSide(new, side: .right, terminator: "\n")
+                    for position in Set([old, new].compactMap { $0 }).sorted() {
+                        for block in unplaced.take(after: hunk.lines[position]) { addBlockRow(block) }
+                    }
+                }
             }
             syntax?.sides += [newSide, oldSide]
             for (old, new) in modifiedPairs(hunk.lines) {
@@ -172,9 +246,12 @@ public struct RenderedDiff {
 
         let attributed = NSMutableAttributedString(string: out as String, attributes: style.base)
         attributed.beginEditing()
-        for row in rows {
+        for (index, row) in rows.enumerated() {
             let full = NSRange(location: row.start, length: row.length)
             attributed.addAttribute(.diffRowKind, value: row.kind.rawValue, range: full)
+            if let side = sides[index] {
+                attributed.addAttribute(.diffSplitSide, value: side == .left ? 0 : 1, range: full)
+            }
             attributed.addAttributes(style.gutter, range: NSRange(location: row.start, length: row.gutter))
             if row.kind == .addition || row.kind == .deletion {
                 // The marker, just before the gutter's closing tab, reads stronger than the numbers.
@@ -201,12 +278,30 @@ public struct RenderedDiff {
         attributed.endEditing()
 
         text = attributed
+        self.layout = layout
         self.syntax = syntax
         rowStarts = rows.map(\.start)
         rowAnchors = anchors
+        rowSides = sides
+        gutterLengths = rows.map(\.gutter)
         self.hunkRows = hunkRows
         self.trailingRow = trailingRow
         self.blockRows = blockRows
+    }
+
+    /// The code of each row on `side` that `range` takes in, gutters and line ends left out, so a
+    /// selection in a split diff keeps to the side it began on, as on github.com.
+    public func code(in range: NSRange, onSide side: DiffAnchor.Side) -> [NSRange] {
+        guard range.length > 0, let first = row(at: range.location), let last = row(at: NSMaxRange(range) - 1) else { return [] }
+        return (first...last).compactMap { row in
+            guard rowSides[row] == side, rowAnchors[row] != nil else { return nil }
+            let end = (row + 1 < rowStarts.count ? rowStarts[row + 1] : text.length) - 1
+            let code = NSRange(location: rowStarts[row] + gutterLengths[row], length: end - rowStarts[row] - gutterLengths[row])
+            let taken = NSIntersectionRange(code, range)
+            // A selection beginning at a row's end takes none of it; an empty line within it counts.
+            if taken.length > 0 { return taken }
+            return code.length == 0 && NSLocationInRange(code.location, range) ? code : nil
+        }
     }
 
     /// A block's row is one line exactly as tall as the block.
@@ -251,6 +346,7 @@ public extension RowKind {
     var background: NSColor? {
         switch self {
         case .context, .block: nil
+        case .empty: DiffColors.emptyCellBackground
         case .addition: DiffColors.additionBackground
         case .deletion: DiffColors.deletionBackground
         case .hunkHeader: DiffColors.hunkHeaderBackground
@@ -260,7 +356,7 @@ public extension RowKind {
     /// The gutter's tint, a shade darker than the row's so the numbers read as separate from the code.
     var gutterBackground: NSColor? {
         switch self {
-        case .context, .block: nil
+        case .context, .block, .empty: nil
         case .addition: DiffColors.additionGutterBackground
         case .deletion: DiffColors.deletionGutterBackground
         case .hunkHeader: DiffColors.hunkHeaderGutterBackground
@@ -272,23 +368,29 @@ public extension RowKind {
         switch self {
         case .addition: DiffColors.additionWordBackground
         case .deletion: DiffColors.deletionWordBackground
-        case .context, .hunkHeader, .block: nil
+        case .context, .hunkHeader, .block, .empty: nil
         }
     }
 }
 
-private struct Style {
+struct Style {
+    /// Where the code starts, past the gutter, from the start of the line.
+    let codeStart: CGFloat
+    /// The width of one character.
+    let digit: CGFloat
     let base: [NSAttributedString.Key: Any]
     let gutter: [NSAttributedString.Key: Any]
     let hunkHeader: [NSAttributedString.Key: Any]
     let control: [NSAttributedString.Key: Any]
 
-    init(fontSize: CGFloat, gutterColumns: Int) {
+    init(fontSize: CGFloat, gutterColumns: Int, split: Bool = false) {
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let digit = ("0" as NSString).size(withAttributes: [.font: font]).width
         // The tint runs a little past the marker; the code starts a little past the tint.
         let gutterWidth = digit * CGFloat(gutterColumns) + (fontSize / 3).rounded()
         let codeStart = gutterWidth + (fontSize * 2 / 3).rounded()
+        self.codeStart = codeStart
+        self.digit = digit
         let paragraph = NSMutableParagraphStyle()
         // Rows are about 20pt at 12pt, as on GitHub, with the extra space split above and below the text.
         let natural = ceil(font.ascender - font.descender + font.leading)
@@ -298,18 +400,23 @@ private struct Style {
         paragraph.lineSpacing = extra - (extra / 2).rounded(.down)
         // The gutter's tab lands on the code column; wrapped lines hang two columns past it, so a
         // continuation reads as one, and tabs in the code step four columns from the column.
+        // A split row's right side starts a line mid-paragraph, which TextKit would hang too, so
+        // there the text container hangs continuations instead.
         paragraph.firstLineHeadIndent = 0
-        paragraph.headIndent = codeStart + digit * 2
+        paragraph.headIndent = split ? 0 : codeStart + digit * 2
         paragraph.tabStops = (0..<32).map { NSTextTab(textAlignment: .left, location: codeStart + digit * 4 * CGFloat($0)) }
         paragraph.defaultTabInterval = digit * 4
-        base = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph, .diffGutterWidth: gutterWidth]
+        base = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph, .diffGutterWidth: gutterWidth, .diffHangingIndent: codeStart + digit * 2]
         gutter = [.foregroundColor: NSColor.tertiaryLabelColor, .diffGutter: true]
         hunkHeader = [.foregroundColor: NSColor.secondaryLabelColor]
         control = [.foregroundColor: NSColor.linkColor, .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)]
     }
 }
 
-private extension FileDiff {
+extension FileDiff {
+    /// A split side's gutter: its number and the marker, two spaces apart.
+    var splitGutterColumns: Int { max(3, String(maxLineNumber).count) + 3 }
+
     var rowCount: Int { hunks.reduce(0) { $0 + $1.lines.count + 1 } }
 
     var maxLineNumber: Int {
@@ -391,6 +498,29 @@ private func pad(_ number: Int?, _ width: Int) -> String {
 private func displayText(_ line: DiffLine) -> String {
     guard line.text.contains(where: \.isNewline) else { return line.text }
     return String(line.text.map { $0.isNewline ? "␤" : $0 })
+}
+
+/// The rows of a split hunk, by index into `lines`: an unchanged line on both sides, and a run
+/// of deletions beside the run of additions after it, paired in order, as GitHub lays them out.
+/// The longer run's extra lines have nothing beside them.
+private func splitRows(_ lines: [DiffLine]) -> [(old: Int?, new: Int?)] {
+    var rows: [(old: Int?, new: Int?)] = []
+    var index = 0
+    while index < lines.count {
+        if case .context = lines[index].kind {
+            rows.append((index, index))
+            index += 1
+            continue
+        }
+        let deletions = index
+        while index < lines.count, lines[index].isDeletion { index += 1 }
+        let additions = index
+        while index < lines.count, lines[index].isAddition { index += 1 }
+        for offset in 0..<max(additions - deletions, index - additions) {
+            rows.append((deletions + offset < additions ? deletions + offset : nil, additions + offset < index ? additions + offset : nil))
+        }
+    }
+    return rows
 }
 
 /// The deleted and added lines that are edits of one another: a run of deletions straight after

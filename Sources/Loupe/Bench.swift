@@ -41,6 +41,11 @@ enum Bench {
             timeView(rendered, wraps: wraps, runs: runs)
         }
 
+        print("-- split")
+        let (split, splitTime) = measure { RenderedDiff(file: file, layout: .split) }
+        print("render attributed string: \(ms(splitTime)) (\(split.text.length) UTF-16 units)")
+        timeView(split, wraps: true, runs: split.syntax?.runs() ?? [])
+
         let (anchor, lookupTime) = measure { rendered.anchor(at: rendered.text.length / 2) }
         print("anchor at midpoint: \(anchor.map(String.init(describing:)) ?? "none") in \(ms(lookupTime))")
     }

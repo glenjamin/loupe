@@ -6,12 +6,15 @@ import SwiftUI
 /// and the review commands for the frontmost PR's shown file.
 struct DiffCommands: Commands {
     @AppStorage(DiffSettings.wrapLinesKey) private var wrapLines = DiffSettings.wrapLinesDefault
+    @AppStorage(DiffSettings.splitDiffKey) private var splitDiff = DiffSettings.splitDiffDefault
     private let windows = ReviewWindows.shared
 
     var body: some Commands {
         CommandGroup(after: .toolbar) {
             Toggle("Wrap Lines", isOn: $wrapLines)
                 .keyboardShortcut("l", modifiers: [.command, .option])
+            Toggle("Split Diff", isOn: $splitDiff)
+                .keyboardShortcut("s", modifiers: [.command, .control])
             Divider()
             // ⌃ rather than ⌘, which picks the PR tab by number.
             Button("Conversation") { windows.shownTab?.section = .conversation }
@@ -42,6 +45,9 @@ struct DiffCommands: Commands {
 enum DiffSettings {
     static let wrapLinesKey = "wrapLines"
     static let wrapLinesDefault = true
+    /// Old beside new, rather than one column; narrow views show unified whatever it says.
+    static let splitDiffKey = "splitDiff"
+    static let splitDiffDefault = false
 }
 
 /// Which PR the window shows, and so which PR the review keys act on. ⌘↓ and `]` mark the shown

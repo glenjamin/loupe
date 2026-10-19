@@ -192,15 +192,16 @@ extension PullRequestTab {
     }
 
     /// The rows of a file a comment can be started on: every line of `file` as shown, those
-    /// revealed around its hunks included, with unchanged lines on the new side as on
-    /// github.com. Nil when only some of the PR's changes are shown, as comments go on the whole
-    /// PR's diff.
+    /// revealed around its hunks included. Unchanged lines take comments on either side, as on
+    /// github.com: the new side in a unified diff, and the side clicked in a split one. Nil when
+    /// only some of the PR's changes are shown, as comments go on the whole PR's diff.
     public func commentableAnchors(of file: FileDiff) -> Set<DiffAnchor>? {
         guard shownChoice == .all else { return nil }
-        return Set(file.hunks.flatMap(\.lines).map { line in
+        return Set(file.hunks.flatMap(\.lines).flatMap { line in
             switch line.kind {
-            case let .context(_, new), let .addition(new): DiffAnchor(path: file.path, side: .right, line: new)
-            case let .deletion(old): DiffAnchor(path: file.path, side: .left, line: old)
+            case let .context(old, new): [DiffAnchor(path: file.path, side: .left, line: old), DiffAnchor(path: file.path, side: .right, line: new)]
+            case let .addition(new): [DiffAnchor(path: file.path, side: .right, line: new)]
+            case let .deletion(old): [DiffAnchor(path: file.path, side: .left, line: old)]
             }
         })
     }
