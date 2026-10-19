@@ -1,4 +1,5 @@
 import Foundation
+import LoupeGit
 import LoupeGitHub
 import LoupeInbox
 import LoupeModel
@@ -205,8 +206,8 @@ extension TabsModel {
     /// Tabs whose waits last until the test elapses `delay` or `showDelay`. Every test's tabs are
     /// made this way so that no check or fetch starts in the background unbidden, landing in the
     /// middle of a slow-running test and changing what it sees.
-    static func manuallyTimed(lists: PullRequestListModel, store: PullRequestStore, client: GitHubClient, notifications: GitHubNotifications, fallbackInterval: Duration = .seconds(60), delay: ManualDelay = ManualDelay(), showDelay: ManualDelay = ManualDelay()) -> TabsModel {
-        TabsModel(lists: lists, store: store, client: client, notifications: notifications, fallbackInterval: fallbackInterval, sleep: { await delay.sleep(for: $0) }, showDelay: { await showDelay.sleep(for: $0) })
+    static func manuallyTimed(lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer = PullRequestDiffer(), client: GitHubClient, notifications: GitHubNotifications, fallbackInterval: Duration = .seconds(60), delay: ManualDelay = ManualDelay(), showDelay: ManualDelay = ManualDelay()) -> TabsModel {
+        TabsModel(lists: lists, store: store, differ: differ, client: client, notifications: notifications, fallbackInterval: fallbackInterval, sleep: { await delay.sleep(for: $0) }, showDelay: { await showDelay.sleep(for: $0) })
     }
 }
 

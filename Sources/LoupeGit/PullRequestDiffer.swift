@@ -12,11 +12,21 @@ public struct PullRequestDiffer: Sendable {
     public var localTimeout: Duration
 
     public var filter: PathFilter
+    /// Where the trees made by replaying a PR's changes onto a new base are written, an object
+    /// directory of Loupe's own shared by every checkout, as checkouts are only fetched into.
+    public var replayedObjects: URL
 
-    public init(fetchTimeout: Duration = .seconds(120), localTimeout: Duration = .seconds(60), filter: PathFilter = .default) {
+    public init(fetchTimeout: Duration = .seconds(120), localTimeout: Duration = .seconds(60), filter: PathFilter = .default, replayedObjects: URL = Self.defaultReplayedObjects) {
         self.fetchTimeout = fetchTimeout
         self.localTimeout = localTimeout
         self.filter = filter
+        self.replayedObjects = replayedObjects
+    }
+
+    /// `~/Library/Caches/Loupe/replayed-objects`: made again whenever it's needed, so the system
+    /// may clear it.
+    public static var defaultReplayedObjects: URL {
+        URL.cachesDirectory.appending(components: "Loupe", "replayed-objects", directoryHint: .isDirectory)
     }
 
     /// Fetches PR `number` of `repository` (`owner/name`) into `refs/loupe/pull/<number>/head`,
@@ -25,13 +35,13 @@ public struct PullRequestDiffer: Sendable {
     public func fetch(number: Int, of repository: String, baseRefName: String, baseRefOid: String?, in checkout: URL) async throws -> FetchedPullRequest {
         let remote = await Git.remotes(of: checkout).matching(repository)?.name ?? "origin"
         let head = "refs/loupe/pull/\(number)/head"
-        try await git(["fetch", "--no-tags", "--no-write-fetch-head", remote, "+refs/pull/\(number)/head:\(head)"], in: checkout, timeout: fetchTimeout)
+        try await fetch([remote, "+refs/pull/\(number)/head:\(head)"], in: checkout)
         let headOid = try await git(["rev-parse", "--verify", "\(head)^{commit}"], in: checkout).trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Without a known oid, the remote-tracking branch the fetch updates stands in.
         let base = baseRefOid ?? "refs/remotes/\(remote)/\(baseRefName)"
         if await !Git.succeeds(["cat-file", "-e", "\(base)^{commit}"], in: checkout) {
-            try await git(["fetch", "--no-tags", "--no-write-fetch-head", remote, baseRefName], in: checkout, timeout: fetchTimeout)
+            try await fetch([remote, baseRefName], in: checkout)
         }
         return FetchedPullRequest(number: number, headOid: headOid, base: base)
     }
@@ -42,16 +52,20 @@ public struct PullRequestDiffer: Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let commits = try await commits(from: mergeBase, to: fetched.headOid, in: checkout)
         let changes = try await diff(DiffRange(base: mergeBase, head: fetched.headOid), in: checkout)
-        return PullRequestDiff(headOid: fetched.headOid, mergeBase: mergeBase, commits: commits, text: changes.text, hidden: changes.hidden)
+        return PullRequestDiff(headOid: fetched.headOid, base: fetched.base, mergeBase: mergeBase, commits: commits, text: changes.text, hidden: changes.hidden)
     }
 
     /// Whether `oid`, an earlier head of PR `repository`, is still in the history of `head`, so
-    /// the changes since it are `oid..head`, or the PR was rebased since. A commit the checkout
-    /// lacks is fetched by oid from the repo's remote, with no ref made for it.
+    /// the changes since it are `oid..head`, or the PR was rebased since. Either commit the
+    /// checkout lacks is fetched by oid from the repo's remote, with no ref made for it.
     public func ancestry(of oid: String, toHead head: String, of repository: String, in checkout: URL) async throws -> Ancestry {
-        if await !Git.succeeds(["cat-file", "-e", "\(oid)^{commit}"], in: checkout) {
+        var missing: [String] = []
+        for commit in [oid, head] where await !Git.succeeds(["cat-file", "-e", "\(commit)^{commit}"], in: checkout) {
+            missing.append(commit)
+        }
+        if !missing.isEmpty {
             let remote = await Git.remotes(of: checkout).matching(repository)?.name ?? "origin"
-            try await git(["fetch", "--no-tags", "--no-write-fetch-head", remote, oid], in: checkout, timeout: fetchTimeout)
+            try await fetch([remote] + missing, in: checkout)
         }
         do {
             try await git(["merge-base", "--is-ancestor", oid, head], in: checkout)
@@ -59,6 +73,35 @@ public struct PullRequestDiffer: Sendable {
         } catch let error as GitError where error.status == 1 {
             return .rebased
         }
+    }
+
+    /// The PR's changes as they were at `oldHead`, replayed onto where `head` branched off
+    /// `base`, so diffing the replay to `head` shows only what the author changed since, and
+    /// nothing `base` gained meanwhile. A file whose old changes don't apply cleanly there takes
+    /// its version at `oldHead` instead, so it shows its whole change since, base's included.
+    /// The replay is made with `git merge-tree`, its objects written to `replayedObjects`.
+    public func replay(_ oldHead: String, onto head: String, base: String, in checkout: URL) async throws -> Replay {
+        async let oldMergeBase = git(["merge-base", base, oldHead], in: checkout)
+        async let newMergeBase = git(["merge-base", base, head], in: checkout)
+        async let headTree = git(["rev-parse", "--verify", "\(head)^{tree}"], in: checkout)
+        async let ownObjects = git(["rev-parse", "--path-format=absolute", "--git-path", "objects"], in: checkout)
+        try FileManager.default.createDirectory(at: replayedObjects, withIntermediateDirectories: true)
+        // Written to Loupe's object directory, reading the checkout's through it.
+        let writing = [
+            "GIT_OBJECT_DIRECTORY": replayedObjects.path(percentEncoded: false),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": try await ownObjects.trimmed,
+        ]
+        let merged = try await Git.run(
+            ["merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", "--merge-base=\(try await oldMergeBase.trimmed)", try await newMergeBase.trimmed, oldHead],
+            in: checkout, environment: writing, timeout: localTimeout, succeedingOn: [0, 1]
+        )
+        // `<tree>NUL`, then for conflicts each conflicted path NUL and an empty field.
+        var fields = merged.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+        let tree = fields.removeFirst()
+        var listed: Set<String> = []
+        let unseparated = fields.prefix { !$0.isEmpty }.filter { listed.insert($0).inserted }
+        let replayed = unseparated.isEmpty ? tree : try await taking(unseparated, from: oldHead, into: tree, in: checkout, environment: writing)
+        return Replay(tree: replayed, head: head, unseparated: unseparated, isUnchanged: replayed == (try await headTree.trimmed))
     }
 
     /// The changes between two commits: the diff of the paths to review, and the hidden paths
@@ -123,7 +166,7 @@ public struct PullRequestDiffer: Sendable {
         let object = "\(oid):\(path)"
         let bytes = Int(try await git(["cat-file", "-s", object], in: checkout).trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
         if bytes > limit { return .tooLarge(bytes: bytes) }
-        return .contents(try await Git.data(["cat-file", "blob", object], in: checkout, timeout: localTimeout))
+        return .contents(try await Git.data(["cat-file", "blob", object], in: checkout, environment: readingReplays, timeout: localTimeout))
     }
 
     /// The commits after `base` up to `head`, oldest first.
@@ -234,11 +277,11 @@ public struct PullRequestDiffer: Sendable {
             }
         }
         guard !undecided.isEmpty else { return hidden }
-        var heads = try await Git.firstLines(of: undecided.map { ("\($0.range.head):\($0.path)", $0.lines) }, in: checkout, timeout: localTimeout)
+        var heads = try await Git.firstLines(of: undecided.map { ("\($0.range.head):\($0.path)", $0.lines) }, in: checkout, environment: readingReplays, timeout: localTimeout)
         // Missing at the range's head means deleted in it.
         let deleted = heads.indices.filter { heads[$0] == nil }
         if !deleted.isEmpty {
-            let before = try await Git.firstLines(of: deleted.map { ("\(undecided[$0].range.base):\(undecided[$0].path)", undecided[$0].lines) }, in: checkout, timeout: localTimeout)
+            let before = try await Git.firstLines(of: deleted.map { ("\(undecided[$0].range.base):\(undecided[$0].path)", undecided[$0].lines) }, in: checkout, environment: readingReplays, timeout: localTimeout)
             for (index, head) in zip(deleted, before) { heads[index] = head }
         }
         for (file, head) in zip(undecided, heads) where filter.excludes(file.path, attributes: file.attributes, head: head) {
@@ -339,10 +382,51 @@ public struct PullRequestDiffer: Sendable {
     /// for every commit of a long PR at the same time.
     private static let concurrentRuns = 8
 
-    @discardableResult
-    private func git(_ arguments: [String], in checkout: URL, input: Data? = nil, timeout: Duration? = nil) async throws -> String {
-        try await Git.run(arguments, in: checkout, input: input, timeout: timeout ?? localTimeout)
+    /// `tree` with each of `paths` as `commit` has it, or without it where `commit` has none,
+    /// written as a tree of its own through an index outside the checkout.
+    private func taking(_ paths: [String], from commit: String, into tree: String, in checkout: URL, environment: [String: String]) async throws -> String {
+        let index = FileManager.default.temporaryDirectory.appending(path: "loupe-replay-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: index) }
+        var environment = environment
+        environment["GIT_INDEX_FILE"] = index.path(percentEncoded: false)
+        func run(_ arguments: [String], input: Data? = nil, literally: Bool = false) async throws -> String {
+            try await Git.run(["-c", "core.splitIndex=false"] + arguments, in: checkout, input: input, environment: literally ? environment.merging(["GIT_LITERAL_PATHSPECS": "1"]) { $1 } : environment, timeout: localTimeout)
+        }
+        _ = try await run(["read-tree", tree])
+        // `<mode> <type> <oid>TAB<path>`, which `--index-info` takes as it is.
+        let listing = try await run(["ls-tree", "-r", "-z", "--full-tree", commit, "--"] + paths, literally: true)
+        var entries: [String: Substring] = [:]
+        for entry in listing.split(separator: "\0") {
+            guard let tab = entry.firstIndex(of: "\t") else { continue }
+            entries[String(entry[entry.index(after: tab)...])] = entry
+        }
+        let removal = "0 \(String(repeating: "0", count: tree.count))\t"
+        let input = Data(paths.map { (entries[$0].map(String.init) ?? removal + $0) + "\0" }.joined().utf8)
+        _ = try await run(["update-index", "-z", "--index-info"], input: input)
+        return try await run(["write-tree"]).trimmed
     }
+
+    /// Lets a local git run read the objects replays have written, as diffing a replay needs.
+    private var readingReplays: [String: String] {
+        let path = replayedObjects.path(percentEncoded: false)
+        return FileManager.default.fileExists(atPath: path) ? ["GIT_ALTERNATE_OBJECT_DIRECTORIES": path] : [:]
+    }
+
+    /// Runs a local git command, which can read replays' objects.
+    @discardableResult
+    private func git(_ arguments: [String], in checkout: URL, input: Data? = nil) async throws -> String {
+        try await Git.run(arguments, in: checkout, input: input, environment: readingReplays, timeout: localTimeout)
+    }
+
+    /// Fetches into the checkout. Replays' objects are kept out of its sight, or it could take
+    /// one for its own and not fetch it, leaving the checkout without it.
+    private func fetch(_ arguments: [String], in checkout: URL) async throws {
+        _ = try await Git.run(["fetch", "--no-tags", "--no-write-fetch-head"] + arguments, in: checkout, timeout: fetchTimeout)
+    }
+}
+
+private extension String {
+    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 }
 
 /// A file's bytes as one commit has them, or its size when it's too big to read.
@@ -361,6 +445,8 @@ public struct FetchedPullRequest: Sendable, Equatable {
 
 public struct PullRequestDiff: Sendable, Equatable {
     public let headOid: String
+    /// The base commit's oid, or the remote-tracking ref standing in for it.
+    public let base: String
     /// Where the PR branched off its base, which the diff is taken from.
     public let mergeBase: String
     /// The PR's commits, oldest first.
@@ -387,6 +473,21 @@ public enum Ancestry: Sendable, Equatable {
     case ancestor
     /// Not in it: the PR was rebased or force-pushed since.
     case rebased
+}
+
+/// An earlier head's changes replayed onto where a later head branched off its base.
+public struct Replay: Sendable, Hashable {
+    /// The replayed tree, in Loupe's object directory or, if nothing needed making, the checkout.
+    public let tree: String
+    public let head: String
+    /// The paths whose old changes didn't apply cleanly, which the tree has as the earlier
+    /// head had them.
+    public let unseparated: [String]
+    /// Whether the replay is the head's own tree: the head was only rebased since.
+    public let isUnchanged: Bool
+
+    /// What the author changed between the two heads.
+    public var range: DiffRange { DiffRange(base: tree, head: head) }
 }
 
 /// What `git diff <base> <head>` compares.

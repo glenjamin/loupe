@@ -12,6 +12,8 @@ import SwiftUI
 struct DiffView: View {
     let file: FileDiff
     let onAnchorClick: (DiffAnchor) -> Void
+    /// Whether its changes since a rebase couldn't be told apart from the rebase's.
+    var isUnseparated = false
     var review: FileReview?
     var markdown: MarkdownPreview?
     var packageLock: PackageLockPreview?
@@ -27,7 +29,7 @@ struct DiffView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            FileHeader(file: file, review: review, markdown: markdown, packageLock: packageLock, image: image, onCollapse: onCollapse)
+            FileHeader(file: file, isUnseparated: isUnseparated, review: review, markdown: markdown, packageLock: packageLock, image: image, onCollapse: onCollapse)
             Divider()
             if let failure = packageLock?.failure {
                 Label("Couldn't compare the packages, so the diff shows: \(failure)", systemImage: "exclamationmark.triangle")
@@ -68,6 +70,7 @@ struct DiffView: View {
 /// The file's path, with its directory dimmed, what happened to it, and its line counts.
 private struct FileHeader: View {
     let file: FileDiff
+    let isUnseparated: Bool
     let review: FileReview?
     let markdown: MarkdownPreview?
     let packageLock: PackageLockPreview?
@@ -85,6 +88,9 @@ private struct FileHeader: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+            }
+            if isUnseparated {
+                UnseparatedBadge(label: "Couldn't separate from rebase")
             }
             Spacer(minLength: 0)
             HStack(spacing: 6) {

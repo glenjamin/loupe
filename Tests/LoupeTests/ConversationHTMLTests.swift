@@ -53,6 +53,29 @@ struct ConversationHTMLTests {
         #expect(page.contains(#">Unresolve conversation</a>"#))
     }
 
+    @Test func aForcePushOffersToShowItsChangesWhenBothHeadsAreKnown() throws {
+        let before = "4cbb2c6d16755ad1fff7442412b242ad6c7a8d33"
+        let after = "fa910661c07e29e142c4b38f8ee93a422abfd51a"
+        var pushed = conversation
+        pushed.items = [
+            TimelineItem(id: "fp1", date: now, actor: Participant(login: "octocat", avatarURL: nil), event: .forcePushed(before: before, after: after)),
+            TimelineItem(id: "fp2", date: now, actor: Participant(login: "octocat", avatarURL: nil), event: .forcePushed(before: nil, after: after)),
+        ]
+        let page = try render(pushed)
+
+        #expect(hrefs(in: page).compactMap(ChangesLink.init(url:)) == [ChangesLink(forcePushFrom: before, to: after)], "the second's earlier head is gone, so it has no link")
+        #expect(page.contains(#"<a class="event-action" href="loupe-changes://force-push/\#(before)/\#(after)">Show changes</a>"#))
+        #expect(page.contains("force-pushed the branch from <code>4cbb2c6</code> to <code>fa91066</code>"))
+    }
+
+    @Test func aChangesLinkCarriesOnlyCommitOids() throws {
+        let link = try #require(ChangesLink(forcePushFrom: "abc123", to: "def456"))
+        #expect(ChangesLink(url: link.url) == link)
+        #expect(ChangesLink(forcePushFrom: "abc", to: "not/an/oid") == nil)
+        #expect(ChangesLink(url: try #require(URL(string: "loupe-changes://force-push/abc"))) == nil)
+        #expect(ChangesLink(url: try #require(URL(string: "loupe-thread://force-push/abc/def"))) == nil)
+    }
+
     @Test func aThreadLinkCarriesAnyThreadId() throws {
         let link = ThreadLink(.reply, thread: "PRRT_kwDO/a+b=")
         #expect(ThreadLink(url: link.url) == link)

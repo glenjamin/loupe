@@ -7,7 +7,7 @@ import WebKit
 /// `Resources/conversation.html` and `conversation.css`. It loads only that page, keeps nothing
 /// and shares no cookies. Links to PRs go to `openPullRequestLink`, those to its review threads
 /// to `openThreadLink`, reactions to `openReactionLink`, "Add a comment…" to `openCommentLink`,
-/// and other links to the default browser.
+/// a force-push's "Show changes" to `openChangesLink`, and other links to the default browser.
 @MainActor
 class GitHubWebPage: NSObject {
     let webView: WKWebView
@@ -19,6 +19,8 @@ class GitHubWebPage: NSObject {
     var openReactionLink: @MainActor (ReactionLink) -> Void = { _ in }
     /// Opens a comment on the PR, as the page's "Add a comment…" asks; set by whoever makes the page.
     var openCommentLink: @MainActor (CommentLink) -> Void = { _ in }
+    /// Shows the changes a force-push's "Show changes" names; set by whoever makes the page.
+    var openChangesLink: @MainActor (ChangesLink) -> Void = { _ in }
     /// Whether the latest page has finished loading, images included.
     private(set) var isLoaded = false
     /// What relative links in the page are relative to.
@@ -92,6 +94,7 @@ extension GitHubWebPage: WKNavigationDelegate, WKUIDelegate {
         if let url = action.request.url, let link = ThreadLink(url: url) { return openThreadLink(link) }
         if let url = action.request.url, let link = ReactionLink(url: url) { return openReactionLink(link) }
         if let url = action.request.url, let link = CommentLink(url: url) { return openCommentLink(link) }
+        if let url = action.request.url, let link = ChangesLink(url: url) { return openChangesLink(link) }
         let inBrowserTab = action.modifierFlags.contains(.command) || action.buttonNumber == middleMouseButton
         followLink(action.request.url, inBrowserTab: inBrowserTab, openPullRequest: openPullRequestLink)
     }

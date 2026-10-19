@@ -212,6 +212,20 @@ actor FakeConversations {
         return commentId
     }
 
+    /// Adds a force-push replacing head `before` with `after` to the end of the PR's timeline,
+    /// as GitHub records one.
+    func forcePush(from before: String, to after: String, on id: String) {
+        let index = timelines[id, default: []].count
+        timelines[id, default: []].append([
+            "__typename": "HeadRefForcePushedEvent",
+            "id": "HRFPE_fake_\(index)",
+            "createdAt": Date.now.formatted(.iso8601),
+            "actor": ["login": "octocat", "avatarUrl": "https://avatars.githubusercontent.com/u/583231?v=4"],
+            "beforeCommit": ["oid": before],
+            "afterCommit": ["oid": after],
+        ])
+    }
+
     /// The markdown of the comment, thread comment or review with `id`, as GitHub has it now.
     func markdown(of id: String) -> String? {
         if let written = markdown[id] { return written }

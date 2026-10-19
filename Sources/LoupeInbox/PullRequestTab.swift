@@ -146,8 +146,15 @@ public final class PullRequestTab: Identifiable {
     /// The head of the PR's diff shown the last time it was opened before this tab, read as the
     /// tab is made, so it stays put while the tab is open whatever's shown meanwhile.
     private let lastOpened: SeenHead?
-    /// Whether the changes since each anchor can be shown, by the range they'd be.
+    /// The force-pushes whose changes the viewer asked to see from the conversation, oldest
+    /// first, kept while the tab is open.
+    private var forcePushes: [ChangesAnchor] = []
+    /// Whether the changes since each anchor can be shown, by the range from the anchor to the
+    /// head they're shown up to.
     private var anchorStates: [DiffRange: AnchorState] = [:]
+    /// For each anchor the PR was rebased from, by the same range, the anchor's changes replayed
+    /// onto the new base, which the changes since are diffed from instead.
+    private var replays: [DiffRange: Replay] = [:]
     private var preparingAnchors: Task<Void, Never>?
     /// Each hidden file's diff once asked for, by range and path.
     private var hiddenFileDiffs: [HiddenFileKey: DiffState<FileDiff>] = [:]
@@ -414,35 +421,48 @@ public final class PullRequestTab: Identifiable {
         await task.value
     }
 
-    /// The earlier heads of the PR the viewer saw that the changes since can be picked from: the
-    /// one their latest submitted review was made against, then the one shown when the PR was
-    /// last opened before this tab. Each only once known and if the head has moved on from it.
+    /// The earlier heads of the PR whose changes since can be picked: the one the viewer's
+    /// latest submitted review was made against, then the one shown when the PR was last opened
+    /// before this tab, each only once known and if the head has moved on from it; then each
+    /// force-push the viewer asked to see from the conversation.
     public var anchors: [ChangesAnchor] {
         guard case let .ready(review) = phase else { return [] }
         let lastReview = conversation?.viewerReview.map { ChangesAnchor(kind: .lastReview, oid: $0.commitOid, at: $0.submittedAt) }
         let lastOpened = lastOpened.map { ChangesAnchor(kind: .lastOpened, oid: $0.headRefOid, at: $0.seenAt) }
-        return [lastReview, lastOpened].compactMap { $0 }.filter { $0.oid != review.headOid }
+        return [lastReview, lastOpened].compactMap { $0 }.filter { $0.oid != review.headOid } + forcePushes
     }
 
     /// Whether the changes since `anchor` can be shown, once it's been looked at.
     public func anchorState(of anchor: ChangesAnchor) -> AnchorState? {
         guard case let .ready(review) = phase else { return nil }
-        return anchorStates[DiffRange(base: anchor.oid, head: review.headOid)]
+        return anchorStates[anchorRange(of: anchor, in: review)]
     }
 
-    /// Looks at each anchor not yet looked at, or that failed, bringing its commit into the
-    /// checkout from the remote if it isn't there: if the head has only gained commits since, its
-    /// changes since are counted and can be shown; if the PR was rebased since, they can't yet.
+    /// The paths in the shown changes whose changes since a head the PR was rebased from
+    /// couldn't be told apart from the rebase's, so they show everything that changed in them,
+    /// their base's changes included. Empty for any other changes.
+    public var unseparatedPaths: Set<String> {
+        guard case let .ready(review) = phase, case let .since(anchor) = shownChoice,
+              let replay = replays[anchorRange(of: anchor, in: review)]
+        else { return [] }
+        return Set(replay.unseparated)
+    }
+
+    /// Looks at each anchor not yet looked at, or that failed, bringing its commits into the
+    /// checkout from the remote if they aren't there. If the head has only gained commits since,
+    /// its changes since are counted and can be shown. If the PR was rebased since, the anchor's
+    /// changes are replayed onto the head's base, and the changes since are from that replay, or
+    /// there are none if the replay is the head itself.
     public func prepareAnchors() async {
         if let preparingAnchors {
             await preparingAnchors.value
             return await prepareAnchors()
         }
         guard case let .ready(review) = phase, let checkout else { return }
-        let ranges = anchors.map { DiffRange(base: $0.oid, head: review.headOid) }.filter { range in
+        let ranges = anchors.map { anchorRange(of: $0, in: review) }.filter { range in
             switch anchorStates[range] {
             case nil, .failed: true
-            case .checking, .ready, .rebased: false
+            case .checking, .ready, .onlyRebased: false
             }
         }
         guard !ranges.isEmpty else { return }
@@ -456,7 +476,14 @@ public final class PullRequestTab: Identifiable {
                         rangeStats.merge(try await differ.stats(of: [range], in: checkout)) { $1 }
                         anchorStates[range] = .ready
                     case .rebased:
-                        anchorStates[range] = .rebased
+                        let replay = try await differ.replay(range.base, onto: range.head, base: review.base, in: checkout)
+                        guard !replay.isUnchanged else {
+                            anchorStates[range] = .onlyRebased
+                            continue
+                        }
+                        rangeStats.merge(try await differ.stats(of: [replay.range], in: checkout)) { $1 }
+                        replays[range] = replay
+                        anchorStates[range] = .ready
                     }
                 } catch {
                     anchorStates[range] = .failed(error.localizedDescription)
@@ -466,6 +493,29 @@ public final class PullRequestTab: Identifiable {
         }
         preparingAnchors = task
         await task.value
+    }
+
+    /// Shows the changes a force-push made, from the head it replaced to the one it pushed, as
+    /// the conversation's "Show changes" asks: the files, with the push a choice of its own in
+    /// the picker while the tab is open. When its changes can't be shown, the picker is opened
+    /// on it to say why.
+    public func showForcePush(from before: String, to after: String) async {
+        section = .files
+        let pushed = conversation?.items.first { item in
+            if case let .forcePushed(from, to) = item.event { from == before && to == after } else { false }
+        }
+        let anchor = ChangesAnchor(kind: .forcePush, oid: before, at: pushed?.date, head: after)
+        if !forcePushes.contains(anchor) {
+            forcePushes.append(anchor)
+            forcePushes.sort { ($0.at ?? .distantPast) < ($1.at ?? .distantPast) }
+        }
+        await load()
+        await prepareAnchors()
+        if anchorState(of: anchor) == .ready {
+            await show(.since(anchor))
+        } else {
+            isPickingCommit = true
+        }
     }
 
     /// A hidden file's diff in the shown changes, once asked for.
@@ -957,8 +1007,13 @@ public final class PullRequestTab: Identifiable {
         switch choice {
         case .all: DiffRange(base: review.mergeBase, head: review.headOid)
         case let .commit(oid): review.commits.first { $0.oid == oid }?.range
-        case let .since(anchor): DiffRange(base: anchor.oid, head: review.headOid)
+        case let .since(anchor): replays[anchorRange(of: anchor, in: review)]?.range ?? anchorRange(of: anchor, in: review)
         }
+    }
+
+    /// From an anchor to the head its changes are shown up to, which names it for looking at.
+    private func anchorRange(of anchor: ChangesAnchor, in review: ReviewDiff) -> DiffRange {
+        DiffRange(base: anchor.oid, head: anchor.head ?? review.headOid)
     }
 
     /// Keeps the shown file if `changes` has it, hidden or not, else shows the first file the
@@ -996,13 +1051,14 @@ public final class PullRequestTab: Identifiable {
             // For the next tab to open on the PR; this one's anchor stays as it was read.
             try? await store.recordSeenHead(diff.headOid, of: id, at: .now)
             lists.reviewProgressChanged(of: id)
-            let review = ReviewDiff(headOid: diff.headOid, mergeBase: diff.mergeBase, commits: diff.commits, changes: ReviewChanges(files: files, hidden: diff.hidden))
+            let review = ReviewDiff(headOid: diff.headOid, base: diff.base, mergeBase: diff.mergeBase, commits: diff.commits, changes: ReviewChanges(files: files, hidden: diff.hidden))
             self.checkout = checkout
             shownChoice = .all
             pendingChoice = nil
             pickedChanges = [:]
             rangeStats = [:]
             anchorStates = [:]
+            replays = [:]
             hiddenFileDiffs = [:]
             packageLockChanges = [:]
             contextExpansions.reset()
@@ -1051,6 +1107,8 @@ public enum DiffStep: Sendable, Equatable {
 
 public struct ReviewDiff: Sendable {
     public let headOid: String
+    /// The base commit's oid, or the remote-tracking ref standing in for it.
+    public let base: String
     public let mergeBase: String
     /// The PR's commits, oldest first, each of which can be shown on its own.
     public let commits: [PullRequestCommit]
@@ -1071,41 +1129,46 @@ public enum ChangesChoice: Hashable, Sendable {
     case all
     /// One commit's, by oid.
     case commit(String)
-    /// The PR's head's since an earlier head the viewer saw.
+    /// Those since an earlier head of the PR, up to its head or a later one.
     case since(ChangesAnchor)
 }
 
-/// An earlier head of the PR the viewer saw, which the changes since can be shown from.
+/// An earlier head of the PR, which the changes since can be shown from.
 public struct ChangesAnchor: Hashable, Sendable {
     public enum Kind: Hashable, Sendable {
         /// The head the viewer's latest submitted review was made against.
         case lastReview
         /// The head shown the last time the viewer opened the PR, before the tab open now.
         case lastOpened
+        /// The head a force-push replaced, up to the head it pushed.
+        case forcePush
     }
 
     public let kind: Kind
     public let oid: String
-    /// When the viewer reviewed or opened it, if known.
+    /// When the viewer reviewed or opened it, or it was force-pushed away, if known.
     public let at: Date?
+    /// The head the changes are shown up to, or nil for the PR's.
+    public let head: String?
 
-    public init(kind: Kind, oid: String, at: Date?) {
+    public init(kind: Kind, oid: String, at: Date?, head: String? = nil) {
         self.kind = kind
         self.oid = oid
         self.at = at
+        self.head = head
     }
 }
 
 /// Whether the changes since an anchor can be shown.
 public enum AnchorState: Sendable, Equatable {
-    /// Its commit is being brought in, or looked at.
+    /// Its commits are being brought in, or looked at.
     case checking
-    /// The head has only gained commits since, and the changes are counted.
+    /// The changes are counted and can be shown: the head has only gained commits since, or the
+    /// PR was rebased since and they're from the anchor's changes replayed onto the new base.
     case ready
-    /// The PR was rebased or force-pushed since, so its changes since would be swamped by its
-    /// base's; a view across a rebase isn't built yet.
-    case rebased
-    /// Why its commit couldn't be fetched or looked at, including git's own message.
+    /// The PR was rebased since without the author changing anything, so there's nothing to show.
+    case onlyRebased
+    /// Why its commits couldn't be fetched or looked at, including git's own message.
     case failed(String)
 }
 

@@ -496,7 +496,7 @@ struct FakePullRequest: Codable, Sendable {
     var updatedAt: String
     var reviewDecision: String?
     let headRefName: String
-    let baseRefName: String
+    var baseRefName: String
     var headRefOid: String
     var baseRefOid: String
     var author: Login?

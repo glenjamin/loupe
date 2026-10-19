@@ -3,7 +3,8 @@ import os
 
 /// Runs git against a checkout. The checkouts are the user's working copies, so diffing never
 /// touches branches, the index or the working tree; the only ref it writes is Loupe's own
-/// `refs/loupe/` namespace. Only `CheckoutSwitcher`, when asked, switches branches.
+/// `refs/loupe/` namespace, and objects it makes itself go to an object directory of Loupe's
+/// own. Only `CheckoutSwitcher`, when asked, switches branches.
 enum Git {
     /// The git Loupe runs: `LOUPE_GIT` if set, else Homebrew's (Apple silicon, then Intel), else
     /// Apple's. Homebrew's is newer and is the one the shell finds, so diffs match the terminal's.
@@ -40,19 +41,23 @@ enum Git {
 
     /// git's stdout, given `input` on stdin and `environment` added to its own. Runs on a
     /// background queue, as it blocks until git exits, and kills git if it outlasts `timeout`.
-    static func run(_ arguments: [String], in directory: URL, input: Data? = nil, environment: [String: String] = [:], timeout: Duration = .seconds(30)) async throws -> String {
+    /// `statuses` are the exit statuses that aren't failures, for commands such as `merge-tree`
+    /// that answer with their status as well as their output.
+    static func run(_ arguments: [String], in directory: URL, input: Data? = nil, environment: [String: String] = [:], timeout: Duration = .seconds(30), succeedingOn statuses: Set<Int32> = [0]) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(with: Result { try runBlocking(arguments, in: directory, input: input, environment: environment, timeout: timeout) })
+                continuation.resume(with: Result {
+                    try runBlocking(arguments, in: directory, input: input, environment: environment, timeout: timeout, succeedingOn: statuses) { String(decoding: $0.readDataToEndOfFile(), as: UTF8.self) }
+                })
             }
         }
     }
 
     /// git's stdout as bytes, for output that isn't text, such as an image's blob.
-    static func data(_ arguments: [String], in directory: URL, timeout: Duration = .seconds(30)) async throws -> Data {
+    static func data(_ arguments: [String], in directory: URL, environment: [String: String] = [:], timeout: Duration = .seconds(30)) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(with: Result { try runBlocking(arguments, in: directory, input: nil, timeout: timeout) { $0.readDataToEndOfFile() } })
+                continuation.resume(with: Result { try runBlocking(arguments, in: directory, input: nil, environment: environment, timeout: timeout) { $0.readDataToEndOfFile() } })
             }
         }
     }
@@ -66,7 +71,7 @@ enum Git {
     /// its `lines` asks for, all read by one `git cat-file --batch`. Only those lines are kept, so
     /// a large file costs only its passage through the pipe. Nil for a name that isn't a blob, or
     /// that has a newline, which batch input can't carry.
-    static func firstLines(of objects: [(name: String, lines: Int)], in directory: URL, timeout: Duration = .seconds(30)) async throws -> [String?] {
+    static func firstLines(of objects: [(name: String, lines: Int)], in directory: URL, environment: [String: String] = [:], timeout: Duration = .seconds(30)) async throws -> [String?] {
         let sendable = objects.filter { !$0.name.contains("\n") }
         guard !sendable.isEmpty else { return objects.map { _ in nil } }
         let input = Data(sendable.map { $0.name + "\n" }.joined().utf8)
@@ -74,7 +79,7 @@ enum Git {
         let heads = try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 continuation.resume(with: Result {
-                    try runBlocking(["cat-file", "--batch"], in: directory, input: input, timeout: timeout) { output in
+                    try runBlocking(["cat-file", "--batch"], in: directory, input: input, environment: environment, timeout: timeout) { output in
                         var reader = BatchReader(lines: lines)
                         while let chunk = try output.read(upToCount: 1 << 16), !chunk.isEmpty { reader.consume(chunk) }
                         return reader.heads
@@ -86,12 +91,8 @@ enum Git {
         return objects.map { $0.name.contains("\n") ? nil : answers.next() ?? nil }
     }
 
-    private static func runBlocking(_ arguments: [String], in directory: URL, input: Data?, environment: [String: String], timeout: Duration) throws -> String {
-        try runBlocking(arguments, in: directory, input: input, environment: environment, timeout: timeout) { String(decoding: $0.readDataToEndOfFile(), as: UTF8.self) }
-    }
-
     /// Runs git, handing its stdout to `read` as it comes, and returns what that makes of it.
-    private static func runBlocking<Output>(_ arguments: [String], in directory: URL, input: Data?, environment extra: [String: String] = [:], timeout: Duration, read: (FileHandle) throws -> Output) throws -> Output {
+    private static func runBlocking<Output>(_ arguments: [String], in directory: URL, input: Data?, environment extra: [String: String] = [:], timeout: Duration, succeedingOn statuses: Set<Int32> = [0], read: (FileHandle) throws -> Output) throws -> Output {
         let process = Process()
         process.executableURL = executable
         process.arguments = ["-C", directory.path(percentEncoded: false)] + arguments
@@ -134,7 +135,7 @@ enum Git {
         if watchdog.fired {
             throw GitError(arguments: arguments, status: nil, message: "timed out after \(timeout). \(message)")
         }
-        guard process.terminationStatus == 0 else {
+        guard statuses.contains(process.terminationStatus) else {
             throw GitError(arguments: arguments, status: process.terminationStatus, message: message)
         }
         return try output.get()

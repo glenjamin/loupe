@@ -1,5 +1,6 @@
 import Foundation
 import LoupeCore
+import LoupeGit
 import LoupeInbox
 import LoupeModel
 import LoupeStore
@@ -84,16 +85,16 @@ struct ChangesSinceTests {
         #expect(try app.store.seenHead(of: pullRequest.id)?.headRefOid == fourth, "recorded for the launch after")
     }
 
-    @Test func aHeadThePullRequestWasRebasedFromIsFetchedButCantBePicked() async throws {
+    @Test func theChangesSinceAHeadThePullRequestWasRebasedFromAreTheAuthorsAlone() async throws {
         let app = try await SinceApp()
         let (pullRequest, first) = try await app.pushPullRequest()
         try await app.conversations.review("COMMENTED", by: FakeGitHub.viewer, on: pullRequest.id, commit: first)
-        // Rebased before the viewer opens it, so the reviewed head was never in their checkout.
-        try await app.repo.git(["commit", "--amend", "--quiet", "-m", "Say hi, rebased"], in: app.repo.contributorDirectory)
-        try await app.repo.push(asPullRequest: pullRequest.number)
-        let rebased = try await app.repo.git(["rev-parse", "HEAD"], in: app.repo.contributorDirectory)
-        try await app.github.edit(pullRequest.id) { $0.headRefOid = rebased }
-        await app.tabs.lists.refresh()
+        // Rebased onto a base that moved on, with more changes, before the viewer opens it, so
+        // the reviewed head was never in their checkout.
+        try await app.moveBase(["README": "An app, documented.\n", "base.go": "package app\n"])
+        try await app.repo.git(["rebase", "--quiet", "main"], in: app.repo.contributorDirectory)
+        try await app.repo.commit(["app.go": "package app\n\nfunc Hello() string { return \"hi\" }\n", "notes.md": "Notes\n"], message: "Say hi")
+        try await app.forcePush(pullRequest)
         let tab = try await app.open(pullRequest)
         #expect(try await !app.repo.has(first))
         let before = try await app.repo.checkoutState()
@@ -102,12 +103,112 @@ struct ChangesSinceTests {
         #expect(anchor.oid == first)
         await tab.prepareAnchors()
 
-        #expect(tab.anchorState(of: anchor) == .rebased)
-        #expect(try await app.repo.has(first), "fetched by oid to tell")
+        #expect(tab.anchorState(of: anchor) == .ready)
+        #expect(try await app.repo.has(first), "fetched by oid")
+        #expect(tab.diffStat(of: .since(anchor)) == DiffStat(files: 2, additions: 2, deletions: 1))
+        await tab.show(.since(anchor))
+        #expect(tab.shownChoice == .since(anchor))
+        #expect(tab.shown?.files.map(\.path) == ["app.go", "notes.md"], "what the base gained isn't among them")
+        let lines = tab.file("app.go")?.hunks.flatMap(\.lines).map(\.text)
+        #expect(lines?.contains("func Hello() string { return \"hey\" }") == true, "from the reviewed version")
+        #expect(lines?.contains("func Hello() string { return \"hi\" }") == true)
+        #expect(tab.unseparatedPaths.isEmpty)
+
         #expect(try await app.repo.checkoutState() == before, "the checkout is left alone")
+    }
+
+    @Test func aFileWhoseChangesDontReplayOntoTheNewBaseShowsAllItsChangesFlagged() async throws {
+        let app = try await SinceApp()
+        let (pullRequest, _) = try await app.pushPullRequest()
+        let reviewed = try await app.pushCommit(["README": "An app that says hey.\n"], to: pullRequest)
+        try await app.conversations.review("APPROVED", by: FakeGitHub.viewer, on: pullRequest.id, commit: reviewed)
+        try await app.moveBase(["README": "The app.\n", "base.go": "package app\n"])
+        // The author resolves README's conflict in rebasing, and changes nothing else.
+        try await app.repo.git(["switch", "--quiet", "-C", "feature", "main"], in: app.repo.contributorDirectory)
+        try await app.repo.commit(["app.go": "package app\n\nfunc Hello() string { return \"hey\" }\n", "README": "The app that says hey.\n"], message: "Say hey, rebased")
+        try await app.forcePush(pullRequest)
+        let tab = try await app.open(pullRequest)
+
+        let anchor = try #require(tab.anchors.first)
+        await tab.prepareAnchors()
+        #expect(tab.anchorState(of: anchor) == .ready)
+        await tab.show(.since(anchor))
+
+        #expect(tab.shown?.files.map(\.path) == ["README"], "app.go replays as it is now, and base.go is the base's")
+        let lines = tab.file("README")?.hunks.flatMap(\.lines).map(\.text)
+        #expect(lines == ["An app that says hey.", "The app that says hey."], "the whole change since, the base's part included")
+        #expect(tab.unseparatedPaths == ["README"])
+        await tab.show(.all)
+        #expect(tab.unseparatedPaths.isEmpty, "flagged only in the changes since")
+
+        let replayed = try app.replayedObjects()
+        #expect(!replayed.isEmpty, "the trees the replay made are Loupe's own")
+        for oid in replayed {
+            #expect(try await !app.repo.has(oid), "and none is written into the checkout")
+        }
+    }
+
+    @Test func aPushThatOnlyRebasedSaysSoAndCantBePicked() async throws {
+        let app = try await SinceApp()
+        let (pullRequest, first) = try await app.pushPullRequest()
+        try await app.conversations.review("COMMENTED", by: FakeGitHub.viewer, on: pullRequest.id, commit: first)
+        try await app.moveBase(["base.go": "package app\n"])
+        try await app.repo.git(["rebase", "--quiet", "main"], in: app.repo.contributorDirectory)
+        let rebased = try await app.forcePush(pullRequest)
+        await app.conversations.forcePush(from: first, to: rebased, on: pullRequest.id)
+        let tab = try await app.open(pullRequest)
+        let before = try await app.repo.checkoutState()
+
+        let anchor = try #require(tab.anchors.first)
+        await tab.prepareAnchors()
+        #expect(tab.anchorState(of: anchor) == .onlyRebased)
         #expect(tab.diffStat(of: .since(anchor)) == nil)
         await tab.show(.since(anchor))
         #expect(tab.shownChoice == .all)
+        #expect(try await app.repo.checkoutState() == before, "the checkout is left alone")
+
+        // Its force-push shows the same, in the picker, as there's nothing to show.
+        await tab.showForcePush(from: first, to: rebased)
+        let push = try #require(tab.anchors.first { $0.kind == .forcePush })
+        #expect(tab.anchorState(of: push) == .onlyRebased)
+        #expect(tab.shownChoice == .all)
+        #expect(tab.section == .files)
+        #expect(tab.isPickingCommit, "the picker says why")
+    }
+
+    @Test func aForcePushInTheConversationShowsWhatThatPushChanged() async throws {
+        let app = try await SinceApp()
+        let (pullRequest, first) = try await app.pushPullRequest()
+        try await app.moveBase(["base.go": "package app\n"])
+        try await app.repo.git(["rebase", "--quiet", "main"], in: app.repo.contributorDirectory)
+        try await app.repo.commit(["app.go": "package app\n\nfunc Hello() string { return \"hi\" }\n"], message: "Say hi")
+        let pushed = try await app.forcePush(pullRequest)
+        await app.conversations.forcePush(from: first, to: pushed, on: pullRequest.id)
+        // The PR has moved on since that push.
+        _ = try await app.pushCommit(["notes.md": "Notes\n"], to: pullRequest)
+        let tab = try await app.open(pullRequest)
+        #expect(tab.section == .conversation)
+
+        await tab.showForcePush(from: first, to: pushed)
+
+        #expect(tab.section == .files)
+        guard case let .since(anchor) = tab.shownChoice else {
+            Issue.record("expected the push's changes, got \(tab.shownChoice)")
+            return
+        }
+        #expect(anchor.kind == .forcePush)
+        #expect(anchor.oid == first)
+        #expect(anchor.head == pushed)
+        #expect(anchor.at != nil, "when it was pushed, from the timeline")
+        #expect(tab.anchors.contains(anchor), "listed in the picker while the tab is open")
+        #expect(tab.shown?.files.map(\.path) == ["app.go"], "not the base's, nor the commit after it")
+        #expect(tab.diffStat(of: .since(anchor)) == DiffStat(files: 1, additions: 1, deletions: 1))
+        let shownApp = try #require(tab.file("app.go"))
+        #expect(tab.commentableAnchors(of: shownApp) == nil, "comments are on the whole PR's diff")
+
+        await tab.reload()
+        #expect(tab.shownChoice == .all)
+        #expect(tab.anchors.contains(anchor))
     }
 
     @Test func aHeadTheRemoteDoesntHaveSaysItCouldntBeFetched() async throws {
@@ -145,7 +246,7 @@ private struct SinceApp {
         github = try FakeGitHub(fixture: "pr-list.json")
         store = try PullRequestStore.inMemory()
         repo = try await FakeRepository()
-        tabs = Self.tabs(github, details, store)
+        tabs = Self.tabs(github, details, store, repo)
         await tabs.lists.refresh()
     }
 
@@ -176,6 +277,27 @@ private struct SinceApp {
         return commit
     }
 
+    /// Commits to the base branch, `main`, and pushes it, leaving the contributor on the PR's
+    /// branch, `feature`.
+    func moveBase(_ files: [String: String]) async throws {
+        try await repo.switchTo("main")
+        try await repo.commit(files, message: "Move the base on")
+        try await repo.push()
+        try await repo.switchTo("feature")
+    }
+
+    /// Force-pushes the contributor's branch as the PR's head, onto `main` as it is now, as after
+    /// a rebase, and returns the head.
+    @discardableResult
+    func forcePush(_ pullRequest: PullRequestSummary) async throws -> String {
+        try await repo.push(asPullRequest: pullRequest.number)
+        let head = try await repo.git(["rev-parse", "HEAD"], in: repo.contributorDirectory)
+        let base = try await repo.git(["rev-parse", "main"], in: repo.contributorDirectory)
+        try await github.edit(pullRequest.id) { $0.headRefOid = head; $0.baseRefOid = base; $0.baseRefName = "main" }
+        await tabs.lists.refresh()
+        return head
+    }
+
     func open(_ pullRequest: PullRequestSummary) async throws -> PullRequestTab {
         tabs.open(pullRequest)
         let tab = try #require(tabs.tab(id: pullRequest.id))
@@ -185,12 +307,28 @@ private struct SinceApp {
 
     /// Fresh models over the same store, as on the next launch.
     func relaunch() -> TabsModel {
-        Self.tabs(github, details, store)
+        Self.tabs(github, details, store, repo)
     }
 
-    private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore) -> TabsModel {
+    /// The oids of the objects replays have written.
+    func replayedObjects() throws -> [String] {
+        let directory = Self.replayedObjects(of: repo)
+        let files = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        return files.compactMap { file in
+            let fanOut = file.deletingLastPathComponent().lastPathComponent
+            return fanOut.count == 2 ? fanOut + file.lastPathComponent : nil
+        }
+    }
+
+    private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore, _ repo: FakeRepository) -> TabsModel {
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
-        return .manuallyTimed(lists: lists, store: store, client: details.client(), notifications: github.notifications())
+        let differ = PullRequestDiffer(replayedObjects: replayedObjects(of: repo))
+        return .manuallyTimed(lists: lists, store: store, differ: differ, client: details.client(), notifications: github.notifications())
+    }
+
+    /// Beside the repo, so it goes when the repo does.
+    private static func replayedObjects(of repo: FakeRepository) -> URL {
+        repo.root.appending(path: "replayed-objects", directoryHint: .isDirectory)
     }
 }
 

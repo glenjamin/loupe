@@ -80,7 +80,7 @@ enum SnapshotRun {
             for tab in tabs.tabs { Task { await tab.load() } }
             await wait(until: deadline) { tabs.tabs.allSatisfy { $0.phase.isSettled(holding: hold.step) } }
             // LOUPE_SNAPSHOT_TAB picks each PR's section; a commit or file to show needs the files.
-            if environment["LOUPE_SNAPSHOT_COMMIT"] != nil || environment["LOUPE_SNAPSHOT_FILE"] != nil || environment["LOUPE_SNAPSHOT_OPEN_COMMITS"] == "1" || environment["LOUPE_SNAPSHOT_HOLD_COMMIT"] != nil {
+            if environment["LOUPE_SNAPSHOT_COMMIT"] != nil || environment["LOUPE_SNAPSHOT_FILE"] != nil || environment["LOUPE_SNAPSHOT_OPEN_COMMITS"] == "1" || environment["LOUPE_SNAPSHOT_HOLD_COMMIT"] != nil || environment["LOUPE_SNAPSHOT_SINCE"] != nil {
                 for tab in tabs.tabs { tab.section = .files }
             } else if let section = environment["LOUPE_SNAPSHOT_TAB"].flatMap(ReviewSection.init(named:)) {
                 for tab in tabs.tabs { tab.section = section }
@@ -111,6 +111,19 @@ enum SnapshotRun {
                 for tab in tabs.tabs {
                     guard case .ready(let review) = tab.phase, let commit = review.commits.picked(by: wanted) else { continue }
                     await tab.show(.commit(commit.oid))
+                }
+            }
+            // LOUPE_SNAPSHOT_SINCE=review or =opened shows the changes since the viewer's last
+            // review or last opening, once the conversation has brought the review's head.
+            if let wanted = environment["LOUPE_SNAPSHOT_SINCE"] {
+                for tab in tabs.tabs {
+                    guard case .ready = tab.phase else { continue }
+                    await wait(until: .now + 10) { tab.isConversationSettled }
+                    await tab.prepareAnchors()
+                    printAnchors(of: tab)
+                    guard let anchor = tab.anchors.first(where: { $0.kind == (wanted == "opened" ? .lastOpened : .lastReview) }) else { continue }
+                    await tab.show(.since(anchor))
+                    printShownChanges(of: tab)
                 }
             }
             // LOUPE_SNAPSHOT_FILE picks the first file whose path contains it, hidden ones after
@@ -354,6 +367,11 @@ enum SnapshotRun {
                 // =reply its first "Reply…", and snapshots the conversation and what the click showed.
                 if let wanted = environment["LOUPE_SNAPSHOT_SHOW_THREAD"] {
                     for url in try await saveSnapshotsOfShownThreads(replying: wanted == "reply", in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
+                // LOUPE_SNAPSHOT_FORCE_PUSH=1 clicks each conversation's first force-push "Show
+                // changes" and snapshots the conversation and the changes it showed.
+                if environment["LOUPE_SNAPSHOT_FORCE_PUSH"] == "1" {
+                    for url in try await saveSnapshotsOfForcePushes(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
                 // LOUPE_SNAPSHOT_COMMENT_PR=1 clicks each conversation's "Add a comment…" and
                 // snapshots the composer it opens. Nothing is typed or sent.
@@ -726,9 +744,7 @@ private func saveSnapshotsOfCommitLists(in windows: WindowManager, to directory:
             try? await Task.sleep(for: .milliseconds(50))
         }
         await tab.prepareAnchors()
-        for anchor in tab.anchors {
-            print("\(tab.title): since \(anchor.kind) at \(anchor.oid.prefix(7)): \(tab.anchorState(of: anchor).map(String.init(describing:)) ?? "not looked at")")
-        }
+        printAnchors(of: tab)
         windows.select(tab.id)
         try? await Task.sleep(for: .milliseconds(300))
         tab.isPickingCommit = true
@@ -903,6 +919,58 @@ private func saveSnapshotsOfShownThreads(replying: Bool, in windows: WindowManag
         try await saveSnapshot(of: window, to: shown)
         page.closeReply()
         activity.closeConversationReply()
+        written += [conversation, shown]
+    }
+    windows.select(selected)
+    return written
+}
+
+/// On each PR's conversation with a force-push both of whose heads are known, scrolls to the
+/// first one's "Show changes" and writes `force-push-conversation-<title>.png`, clicks it in the
+/// page so it goes through the web view's navigation as a real click does, waits for the push's
+/// changes, prints them and writes `force-push-<title>.png`, with the picker moved back under its
+/// button if the click opened it to say why they can't be shown.
+@MainActor
+private func saveSnapshotsOfForcePushes(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    let link = "a.event-action"
+    var written: [URL] = []
+    for tab in windows.tabs.tabs where tab.conversation != nil {
+        tab.section = .conversation
+        windows.select(tab.id)
+        let page = ConversationPage.page(for: tab)
+        let deadline = Date.now.addingTimeInterval(10)
+        while Date.now < deadline, !page.isLoaded { try? await Task.sleep(for: .milliseconds(100)) }
+        let found = try? await page.webView.evaluateJavaScript(
+            "(() => { const link = document.querySelector('\(link)'); if (!link) return false; link.closest('.item').scrollIntoView({ block: 'center' }); return true })()",
+            in: nil, contentWorld: .defaultClient
+        )
+        guard found as? Bool == true else {
+            print("\(tab.title): no \(link) to click")
+            continue
+        }
+        try? await Task.sleep(for: .milliseconds(500))
+        let title = sanitised(windows.title(of: tab.id))
+        let conversation = directory.appending(path: "force-push-conversation-\(title).png")
+        try await saveSnapshot(of: window, to: conversation)
+        _ = try? await page.webView.evaluateJavaScript("document.querySelector('\(link)').click()", in: nil, contentWorld: .defaultClient)
+        // Fetching either head and replaying can take a while on a big repo.
+        let settled = Date.now.addingTimeInterval(60)
+        while Date.now < settled, !(tab.section == .files && tab.pendingChoice == nil && (tab.shownChoice != .all || tab.isPickingCommit)) {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        printAnchors(of: tab)
+        printShownChanges(of: tab)
+        try? await Task.sleep(for: .milliseconds(500))
+        if tab.isPickingCommit, let root = window.contentView,
+           let picker = descendants(of: root).first(where: { $0 is CommitPickerMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }) {
+            placePopover(under: picker, in: window)
+        }
+        let shown = directory.appending(path: "force-push-\(title).png")
+        try await saveSnapshot(of: window, to: shown)
+        tab.isPickingCommit = false
         written += [conversation, shown]
     }
     windows.select(selected)
@@ -1626,6 +1694,23 @@ private func editorPlan(for tab: PullRequestTab) async -> String {
         state = "refused: \(error.localizedDescription)"
     }
     return "\(tab.title): editor: \(editor.name), branch \(pullRequest.headRefName), checkout \(checkout.path(percentEncoded: false)), \(state)"
+}
+
+/// Each earlier head the tab offers the changes since, and whether they can be shown.
+@MainActor
+private func printAnchors(of tab: PullRequestTab) {
+    for anchor in tab.anchors {
+        let head = anchor.head.map { " to \($0.prefix(7))" } ?? ""
+        print("\(tab.title): since \(anchor.kind) at \(anchor.oid.prefix(7))\(head): \(tab.anchorState(of: anchor).map(String.init(describing:)) ?? "not looked at")")
+    }
+}
+
+/// Which changes the tab shows, their files, and those that couldn't be told apart from a rebase.
+@MainActor
+private func printShownChanges(of tab: PullRequestTab) {
+    let files = if case let .ready(changes)? = tab.shownChanges { changes.files.map(\.path).joined(separator: ", ") } else { "not diffed" }
+    let unseparated = tab.unseparatedPaths.sorted().joined(separator: ", ")
+    print("\(tab.title): showing \(tab.shownChoice), section \(tab.section), files \(files), unseparated [\(unseparated)], stat \(tab.diffStat(of: tab.shownChoice).map(String.init(describing:)) ?? "none")")
 }
 
 /// A comment for `LOUPE_SNAPSHOT_PREVIEW` to preview, with the markdown comments use most.

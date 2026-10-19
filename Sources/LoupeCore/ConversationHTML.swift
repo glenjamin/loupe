@@ -77,7 +77,10 @@ public enum ConversationHTML {
         case .commit:
             return ""
         case let .forcePushed(before, after):
-            return event(item, now: now, icon: "↻", text: "force-pushed the branch from \(sha(before)) to \(sha(after))")
+            // Its changes are shown in the app, which needs both heads to find them.
+            let show = before.flatMap { before in after.flatMap { ChangesLink(forcePushFrom: before, to: $0) } }
+            let action = show.map { #"<a class="event-action" href="\#(escape($0.url.absoluteString))">Show changes</a>"# } ?? ""
+            return event(item, now: now, icon: "↻", text: "force-pushed the branch from \(sha(before)) to \(sha(after))", action: action)
         case let .merged(commit, into):
             return event(item, now: now, icon: "⇥", text: "merged \(sha(commit)) into <code>\(escape(into))</code>", kind: "merged")
         case .closed:
@@ -197,8 +200,8 @@ public enum ConversationHTML {
         return #"<section class="item commits"><span class="icon">⎇</span><ul>\#(rows)</ul></section>"# + "\n"
     }
 
-    private static func event(_ item: TimelineItem, now: Date, icon: String, text: String, kind: String = "") -> String {
-        #"<div class="item event \#(kind)"><span class="icon">\#(icon)</span>\#(avatar(item.actor, size: 20))<span>\#(login(item.actor)) \#(text) \#(time(item.date, now: now))</span></div>"# + "\n"
+    private static func event(_ item: TimelineItem, now: Date, icon: String, text: String, kind: String = "", action: String = "") -> String {
+        #"<div class="item event \#(kind)"><span class="icon">\#(icon)</span>\#(avatar(item.actor, size: 20))<span>\#(login(item.actor)) \#(text) \#(time(item.date, now: now))</span>\#(action)</div>"# + "\n"
     }
 
     private static func checks(_ checks: [CheckContext]) -> String {
@@ -311,6 +314,41 @@ public enum ConversationHTML {
             }
         }
         return escaped
+    }
+}
+
+/// A force-push's "Show changes" in the conversation page, which shows the files with what the
+/// push changed picked. Caught by its web view as `ThreadLink`s are.
+public struct ChangesLink: Sendable, Equatable {
+    /// The head the push replaced.
+    public let before: String
+    /// The head it pushed.
+    public let after: String
+
+    /// Nil unless both are commit oids, the only thing the link carries.
+    public init?(forcePushFrom before: String, to after: String) {
+        guard Self.isOid(before), Self.isOid(after) else { return nil }
+        self.before = before
+        self.after = after
+    }
+
+    /// The link a page names, if it's one of these.
+    public init?(url: URL) {
+        let oids = url.path(percentEncoded: false).split(separator: "/")
+        guard url.scheme == Self.scheme, url.host() == "force-push", oids.count == 2 else { return nil }
+        self.init(forcePushFrom: String(oids[0]), to: String(oids[1]))
+    }
+
+    /// `loupe-changes://force-push/<before>/<after>`.
+    public var url: URL {
+        // Both are hex, so this always parses.
+        URL(string: "\(Self.scheme)://force-push/\(before)/\(after)")!
+    }
+
+    private static let scheme = "loupe-changes"
+
+    private static func isOid(_ text: String) -> Bool {
+        !text.isEmpty && text.allSatisfy(\.isHexDigit)
     }
 }
 

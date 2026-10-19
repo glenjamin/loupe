@@ -424,7 +424,7 @@ struct FileDetail: View {
     private func diffView(_ file: FileDiff) -> some View {
         let shown = tab.expandedFile(file)
         return DiffView(
-            file: shown, onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file), markdown: tab.markdownPreview(of: file),
+            file: shown, onAnchorClick: { anchor in print("clicked \(anchor)") }, isUnseparated: tab.unseparatedPaths.contains(file.path), review: review(of: file), markdown: tab.markdownPreview(of: file),
             packageLock: tab.packageLockPreview(of: file), image: tab.imagePreview(of: file),
             expandable: tab.expandableContext(of: file), onExpand: { expansion in Task { await tab.expandContext(of: file, expansion) } },
             onCollapse: tab.hasRevealedContext(of: file) ? { tab.collapseContext(of: file) } : nil,
@@ -539,7 +539,7 @@ struct CommitPicker: View {
     private var shownLabel: Text {
         switch tab.pendingChoice ?? tab.shownChoice {
         case let .since(anchor):
-            return Text(verbatim: anchorTitle(anchor.kind))
+            return Text(verbatim: anchorTitle(anchor))
         case let .commit(oid):
             if let commit = commits.first(where: { $0.oid == oid }) {
                 return Text(verbatim: String(commit.oid.prefix(7))).monospaced() + Text(verbatim: "  \(commit.headline)")
@@ -552,9 +552,10 @@ struct CommitPicker: View {
 }
 
 /// The choices of changes to show, each with its diff-stat, the shown one ticked: the whole PR's,
-/// then those since the viewer last reviewed it or last opened it, then each commit's. A click
-/// picks one; the arrow keys move between them and Return picks. The changes since a head the PR
-/// was rebased from can't be picked yet, and say so when hovered.
+/// then those since the viewer last reviewed it or last opened it, and those of force-pushes
+/// asked for from the conversation, then each commit's. A click picks one; the arrow keys move
+/// between them and Return picks. Changes that turn out to be none, as after only a rebase, or
+/// that can't be fetched, can't be picked, and say why when hovered.
 struct CommitList: View {
     @Bindable var tab: PullRequestTab
     let commits: [PullRequestCommit]
@@ -617,8 +618,9 @@ struct CommitList: View {
     }
 
     /// The changes since an earlier head: named for how the viewer saw it, its stat, when they
-    /// saw it and its short oid. Until they can be shown it's dimmed and can't be picked; when
-    /// they can't be at all, the row says why in brief, and in full when hovered.
+    /// saw it and its short oid, which a force-push's names already have. Until they can be
+    /// shown it's dimmed and can't be picked; when they can't be at all, the row says why in
+    /// brief, and in full when hovered.
     private func anchorRow(_ anchor: ChangesAnchor) -> some View {
         let choice = ChangesChoice.since(anchor)
         let state = tab.anchorState(of: anchor)
@@ -626,14 +628,14 @@ struct CommitList: View {
         return HStack(alignment: .firstTextBaseline, spacing: 6) {
             tick(choice)
             VStack(alignment: .leading, spacing: 3) {
-                Text(verbatim: anchorTitle(anchor.kind))
+                Text(verbatim: anchorTitle(anchor))
                     .foregroundStyle(isReady ? .primary : .tertiary)
                 HStack(spacing: 8) {
                     switch state {
                     case .ready:
                         stat(of: choice)
-                    case .rebased:
-                        Label("Rebased since", systemImage: "info.circle")
+                    case .onlyRebased:
+                        Label(anchor.kind == .forcePush ? "Only rebased, no changes" : "Only rebased since, no changes", systemImage: "info.circle")
                     case .failed:
                         Label("Couldn't fetch \(String(anchor.oid.prefix(7)))", systemImage: "exclamationmark.triangle")
                     case .checking, nil:
@@ -645,9 +647,11 @@ struct CommitList: View {
                         Text(verbatim: "\(anchorVerb(anchor.kind)) \(at.formatted(.relative(presentation: .named)))")
                             .foregroundStyle(.tertiary)
                     }
-                    Text(verbatim: String(anchor.oid.prefix(7)))
-                        .monospaced()
-                        .foregroundStyle(.tertiary)
+                    if anchor.kind != .forcePush {
+                        Text(verbatim: String(anchor.oid.prefix(7)))
+                            .monospaced()
+                            .foregroundStyle(.tertiary)
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -656,7 +660,7 @@ struct CommitList: View {
         .padding(.vertical, 3)
         .contentShape(Rectangle())
         .background {
-            if let help = AnchorHelp(anchor: anchor, state: state) {
+            if let help = HoverHelp(anchor: anchor, state: state) {
                 HoverPopoverAnchor(content: help)
             }
         }
@@ -688,31 +692,43 @@ struct CommitList: View {
     }
 }
 
-/// Why the changes since an earlier head can't be shown, in a popover as the checks' is, opened
-/// by resting the pointer on its row. Nil when they can, or until that's known.
-private struct AnchorHelp: HoverPopoverContent {
+/// A title and its explanation, in a popover as the checks' is, opened by resting the pointer on
+/// what it explains.
+struct HoverHelp: HoverPopoverContent {
     let title: String
     let detail: String
     var onPointerOver: (Bool) -> Void = { _ in }
     var onOpen: () -> Void = {}
 
+    init(title: String, detail: String) {
+        self.title = title
+        self.detail = detail
+    }
+
+    /// Why the changes since an earlier head can't be shown. Nil when they can, or until that's
+    /// known.
     init?(anchor: ChangesAnchor, state: AnchorState?) {
         let oid = String(anchor.oid.prefix(7))
-        let when = switch anchor.kind {
-        case .lastReview: "you last reviewed it, at \(oid)"
-        case .lastOpened: "you last opened it, at \(oid)"
+        let since = switch anchor.kind {
+        case .lastReview: "Only rebased since you last reviewed it, at \(oid)"
+        case .lastOpened: "Only rebased since you last opened it, at \(oid)"
+        case .forcePush: "Only rebased by this push"
         }
         switch state {
-        case .rebased:
-            title = "Rebased since \(when)"
-            detail = "Its changes since then would be mixed with those from its base. Showing the changes across a rebase isn't built yet."
+        case .onlyRebased:
+            self.init(title: since, detail: "It was moved onto a newer base without any change of its own, so there's nothing new to review.")
         case let .failed(message):
-            title = "Couldn't fetch \(oid) from the remote"
-            detail = message
+            self.init(title: "Couldn't fetch \(oid) from the remote", detail: message)
         case .ready, .checking, nil:
             return nil
         }
     }
+
+    /// Why a file's changes since an earlier head include its base's.
+    static let unseparated = HoverHelp(
+        title: "Couldn't separate from the rebase",
+        detail: "The PR was rebased since, and this file's earlier changes don't apply cleanly to its new base, so this shows everything that changed in it since, its base's changes included."
+    )
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -791,7 +807,7 @@ struct ReviewFileList: View {
     }
 
     private func row(_ path: String, help: String? = nil, @ViewBuilder trailing: () -> some View) -> some View {
-        ReviewFileRow(path: path, unresolvedThreads: tab.unresolvedThreadCount(of: path) ?? 0, state: tab.viewedState(of: path), trailing: trailing())
+        ReviewFileRow(path: path, unresolvedThreads: tab.unresolvedThreadCount(of: path) ?? 0, state: tab.viewedState(of: path), isUnseparated: tab.unseparatedPaths.contains(path), trailing: trailing())
             // SwiftUI's List doesn't tell a row it's on the accent-coloured selection, so the
             // row is told here: selected, with the list focused in the key window.
             .environment(\.backgroundProminence, isEmphasized(path) ? .increased : .standard)
@@ -870,6 +886,8 @@ struct ReviewFileRow<Trailing: View>: View {
     let path: String
     let unresolvedThreads: Int
     let state: FileViewedState
+    /// Whether its changes since a rebase couldn't be told apart from the rebase's.
+    var isUnseparated = false
     let trailing: Trailing
     @Environment(\.backgroundProminence) private var prominence
 
@@ -893,6 +911,9 @@ struct ReviewFileRow<Trailing: View>: View {
                     .help("Changed since you reviewed it")
                     .fixedSize()
             }
+            if isUnseparated {
+                UnseparatedBadge(label: "rebase")
+            }
             Spacer(minLength: 4)
             // A clear view holds the slot, as an empty one takes no room in a stack.
             Color.clear
@@ -912,6 +933,23 @@ struct ReviewFileRow<Trailing: View>: View {
 
     private var dimming: Double {
         state.isViewed && prominence != .increased ? 0.5 : 1
+    }
+}
+
+/// Marks a file whose changes since a rebase couldn't be told apart from the rebase's, so its
+/// diff includes its base's changes, explained when hovered.
+struct UnseparatedBadge: View {
+    let label: String
+
+    var body: some View {
+        Text(verbatim: label)
+            .font(.caption2)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .foregroundStyle(.secondary)
+            .overlay(Capsule().strokeBorder(.secondary.opacity(0.5)))
+            .fixedSize()
+            .background(HoverPopoverAnchor(content: HoverHelp.unseparated))
     }
 }
 
@@ -1094,19 +1132,21 @@ private func allCommitsTitle(_ count: Int) -> String {
     }
 }
 
-/// How the changes since an earlier head the viewer saw are named in the picker.
-private func anchorTitle(_ kind: ChangesAnchor.Kind) -> String {
-    switch kind {
+/// How the changes since an earlier head are named in the picker.
+private func anchorTitle(_ anchor: ChangesAnchor) -> String {
+    switch anchor.kind {
     case .lastReview: "Since your last review"
     case .lastOpened: "Since you last opened it"
+    case .forcePush: "Force-push \(anchor.oid.prefix(7)) → \(anchor.head?.prefix(7) ?? "head")"
     }
 }
 
-/// What the viewer did when they saw an earlier head, before when they did it.
+/// What happened when the earlier head was seen or replaced, before when it did.
 private func anchorVerb(_ kind: ChangesAnchor.Kind) -> String {
     switch kind {
     case .lastReview: "reviewed"
     case .lastOpened: "opened"
+    case .forcePush: "pushed"
     }
 }
 
