@@ -300,12 +300,27 @@ enum SnapshotRun {
                 }
                 windows.select(tabs.selected)
             }
-            // LOUPE_SNAPSHOT_DOUBLE_CLICK=<line> double-clicks the code of that new line's row in
+            // LOUPE_SNAPSHOT_MIDDLE_CLICK=<line> middle-clicks the code of that new line's row in
             // each shown diff, which starts a comment there as its "+" would. Nothing is typed or sent.
+            if let line = environment["LOUPE_SNAPSHOT_MIDDLE_CLICK"].flatMap(Int.init) {
+                for tab in tabs.tabs {
+                    windows.select(tab.id)
+                    try? await Task.sleep(for: .milliseconds(800))
+                    await wait(until: .now + 10) { windows.mainWindow.flatMap(visibleDiff(in:))?.rendered?.rowAnchors.contains { $0 != nil } == true }
+                    guard let window = windows.mainWindow else { continue }
+                    middleClickRow(ofNewLine: line, in: window)
+                    try? await Task.sleep(for: .milliseconds(800))
+                    print("middle-clicking new line \(line): \(tab.threadActivity.newComment.map { "a comment is open on \($0.anchor.side) line \($0.anchor.line)" } ?? "no comment is open")")
+                }
+                windows.select(tabs.selected)
+            }
+            // LOUPE_SNAPSHOT_DOUBLE_CLICK=<line> double-clicks the code of that new line's row in
+            // each shown diff, which selects a word there as in any text view.
             if let line = environment["LOUPE_SNAPSHOT_DOUBLE_CLICK"].flatMap(Int.init) {
                 for tab in tabs.tabs {
                     windows.select(tab.id)
                     try? await Task.sleep(for: .milliseconds(800))
+                    await wait(until: .now + 10) { windows.mainWindow.flatMap(visibleDiff(in:))?.rendered?.rowAnchors.contains { $0 != nil } == true }
                     guard let window = windows.mainWindow else { continue }
                     doubleClickRow(ofNewLine: line, in: window)
                     try? await Task.sleep(for: .milliseconds(800))
@@ -602,6 +617,21 @@ enum SnapshotRun {
         textView.mouseMoved(with: event)
         print("hovering new line \(line): the comment button is \(textView.commentButton.isHidden ? "hidden" : "shown")")
         return !textView.commentButton.isHidden
+    }
+
+    /// Scrolls the shown diff so the row of a new line is a little way down, then middle-clicks
+    /// its code through the window as the mouse would.
+    private static func middleClickRow(ofNewLine line: Int, in window: NSWindow) {
+        guard let (_, point) = scrollToRow(ofNewLine: line, in: window) else {
+            return print("no row for new line \(line) to middle-click")
+        }
+        for type in [NSEvent.EventType.otherMouseDown, .otherMouseUp] {
+            // AppKit's factory can't name the button, so the event is given the middle one through Quartz.
+            guard let made = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .otherMouseDown ? 1 : 0)?.cgEvent else { return }
+            made.setIntegerValueField(.mouseEventButtonNumber, value: Int64(CGMouseButton.center.rawValue))
+            guard let event = NSEvent(cgEvent: made) else { return }
+            window.sendEvent(event)
+        }
     }
 
     /// Scrolls the shown diff so the row of a new line is a little way down, then double-clicks

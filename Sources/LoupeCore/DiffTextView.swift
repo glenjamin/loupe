@@ -86,7 +86,7 @@ public final class DiffTextView: NSTextView {
         let size = commentButton.intrinsicContentSize
         commentButton.frame = NSRect(x: textContainerOrigin.x + 2, y: fragment.minY + textContainerOrigin.y + (fragment.height - size.height) / 2, width: size.width, height: size.height)
         hoveredAnchor = anchor
-        commentButton.toolTip = "Comment on line \(anchor.line) (or double-click the row)"
+        commentButton.toolTip = "Comment on line \(anchor.line) (or middle-click the row)"
     }
 
     /// The row under a point, gutter or code, and its anchor, when a comment can be started there.
@@ -211,13 +211,6 @@ public final class DiffTextView: NSTextView {
             onExpand?(expansion)
             return
         }
-        // Double-clicking a row that takes comments starts one, as its "+" does, instead of
-        // selecting a word; elsewhere a double-click selects as usual.
-        if event.clickCount == 2, let (_, anchor) = commentableRow(at: point) {
-            setSelectedRange(NSRange(location: selectedRange().location, length: 0))
-            onComment?(anchor)
-            return
-        }
         super.mouseDown(with: event)
         // super runs the selection-tracking loop, so a drag has finished by here; only a plain click reports.
         guard selectedRange().length == 0, event.clickCount == 1, let rendered else { return }
@@ -225,6 +218,15 @@ public final class DiffTextView: NSTextView {
         if let anchor = rendered.anchor(at: min(index, rendered.text.length - 1)) {
             onAnchorClick?(anchor)
         }
+    }
+
+    /// A middle click on a row that takes comments starts one, as its "+" does, so a reviewer
+    /// needn't aim for the "+" at the row's edge.
+    public override func otherMouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 2, let (_, anchor) = commentableRow(at: convert(event.locationInWindow, from: nil)) else {
+            return super.otherMouseDown(with: event)
+        }
+        onComment?(anchor)
     }
 
     public override func writeSelection(to pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {

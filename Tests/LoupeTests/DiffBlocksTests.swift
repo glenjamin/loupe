@@ -98,6 +98,53 @@ struct DiffBlocksTests {
         try hover(onRowContaining: "transfermanager", in: view)
         #expect(view.commentButton.isHidden, "nothing takes comments")
     }
+
+    @Test func middleClickingARowThatTakesACommentStartsOneThere() throws {
+        let goMod = try fixtureFile("go.mod")
+        let view = DiffTextView.make()
+        view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        view.show(RenderedDiff(file: goMod))
+        view.layoutManager?.ensureLayout(for: try #require(view.textContainer))
+        let added = DiffAnchor(path: "go.mod", side: .right, line: 10)
+        view.commentableAnchors = [added]
+        var asked: [DiffAnchor] = []
+        view.onComment = { asked.append($0) }
+        let text = view.string as NSString
+        let code = text.range(of: "transfermanager")
+        let row = try #require(view.rendered?.row(at: code.location))
+        let gutter = NSRange(location: try #require(view.rendered).rowStarts[row], length: 1)
+
+        try middleClick(on: code, in: view)
+        #expect(asked == [added], "its code")
+        try middleClick(on: gutter, in: view)
+        #expect(asked == [added, added], "its gutter")
+
+        asked = []
+        try middleClick(on: text.range(of: "require ("), in: view)
+        #expect(asked.isEmpty, "a row it can't take a comment on")
+        try middleClick(on: text.range(of: "@@ -7,7"), in: view)
+        #expect(asked.isEmpty, "a hunk header")
+    }
+
+    @Test func doubleClickingARowThatTakesACommentSelectsAWord() throws {
+        let goMod = try fixtureFile("go.mod")
+        let view = DiffTextView.make()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        window.contentView = view
+        view.show(RenderedDiff(file: goMod))
+        view.layoutManager?.ensureLayout(for: try #require(view.textContainer))
+        view.commentableAnchors = [DiffAnchor(path: "go.mod", side: .right, line: 10)]
+        var asked: [DiffAnchor] = []
+        view.onComment = { asked.append($0) }
+        let word = (view.string as NSString).range(of: "transfermanager")
+
+        try doubleClick(on: word, in: view)
+        #expect(asked.isEmpty)
+        #expect(view.selectedRange() == word)
+    }
 }
 
 /// Sends the mouse moving over the middle of the text on a row, as hovering does.
@@ -117,4 +164,41 @@ private func top(ofRow row: Int, in view: DiffTextView) throws -> CGFloat {
     let layoutManager = try #require(view.layoutManager)
     let start = try #require(view.rendered).rowStarts[row]
     return layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: start), effectiveRange: nil).minY + view.textContainerOrigin.y
+}
+
+/// Sends a middle mouse down over the middle of a range of the text, as a middle click arrives.
+@MainActor
+private func middleClick(on range: NSRange, in view: DiffTextView) throws {
+    let point = try point(over: range, in: view)
+    // AppKit's factory can't name the button, so the event is given the middle one through Quartz.
+    let made = try #require(NSEvent.mouseEvent(with: .otherMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)?.cgEvent)
+    made.setIntegerValueField(.mouseEventButtonNumber, value: Int64(CGMouseButton.center.rawValue))
+    let event = try #require(NSEvent(cgEvent: made))
+    #expect(event.buttonNumber == 2 && event.locationInWindow == point)
+    view.otherMouseDown(with: event)
+}
+
+/// Clicks twice over the middle of a range of the text, as a double-click arrives. Each mouse-up
+/// is posted from inside the text view's selection tracking, which waits for it; posting wakes the
+/// running loop, and before tracking that's the one the test runner exits after.
+@MainActor
+private func doubleClick(on range: NSRange, in view: DiffTextView) throws {
+    let point = try point(over: range, in: view)
+    let windowNumber = try #require(view.window).windowNumber
+    for clickCount in 1...2 {
+        let up = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: 0))
+        let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: 1))
+        nonisolated(unsafe) let posted = up
+        RunLoop.main.perform(inModes: [.eventTracking]) { MainActor.assumeIsolated { NSApplication.shared.postEvent(posted, atStart: false) } }
+        view.mouseDown(with: down)
+    }
+}
+
+/// The middle of a range of the text, in window coordinates.
+@MainActor
+private func point(over range: NSRange, in view: DiffTextView) throws -> NSPoint {
+    let layoutManager = try #require(view.layoutManager)
+    let container = try #require(view.textContainer)
+    let bounds = layoutManager.boundingRect(forGlyphRange: layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
+    return view.convert(NSPoint(x: bounds.midX + view.textContainerOrigin.x, y: bounds.midY + view.textContainerOrigin.y), to: nil)
 }

@@ -837,6 +837,10 @@ A Swift ticker pushing strings formatted in Swift was considered, as it keeps on
 
 In the native UI, each relative label now sits in its own `TimelineView(.everyMinute)`. One wrapped round the whole of the lists never reached the rows, since SwiftUI skips views whose inputs haven't changed. The commit picker's "reviewed 2 days ago" rows didn't tick at all; now they do. The To review chip's tooltip is worded from the tick's time too.
 
+### Middle-clicking a row starts a comment on it; double-click selects a word again
+
+This reverses "Double-clicking a row starts a comment on it". A double-click should select a word, as it does in any text view, and taking it on commentable rows meant copying a word from most of the diff needed a drag. A double-click (and a triple-click) now selects as NSTextView does everywhere in the diff. A middle click anywhere on a row that offers the "+", its gutter or its code, starts a comment there instead, so the large target stays; elsewhere a middle click does nothing. It uses the same row lookup as the "+", so they still can't disagree about which rows take comments, and the "+"'s tooltip mentions it.
+
 ## Not yet decided
 
 Nothing is pending.
