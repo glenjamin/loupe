@@ -100,6 +100,20 @@ public struct PullRequestStore: Sendable {
         }
     }
 
+    /// Stores `pullRequests`, the PRs around listed ones in their stacks, whether or not they're
+    /// in a list, leaving which lists they're in alone. Those no longer connected through an open
+    /// stack to a listed PR or an open tab are let go, merged and closed ones among them.
+    @discardableResult
+    public func storeStackNeighbours(_ pullRequests: [PullRequestSummary]) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            for pullRequest in pullRequests {
+                try Self.upsert(pullRequest, db)
+            }
+            try Self.deleteUnlisted(db)
+            return try Self.snapshot(db)
+        }
+    }
+
     /// Replaces the stored checks, mergeability, merge state and review decision of each PR in
     /// `statuses`, keyed by id, with those last looked up. PRs no longer stored are left out, as
     /// nothing shows them.
@@ -182,7 +196,12 @@ public struct PullRequestStore: Sendable {
                 """, arguments: [list.rawValue]), db)
             refreshed[list] = try ListRefresh.fetchOne(db, key: list.rawValue)?.refreshedAt
         }
-        return PullRequestSnapshot(lists: lists, refreshedAt: refreshed)
+        let unlisted = try summaries(of: PullRequestRow.fetchAll(db, sql: """
+            SELECT * FROM pullRequest
+            WHERE id NOT IN (SELECT pullRequestId FROM listMembership)
+            ORDER BY updatedAt DESC
+            """), db)
+        return PullRequestSnapshot(lists: lists, unlisted: unlisted, refreshedAt: refreshed)
     }
 
     /// The PRs stored in `rows`, with their checks.
@@ -541,6 +560,16 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "viewerReviewCommitOid", .text)
             }
         }
+        // Null on rows stored before until they're next fetched, so both lists' refresh times are
+        // forgotten: their next refreshes are full loads, which fetch every listed PR.
+        migrator.registerMigration("Pull request stacks") { db in
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "stackId", .text)
+                t.add(column: "stackPosition", .integer)
+                t.add(column: "stackParentId", .text)
+            }
+            try db.execute(sql: "DELETE FROM listRefresh")
+        }
         return migrator
     }
 
@@ -563,12 +592,21 @@ public struct PullRequestStore: Sendable {
         try PullRequestRow(pullRequest, keepingLookupsFrom: stored).upsert(db)
     }
 
-    /// PRs in neither list are no longer needed, unless open in a tab.
+    /// PRs in neither list are no longer needed, unless open in a tab or stacked, through open
+    /// PRs, with one that's listed or open in a tab.
     static func deleteUnlisted(_ db: Database) throws {
         try db.execute(sql: """
-            DELETE FROM pullRequest
-            WHERE id NOT IN (SELECT pullRequestId FROM listMembership)
-            AND id NOT IN (SELECT pullRequestId FROM openTab)
+            WITH RECURSIVE kept(id) AS (
+                SELECT pullRequestId FROM listMembership
+                UNION SELECT pullRequestId FROM openTab
+                UNION SELECT other.id FROM kept
+                    JOIN pullRequest AS this ON this.id = kept.id AND this.state = 'OPEN'
+                    JOIN pullRequest AS other ON other.repository = this.repository AND other.state = 'OPEN' AND (
+                        other.stackId = this.stackId OR other.id = this.stackParentId OR other.stackParentId = this.id
+                        OR other.headRefName = this.baseRefName OR other.baseRefName = this.headRefName
+                    )
+            )
+            DELETE FROM pullRequest WHERE id NOT IN kept
             """)
     }
 }
@@ -576,13 +614,17 @@ public struct PullRequestStore: Sendable {
 /// The stored lists and when each was last refreshed from GitHub.
 public struct PullRequestSnapshot: Sendable, Equatable {
     private let lists: [PullRequestList: [PullRequestSummary]]
+    /// The stored PRs in neither list: those open in tabs, and those stacked with listed ones.
+    /// Newest first.
+    public let unlisted: [PullRequestSummary]
     private let refreshedAt: [PullRequestList: Date]
 
     /// Nothing stored and nothing refreshed.
-    public static let empty = PullRequestSnapshot(lists: [:], refreshedAt: [:])
+    public static let empty = PullRequestSnapshot(lists: [:], unlisted: [], refreshedAt: [:])
 
-    init(lists: [PullRequestList: [PullRequestSummary]], refreshedAt: [PullRequestList: Date]) {
+    init(lists: [PullRequestList: [PullRequestSummary]], unlisted: [PullRequestSummary], refreshedAt: [PullRequestList: Date]) {
         self.lists = lists
+        self.unlisted = unlisted
         self.refreshedAt = refreshedAt
     }
 
@@ -627,6 +669,9 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let viewerReview: String?
     let viewerReviewedAt: Date?
     let viewerReviewCommitOid: String?
+    let stackId: String?
+    let stackPosition: Int?
+    let stackParentId: String?
 
     /// Anything `pullRequest` lacks because only a lookup by id fetches it is kept from `stored`.
     init(_ pullRequest: PullRequestSummary, keepingLookupsFrom stored: PullRequestRow?) {
@@ -658,6 +703,9 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         // When and on which head go with the verdict they describe.
         viewerReviewedAt = pullRequest.viewerReview == nil ? stored?.viewerReviewedAt : pullRequest.viewerReviewedAt
         viewerReviewCommitOid = pullRequest.viewerReview == nil ? stored?.viewerReviewCommitOid : pullRequest.viewerReviewCommitOid
+        stackId = pullRequest.stackId
+        stackPosition = pullRequest.stackPosition
+        stackParentId = pullRequest.stackParentId
     }
 
     func summary(checkContexts: [CheckContext]) -> PullRequestSummary {
@@ -690,7 +738,10 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             requestedReviewers: requestedReviewers?.map(\.reviewer),
             viewerReview: viewerReview.map(ReviewState.init(lenientRawValue:)),
             viewerReviewedAt: viewerReviewedAt,
-            viewerReviewCommitOid: viewerReviewCommitOid
+            viewerReviewCommitOid: viewerReviewCommitOid,
+            stackId: stackId,
+            stackPosition: stackPosition,
+            stackParentId: stackParentId
         )
     }
 }

@@ -1,0 +1,31 @@
+query($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ...PullRequestRow
+    ... on PullRequest {
+      stack { entries(first: 50) { nodes { pullRequest { ...PullRequestRow } } } }
+      baseRef { associatedPullRequests(states: OPEN, first: 1) { nodes { ...PullRequestRow } } }
+    }
+  }
+}
+
+fragment PullRequestRow on PullRequest {
+  id
+  number
+  title
+  url
+  isDraft
+  state
+  mergedAt
+  closedAt
+  updatedAt
+  reviewDecision
+  headRefName
+  baseRefName
+  headRefOid
+  baseRefOid
+  author { login }
+  repository { nameWithOwner }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+  stackEntry { position stack { id } }
+  baseRef { associatedPullRequests(states: OPEN, first: 1) { nodes { id } } }
+}

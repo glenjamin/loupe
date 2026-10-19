@@ -272,6 +272,8 @@ public struct GitHubClient: Sendable {
           author { login }
           repository { nameWithOwner }
           commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+          stackEntry { position stack { id } }
+          baseRef { associatedPullRequests(states: OPEN, first: 1) { nodes { id } } }
         }
         """
 }

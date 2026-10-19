@@ -276,6 +276,8 @@ public final class TabsModel {
             guard item(id: pending.id) != nil else { return }
             try await store.addOpenTab(found)
             place(found, replacing: pending)
+            // Only now, as what's stacked with a PR is kept while it's open in a tab or listed.
+            await lists.lookUpStacks(around: [found])
         } catch {
             log("Couldn't look up \(link.repository)#\(link.number): \(error.localizedDescription)")
             pending.error = error.localizedDescription

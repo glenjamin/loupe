@@ -24,7 +24,10 @@ extension PullRequestSummary {
             commitCount: node.commitCount?.totalCount,
             commentCount: node.comments?.totalCount,
             reviewThreadCount: node.reviewThreads?.totalCount,
-            requestedReviewers: node.reviewRequests?.nodes.map(\.reviewer)
+            requestedReviewers: node.reviewRequests?.nodes.map(\.reviewer),
+            stackId: node.stackEntry?.stack?.id,
+            stackPosition: node.stackEntry?.position,
+            stackParentId: node.baseRef?.associatedPullRequests.nodes.first?.id
         )
     }
 }
@@ -67,7 +70,25 @@ struct SearchPageResponse: Decodable {
         let reviewRequests: Connection<NodesResponse.ReviewRequest>?
         let requestEvents: Connection<NodesResponse.RequestEvent>?
         let latestOpinionatedReviews: Connection<NodesResponse.Verdict>?
+        /// Null when the PR isn't in a GitHub stack.
+        let stackEntry: StackEntry?
+        /// Null when the base branch has been deleted.
+        let baseRef: BaseRef?
     }
+
+    struct StackEntry: Decodable {
+        let position: Int
+        let stack: Stack?
+
+        struct Stack: Decodable { let id: String }
+    }
+
+    /// The open PRs whose head is this PR's base branch.
+    struct BaseRef: Decodable {
+        let associatedPullRequests: Connection<Identified>
+    }
+
+    struct Identified: Decodable { let id: String }
 
     struct Login: Decodable { let login: String }
     struct Repository: Decodable { let nameWithOwner: String }

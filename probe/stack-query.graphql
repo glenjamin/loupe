@@ -1,0 +1,32 @@
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    bottom: pullRequest(number: 277) { ...PullRequestRow ...Stack }
+    top: pullRequest(number: 278) { ...PullRequestRow ...Stack }
+  }
+}
+
+fragment Stack on PullRequest {
+  stack { id number size baseRefName entries(first: 50) { totalCount nodes { position pullRequest { id number state } } } }
+}
+
+fragment PullRequestRow on PullRequest {
+  id
+  number
+  title
+  url
+  isDraft
+  state
+  mergedAt
+  closedAt
+  updatedAt
+  reviewDecision
+  headRefName
+  baseRefName
+  headRefOid
+  baseRefOid
+  author { login }
+  repository { nameWithOwner }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+  stackEntry { position stack { id entries(first: 50) { nodes { position pullRequest { id state } } } } }
+  baseRef { associatedPullRequests(states: OPEN, first: 1) { nodes { id } } }
+}

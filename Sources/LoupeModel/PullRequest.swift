@@ -53,6 +53,14 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     /// on rows checked before these were fetched.
     public let viewerReviewedAt: Date?
     public let viewerReviewCommitOid: String?
+    /// The GitHub stack the PR is in and its place there, 1 nearest the base branch, counting
+    /// members since merged. Nil when it's in none.
+    public let stackId: String?
+    public let stackPosition: Int?
+    /// The open PR whose head branch is this PR's base branch, which it's stacked on whether or
+    /// not GitHub has linked them in a stack. Nil when there's none, or on rows stored before it
+    /// was fetched.
+    public let stackParentId: String?
 
     public init(
         id: String,
@@ -82,7 +90,10 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         requestedReviewers: [RequestedReviewer]? = nil,
         viewerReview: ReviewState? = nil,
         viewerReviewedAt: Date? = nil,
-        viewerReviewCommitOid: String? = nil
+        viewerReviewCommitOid: String? = nil,
+        stackId: String? = nil,
+        stackPosition: Int? = nil,
+        stackParentId: String? = nil
     ) {
         self.id = id
         self.repository = repository
@@ -112,6 +123,9 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.viewerReview = viewerReview
         self.viewerReviewedAt = viewerReviewedAt
         self.viewerReviewCommitOid = viewerReviewCommitOid
+        self.stackId = stackId
+        self.stackPosition = stackPosition
+        self.stackParentId = stackParentId
     }
 
     /// The approval or request for changes `login` has made and still stands by, while they

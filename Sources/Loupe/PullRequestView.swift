@@ -227,6 +227,12 @@ struct PullRequestHeader: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                if let line = tab.stackLine {
+                    StackBar(line: line, tab: tab)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             // Each section is always there, empty when it has nothing, so the layout sees three.
             VStack(spacing: 2) {

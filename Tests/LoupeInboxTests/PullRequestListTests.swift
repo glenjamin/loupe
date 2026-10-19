@@ -16,8 +16,13 @@ struct PullRequestListTests {
         #expect(model.error == nil)
         #expect(model.pullRequests(in: .mine).count == 50)
         #expect(model.pullRequests(in: .toReview).count == 13)
+        // A stack is listed together, where its newest member goes.
         for list in PullRequestList.allCases {
-            let dates = model.pullRequests(in: list).map(\.updatedAt)
+            var groups: [[PullRequestSummary]] = []
+            for listed in model.listing(in: list) {
+                if listed.depth > 0, !groups.isEmpty { groups[groups.count - 1].append(listed.pullRequest) } else { groups.append([listed.pullRequest]) }
+            }
+            let dates = groups.map { $0.map(\.updatedAt).max() ?? .distantPast }
             #expect(dates == dates.sorted(by: >))
         }
 

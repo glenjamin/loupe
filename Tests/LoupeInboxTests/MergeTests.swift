@@ -47,6 +47,26 @@ struct MergeTests {
         #expect(nextRun.mergeReadiness == merge.expected)
     }
 
+    @Test func aPullRequestOnAnUnmergedOneSaysToMergeThatFirstWithoutBlockingMerge() async throws {
+        let app = try await MergeApp()
+        try await app.github.addCapturedStack()
+        let top = "PR_kwDOAYVX-88AAAABI5AxRA"
+        try await app.github.edit(top) { $0.reviewDecision = "APPROVED" }
+        try await app.github.setMergeState(of: top, "CLEAN")
+        await app.tabs.lists.refresh()
+        let tab = try await app.open(try #require(app.tabs.lists.pullRequest(id: top)))
+
+        #expect(tab.mergeFirst?.number == 277)
+        #expect(tab.mergeReadiness == .ready)
+        await tab.merge()
+        #expect(await app.github.mergesReceived.map(\.pullRequestId) == [top])
+        #expect(tab.mergeError == nil)
+
+        // The bottom of the stack has nothing to merge first.
+        let bottom = try await app.open(try #require(app.tabs.lists.pullRequest(id: "PR_kwDOAYVX-88AAAABI4ybXQ")))
+        #expect(bottom.mergeFirst == nil)
+    }
+
     @Test func anApprovalNoticedOnGitHubMakesItMergeableWithoutWaitingForTheLists() async throws {
         let app = try await MergeApp()
         let pullRequest = try app.mergeable()

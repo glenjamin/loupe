@@ -332,7 +332,7 @@ struct TabsTests {
         // Reviewing a PR takes it out of the to-review list.
         try await app.github.edit(reviewed.id) { $0.requestedReviewers = [] }
         await app.tabs.lists.refresh()
-        #expect(app.tabs.lists.pullRequest(id: reviewed.id) == nil)
+        #expect(!app.toReview.contains { $0.id == reviewed.id })
 
         let nextRun = try app.relaunch()
 

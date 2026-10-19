@@ -736,6 +736,18 @@ public final class PullRequestTab: Identifiable {
         return MergeReadiness(pullRequest)
     }
 
+    /// The PR's stack as seen from it, for its header; nil when it isn't stacked.
+    public var stackLine: StackLine? {
+        lists.stacks.line(through: pullRequest)
+    }
+
+    /// The open PR this one is stacked on, to merge before it, said beside the viewer's own PR's
+    /// Merge button. Only a hint: GitHub decides whether it can be merged, as ever.
+    public var mergeFirst: PullRequestSummary? {
+        guard mergeReadiness != nil else { return nil }
+        return lists.stacks.parent(of: pullRequest)
+    }
+
     /// Merges the PR with a merge commit, provided its head is still the one last looked up,
     /// then looks it up again so it shows as merged everywhere. A refusal is kept to show.
     public func merge() async {

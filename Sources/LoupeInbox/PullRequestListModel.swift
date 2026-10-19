@@ -91,8 +91,23 @@ public final class PullRequestListModel {
     /// changes of, so what needs them leads. Closed and merged PRs stay stored, but are left out
     /// unless asked for. So are stale ones, too old to be worth listing; a fresh request, or
     /// activity on a PR the viewer gave a verdict on, brings one back. Asked for, those come
-    /// last, newest first, so the rest keep their place.
+    /// last, newest first, so the rest keep their place. The PRs of one stack are listed
+    /// together, from the bottom up, where the first of them would be.
     public func pullRequests(in list: PullRequestList, includingClosed: Bool = false, includingStale: Bool = false) -> [PullRequestSummary] {
+        listing(in: list, includingClosed: includingClosed, includingStale: includingStale).map(\.pullRequest)
+    }
+
+    /// `pullRequests(in:includingClosed:includingStale:)` with each one's place in its stack.
+    public func listing(in list: PullRequestList, includingClosed: Bool = false, includingStale: Bool = false) -> [StackedPullRequest] {
+        stacks.grouped(ordered(in: list, includingClosed: includingClosed, includingStale: includingStale))
+    }
+
+    /// How the open PRs known here stack, listed or not.
+    public var stacks: PullRequestStacks {
+        PullRequestStacks(PullRequestList.allCases.flatMap { snapshot[$0] } + Array(unlisted.values) + snapshot.unlisted)
+    }
+
+    private func ordered(in list: PullRequestList, includingClosed: Bool, includingStale: Bool) -> [PullRequestSummary] {
         let listed = listed(in: list, includingClosed: includingClosed)
         let recent = listed.filter { !isStale($0, in: list) }
         let awaiting = recent.filter { verdict(on: $0, in: list) == nil }
@@ -132,7 +147,7 @@ public final class PullRequestListModel {
         for list in PullRequestList.allCases {
             if let found = snapshot[list].first(where: { $0.id == id }) { return found }
         }
-        return unlisted[id]
+        return unlisted[id] ?? snapshot.unlisted.first { $0.id == id }
     }
 
     /// The stored PR numbered `number` in `repository`, whatever its state, if it's in either
@@ -144,7 +159,7 @@ public final class PullRequestListModel {
         for list in PullRequestList.allCases {
             if let found = snapshot[list].first(where: matches) { return found }
         }
-        return unlisted.values.first(where: matches)
+        return unlisted.values.first(where: matches) ?? snapshot.unlisted.first(where: matches)
     }
 
     /// Whether GitHub is being asked for anything that updates the stored PR with `id`: a
@@ -225,6 +240,7 @@ public final class PullRequestListModel {
         guard !isLoading else { return }
         isLoading = true
         await refreshLists()
+        await lookUpStacks(around: PullRequestList.allCases.flatMap { snapshot[$0] }, refreshing: snapshot.unlisted)
         await refreshStatuses()
         isLoading = false
         await resolveCheckouts()
@@ -332,6 +348,42 @@ public final class PullRequestListModel {
         return login
     }
 
+    /// Looks up the PRs stacked with any of `pullRequests` that are open and stacked, so each
+    /// stack is whole and its members current whichever lists they're in, then those stacked
+    /// with the PRs found, until no more turn up. A GitHub stack is asked about once, through any
+    /// one member, as that finds them all. Each of `others`, the stored PRs in neither list, is
+    /// looked up too, stacked or not, so a neighbour merged since drops out. A failure leaves
+    /// the stacks as last looked up, and doesn't count as the lists failing to refresh.
+    func lookUpStacks(around pullRequests: [PullRequestSummary], refreshing others: [PullRequestSummary] = []) async {
+        var asked: Set<String> = []
+        var askedStacks: Set<String> = []
+        var candidates = pullRequests
+        var refreshing = others.filter { $0.state == .open }
+        do {
+            for _ in 0..<Self.stackLookupRounds {
+                var ids = refreshing.map(\.id)
+                asked.formUnion(ids)
+                askedStacks.formUnion(refreshing.compactMap(\.stackId))
+                for pullRequest in candidates where pullRequest.state == .open && !asked.contains(pullRequest.id) {
+                    if let stackId = pullRequest.stackId {
+                        guard askedStacks.insert(stackId).inserted else { continue }
+                    } else if pullRequest.stackParentId == nil {
+                        continue
+                    }
+                    asked.insert(pullRequest.id)
+                    ids.append(pullRequest.id)
+                }
+                refreshing = []
+                guard !ids.isEmpty else { return }
+                let found = try await client.stackNeighbours(of: ids)
+                snapshot = try await store.storeStackNeighbours(found)
+                candidates = found
+            }
+        } catch {
+            FileHandle.standardError.write(Data("Couldn't look up stacked PRs: \(error)\n".utf8))
+        }
+    }
+
     /// Each open PR's checks and mergeability, looked up by id as asking the searches for them
     /// takes a full page to GitHub's time limit. Every open PR is asked about, as a check
     /// finishing doesn't change a PR's update time, so the searches for changes never report it.
@@ -385,6 +437,10 @@ public final class PullRequestListModel {
     /// How far before the last refresh to ask for changes from, allowing for clock skew and
     /// GitHub's search index lagging behind its updates.
     static let refreshOverlap = Duration.seconds(120)
+
+    /// How many PRs deep a stack is followed down its branches in one refresh; a GitHub stack is
+    /// found whole at once.
+    static let stackLookupRounds = 5
 
     /// How long a request for the viewer's review stays listed unanswered, or a PR they gave a
     /// verdict on stays listed without activity, before it's hidden as stale; the list's caption

@@ -3,6 +3,7 @@ import LoupeCore
 import LoupeGit
 import LoupeGitHub
 import LoupeInbox
+import LoupeModel
 import SwiftUI
 import os
 import UniformTypeIdentifiers
@@ -434,6 +435,11 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_SHOW_STALE"] == "1" {
                     print(try await saveSnapshotAfterShowingStale(in: windows, to: directory).path(percentEncoded: false))
                 }
+                // LOUPE_SNAPSHOT_CLICK_STACK=1 prints the lists' stacks and each PR's stack bar,
+                // then clicks the first other PR in each bar and snapshots what it showed.
+                if environment["LOUPE_SNAPSHOT_CLICK_STACK"] == "1" {
+                    for url in try await saveSnapshotsAfterClickingStacks(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_OPEN_COMMITS=1 opens each PR's list of commits to pick from, once
                 // they're counted, and snapshots it.
                 if environment["LOUPE_SNAPSHOT_OPEN_COMMITS"] == "1" {
@@ -839,6 +845,58 @@ private func saveSnapshotAfterShowingStale(in windows: WindowManager, to directo
     let url = directory.appending(path: "stale-shown.png")
     try await saveSnapshot(of: window, to: url)
     return url
+}
+
+/// Prints each list's stacked PRs with their depth and what they're on, then for each PR tab with
+/// a stack bar prints the bar and its merge hint, clicks the bar's first PR other than the tab's
+/// own with a synthesised mouse down and up sent through the window, prints what the click
+/// showed and writes `stack-<title>.png` of it. The PRs shown first are put back afterwards.
+@MainActor
+private func saveSnapshotsAfterClickingStacks(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    let tabs = windows.tabs
+    for list in PullRequestList.allCases {
+        for listed in tabs.lists.listing(in: list) where listed.depth > 0 || listed.parent != nil || tabs.lists.stacks.isStacked(listed.pullRequest) {
+            let indent = String(repeating: "  ", count: listed.depth)
+            let on = listed.parent.map { " on #\($0.number)" } ?? ""
+            print("\(list.rawValue): \(indent)\(listed.pullRequest.repository) #\(listed.pullRequest.number)\(on)")
+        }
+    }
+    let shown = tabs.selected
+    let original = tabs.tabs.map(\.id)
+    var urls: [URL] = []
+    for id in original {
+        guard let tab = tabs.tab(id: id), let line = tab.stackLine else { continue }
+        let levels = line.levels.map { level in
+            level.map { "#\($0.number)\($0.id == line.current ? " (this)" : "") \(StackReviewGlyph.words($0))" }.joined(separator: " · ")
+        }
+        print("\(tab.title): stack \(levels.joined(separator: " → ")); merge first: \(tab.mergeFirst.map { "#\($0.number)" } ?? "nothing")")
+        windows.select(id)
+        try? await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+        guard let root = window.contentView,
+              let entry = descendants(of: root).first(where: { $0 is StackEntryMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }) else {
+            print("\(tab.title): no stack entry to click")
+            continue
+        }
+        let point = entry.convert(NSPoint(x: entry.bounds.midX, y: entry.bounds.midY), to: nil)
+        // The mouse-up is queued first, so a tracking loop started by the mouse-down finds it.
+        let events = [NSEvent.EventType.leftMouseUp, .leftMouseDown].compactMap { type in
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+        }
+        guard events.count == 2 else { continue }
+        NSApp.postEvent(events[0], atStart: false)
+        window.sendEvent(events[1])
+        await SnapshotRun.wait(until: .now.addingTimeInterval(10)) { tabs.selected != id && tabs.selected.flatMap(tabs.tab(id:)) != nil }
+        try? await Task.sleep(for: .milliseconds(500))
+        print("\(tab.title): clicked at \(point), now showing \(tabs.selected.flatMap(tabs.item(id:))?.title ?? "the lists")")
+        let url = directory.appending(path: "stack-\(sanitised(windows.title(of: id))).png")
+        try await saveSnapshot(of: window, to: url)
+        urls.append(url)
+    }
+    for id in tabs.tabs.map(\.id) where !original.contains(id) { tabs.close(id) }
+    windows.select(shown)
+    return urls
 }
 
 /// Opens each diffed PR's list of commits to pick from, once they're counted and the changes since

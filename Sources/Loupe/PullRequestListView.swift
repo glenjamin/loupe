@@ -84,7 +84,8 @@ struct PullRequestColumn: View {
     @State private var showsStale = false
 
     var body: some View {
-        let pullRequests = model.pullRequests(in: list, includingClosed: showsClosed, includingStale: showsStale)
+        let listing = model.listing(in: list, includingClosed: showsClosed, includingStale: showsStale)
+        let pullRequests = listing.map(\.pullRequest)
         VStack(alignment: .leading, spacing: 0) {
             Text("\(title) (\(pullRequests.count))")
                 .font(.headline)
@@ -95,10 +96,12 @@ struct PullRequestColumn: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(pullRequests, selection: $selection) { pullRequest in
+                List(listing, selection: $selection) { listed in
+                    let pullRequest = listed.pullRequest
                     let checkout = model.checkout(for: pullRequest.repository)
                     Button { model.open(pullRequest) } label: {
-                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, isSelfReviewed: model.isSelfReviewed(pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list))
+                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, isSelfReviewed: model.isSelfReviewed(pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent)
+                            .padding(.leading, CGFloat(listed.depth) * Self.stackIndent)
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -140,6 +143,9 @@ struct PullRequestColumn: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// How far each PR in a stack is stepped in from the one below it.
+    private static let stackIndent: CGFloat = 16
+
     /// When the viewer was asked to review a PR listed only because the hidden ones are shown,
     /// so its row can say how long it has waited. A verdict's row has its own time instead.
     private func staleRequestedAt(of pullRequest: PullRequestSummary) -> Date? {
@@ -159,6 +165,8 @@ struct PullRequestRow: View {
     var staleRequestedAt: Date? = nil
     /// The viewer's approval or request for changes, set where that's why the PR is listed.
     var verdict: ReviewState? = nil
+    /// The open PR it's stacked on, if any.
+    var stackedOn: PullRequestSummary? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -171,6 +179,9 @@ struct PullRequestRow: View {
                 StateBadge(pullRequest: pullRequest, showsOpen: false)
                 ConflictsBadge(pullRequest: pullRequest)
                 SelfReviewedBadge(isSelfReviewed: isSelfReviewed)
+                if let stackedOn {
+                    StackedOnLabel(parent: stackedOn)
+                }
                 Text(owner)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -353,6 +364,22 @@ struct ChecksIcon: View {
         case .pending, .expected: Image(systemName: "clock").foregroundStyle(.orange)
         case .unknown: Image(systemName: "questionmark").foregroundStyle(.secondary)
         }
+    }
+}
+
+/// Which PR a stacked one sits on, beside GitHub's stack icon.
+struct StackedOnLabel: View {
+    let parent: PullRequestSummary
+
+    var body: some View {
+        Label {
+            Text(verbatim: "on #\(parent.number)")
+        } icon: {
+            Image(systemName: "square.stack.3d.up")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .help("Stacked on \(repositoryName(parent)) #\(parent.number), \(parent.title)")
     }
 }
 

@@ -40,6 +40,8 @@ actor FakeGitHub: HTTPTransport {
     private(set) var searches: [String] = []
     /// The ids of every lookup of PR rows by id, in order.
     private(set) var pullRequestLookups: [[String]] = []
+    /// The ids of every lookup of PRs' stack neighbours, in order.
+    private(set) var stackLookups: [[String]] = []
     /// The ids of every lookup of PRs' statuses, in order.
     private(set) var statusLookups: [[String]] = []
     /// Every lookup of a PR by repo and number, as `owner/name#number`, in order.
@@ -128,11 +130,13 @@ actor FakeGitHub: HTTPTransport {
         notified[id] = max(.now, (notified.values.max() ?? Self.quietSince) + 1)
     }
 
-    /// Opens PR `number` by `author` in the unlisted PR's repo, asking `reviewers` to review it,
-    /// as just made: in neither of the viewer's lists until their searches next ask.
+    /// Opens PR `number` by `author` in `repository`, or the unlisted PR's repo, asking
+    /// `reviewers` to review it, as just made: in neither of the viewer's lists until their
+    /// searches next ask. Its branch is its own, onto master.
     @discardableResult
-    func openPullRequest(number: Int, by author: String, asking reviewers: [FakePullRequest.Reviewer] = []) throws -> FakePullRequest {
+    func openPullRequest(number: Int, by author: String, asking reviewers: [FakePullRequest.Reviewer] = [], in repository: String? = nil) throws -> FakePullRequest {
         var pullRequest = unlistedPullRequest
+        if let repository { pullRequest.repository = .init(nameWithOwner: repository) }
         pullRequest.id = "PR_new_\(number)"
         pullRequest.number = number
         pullRequest.url = "https://github.com/\(pullRequest.repository.nameWithOwner)/pull/\(number)"
@@ -145,6 +149,10 @@ actor FakeGitHub: HTTPTransport {
         pullRequest.requestedReviewers = []
         pullRequest.requestEvents = []
         pullRequest.reviews = []
+        pullRequest.headRefName = "branch-\(number)"
+        pullRequest.baseRefName = "master"
+        pullRequest.stackId = nil
+        pullRequest.stackPosition = nil
         pullRequests.append(pullRequest)
         try edit(pullRequest.id) { _ in }
         for reviewer in reviewers {
@@ -237,12 +245,48 @@ actor FakeGitHub: HTTPTransport {
         notificationsRefusal = status
     }
 
+    /// Merges the PR. In a GitHub stack, the PR above it is rebased onto its base, as GitHub
+    /// does, though the merged PR stays a member; a PR stacked only by branch keeps its base.
     func merge(_ id: String) throws {
         try edit(id) { pullRequest in
             let now = Date.now.formatted(.iso8601)
             pullRequest.state = "MERGED"
             pullRequest.mergedAt = now
             pullRequest.closedAt = now
+        }
+        let merged = try #require(pullRequests.first { $0.id == id })
+        guard let stackId = merged.stackId else { return }
+        for above in pullRequests where above.stackId == stackId && above.state == "OPEN" && above.baseRefName == merged.headRefName {
+            try edit(above.id) { $0.baseRefName = merged.baseRefName }
+        }
+    }
+
+    /// Stacks the PR with `id` on the one with `parent`: its base becomes that PR's head branch,
+    /// and with `linked` GitHub links them in a stack too, as "Create stack" does, putting it
+    /// on top of the parent's stack or starting one.
+    func stack(_ id: String, on parent: String, linked: Bool = true) throws {
+        let below = try #require(pullRequests.first { $0.id == parent })
+        let stackId = below.stackId ?? "PRS_fake_\(below.number)"
+        if linked, below.stackId == nil {
+            try edit(parent) { $0.stackId = stackId; $0.stackPosition = 1 }
+        }
+        let position = (pullRequests.filter { $0.stackId == stackId }.compactMap(\.stackPosition).max() ?? 0) + 1
+        try edit(id) { pullRequest in
+            pullRequest.baseRefName = below.headRefName
+            if linked {
+                pullRequest.stackId = stackId
+                pullRequest.stackPosition = position
+            }
+        }
+    }
+
+    /// Adds the viewer's two stacked PRs captured in `probe/stack.json`, gazette #277 and #278
+    /// above it, linked in a GitHub stack, as just updated so the lists' next refresh finds them.
+    func addCapturedStack() throws {
+        let probe = try JSONDecoder().decode(StackProbe.self, from: Data(contentsOf: projectRoot.appending(path: "probe/stack.json")))
+        for captured in [probe.data.repository.bottom, probe.data.repository.top] {
+            pullRequests.append(captured)
+            try edit(captured.id) { _ in }
         }
     }
 
@@ -295,7 +339,8 @@ actor FakeGitHub: HTTPTransport {
 
         let body = try JSONDecoder().decode(GraphQLRequest.self, from: try #require(request.httpBody))
         if body.variables.query != nil { await pass(.search) }
-        if body.variables.ids != nil, !body.query.contains("contexts"), body.query.contains("fragment PullRequestRow") { await pass(.lookup) }
+        let isStackLookup = body.query.contains("stack { entries")
+        if body.variables.ids != nil, !body.query.contains("contexts"), !isStackLookup, body.query.contains("fragment PullRequestRow") { await pass(.lookup) }
         if body.variables.number != nil { await pass(.numberLookup) }
         if body.query.contains("mergePullRequest(") {
             return (try mergePullRequest(try #require(body.variables.input)), httpResponse(url, status: 200))
@@ -305,6 +350,8 @@ actor FakeGitHub: HTTPTransport {
         }
         let response: any Encodable = if let owner = body.variables.owner, let name = body.variables.name, let number = body.variables.number {
             pullRequest(in: "\(owner)/\(name)", number: number)
+        } else if let ids = body.variables.ids, isStackLookup {
+            try stackNeighbours(ids)
         } else if let ids = body.variables.ids, body.query.contains("contexts") {
             try statuses(ids)
         } else if let ids = body.variables.ids, body.query.contains("fragment PullRequestRow") {
@@ -340,7 +387,7 @@ actor FakeGitHub: HTTPTransport {
         let end = min(start + min(first, maxPageSize), results.count)
         return Envelope(data: SearchPayload(search: .init(
             pageInfo: .init(hasNextPage: end < results.count, endCursor: end > start ? String(end) : nil),
-            nodes: results[start..<end].map { SearchNode(pullRequest: $0) }
+            nodes: results[start..<end].map { SearchNode(pullRequest: $0, parentId: openParent(of: $0)?.id) }
         )))
     }
 
@@ -379,7 +426,34 @@ actor FakeGitHub: HTTPTransport {
     private func pullRequestRows(_ ids: [String]) throws -> Envelope<[String: [LookupNode?]]> {
         #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
         pullRequestLookups.append(ids)
-        return Envelope(data: ["nodes": ids.map { id in pullRequests.first { $0.id == id }.map(LookupNode.init) }])
+        return Envelope(data: ["nodes": ids.map { id in pullRequests.first { $0.id == id }.map(lookupNode) }])
+    }
+
+    /// Each PR's row, with every member of its stack, merged ones included, and the open PR whose
+    /// head is its base branch, as rows.
+    private func stackNeighbours(_ ids: [String]) throws -> Envelope<[String: [StackNode?]]> {
+        #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
+        stackLookups.append(ids)
+        return Envelope(data: ["nodes": ids.map { id in
+            pullRequests.first { $0.id == id }.map { pullRequest in
+                let members = pullRequest.stackId.map { stackId in
+                    pullRequests.filter { $0.stackId == stackId }.sorted { ($0.stackPosition ?? 0) < ($1.stackPosition ?? 0) }
+                }
+                return StackNode(pullRequest: pullRequest, members: members?.map(lookupNode), parent: openParent(of: pullRequest).map(lookupNode))
+            }
+        }])
+    }
+
+    private func lookupNode(_ pullRequest: FakePullRequest) -> LookupNode {
+        LookupNode(pullRequest: pullRequest, parentId: openParent(of: pullRequest)?.id)
+    }
+
+    /// The open PR whose head branch is this one's base, in the same repo, as GitHub's
+    /// `baseRef { associatedPullRequests(states: OPEN) }` finds it.
+    private func openParent(of pullRequest: FakePullRequest) -> FakePullRequest? {
+        pullRequests.first {
+            $0.state == "OPEN" && $0.id != pullRequest.id && $0.repository.nameWithOwner == pullRequest.repository.nameWithOwner && $0.headRefName == pullRequest.baseRefName
+        }
     }
 
     /// As GitHub answers: a null repo when it has no PRs here, a null PR when none has that
@@ -395,7 +469,7 @@ actor FakeGitHub: HTTPTransport {
             let error = Envelope<[String: [String: LookupNode?]?]>.GraphQLError(type: "NOT_FOUND", path: ["repository", "pullRequest"], message: "Could not resolve to a PullRequest with the number of \(number).")
             return Envelope(data: ["repository": ["pullRequest": nil]], errors: [error])
         }
-        return Envelope(data: ["repository": ["pullRequest": LookupNode(pullRequest: found)]])
+        return Envelope(data: ["repository": ["pullRequest": lookupNode(found)]])
     }
 
     private func statuses(_ ids: [String]) throws -> Envelope<StatusPayload> {
@@ -507,12 +581,12 @@ struct FakePullRequest: Codable, Sendable {
     var closedAt: String?
     var updatedAt: String
     var reviewDecision: String?
-    let headRefName: String
+    var headRefName: String
     var baseRefName: String
     var headRefOid: String
     var baseRefOid: String
     var author: Login?
-    let repository: Repository
+    var repository: Repository
     var commits: Commits
     var commitCount: Count
     var comments: Count
@@ -527,6 +601,9 @@ struct FakePullRequest: Codable, Sendable {
     var checkContexts: [FakeCheckContext] = []
     var mergeable = "UNKNOWN"
     var mergeStateStatus = "UNKNOWN"
+    /// The GitHub stack it's in and its place there, 1 at the bottom.
+    var stackId: String?
+    var stackPosition: Int?
 
     enum Reviewer: Sendable, Equatable {
         case user(String)
@@ -595,12 +672,67 @@ struct FakePullRequest: Codable, Sendable {
             .compactMap { verdict in
                 verdict.author.map { Review(login: $0.login, state: verdict.state, submittedAt: verdict.submittedAt.flatMap { try? Date($0, strategy: .iso8601) }, commit: verdict.commit?.oid) }
             } ?? []
+        let stack = try decoder.container(keyedBy: StackKeys.self)
+        let entry = try stack.decodeIfPresent(StackEntry.self, forKey: .stackEntry)
+        stackId = entry?.stack.id
+        stackPosition = entry?.position
     }
 }
 
 /// The fields only a lookup of a PR by id or number asks for, beside a search node's.
 private enum ReviewRequestKeys: String, CodingKey {
     case reviewRequests, requestEvents, latestOpinionatedReviews
+}
+
+/// The stack fields every row has, which the fake works out from its PRs when it serves them.
+private enum StackKeys: String, CodingKey {
+    case stackEntry, baseRef
+}
+
+private struct StackEntry: Codable {
+    let position: Int
+    let stack: Stack
+
+    struct Stack: Codable { let id: String }
+}
+
+/// The open PRs whose head is a PR's base branch, as ids in a row or rows in a stack lookup.
+private struct BaseRef<Node: Encodable>: Encodable {
+    let associatedPullRequests: EncodedNodes<Node>
+}
+
+private struct Identified: Codable { let id: String }
+
+private struct EncodedNodes<Element: Encodable>: Encodable { let nodes: [Element] }
+
+/// A PR as the stack lookup answers for it: its own row, with its stack's members and the open
+/// PR its base branch is the head of as rows too.
+private struct StackNode: Encodable {
+    let pullRequest: FakePullRequest
+    /// Nil when it's in no GitHub stack.
+    let members: [LookupNode]?
+    let parent: LookupNode?
+
+    func encode(to encoder: any Encoder) throws {
+        try pullRequest.encode(to: encoder)
+        var container = encoder.container(keyedBy: StackKeys.self)
+        try container.encode(pullRequest.stackId.map { StackEntry(position: pullRequest.stackPosition ?? 1, stack: .init(id: $0)) }, forKey: .stackEntry)
+        try container.encode(BaseRef(associatedPullRequests: .init(nodes: parent.map { [$0] } ?? [])), forKey: .baseRef)
+        var stack = encoder.container(keyedBy: Keys.self)
+        try stack.encode(members.map { Stack(entries: .init(nodes: $0.map(Entry.init))) }, forKey: .stack)
+    }
+
+    enum Keys: String, CodingKey { case stack }
+    struct Stack: Encodable { let entries: EncodedNodes<Entry> }
+    struct Entry: Encodable { let pullRequest: LookupNode }
+}
+
+/// Encodes a row's stack fields: its GitHub stack and place there, and its open parent.
+private func encodeStackFields(of pullRequest: FakePullRequest, parentId: String?, to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: StackKeys.self)
+    let entry = pullRequest.stackId.map { StackEntry(position: pullRequest.stackPosition ?? 1, stack: .init(id: $0)) }
+    try container.encode(entry, forKey: .stackEntry)
+    try container.encode(BaseRef(associatedPullRequests: .init(nodes: parentId.map { [Identified(id: $0)] } ?? [])), forKey: .baseRef)
 }
 
 private extension FakePullRequest {
@@ -740,6 +872,17 @@ private struct NumberProbe: Decodable {
 
     struct Payload: Decodable { let repository: Repository }
     struct Repository: Decodable { let pullRequest: FakePullRequest }
+}
+
+/// `probe/stack.json`: two stacked PRs looked up by repo and number.
+private struct StackProbe: Decodable {
+    let data: Payload
+
+    struct Payload: Decodable { let repository: Repository }
+    struct Repository: Decodable {
+        let bottom: FakePullRequest
+        let top: FakePullRequest
+    }
 }
 
 /// `probe/pr-status.json`: the status lookup's response for the PRs in `probe/pr-list.json`.
@@ -892,6 +1035,8 @@ private struct RequestsProbe: Decodable {
 /// A PR as the app's search asks for it, without the counts it fetches only by id.
 private struct SearchNode: Encodable {
     let pullRequest: FakePullRequest
+    /// The open PR whose head is its base branch.
+    let parentId: String?
 
     func encode(to encoder: any Encoder) throws {
         try pullRequest.encode(to: encoder)
@@ -899,6 +1044,7 @@ private struct SearchNode: Encodable {
         try container.encodeNil(forKey: .commitCount)
         try container.encodeNil(forKey: .comments)
         try container.encodeNil(forKey: .reviewThreads)
+        try encodeStackFields(of: pullRequest, parentId: parentId, to: encoder)
     }
 }
 
@@ -906,9 +1052,12 @@ private struct SearchNode: Encodable {
 /// review is asked of and each reviewer's latest verdict.
 private struct LookupNode: Encodable {
     let pullRequest: FakePullRequest
+    /// The open PR whose head is its base branch.
+    let parentId: String?
 
     func encode(to encoder: any Encoder) throws {
         try pullRequest.encode(to: encoder)
+        try encodeStackFields(of: pullRequest, parentId: parentId, to: encoder)
         var container = encoder.container(keyedBy: ReviewRequestKeys.self)
         try container.encode(pullRequest.reviewRequestNodes, forKey: .reviewRequests)
         try container.encode(pullRequest.requestEventNodes, forKey: .requestEvents)

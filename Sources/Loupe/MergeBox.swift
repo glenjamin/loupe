@@ -28,6 +28,9 @@ struct MergeBox: View {
             }
             .fixedSize()
             reason
+            if let parent = tab.mergeFirst {
+                MergeFirstLabel(parent: parent)
+            }
         }
         .alert(Text(verbatim: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName)?"), isPresented: $confirming) {
             Button("Merge") { Task { await tab.merge() } }
