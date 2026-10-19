@@ -586,6 +586,7 @@ struct ReviewFooter: View {
             Divider()
             Button(action: action) {
                 Label(state.label, systemImage: state.isArmed ? "checkmark.circle.fill" : state.isViewed ? "arrow.down.circle" : "checkmark.circle")
+                    .lineLimit(1)
             }
             .buttonStyle(PullFillButtonStyle(progress: state.progress, isArmed: state.isArmed))
             .help("Or pull past the end of the diff (⌘↓)")

@@ -735,6 +735,10 @@ This revises the timings of "The checks glyph opens a popover after a short rest
 
 This complements "The checks popover opens and closes with a quick fade": the other hover text, the reviewers, avatars, buttons and tabs, is native tooltips, which macOS holds back for 1.5s by default. The app registers `NSInitialToolTipDelay` at launch, which both AppKit's `toolTip` and SwiftUI's `.help` read. It's registered rather than written, so nothing is saved to the user's defaults and a value they set themselves still wins.
 
+### Moving on from a commit's last file goes to the next commit
+
+When one commit is picked and none of its files is left to review, moving on (the footer's button, pulling past it, ⌘↓, `]` and checking the header's Reviewed box) picks the next commit in the picker's order, as choosing it there would, and shows its first file not reviewed, or its first file if all are. Stepping through commits one at a time is the point of picking one, so ending a commit with nowhere to go left the reviewer to open the picker each time. The footer says where it goes: "Next commit · " and the commit's headline, cut short to fit the button, or "Mark reviewed · next commit" while the shown file isn't reviewed, with "Pull for the next commit" as the pull's hint. A file just marked counts as reviewed in the next commit even before GitHub answers, so a file both commits change isn't shown again. The last commit and the whole PR's changes keep "All this commit's files reviewed", "All files reviewed" and "Mark reviewed · last file", and stay where they are.
+
 ## Not yet decided
 
 Nothing is pending.

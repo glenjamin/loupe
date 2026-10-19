@@ -144,6 +144,69 @@ struct ViewedFilesTests {
         #expect(await app.viewed.state(of: "go.sum", in: pullRequest.id) == .viewed)
     }
 
+    @Test func onceACommitsFilesAreReviewedMovingOnShowsTheNextCommitsFirstUnreviewedFile() async throws {
+        let repo = try await FakeRepository()
+        let app = try await ViewedApp()
+        let (pullRequest, commits) = try await app.pushPullRequest(commits: [["a.txt", "b.txt"], ["c.txt", "d.txt"], ["e.txt", "f.txt"]], in: repo)
+        await app.viewed.add(pullRequest.id, files: [("a.txt", .unviewed), ("b.txt", .viewed), ("c.txt", .viewed), ("d.txt", .unviewed), ("e.txt", .viewed), ("f.txt", .viewed)])
+        let tab = try await app.open(pullRequest)
+        await tab.showCommit(commits[0])
+        #expect(tab.selectedFile == "a.txt")
+        #expect(tab.nextCommit?.oid == commits[1])
+
+        await tab.markViewedAndAdvance()
+        #expect(tab.shownCommit == commits[1], "the commit's last file to review was marked")
+        #expect(tab.shown?.files.map(\.path) == ["c.txt", "d.txt"])
+        #expect(tab.selectedFile == "d.txt", "c.txt is already reviewed")
+        #expect(tab.viewedState(of: "a.txt") == .viewed)
+
+        await tab.markViewedAndAdvance()
+        #expect(tab.shownCommit == commits[2])
+        #expect(tab.selectedFile == "e.txt", "all reviewed, so its first file")
+        #expect(tab.nextCommit == nil, "it's the last commit")
+        #expect(await app.viewed.mutations == [.mark("a.txt"), .mark("d.txt")])
+    }
+
+    @Test func onTheLastCommitOrTheWholePRMovingOnStaysWithNoFileLeftToReview() async throws {
+        let repo = try await FakeRepository()
+        let app = try await ViewedApp()
+        let (pullRequest, commits) = try await app.pushPullRequest(commits: [["a.txt"], ["b.txt", "c.txt"]], in: repo)
+        await app.viewed.add(pullRequest.id, files: [("a.txt", .unviewed), ("b.txt", .viewed), ("c.txt", .unviewed)])
+        let tab = try await app.open(pullRequest)
+        await tab.showCommit(commits[1])
+        tab.selectedFile = "c.txt"
+
+        await tab.markViewedAndAdvance()
+        #expect(tab.shownCommit == commits[1])
+        #expect(tab.selectedFile == "c.txt")
+        await tab.markViewedAndAdvance()
+        #expect(tab.shownCommit == commits[1], "there's no commit after the last")
+        #expect(tab.selectedFile == "c.txt")
+
+        await tab.showCommit(nil)
+        tab.selectedFile = "a.txt"
+        await tab.markViewedAndAdvance()
+        #expect(tab.shownCommit == nil, "the whole PR's changes have no next commit")
+        #expect(tab.nextCommit == nil)
+        #expect(tab.selectedFile == "a.txt")
+        #expect(tab.allFilesViewed)
+    }
+
+    @Test func markingACommitsLastFileReviewedMovesPastItInTheNextCommit() async throws {
+        let repo = try await FakeRepository()
+        let app = try await ViewedApp()
+        let (pullRequest, commits) = try await app.pushPullRequest(commits: [["a.txt"], ["a.txt", "b.txt"]], in: repo)
+        await app.viewed.add(pullRequest.id, files: [("a.txt", .unviewed), ("b.txt", .unviewed)])
+        let tab = try await app.open(pullRequest)
+        await tab.showCommit(commits[0])
+
+        await tab.markViewedAndAdvance()
+        #expect(tab.shownCommit == commits[1])
+        #expect(tab.selectedFile == "b.txt", "a.txt was just marked reviewed, though the next commit changes it too")
+        #expect(tab.viewedState(of: "a.txt") == .viewed)
+        #expect(await app.viewed.state(of: "a.txt", in: pullRequest.id) == .viewed)
+    }
+
     @Test func reloadingTakesViewedFilesFromGitHubAgain() async throws {
         let app = try await ViewedApp()
         let pullRequest = app.toReview[0]
@@ -189,15 +252,26 @@ private struct ViewedApp {
     /// Makes the first to-review PR one commit changing `paths` in `repo`, and returns it as
     /// the lists now have it.
     func pushPullRequest(changing paths: [String], in repo: FakeRepository) async throws -> PullRequestSummary {
+        try await pushPullRequest(commits: [paths], in: repo).pullRequest
+    }
+
+    /// Makes the first to-review PR a commit for each list of paths in `repo`, each changing
+    /// its paths, and returns it as the lists now have it with its commits' oids.
+    func pushPullRequest(commits: [[String]], in repo: FakeRepository) async throws -> (pullRequest: PullRequestSummary, commits: [String]) {
         let listed = toReview[0]
         try await store.updateLocalRepos(saving: [LocalRepo(nameWithOwner: listed.repository, path: repo.checkout, verifiedAt: .now)])
         let branchPoint = try await repo.git(["rev-parse", "HEAD"], in: repo.checkout)
         try await repo.switchTo("feature", creatingFrom: "main")
-        let head = try await repo.commit(Dictionary(uniqueKeysWithValues: paths.map { ($0, "\($0)\n") }), message: "Add files")
+        var oids: [String] = []
+        for (index, paths) in commits.enumerated() {
+            let files = Dictionary(uniqueKeysWithValues: paths.map { ($0, "\($0) as of commit \(index + 1)\n") })
+            oids.append(try await repo.commit(files, message: "Change files, part \(index + 1)"))
+        }
+        let head = try #require(oids.last)
         try await repo.push(asPullRequest: listed.number)
         try await github.edit(listed.id) { $0.headRefOid = head; $0.baseRefOid = branchPoint }
         await tabs.lists.refresh()
-        return try #require(tabs.lists.pullRequest(id: listed.id))
+        return (try #require(tabs.lists.pullRequest(id: listed.id)), oids)
     }
 
     /// Fresh models over the same store, as on the next launch.
@@ -318,4 +392,11 @@ actor FakeViewedFiles: HTTPTransport {
 
 private func response(_ url: URL, status: Int) -> HTTPURLResponse {
     HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+}
+
+private extension PullRequestTab {
+    var shown: ReviewChanges? {
+        guard case let .ready(changes)? = shownChanges else { return nil }
+        return changes
+    }
 }

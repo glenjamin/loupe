@@ -508,13 +508,31 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// Marks the shown file viewed and shows the next one not viewed, after it in the list or
-    /// else from the top. With none left, the file stays shown.
+    /// else from the top. With none left in a single commit, shows the next commit, on its
+    /// first file not viewed; otherwise the file stays shown.
     public func markViewedAndAdvance() async {
         guard let current = selectedFile else { return }
         if let next = nextUnviewedFile(after: current) {
             selectedFile = next
+        } else if let commit = nextCommit {
+            async let marking: Void = setViewed(true, path: current)
+            await showCommit(commit.oid)
+            if shownCommit == commit.oid, case let .ready(changes)? = shownChanges {
+                // The file just marked counts as viewed, whether or not GitHub has answered yet.
+                let files = FileTree(paths: changes.files.map(\.path)).files
+                selectedFile = files.first { $0 != current && !viewedState(of: $0).isViewed } ?? files.first ?? selectedFile
+            }
+            return await marking
         }
         await setViewed(true, path: current)
+    }
+
+    /// The commit after the one shown, in the picker's order, where moving on goes once the shown
+    /// commit's files are all viewed. Nil while the whole PR's changes are shown, or the last
+    /// commit's.
+    public var nextCommit: PullRequestCommit? {
+        guard case let .ready(review) = phase, let index = review.commits.firstIndex(where: { $0.oid == shownCommit }) else { return nil }
+        return review.commits.indices.contains(index + 1) ? review.commits[index + 1] : nil
     }
 
     /// The first file after `id` in the shown changes, in the file list's tree order, that isn't

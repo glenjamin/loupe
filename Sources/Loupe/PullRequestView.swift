@@ -438,8 +438,12 @@ struct FileDetail: View {
     private func review(of file: FileDiff) -> FileReview {
         let isViewed = tab.viewedState(of: file.path).isViewed
         let hasNext = tab.nextUnviewedFile(after: file.id) != nil
+        // Only once the shown commit has no file left to review does moving on go to the next.
+        let nextCommit = hasNext ? nil : tab.nextCommit
         let label = if hasNext {
             isViewed ? "Next unreviewed file" : "Mark reviewed · next file"
+        } else if let nextCommit {
+            isViewed ? "Next commit · \(shortened(nextCommit.headline))" : "Mark reviewed · next commit"
         } else if isViewed {
             tab.shownCommit == nil ? "All files reviewed" : "All this commit's files reviewed"
         } else {
@@ -448,8 +452,8 @@ struct FileDetail: View {
         let pullHint = switch (hasNext, isViewed) {
         case (true, false): "Pull to mark reviewed and move on"
         case (true, true): "Pull for the next unreviewed file"
-        case (false, false): "Pull to mark the last file reviewed"
-        case (false, true): label
+        case (false, false): nextCommit == nil ? "Pull to mark the last file reviewed" : "Pull to mark reviewed and go to the next commit"
+        case (false, true): nextCommit == nil ? label : "Pull for the next commit"
         }
         return FileReview(
             isViewed: isViewed,
@@ -458,6 +462,12 @@ struct FileDetail: View {
             pullHint: pullHint,
             markViewedAndAdvance: { Task { await tab.markViewedAndAdvance() } }
         )
+    }
+
+    /// A commit's headline cut short enough to sit in the footer's button.
+    private func shortened(_ headline: String) -> String {
+        let limit = 48
+        return headline.count > limit ? headline.prefix(limit - 1).trimmingCharacters(in: .whitespaces) + "…" : headline
     }
 }
 
