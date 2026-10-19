@@ -701,6 +701,10 @@ An edit starts from the comment's markdown fetched afresh by id, as the descript
 
 Saving is optimistic like the rest of the viewer's changes: the comment shows the new text at once as plain paragraphs, marked "Saving…", until GitHub answers with its rendering, which takes its place, in the thread and wherever the timeline shows it; then the thread or conversation is fetched again. A refusal puts the old body back and reopens the editor with the draft and why. A deletion is likewise: after a native confirmation, the alert on the diff's card and one over the conversation page for its link, the comment goes at once, its thread too if it was the only comment, and comes back if GitHub refuses, saying why on the thread's card or in an alert over the page. Deleting a comment drops any edit of it.
 
+### Snapshot runs are a separate app to macOS
+
+Snapshot runs, often several at once from agents' worktrees, used the same bundle id and name as the real app, so Launch Services could hand `./start.sh`'s `open` or a link to one of them, or to one exiting (failing with -600), and building one replaced the `Loupe.app` the real app was running from. So `Scripts/snapshot.sh` builds its own `LoupeSnapshot.app`, with its own name and id and no URL types: nothing outside it can mistake it for Loupe, and it never becomes a link's handler. Its defaults domain is therefore its own; it reads the real app's settings beneath it so snapshots look as the app does, and never writes them. `start.sh` quits only the instance running from its own checkout's bundle, by pid, and waits for it to be gone before opening the new build.
+
 ## Not yet decided
 
 Nothing is pending.

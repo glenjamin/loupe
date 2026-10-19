@@ -109,6 +109,8 @@ Icon/render.sh
 sh Scripts/bundle.sh && open .build/Loupe.app   # the two steps separately
 ```
 
+`start.sh` first quits the Loupe running from this checkout's `.build/Loupe.app`, found by its executable's path and asked to quit by pid, and waits until it has exited and Launch Services no longer lists it before opening the new build; an `open` sent while the old one is still exiting is handed to it and fails with `_LSOpenURLsWithCompletionHandler() failed with error -600`. If it hasn't quit within 10 seconds (it may be asking something), the script says so and stops without opening. Snapshot runs and other checkouts' bundles are left alone.
+
 ### Opening PR links from other apps
 
 The bundle declares the `loupe` URL scheme, and `https` as an alternate handler only, so Loupe can be picked for a link without becoming the default browser (see "Links from other apps open in Loupe" in `DESIGN.md`). Launch Services learns the URL types when the bundle is registered, which opening it does, so `./start.sh` after a rebuild is enough. To force it without opening the app:
@@ -143,10 +145,12 @@ With `LOUPE_SNAPSHOT_DIR` set, the app waits until the lists have refreshed and 
 Scripts/snapshot.sh /tmp/loupe-snaps   # builds the bundle, runs it as below
 
 # the same by hand, against a copy of the database
-sh Scripts/bundle.sh
+sh Scripts/bundle.sh debug snapshot
 sqlite3 ~/Library/Application\ Support/Loupe/loupe.sqlite ".backup /tmp/loupe-db/loupe.sqlite"   # copying the WAL files by hand can give an unreadable copy
-LOUPE_DATABASE=/tmp/loupe-db/loupe.sqlite LOUPE_SNAPSHOT_DIR=/tmp/loupe-snaps .build/Loupe.app/Contents/MacOS/Loupe
+LOUPE_DATABASE=/tmp/loupe-db/loupe.sqlite LOUPE_SNAPSHOT_DIR=/tmp/loupe-snaps .build/LoupeSnapshot.app/Contents/MacOS/Loupe
 ```
+
+Snapshot runs use their own bundle, `.build/LoupeSnapshot.app`, named "Loupe Snapshot" with the id `com.glenmailer.Loupe.snapshot` and no URL types, so Launch Services, AppleScript, `open -a Loupe` and links never pick a snapshot run (or a worktree's snapshot bundle) for the real app, and building one never replaces a running `Loupe.app`. Its defaults are its own, with the real app's read beneath them, so it shows the same View settings and never writes the real app's.
 
 The run is an accessory process that's never activated, and its window is transparent and off every screen, so nothing shows while it runs.
 

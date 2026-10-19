@@ -16,6 +16,11 @@ enum Entry {
             FileHandle.standardError.write(Data("usage: Loupe [diff-file] | --bench <diff-file> [path-substring]\n".utf8))
             exit(2)
         }
+        if SnapshotRun.directory != nil {
+            // A snapshot run's bundle has its own id and so its own defaults; it reads the real
+            // app's settings beneath them, to look the same, without ever writing to them.
+            UserDefaults.standard.addSuite(named: "com.glenmailer.Loupe")
+        }
         if let path = args.first {
             LaunchOptions.diffPath = path
             DiffApp.main()
