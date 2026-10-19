@@ -425,7 +425,7 @@ struct FileDetail: View {
         let shown = tab.expandedFile(file)
         return DiffView(
             file: shown, onAnchorClick: { anchor in print("clicked \(anchor)") }, review: review(of: file), markdown: tab.markdownPreview(of: file),
-            packageLock: tab.packageLockPreview(of: file),
+            packageLock: tab.packageLockPreview(of: file), image: tab.imagePreview(of: file),
             expandable: tab.expandableContext(of: file), onExpand: { expansion in Task { await tab.expandContext(of: file, expansion) } },
             onCollapse: tab.hasRevealedContext(of: file) ? { tab.collapseContext(of: file) } : nil,
             blocks: tab.threads(on: shown).map { threadBlocks(for: $0, onFileAt: file.path, in: tab) } ?? [],

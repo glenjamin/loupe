@@ -48,6 +48,15 @@ enum Git {
         }
     }
 
+    /// git's stdout as bytes, for output that isn't text, such as an image's blob.
+    static func data(_ arguments: [String], in directory: URL, timeout: Duration = .seconds(30)) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result { try runBlocking(arguments, in: directory, input: nil, timeout: timeout) { $0.readDataToEndOfFile() } })
+            }
+        }
+    }
+
     /// Whether git exits successfully, for commands that answer a yes/no question.
     static func succeeds(_ arguments: [String], in directory: URL) async -> Bool {
         (try? await run(arguments, in: directory)) != nil

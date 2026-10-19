@@ -64,6 +64,8 @@ public final class PullRequestTab: Identifiable {
     public private(set) var mergeError: String?
     /// Its markdown files as GitHub renders them, and which are shown so.
     public let markdown: MarkdownPreviews
+    /// Its image files as read from the checkout, and how each is compared.
+    public let images: ImagePreviews
     /// The description being edited, shown in place of the conversation, or nil when it isn't.
     public private(set) var descriptionEditor: DescriptionEditor?
     /// The unchanged lines revealed around each file's hunks.
@@ -166,6 +168,7 @@ public final class PullRequestTab: Identifiable {
         self.client = client
         self.candidates = candidates
         markdown = MarkdownPreviews(client: client, differ: differ)
+        images = ImagePreviews(differ: differ)
         contextExpansions = ContextExpansions(differ: differ)
         do {
             lastOpened = try store.seenHead(of: id)

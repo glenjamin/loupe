@@ -117,6 +117,15 @@ public struct PullRequestDiffer: Sendable {
         try await git(["show", "--no-textconv", "\(oid):\(path)"], in: checkout)
     }
 
+    /// The bytes of the file at `path` in commit `oid`, or only its size when that's over `limit`,
+    /// so a huge file is never read into memory.
+    public func blob(of path: String, at oid: String, in checkout: URL, limit: Int) async throws -> Blob {
+        let object = "\(oid):\(path)"
+        let bytes = Int(try await git(["cat-file", "-s", object], in: checkout).trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        if bytes > limit { return .tooLarge(bytes: bytes) }
+        return .contents(try await Git.data(["cat-file", "blob", object], in: checkout, timeout: localTimeout))
+    }
+
     /// The commits after `base` up to `head`, oldest first.
     private func commits(from base: String, to head: String, in checkout: URL) async throws -> [PullRequestCommit] {
         let log = try await git(["log", "--reverse", "-z", "--format=%H%x1f%P%x1f%s", "\(base)..\(head)"], in: checkout)
@@ -334,6 +343,12 @@ public struct PullRequestDiffer: Sendable {
     private func git(_ arguments: [String], in checkout: URL, input: Data? = nil, timeout: Duration? = nil) async throws -> String {
         try await Git.run(arguments, in: checkout, input: input, timeout: timeout ?? localTimeout)
     }
+}
+
+/// A file's bytes as one commit has them, or its size when it's too big to read.
+public enum Blob: Sendable, Equatable {
+    case contents(Data)
+    case tooLarge(bytes: Int)
 }
 
 /// A PR whose head and base commits are present in the checkout.

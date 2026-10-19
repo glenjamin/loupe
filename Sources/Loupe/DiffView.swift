@@ -5,7 +5,8 @@ import SwiftUI
 /// One file's diff under a header naming it, in a bordered box as on GitHub. Clicking a row
 /// reports its comment anchor. A PR's file also has a "Reviewed" checkbox, and ends in a footer
 /// that marks it reviewed and moves on. A PR's markdown file can be shown rendered instead, and
-/// a hidden npm lockfile as its package changes.
+/// a hidden npm lockfile as its package changes. An image file shows its image, before any
+/// threads; an SVG's only when asked, as it has a diff of its own.
 /// With `expandable`, hunk headers have arrows that ask for more of the file around them.
 /// `blocks` are views laid between rows, such as review threads.
 struct DiffView: View {
@@ -14,6 +15,7 @@ struct DiffView: View {
     var review: FileReview?
     var markdown: MarkdownPreview?
     var packageLock: PackageLockPreview?
+    var image: ImagePreview?
     var expandable: ExpandableContext?
     var onExpand: (ContextExpansion) -> Void = { _ in }
     /// Hides the lines revealed in the file; nil while nothing is revealed.
@@ -25,7 +27,7 @@ struct DiffView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            FileHeader(file: file, review: review, markdown: markdown, packageLock: packageLock, onCollapse: onCollapse)
+            FileHeader(file: file, review: review, markdown: markdown, packageLock: packageLock, image: image, onCollapse: onCollapse)
             Divider()
             if let failure = packageLock?.failure {
                 Label("Couldn't compare the packages, so the diff shows: \(failure)", systemImage: "exclamationmark.triangle")
@@ -42,7 +44,7 @@ struct DiffView: View {
             // A rendering covers the diff rather than replacing it, so the diff keeps its place.
             ZStack {
                 DiffTextScrollView(
-                    file: file, onAnchorClick: onAnchorClick, review: review, expandable: expandable, onExpand: onExpand, blocks: blocks,
+                    file: file, onAnchorClick: onAnchorClick, review: review, expandable: expandable, onExpand: onExpand, blocks: (image?.block).map { [$0] + blocks } ?? blocks,
                     commentable: commentable, onComment: onComment
                 )
                 if let markdown, markdown.isRendered {
@@ -50,6 +52,10 @@ struct DiffView: View {
                 }
                 if let packageLock, packageLock.showsChanges {
                     PackageLockChangesView(preview: packageLock)
+                }
+                if let image, image.isSVG, image.isRendered {
+                    ScrollView { ImageComparisonView(preview: image) }
+                        .background(Color(nsColor: .textBackgroundColor))
                 }
             }
         }
@@ -65,6 +71,7 @@ private struct FileHeader: View {
     let review: FileReview?
     let markdown: MarkdownPreview?
     let packageLock: PackageLockPreview?
+    let image: ImagePreview?
     let onCollapse: (() -> Void)?
 
     var body: some View {
@@ -101,6 +108,17 @@ private struct FileHeader: View {
                 .controlSize(.small)
                 .fixedSize()
                 .help("Show the diff, or the file as GitHub renders it")
+            }
+            if let image, image.isSVG {
+                Picker("Show", selection: Binding(get: { image.isRendered }, set: image.setRendered)) {
+                    Text("Source").tag(false)
+                    Text("Rendered").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                .help("Show the diff, or the image it draws")
             }
             if let packageLock, packageLock.failure == nil {
                 Picker("Show", selection: Binding(get: { packageLock.showsRawDiff }, set: packageLock.setShowsRawDiff)) {

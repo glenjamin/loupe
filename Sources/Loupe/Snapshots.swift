@@ -372,6 +372,11 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_QUOTE"] == "1" {
                     for url in try await saveSnapshotsOfQuotes(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_IMAGE=1 shows each shown image file, an SVG rendered, once read,
+                // and snapshots a changed one in each way of comparing it.
+                if environment["LOUPE_SNAPSHOT_IMAGE"] == "1" {
+                    for url in try await saveSnapshotsOfImages(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_REACTIONS=1 scrolls each conversation to its first reaction and
                 // opens the picker beside it, and snapshots it. Nothing is clicked or sent.
                 if environment["LOUPE_SNAPSHOT_REACTIONS"] == "1" {
@@ -1302,6 +1307,69 @@ private func printPull(of scroll: OverscrollScrollView, when: String) {
     let clip = scroll.contentView
     let progress = String(format: "%.2f", pull.progress)
     print("  \(when): travel \(pull.travel) revealed \(pull.revealed) progress \(progress) armed \(pull.isArmed) dragging \(pull.isDragging) | clip y \(clip.bounds.minY) maxY \(clip.bounds.maxY) document maxY \(clip.documentRect.maxY) inset \(clip.contentInsets.bottom)")
+}
+
+/// Shows each PR's shown image file once both its versions are read, an SVG rendered, and
+/// writes `image-<mode>-<title>.png` for each way of comparing a changed one, or
+/// `image-<title>.png` for an added or deleted one. A PR whose diff wasn't ready in the run's
+/// wait is waited for, and given the commit and file asked for then.
+@MainActor
+private func saveSnapshotsOfImages(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let environment = ProcessInfo.processInfo.environment
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs {
+        let deadline = Date.now.addingTimeInterval(60)
+        while Date.now < deadline, !tab.phase.isSettled(holding: nil) {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        if let wanted = environment["LOUPE_SNAPSHOT_COMMIT"], case let .ready(review) = tab.phase,
+           let commit = review.commits.picked(by: wanted), tab.shownChoice != .commit(commit.oid) {
+            await tab.show(.commit(commit.oid))
+        }
+        if let wanted = environment["LOUPE_SNAPSHOT_FILE"], tab.shownFile.map({ !$0.path.contains(wanted) }) ?? true,
+           case let .ready(changes)? = tab.shownChanges {
+            if let file = changes.files.first(where: { $0.path.contains(wanted) }) {
+                tab.selectedFile = file.id
+            } else if let file = changes.hidden.first(where: { $0.path.contains(wanted) }) {
+                tab.selectedFile = file.id
+                await tab.diffHiddenFile(file.path)
+            }
+        }
+        guard let file = tab.shownFile, let change = tab.imageChange(of: file) else { continue }
+        tab.images.setRendered(true, path: file.path)
+        await tab.loadImages(change)
+        print("\(tab.title): \(file.path), old \(describe(change.old.flatMap { tab.images.image($0) })), new \(describe(change.new.flatMap { tab.images.image($0) }))")
+        windows.select(tab.id)
+        let title = sanitised(windows.title(of: tab.id))
+        guard change.old != nil, change.new != nil else {
+            let url = directory.appending(path: "image-\(title).png")
+            try await saveSnapshot(of: window, to: url)
+            written.append(url)
+            continue
+        }
+        for mode in ImageComparisonMode.allCases {
+            tab.images.setMode(mode, path: file.path)
+            let url = directory.appending(path: "image-\(mode.rawValue)-\(title).png")
+            try await saveSnapshot(of: window, to: url)
+            written.append(url)
+        }
+        tab.images.setMode(.twoUp, path: file.path)
+    }
+    windows.select(selected)
+    return written
+
+    func describe(_ state: ImageState?) -> String {
+        switch state {
+        case nil: "none"
+        case .loading: "loading"
+        case let .ready(data): "\(data.count) bytes"
+        case let .tooLarge(bytes): "too large at \(bytes) bytes"
+        case let .failed(message): "failed: \(message)"
+        }
+    }
 }
 
 /// Lets the window settle and draw, then writes it to `url`.
