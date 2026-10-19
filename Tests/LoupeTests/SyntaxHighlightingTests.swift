@@ -25,7 +25,9 @@ struct SyntaxHighlightingTests {
         view.show(RenderedDiff(file: try greet(path: "greet.go")))
         #expect(colors(of: "func", in: view) == [NSColor.textColor])
 
-        for _ in 0..<200 where colors(of: "func", in: view) == [NSColor.textColor] {
+        // The deadline only guards against a hang, so it outlasts a whole suite on a busy machine.
+        let deadline = ContinuousClock.now + .seconds(300)
+        while colors(of: "func", in: view) == [NSColor.textColor], ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(colors(of: "func", in: view) == [DiffColors.syntaxKeyword])

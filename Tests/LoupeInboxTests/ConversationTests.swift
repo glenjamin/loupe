@@ -203,19 +203,23 @@ final class ManualDelay {
 }
 
 extension TabsModel {
-    /// Tabs whose waits last until the test elapses `delay` or `showDelay`. Every test's tabs are
-    /// made this way so that no check or fetch starts in the background unbidden, landing in the
-    /// middle of a slow-running test and changing what it sees.
+    /// Tabs whose waits last until the test elapses `delay` or `showDelay`, and whose clock stands
+    /// still. Every test's tabs are made this way so that no check or fetch starts in the
+    /// background unbidden, and no check falls due, in the middle of a slow-running test and
+    /// changes what it sees.
     static func manuallyTimed(lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer = PullRequestDiffer(), client: GitHubClient, notifications: GitHubNotifications, fallbackInterval: Duration = .seconds(60), delay: ManualDelay = ManualDelay(), showDelay: ManualDelay = ManualDelay()) -> TabsModel {
-        TabsModel(lists: lists, store: store, differ: differ, client: client, notifications: notifications, fallbackInterval: fallbackInterval, sleep: { await delay.sleep(for: $0) }, showDelay: { await showDelay.sleep(for: $0) })
+        let started = ContinuousClock.now
+        return TabsModel(lists: lists, store: store, differ: differ, client: client, notifications: notifications, fallbackInterval: fallbackInterval, sleep: { await delay.sleep(for: $0) }, showDelay: { await showDelay.sleep(for: $0) }, now: { started })
     }
 }
 
-/// Waits for `condition`, for work in the background. The deadline only guards against a hang.
+/// Waits for `condition`, for work in the background. The deadline only guards against a hang, so
+/// it outlasts a whole suite run on a busy machine: every test shares the main actor, and one can
+/// wait behind the rest for most of the run.
 @MainActor
-func until(_ condition: () -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(5)
-    while !condition() {
+func until(_ condition: () async -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(300)
+    while await !condition() {
         try #require(ContinuousClock.now < deadline, "waited too long")
         try await Task.sleep(for: .milliseconds(1))
     }

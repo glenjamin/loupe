@@ -144,10 +144,7 @@ private extension ConversationApp {
 }
 
 /// Waits for GitHub to have been sent `count` reactions.
+@MainActor
 private func untilReceived(_ count: Int, by app: ConversationApp) async throws {
-    let deadline = ContinuousClock.now + .seconds(5)
-    while await app.conversations.reactionsReceived.count < count {
-        try #require(ContinuousClock.now < deadline, "waited too long")
-        try await Task.sleep(for: .milliseconds(1))
-    }
+    try await until { await app.conversations.reactionsReceived.count >= count }
 }

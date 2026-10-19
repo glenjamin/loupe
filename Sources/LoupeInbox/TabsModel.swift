@@ -35,6 +35,8 @@ public final class TabsModel {
     /// How the shown PR waits for the selection to settle before it's checked; tests pass one
     /// they control.
     private let showDelay: @Sendable (Duration) async throws -> Void
+    /// The time, for how recently each PR was checked; tests pass one they control.
+    private let now: @Sendable () -> ContinuousClock.Instant
     /// The pending check of the shown PR, replaced whenever the selection changes.
     private var shownCheck: Task<Void, Never>?
     /// When each open PR was last checked for changes, so showing it again soon after doesn't
@@ -51,7 +53,8 @@ public final class TabsModel {
         notifications: GitHubNotifications = GitHubNotifications(),
         fallbackInterval: Duration = .seconds(60),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
-        showDelay: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+        showDelay: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }
     ) {
         self.lists = lists
         self.store = store
@@ -62,6 +65,7 @@ public final class TabsModel {
         self.fallbackInterval = fallbackInterval
         self.sleep = sleep
         self.showDelay = showDelay
+        self.now = now
         do {
             let saved = try store.openTabs()
             items = saved.pullRequests.map { .pullRequest(makeTab($0)) }
@@ -150,7 +154,7 @@ public final class TabsModel {
         shownCheck = Task { [weak self, showDelay] in
             do { try await showDelay(Self.showSettle) } catch { return }
             guard let self, !Task.isCancelled, selected == id else { return }
-            if let last = lastChecked[id], ContinuousClock.now - last < Self.recheckInterval { return }
+            if let last = lastChecked[id], now() - last < Self.recheckInterval { return }
             await catchUp(shown).value
         }
     }
@@ -219,7 +223,7 @@ public final class TabsModel {
     /// Looks up the PRs, then their checks and merge state, which the lookup leaves out and
     /// which an approval or a push can change, so the merge box doesn't wait for the lists.
     private func checkForChanges(to tabs: [PullRequestTab]) async {
-        let checked = ContinuousClock.now
+        let checked = now()
         for tab in tabs { lastChecked[tab.id] = checked }
         do {
             let ids = tabs.map(\.id)

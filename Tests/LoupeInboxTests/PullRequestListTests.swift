@@ -215,7 +215,9 @@ struct PullRequestListTests {
         let url = directory.appending(path: "loupe.sqlite")
 
         let firstRun = try listModel(try FakeGitHub(fixture: "pr-list.json"), store: PullRequestStore(url: url))
+        let refreshStarted = Date.now
         await firstRun.refresh()
+        let refreshEnded = Date.now
 
         let github = try FakeGitHub(fixture: "pr-list.json")
         let secondRun = try listModel(github, store: PullRequestStore(url: url))
@@ -225,7 +227,8 @@ struct PullRequestListTests {
         #expect(secondRun.pullRequests(in: .toReview) == firstRun.pullRequests(in: .toReview))
         #expect(secondRun.pullRequests(in: .toReview).first?.checkContexts.isEmpty == false)
         let lastRefreshed = try #require(secondRun.lastRefreshed)
-        #expect(abs(lastRefreshed.timeIntervalSinceNow) < 60)
+        // The store may keep the time a little coarser than it was taken.
+        #expect(refreshStarted.addingTimeInterval(-1) <= lastRefreshed && lastRefreshed <= refreshEnded)
         #expect(await github.requestCount == 0)
     }
 
@@ -725,7 +728,8 @@ struct PullRequestListTests {
         #expect(!model.isChecking(listed.id))
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    // Only catches a loop that never sleeps, so it outlasts a whole suite run on a busy machine.
+    @Test(.timeLimit(.minutes(5)))
     func refreshesEachIntervalUntilCancelled() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let clock = ManualClock()

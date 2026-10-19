@@ -1027,8 +1027,8 @@ struct TabsTests {
     @Test func newCommitsFoundWhileATabIsReadAreOfferedRatherThanReloaded() async throws {
         let repo = try await FakeRepository()
         let app = try await App()
-        let statuses = await app.github.statusLookups.count
         let (pullRequest, tab, first) = try await app.openDiffed(in: repo)
+        let statuses = await app.github.statusLookups.count
         try await app.showDelay.untilWaiting()
         app.showDelay.elapse()
         try await app.untilStatusLookups(reach: statuses + 1)
@@ -1156,13 +1156,10 @@ private struct App {
     }
 
     /// Waits for GitHub to have answered `count` status lookups in all, as the shown PR is
-    /// checked in the background.
+    /// checked in the background, and for the tabs to have finished with the answers.
     func untilStatusLookups(reach count: Int) async throws {
-        let deadline = ContinuousClock.now + .seconds(5)
-        while await github.statusLookups.count < count {
-            try #require(ContinuousClock.now < deadline, "waited too long")
-            try await Task.sleep(for: .milliseconds(1))
-        }
+        try await until { await github.statusLookups.count >= count }
+        try await until { !tabs.tabs.contains(where: \.isCheckingGitHub) }
     }
 
     /// Opens the first to-review PR, pushed to `repo` with one commit, once its diff is ready.
