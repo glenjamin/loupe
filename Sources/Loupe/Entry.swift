@@ -16,6 +16,9 @@ enum Entry {
             FileHandle.standardError.write(Data("usage: Loupe [diff-file] | --bench <diff-file> [path-substring]\n".utf8))
             exit(2)
         }
+        // Native tooltips, SwiftUI's `.help` included, show sooner than macOS's default; registered
+        // rather than set, so it isn't saved and a value the user sets still wins.
+        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 400])
         if SnapshotRun.directory != nil {
             // A snapshot run's bundle has its own id and so its own defaults; it reads the real
             // app's settings beneath them, to look the same, without ever writing to them.

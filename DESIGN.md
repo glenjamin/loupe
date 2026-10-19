@@ -731,6 +731,10 @@ On the diff, a comment is SwiftUI text, so `CommentBlock` now records where in t
 
 This revises the timings of "The checks glyph opens a popover after a short rest, not a tooltip". Most of the wait was `NSPopover`'s own animation, measured at about half a second to show and the same to close, on top of the 200ms rest and 300ms grace, so the popover took about 0.7s to be readable and 0.8s to go. Its animation is now off and the popover's window fades in and out over 80ms instead; `NSPopover` offers only its animation or none, and none made it pop in and out more abruptly than a fast fade. The rest is now 120ms, still longer than the pointer takes to sweep across the glyph, and the grace 150ms, enough to cross the popover's arrow from the glyph. A click elsewhere still closes it at once, with no fade. The checks glyph's is the only popover opened by hovering; the reviewers, avatars and other hover text are native tooltips, and popovers opened by a click keep `NSPopover`'s animation.
 
+### Tooltips show after 0.4s, not macOS's default
+
+This complements "The checks popover opens and closes with a quick fade": the other hover text, the reviewers, avatars, buttons and tabs, is native tooltips, which macOS holds back for 1.5s by default. The app registers `NSInitialToolTipDelay` at launch, which both AppKit's `toolTip` and SwiftUI's `.help` read. It's registered rather than written, so nothing is saved to the user's defaults and a value they set themselves still wins.
+
 ## Not yet decided
 
 Nothing is pending.
