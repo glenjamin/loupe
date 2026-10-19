@@ -73,6 +73,8 @@ private extension CommentBlock {
         case let .code(code): "code: \(code)"
         case let .quote(blocks): "quote: [\(blocks.map(\.summary).joined(separator: ", "))]"
         case .rule: "rule"
+        case let .suggestion(removed, added):
+            "suggestion: " + (removed.map { "-\($0.number.map(String.init) ?? "") \($0.text)" } + added.map { "+\($0.number.map(String.init) ?? "") \($0.text)" }).joined(separator: " | ")
         }
     }
 }

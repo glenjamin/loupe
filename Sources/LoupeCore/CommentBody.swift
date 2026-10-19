@@ -1,14 +1,17 @@
 import Foundation
 
 /// A comment's body as blocks of text to show natively, from the HTML GitHub renders it to:
-/// paragraphs with bold, italic, code and links inline, code blocks, quotes and rules. Images
-/// become links to themselves, so nothing is fetched to show a comment.
+/// paragraphs with bold, italic, code and links inline, code blocks, quotes, rules and suggested
+/// changes. Images become links to themselves, so nothing is fetched to show a comment.
 public enum CommentBlock: Sendable, Equatable {
     /// A paragraph, heading, list item or table row, indented by list depth.
     case text(AttributedString, indent: Int)
     case code(String)
     case quote([CommentBlock])
     case rule
+    /// A suggested change, as github.com shows one: the lines it replaces, then those it puts
+    /// in their place.
+    case suggestion(removed: [SuggestedLine], added: [SuggestedLine])
 
     /// The blocks of GitHub's `bodyHTML` for a comment.
     public static func blocks(fromHTML html: String) -> [CommentBlock] {
@@ -31,6 +34,17 @@ public enum CommentBlock: Sendable, Equatable {
             builder.add(token)
         }
         return builder
+    }
+}
+
+/// A line of a suggested change, with its number in the file where GitHub gives one.
+public struct SuggestedLine: Sendable, Equatable {
+    public let number: Int?
+    public let text: String
+
+    public init(number: Int?, text: String) {
+        self.number = number
+        self.text = text
     }
 }
 
@@ -86,6 +100,12 @@ private struct BlockBuilder {
     private var skipping = 0
     /// Whether the current table row has had a cell yet.
     private var rowHasCell = false
+    /// The suggested change being read, until its table closes; only its lines are shown.
+    private var suggestion: (removed: [SuggestedLine], added: [SuggestedLine])?
+    /// The line number of the suggested change's current row.
+    private var suggestionNumber: Int?
+    /// The suggested line being read, kept as it is, until its cell closes.
+    private var suggestionCell: (isAddition: Bool, number: Int?, text: String)?
 
     mutating func add(_ token: HTMLToken) {
         let afterPre = justOpenedPre
@@ -101,7 +121,9 @@ private struct BlockBuilder {
             textNode = (node.index, node.length + text.utf16.count)
             guard skipping == 0 else { return }
             emptyLink = nil
-            if preformatted != nil {
+            if suggestion != nil {
+                suggestionCell?.text += text
+            } else if preformatted != nil {
                 preformatted? += text
                 var offset = node.length
                 for character in text {
@@ -151,6 +173,21 @@ private struct BlockBuilder {
                 self.preformatted = preformatted + "\n"
                 preformattedSpans.append(element)
             }
+            return
+        }
+        let classes = attributes["class"]?.split(separator: " ") ?? []
+        if suggestion != nil {
+            guard name == "td" else { return }
+            if classes.contains("blob-num") {
+                suggestionNumber = attributes["data-line-number"].flatMap { Int($0) }
+            } else if classes.contains("blob-code-addition") || classes.contains("blob-code-deletion") {
+                suggestionCell = (classes.contains("blob-code-addition"), suggestionNumber, "")
+            }
+            return
+        }
+        if name == "div", classes.contains("js-suggested-changes-blob") {
+            flush()
+            suggestion = ([], [])
             return
         }
         switch name {
@@ -219,6 +256,17 @@ private struct BlockBuilder {
             preformattedSpans = []
             sources.append(BlockSource(text: code, spans: Self.resolved(spans)))
             append(.code(code))
+            return
+        }
+        if let current = suggestion {
+            if name == "td", let cell = suggestionCell {
+                let line = SuggestedLine(number: cell.number, text: cell.text)
+                if cell.isAddition { suggestion?.added.append(line) } else { suggestion?.removed.append(line) }
+                suggestionCell = nil
+            } else if name == "table" {
+                append(.suggestion(removed: current.removed, added: current.added))
+                suggestion = nil
+            }
             return
         }
         switch name {

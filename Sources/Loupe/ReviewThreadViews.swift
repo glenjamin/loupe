@@ -63,7 +63,10 @@ private struct NewCommentCard: View {
                         .textSelection(.enabled)
                         .help(error)
                 }
-                CommentComposer(tab: tab, draft: comment.draft, caption: caption, actions: actions, cancel: { tab.cancelComment() })
+                CommentComposer(
+                    tab: tab, draft: comment.draft, caption: caption, actions: actions, cancel: { tab.cancelComment() },
+                    suggestedLines: tab.suggestedLines(at: comment.anchor)
+                )
             }
             .font(.callout)
             .padding(10)
@@ -525,7 +528,8 @@ private struct ReplyComposer: View {
             actions: [ComposerAction(label: "Reply", help: "Reply at once, not as part of a review") { Task { await tab.sendReply(to: thread) } }],
             cancel: { tab.cancelReply(to: thread) },
             escape: escape,
-            takesFocus: takesFocus
+            takesFocus: takesFocus,
+            suggestedLines: tab.suggestedLines(for: thread)
         )
     }
 }
@@ -663,15 +667,26 @@ struct CommentComposer: View {
     var escape: (() -> Void)?
     /// Whether it takes the focus when the draft asks, as when a quote is added to it.
     var takesFocus = true
+    /// The commented lines' text, for a comment on lines that can take a suggestion.
+    var suggestedLines: [String]?
     @State private var confirmsDiscard = false
+    @State private var suggestionRequests = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             MarkdownEditor(
                 text: $draft.text, isEditable: true, tab: tab, save: { send(actions.first) }, alternateSave: alternateSave, cancel: escape ?? cancelAsking,
-                font: .systemFont(ofSize: NSFont.systemFontSize), minHeight: 96, focusRequests: takesFocus ? draft.focusRequests : 0
+                font: .systemFont(ofSize: NSFont.systemFontSize), minHeight: 96, focusRequests: takesFocus ? draft.focusRequests : 0,
+                suggestion: suggestedLines.map { SuggestionRequests(lines: $0, count: suggestionRequests, request: { suggestionRequests += 1 }) }
             )
             HStack(spacing: 8) {
+                if suggestedLines != nil {
+                    Button { suggestionRequests += 1 } label: {
+                        Image(systemName: "plus.forwardslash.minus")
+                    }
+                    .help("Insert a suggestion (⌘G)")
+                    .accessibilityLabel("Insert a suggestion")
+                }
                 Text(caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -753,10 +768,60 @@ struct CommentBody: View {
                     }
                 case .rule:
                     Divider()
+                case let .suggestion(removed, added):
+                    SuggestionView(removed: removed, added: added)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A suggested change in a comment, as github.com shows one: under "Suggested change", the
+/// lines it replaces and those it puts in their place, each numbered and marked as in a diff.
+private struct SuggestionView: View {
+    let removed: [SuggestedLine]
+    let added: [SuggestedLine]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Suggested change")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+            Divider()
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                ForEach(Array(removed.enumerated()), id: \.offset) { _, line in
+                    row(line, marker: "-", background: DiffColors.deletionBackground, gutter: DiffColors.deletionGutterBackground)
+                }
+                ForEach(Array(added.enumerated()), id: \.offset) { _, line in
+                    row(line, marker: "+", background: DiffColors.additionBackground, gutter: DiffColors.additionGutterBackground)
+                }
+            }
+            .font(.system(.callout, design: .monospaced))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))
+    }
+
+    private func row(_ line: SuggestedLine, marker: String, background: NSColor, gutter: NSColor) -> some View {
+        GridRow {
+            Text(verbatim: line.number.map(String.init) ?? "")
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .gridColumnAlignment(.trailing)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .background(Color(nsColor: gutter))
+            Text(verbatim: "\(marker) \(line.text)")
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: background))
+        }
     }
 }
 

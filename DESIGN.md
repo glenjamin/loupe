@@ -811,6 +811,14 @@ This revises "Every markdown box has Write and Preview, rendered by GitHub", whe
 
 400pt is a fixed cap rather than a share of the window, as the boxes live in both the diff and popovers, which have no pane to take a share of: it's about 25 lines of text, enough for most comments, and leaves the line commented on and the box's buttons in view together in a window of ordinary size. On the diff, a thread's block already takes the height its view measures, so the rows below move with the box; a popover follows its content's size, kept by its link.
 
+### A comment on lines offers github.com's "Insert a suggestion", and suggestions show as GitHub draws them
+
+A comment on a line of the diff and a reply in a thread on lines of it have a button with github.com's plus-slash-minus symbol, "Insert a suggestion", at the start of the composer's action row, and ⌘G, github.com's key, while the box has focus. It puts a `suggestion` block in place of the selection holding the commented lines as the PR's diff has them on the new side, indentation and all, on lines of its own after anything already written, with the cursor at the end of the lines inside the block, ready to edit; it's one change, so ⌘Z takes it out. A reply suggests every line of its thread's range. The text comes from the whole PR's diff the tab has, with any lines revealed around a hunk, not from the working tree, so it's what GitHub will compare the suggestion with. A comment or thread on a deleted line, an outdated thread and one on the whole file offer none, as github.com doesn't: there's no current text to change. Edits of existing comments don't offer it yet. ⌘G is taken ahead of the menus, so Find Next doesn't work in a box that offers suggestions; it's github.com's key, and finding within a comment being written is rare.
+
+The button sits in the action row rather than a toolbar above the box, as the composer has no toolbar and the row is where its other controls are. Preview renders the draft with `POST /markdown`, which doesn't know the line, so a suggestion previews as a plain code block rather than github.com's "Suggested change"; matching that would mean drawing the diff ourselves. Applying a suggestion is a mutation, and isn't offered.
+
+GitHub's `bodyHTML` gives a suggestion as a table of the replaced and replacing lines with their numbers, which the native comment parser read as table rows with their whitespace collapsed and no sign of which were which. `CommentBlock` now has a suggestion of its own, drawn on the diff's cards under "Suggested change" with each line numbered, marked and coloured as in the diff; in the conversation, GitHub's classes for it are styled to match github.com, word changes highlighted.
+
 ## Not yet decided
 
 Nothing is pending.

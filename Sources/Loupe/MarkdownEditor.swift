@@ -28,6 +28,8 @@ struct MarkdownEditor: View {
     /// Counts requests to take the focus with the cursor at the end, as after a quote is added,
     /// which shows Write if it's previewing.
     var focusRequests = 0
+    /// The suggestion it offers, if any, which goes in on Write.
+    var suggestion: SuggestionRequests?
     @State private var isPreviewing = SnapshotRun.previewsDrafts
     @State private var page = LazyDraftPreviewPage()
     /// How tall the text and the preview's page are laid out, which a framed box grows to fit.
@@ -47,7 +49,7 @@ struct MarkdownEditor: View {
                 toggle
             }
             ZStack {
-                MarkdownTextView(text: $text, isEditable: isEditable, save: save, alternateSave: alternateSave, cancel: cancel, font: font, isPreviewing: isPreviewing, togglePreview: { isPreviewing.toggle() }, focusRequests: focusRequests, contentHeightChanged: minHeight == nil ? nil : { writtenHeight = $0 })
+                MarkdownTextView(text: $text, isEditable: isEditable, save: save, alternateSave: alternateSave, cancel: cancel, font: font, isPreviewing: isPreviewing, togglePreview: { isPreviewing.toggle() }, focusRequests: focusRequests, contentHeightChanged: minHeight == nil ? nil : { writtenHeight = $0 }, suggestion: suggestion)
                 if isPreviewing {
                     DraftPreview(text: text, tab: tab, page: { page.page(for: tab) }, contentHeightChanged: { previewedHeight = $0 })
                         // Inside the field's border.
@@ -63,6 +65,7 @@ struct MarkdownEditor: View {
             }
         }
         .onChange(of: focusRequests, initial: true) { if focusRequests > 0 { isPreviewing = false } }
+        .onChange(of: suggestion?.count) { isPreviewing = false }
     }
 
     /// A framed box's height: the mode's content within its least height and `maxHeight`, a

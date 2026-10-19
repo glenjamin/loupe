@@ -365,6 +365,7 @@ private func plainLines(of blocks: [CommentBlock]) -> [String] {
         case let .code(code): code.components(separatedBy: .newlines)
         case let .quote(inner): plainLines(of: inner).map { "> \($0)" }
         case .rule: []
+        case let .suggestion(_, added): added.map(\.text)
         }
     }
     .map { $0.trimmingCharacters(in: .whitespaces) }

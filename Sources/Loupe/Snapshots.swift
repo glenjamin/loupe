@@ -236,6 +236,37 @@ enum SnapshotRun {
                 }
                 windows.select(tabs.selected)
             }
+            // LOUPE_SNAPSHOT_SUGGEST=1 presses ⌘G in each comment started on a line, as github.com's
+            // "Add a suggestion" key, writing `suggest-<title>.png`, then ⌘⇧P, writing
+            // `suggest-preview-<title>.png` once GitHub has rendered it (read-only). Nothing is sent.
+            if environment["LOUPE_SNAPSHOT_SUGGEST"] == "1" {
+                for tab in tabs.tabs {
+                    guard let comment = tab.threadActivity.newComment else { continue }
+                    windows.select(tab.id)
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard let window = windows.mainWindow, let content = window.contentView,
+                          let editor = descendants(of: content).compactMap({ $0 as? MarkdownEditingTextView }).first
+                    else { continue }
+                    window.makeFirstResponder(editor)
+                    pressKeyEquivalent("g", modifiers: .command, keyCode: 5, in: window)
+                    try? await Task.sleep(for: .milliseconds(500))
+                    print("\(tab.title): suggesting on line \(comment.anchor.line) offers \(tab.suggestedLines(at: comment.anchor).map(String.init(describing:)) ?? "nothing"), draft \(String(reflecting: comment.draft.text)), cursor at \(editor.selectedRange().location)")
+                    let written = directory.appending(path: "suggest-\(sanitised(windows.title(of: tab.id))).png")
+                    try? await saveSnapshot(of: window, to: written)
+                    print(written.path(percentEncoded: false))
+                    pressKeyEquivalent("p", modifiers: [.command, .shift], keyCode: 35, in: window)
+                    let draft = comment.draft.text
+                    await wait(until: .now + 10) { tab.markdown.preview(ofDraft: draft).map { $0 != .rendering } ?? true }
+                    print("\(tab.title): previewing the suggestion, \(String(describing: tab.markdown.preview(ofDraft: draft)).prefix(200))")
+                    // The preview's page loads once drawn.
+                    try? await Task.sleep(for: .milliseconds(1500))
+                    let previewed = directory.appending(path: "suggest-preview-\(sanitised(windows.title(of: tab.id))).png")
+                    try? await saveSnapshot(of: window, to: previewed)
+                    print(previewed.path(percentEncoded: false))
+                    pressKeyEquivalent("p", modifiers: [.command, .shift], keyCode: 35, in: window)
+                }
+                windows.select(tabs.selected)
+            }
             // LOUPE_SNAPSHOT_DRAFT=<short|long> fills each comment started on a line with that
             // draft. LOUPE_SNAPSHOT_PREVIEW=1 opens every markdown box on Preview, and fills
             // each such comment with the short one unless asked for the long, for GitHub to
@@ -1773,6 +1804,16 @@ private func printShownChanges(of tab: PullRequestTab) {
 
 /// A comment longer than any markdown box grows to, for `LOUPE_SNAPSHOT_DRAFT=long`.
 private let longDraft = (1...4).map { "\($0). \(sampleDraft)" }.joined(separator: "\n\n")
+
+/// Sends a key equivalent to `window` as AppKit delivers one, before the menus.
+@MainActor
+private func pressKeyEquivalent(_ key: String, modifiers: NSEvent.ModifierFlags, keyCode: UInt16, in window: NSWindow) {
+    guard let event = NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+        context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: keyCode
+    ) else { return }
+    _ = window.performKeyEquivalent(with: event)
+}
 
 /// A comment for `LOUPE_SNAPSHOT_PREVIEW` to preview, with the markdown comments use most.
 private let sampleDraft = """

@@ -96,6 +96,14 @@ struct DescriptionEditorView: View {
     }
 }
 
+/// The commented lines a composer offers as a suggestion, put in at the cursor each time `count`
+/// goes up, as github.com's "Add a suggestion" does; `request` asks for one.
+struct SuggestionRequests {
+    let lines: [String]
+    let count: Int
+    let request: () -> Void
+}
+
 /// A plain-text `NSTextView` for markdown: monospaced, with no spelling, quote, dash or link
 /// substitutions, which would change what's sent to GitHub.
 struct MarkdownTextView: NSViewRepresentable {
@@ -114,6 +122,8 @@ struct MarkdownTextView: NSViewRepresentable {
     var focusRequests = 0
     /// Told how tall the text is laid out whenever that changes, for a box that fits it.
     var contentHeightChanged: ((CGFloat) -> Void)?
+    /// The suggestion it offers, if any, put in at the cursor on each request and on ⌘G.
+    var suggestion: SuggestionRequests?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -128,6 +138,7 @@ struct MarkdownTextView: NSViewRepresentable {
         textView.font = font
         textView.string = text
         textView.delegate = context.coordinator
+        context.coordinator.suggestionRequests = suggestion?.count ?? 0
         scrollView.documentView = textView
         return scrollView
     }
@@ -158,6 +169,12 @@ struct MarkdownTextView: NSViewRepresentable {
             context.coordinator.focusRequests = focusRequests
             textView.focusAtEnd()
         }
+        textView.onSuggest = suggestion?.request
+        // A request made over the preview waits for Write, as the text takes no typing there.
+        if let suggestion, suggestion.count != context.coordinator.suggestionRequests, !isPreviewing {
+            context.coordinator.suggestionRequests = suggestion.count
+            textView.insertSuggestion(of: suggestion.lines)
+        }
     }
 
     @MainActor
@@ -167,6 +184,8 @@ struct MarkdownTextView: NSViewRepresentable {
         var wasPreviewing = false
         /// The focus requests acted on.
         var focusRequests = 0
+        /// The suggestion requests acted on.
+        var suggestionRequests = 0
 
         init(text: Binding<String>) {
             self.text = text
@@ -191,6 +210,8 @@ final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
     var onTogglePreview: (() -> Void)?
     /// Told the height of the laid-out text whenever it changes.
     var onContentHeight: ((CGFloat) -> Void)?
+    /// What ⌘G does, as on github.com, if anything.
+    var onSuggest: (() -> Void)?
     var isPreviewing = false
     private var reportedHeight: CGFloat?
     /// The fixed end of a selection made by code words, so the other end moves on the next one.
@@ -232,6 +253,18 @@ final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
         if rewraps { reportContentHeight() }
     }
 
+    /// Puts a suggestion of `lines` in place of the selection, as one undoable change, and takes
+    /// the focus with the cursor inside it.
+    func insertSuggestion(of lines: [String]) {
+        let edit = SuggestedChange.insertion(of: lines, into: string, replacing: selectedRange())
+        guard shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
+        replaceCharacters(in: edit.range, with: edit.replacement)
+        didChangeText()
+        window?.makeFirstResponder(self)
+        setSelectedRange(edit.selection)
+        scrollRangeToVisible(edit.selection)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if focusesInWindow, window != nil { focusAtEnd() }
@@ -264,6 +297,10 @@ final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
         if let onTogglePreview, window?.firstResponder === self, modifiers == [.command, .shift],
            event.charactersIgnoringModifiers?.lowercased() == "p" {
             onTogglePreview()
+            return true
+        }
+        if let onSuggest, window?.firstResponder === self, modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "g" {
+            onSuggest()
             return true
         }
         return super.performKeyEquivalent(with: event)
