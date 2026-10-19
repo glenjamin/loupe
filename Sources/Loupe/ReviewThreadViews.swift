@@ -269,7 +269,8 @@ private struct ThreadCard: View {
                     .help(error)
             }
             if let draft = activity.replies[thread.id] {
-                ReplyComposer(tab: tab, thread: thread, draft: draft)
+                // The files stay behind the conversation, where the reply may be written too.
+                ReplyComposer(tab: tab, thread: thread, draft: draft, takesFocus: tab.section == .files)
             } else if thread.viewerCanReply {
                 Button("Reply…") { tab.startReply(to: thread) }
                     .controlSize(.small)
@@ -514,6 +515,8 @@ private struct ReplyComposer: View {
     let draft: CommentDraft
     /// What Esc does instead of cancelling, if anything.
     var escape: (() -> Void)?
+    /// Whether it takes the focus when the draft asks, false while it's out of sight.
+    var takesFocus = true
 
     var body: some View {
         CommentComposer(
@@ -521,7 +524,8 @@ private struct ReplyComposer: View {
             draft: draft, caption: "Markdown. Posts at once, not as part of a review.",
             actions: [ComposerAction(label: "Reply", help: "Reply at once, not as part of a review") { Task { await tab.sendReply(to: thread) } }],
             cancel: { tab.cancelReply(to: thread) },
-            escape: escape
+            escape: escape,
+            takesFocus: takesFocus
         )
     }
 }
@@ -585,7 +589,9 @@ private struct CommentView: View {
                 if let edit {
                     CommentEditor(tab: tab, edit: edit)
                 } else {
-                    CommentBody(blocks: commentBlocks(comment.bodyHTML))
+                    let blocks = commentBlocks(comment.bodyHTML)
+                    CommentBody(blocks: blocks)
+                        .background(QuoteSource(threadId: thread.id, blocks: blocks))
                 }
                 // A pending comment can't be reacted to until its review is submitted, nor one
                 // GitHub doesn't have yet.
@@ -656,11 +662,16 @@ struct CommentComposer: View {
     let cancel: () -> Void
     /// What Esc does instead of cancelling, such as putting a floating composer away.
     var escape: (() -> Void)?
+    /// Whether it takes the focus when the draft asks, as when a quote is added to it.
+    var takesFocus = true
     @State private var confirmsDiscard = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            MarkdownEditor(text: $draft.text, isEditable: true, tab: tab, save: { send(actions.first) }, alternateSave: alternateSave, cancel: escape ?? cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize), height: 96)
+            MarkdownEditor(
+                text: $draft.text, isEditable: true, tab: tab, save: { send(actions.first) }, alternateSave: alternateSave, cancel: escape ?? cancelAsking,
+                font: .systemFont(ofSize: NSFont.systemFontSize), height: 96, focusRequests: takesFocus ? draft.focusRequests : 0
+            )
             HStack(spacing: 8) {
                 Text(caption)
                     .foregroundStyle(.secondary)
@@ -750,6 +761,42 @@ struct CommentBody: View {
     }
 }
 
+/// Marks where a thread comment's body is drawn, so text selected in it can be quoted into the
+/// thread's reply.
+struct QuoteSource: NSViewRepresentable {
+    let threadId: String
+    let blocks: [CommentBlock]
+
+    final class Marker: NSView {
+        var threadId = ""
+        var blocks: [CommentBlock] = []
+
+        // Only marks the place; clicks go to the comment it's behind.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    func makeNSView(context: Context) -> Marker { Marker() }
+
+    func updateNSView(_ view: Marker, context: Context) {
+        view.threadId = threadId
+        view.blocks = blocks
+    }
+}
+
+/// Quotes the text selected in a thread comment's body, drawn natively in `window`, into the
+/// thread's reply, as github.com's `r` does, and returns whether it could. A selection in a
+/// comment's body is made in the window's field editor for one of the body's blocks.
+@MainActor
+func quoteSelectedComment(in window: NSWindow, of tab: PullRequestTab) -> Bool {
+    guard let editor = window.firstResponder as? NSTextView, !editor.isEditable, editor.selectedRange().length > 0,
+          let field = editor.delegate as? NSTextField, let root = window.contentView else { return false }
+    let center = field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil)
+    guard let source = quoteSource(at: center, in: root), let thread = tab.reviewThread(source.threadId),
+          let markdown = QuoteReply.markdown(selecting: editor.selectedRange(), of: editor.string, in: source.blocks)
+    else { return false }
+    return tab.quoteInReply(markdown, to: thread)
+}
+
 /// Marks a comment, or a thread, in the viewer's review not yet submitted.
 private struct PendingBadge: View {
     var body: some View {
@@ -818,4 +865,14 @@ func commentBlocks(_ html: String) -> [CommentBlock] {
 /// current diff, or where it was made once outdated.
 func place(of thread: ReviewThread) -> String {
     thread.lines.map { "\(thread.path):\($0.upperBound)" } ?? thread.path
+}
+
+/// The comment body drawn at `point`, in the window's coordinates, among `view`'s descendants.
+@MainActor
+private func quoteSource(at point: NSPoint, in view: NSView) -> QuoteSource.Marker? {
+    for subview in view.subviews where !subview.isHidden {
+        if let marker = subview as? QuoteSource.Marker, marker.convert(marker.bounds, to: nil).contains(point) { return marker }
+        if let found = quoteSource(at: point, in: subview) { return found }
+    }
+    return nil
 }

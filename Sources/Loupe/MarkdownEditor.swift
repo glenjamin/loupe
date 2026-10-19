@@ -20,6 +20,9 @@ struct MarkdownEditor: View {
     var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     /// The box's height, framed as a field; without one it fills the space unframed, as a page.
     var height: CGFloat?
+    /// Counts requests to take the focus with the cursor at the end, as after a quote is added,
+    /// which shows Write if it's previewing.
+    var focusRequests = 0
     @State private var isPreviewing = SnapshotRun.previewsDrafts
     @State private var page = LazyDraftPreviewPage()
 
@@ -36,7 +39,7 @@ struct MarkdownEditor: View {
                 toggle
             }
             ZStack {
-                MarkdownTextView(text: $text, isEditable: isEditable, save: save, alternateSave: alternateSave, cancel: cancel, font: font, isPreviewing: isPreviewing, togglePreview: { isPreviewing.toggle() })
+                MarkdownTextView(text: $text, isEditable: isEditable, save: save, alternateSave: alternateSave, cancel: cancel, font: font, isPreviewing: isPreviewing, togglePreview: { isPreviewing.toggle() }, focusRequests: focusRequests)
                 if isPreviewing {
                     DraftPreview(text: text, tab: tab, page: { page.page(for: tab) })
                         // Inside the field's border.
@@ -51,6 +54,7 @@ struct MarkdownEditor: View {
                 }
             }
         }
+        .onChange(of: focusRequests, initial: true) { if focusRequests > 0 { isPreviewing = false } }
     }
 
     private var toggle: some View {

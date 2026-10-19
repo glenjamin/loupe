@@ -94,6 +94,9 @@ public final class CommentDraft {
     public var text = ""
     /// The markdown as GitHub had it, for a draft editing a comment rather than writing one.
     public internal(set) var original: String?
+    /// Counts the times its composer was asked to take the focus, with the cursor at the end,
+    /// as when a quote is added to it.
+    public internal(set) var focusRequests = 0
 
     init() {}
 

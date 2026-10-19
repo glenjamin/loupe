@@ -46,7 +46,7 @@ enum DiffSettings {
 
 /// Which PR the window shows, and so which PR the review keys act on. ⌘↓ and `]` mark the shown
 /// file viewed and show the next one, and ⇧V toggles it, unless the focus is somewhere text can
-/// be typed.
+/// be typed. `r` quotes text selected in a comment into a reply, in either section.
 @Observable
 @MainActor
 final class ReviewWindows {
@@ -73,6 +73,7 @@ final class ReviewWindows {
 
     /// Whether `event` was a review key, now acted on.
     private func handle(_ event: NSEvent) -> Bool {
+        if let window = event.window, window.isKeyWindow, quote(event, in: window) { return true }
         guard let window = event.window, window === self.window, window.isKeyWindow, let tab = shownTab,
               tab.section == .files, let path = tab.selectedFile, !isTyping(in: window)
         else { return false }
@@ -87,6 +88,20 @@ final class ReviewWindows {
             return true
         }
         return false
+    }
+
+    /// Whether `event` was `r` with text selected in a comment of the shown PR, in `window` or
+    /// a popover over it, now quoted into a reply as github.com does. The conversation page's
+    /// selection is read asynchronously, so `r` there is taken whatever is selected; the page
+    /// has nothing to type into.
+    func quote(_ event: NSEvent, in window: NSWindow) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        guard event.charactersIgnoringModifiers == "r", modifiers.isEmpty, let tab = shownTab, !isTyping(in: window) else { return false }
+        if quoteSelectedComment(in: window, of: tab) { return true }
+        guard tab.section == .conversation, let page = ConversationPage.existingPage(for: tab),
+              let responder = window.firstResponder as? NSView, responder.isDescendant(of: page.webView) else { return false }
+        Task { await page.quoteSelection() }
+        return true
     }
 }
 

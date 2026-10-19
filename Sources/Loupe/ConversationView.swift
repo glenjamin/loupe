@@ -344,6 +344,19 @@ final class ConversationPage: GitHubWebPage {
         editPopover.popover.close()
     }
 
+    /// Quotes what's selected in one comment of the page into a reply, as github.com's `r` does:
+    /// a thread's comment into the thread's reply, any other into the comment on the PR. Returns
+    /// whether there was such a selection.
+    @discardableResult
+    func quoteSelection() async -> Bool {
+        guard let tab, let found = try? await webView.evaluateJavaScript(Self.selectionScript, in: nil, contentWorld: .defaultClient),
+              let selection = found as? [String: Any], let html = selection["html"] as? String else { return false }
+        let markdown = QuoteReply.markdown(fromHTML: html)
+        guard !markdown.isEmpty else { return false }
+        tab.quoteInConversation(markdown, fromThread: selection["thread"] as? String)
+        return true
+    }
+
     /// Where "Add a comment…" sits in the web view, scrolled into view if need be; nil if the
     /// page has none.
     private func rectOfCommentLink() async -> NSRect? {
@@ -393,6 +406,36 @@ final class ConversationPage: GitHubWebPage {
     }
 
     private static let baseURL = URL(string: "https://github.com/")!
+
+    /// The selection's HTML, inside clones of the elements it's within up to its comment's body
+    /// so a part of a code block or link stays one, and the id of the thread that comment is in;
+    /// null unless the selection is within a single comment's body. A thread's own comments
+    /// have their own body inside a review's, so the review's counts only outside its threads.
+    private static let selectionScript = """
+        (() => {
+          const selection = window.getSelection();
+          if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+          const range = selection.getRangeAt(0);
+          const element = node => node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+          const bodyOf = node => {
+            const body = element(node)?.closest('.body');
+            const thread = element(node)?.closest('details.thread');
+            return body && (!thread || thread.contains(body)) ? body : null;
+          };
+          const body = bodyOf(range.startContainer);
+          if (!body || body !== bodyOf(range.endContainer)) return null;
+          let selected = range.cloneContents();
+          for (let inside = element(range.commonAncestorContainer); inside && inside !== body; inside = inside.parentElement) {
+            const clone = inside.cloneNode(false);
+            clone.appendChild(selected);
+            selected = clone;
+          }
+          const holder = document.createElement('div');
+          holder.appendChild(selected);
+          holder.querySelectorAll('.reactions, details.thread, details.minimized > summary').forEach(hidden => hidden.remove());
+          return { html: holder.innerHTML, thread: body.closest('details.thread')?.dataset.threadId ?? null };
+        })()
+        """
 
     /// Scrolls to `offset` unless it's negative, then waits for a frame to be drawn, or a moment
     /// where frames are held back, as in a window off screen.

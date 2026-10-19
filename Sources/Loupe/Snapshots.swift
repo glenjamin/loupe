@@ -366,6 +366,12 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_EDIT_COMMENT"] == "1" {
                     for url in try await saveSnapshotsOfCommentEdits(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_QUOTE=1 selects text in a comment on the PR, a thread comment in
+                // the conversation and one on the diff, presses r for each and snapshots the quote
+                // in its composer. Nothing is sent.
+                if environment["LOUPE_SNAPSHOT_QUOTE"] == "1" {
+                    for url in try await saveSnapshotsOfQuotes(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_REACTIONS=1 scrolls each conversation to its first reaction and
                 // opens the picker beside it, and snapshots it. Nothing is clicked or sent.
                 if environment["LOUPE_SNAPSHOT_REACTIONS"] == "1" {
@@ -977,6 +983,131 @@ private func saveSnapshotsOfCommentEdits(in windows: WindowManager, to directory
         page.closeEdit()
         tab.cancelEdit(of: commentId)
         written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
+/// On each PR, selects text in a comment and presses `r`, sent to the key handling as a
+/// synthesised key down, three times: in the conversation's first comment on the PR (or its
+/// description), in the first comment of its first open thread there, and in the first comment
+/// of a thread on the diff the viewer can reply to, triple-clicked. Each prints the draft and writes
+/// `quote-comment-`, `quote-thread-` and `quote-diff-<title>.png`, with a popover moved back by
+/// its link. Nothing is sent, and each draft is dropped afterwards.
+@MainActor
+private func saveSnapshotsOfQuotes(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    func pressR() -> Bool {
+        guard let key = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, characters: "r", charactersIgnoringModifiers: "r", isARepeat: false, keyCode: 15
+        ) else { return false }
+        return ReviewWindows.shared.quote(key, in: window)
+    }
+    for tab in windows.tabs.tabs {
+        let title = sanitised(windows.title(of: tab.id))
+        windows.select(tab.id)
+        let fetched = Date.now.addingTimeInterval(20)
+        while Date.now < fetched, tab.conversation == nil || tab.isFetchingConversation { try? await Task.sleep(for: .milliseconds(100)) }
+        guard tab.conversation != nil else {
+            print("\(tab.title): no conversation")
+            continue
+        }
+        tab.section = .conversation
+        let page = ConversationPage.page(for: tab)
+        let deadline = Date.now.addingTimeInterval(10)
+        while Date.now < deadline, !page.isLoaded { try? await Task.sleep(for: .milliseconds(100)) }
+        try? await Task.sleep(for: .milliseconds(300))
+        let bodies = [
+            ("comment", "document.querySelector('article.item.comment > .card > .body') ?? document.querySelector('article.item > .card > .body')"),
+            ("thread", "document.querySelector('details.thread[open][data-thread-id] .thread-comment .body')"),
+        ]
+        for (kind, finding) in bodies {
+            // Selects the body's first few blocks, as a drag over them would.
+            let script = """
+                (() => {
+                  const body = \(finding);
+                  if (!body) return null;
+                  body.scrollIntoView({ block: 'center' });
+                  const range = document.createRange();
+                  const blocks = [...body.children];
+                  if (blocks.length > 0) {
+                    range.setStartBefore(blocks[0]);
+                    range.setEndAfter(blocks[Math.min(blocks.length, 3) - 1]);
+                  } else {
+                    range.selectNodeContents(body);
+                  }
+                  const selection = window.getSelection();
+                  selection.removeAllRanges();
+                  selection.addRange(range);
+                  return selection.toString();
+                })()
+                """
+            guard let text = try? await page.webView.evaluateJavaScript(script, in: nil, contentWorld: .defaultClient) as? String else {
+                print("\(tab.title): no \(kind) body to select in the conversation")
+                continue
+            }
+            window.makeFirstResponder(page.webView)
+            let taken = pressR()
+            try? await Task.sleep(for: .milliseconds(1500))
+            let activity = tab.threadActivity
+            let reply = activity.replyingInConversation.flatMap { activity.replies[$0] }
+            let draft = reply ?? tab.conversationComment.draft
+            print("\(tab.title): selected \(text.debugDescription) in a \(kind); r taken \(taken); into \(reply != nil ? "the thread's reply" : tab.conversationComment.isOpen ? "the comment on the PR" : "nothing"): \((draft?.text ?? "none").debugDescription)")
+            if let popover = page.replyPopover?.popover ?? page.commentPopover {
+                placePopover(under: page.webView.convert(popover.positioningRect, to: nil), in: window)
+            }
+            let url = directory.appending(path: "quote-\(kind)-\(title).png")
+            try await saveSnapshot(of: window, to: url)
+            written.append(url)
+            page.closeReply()
+            page.closeComment()
+            if let id = activity.replyingInConversation, let thread = tab.reviewThread(id) { tab.cancelReply(to: thread) }
+            tab.cancelConversationComment()
+            _ = try? await page.webView.evaluateJavaScript("window.getSelection().removeAllRanges()", in: nil, contentWorld: .defaultClient)
+        }
+        guard let thread = tab.placedThreads.first(where: { $0.viewerCanReply && !$0.isPending && !$0.isResolved && !$0.comments.isEmpty }) else {
+            print("\(tab.title): no thread on the diff to quote")
+            continue
+        }
+        await tab.showInDiff(thread)
+        try? await Task.sleep(for: .milliseconds(1500))
+        window.layoutIfNeeded()
+        // A comment body's text is a selectable field drawn over its marker.
+        guard let root = window.contentView,
+              let field = descendants(of: root).lazy.compactMap({ $0 as? NSTextField }).first(where: { field in
+                  !field.isHiddenOrHasHiddenAncestor && !field.isEditable && field.isSelectable && !field.stringValue.isEmpty
+                      && descendants(of: root).contains { marker in
+                          marker is QuoteSource.Marker && marker.convert(marker.bounds, to: nil).contains(field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil))
+                      }
+              })
+        else {
+            print("\(tab.title): no comment body drawn on the diff")
+            continue
+        }
+        // A triple click selects the paragraph, as it would for a reader.
+        let point = field.convert(NSPoint(x: min(20, field.bounds.midX), y: field.bounds.midY), to: nil)
+        for clickCount in 1...3 {
+            let events = [NSEvent.EventType.leftMouseUp, .leftMouseDown].compactMap { type in
+                NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: type == .leftMouseDown ? 1 : 0)
+            }
+            guard events.count == 2 else { continue }
+            NSApp.postEvent(events[0], atStart: false)
+            window.sendEvent(events[1])
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        let taken = pressR()
+        try? await Task.sleep(for: .milliseconds(800))
+        let draft = tab.threadActivity.replies[thread.id]
+        print("\(tab.title): selected \(String(field.stringValue.prefix(60)).debugDescription) on the diff; r taken \(taken); reply: \((draft?.text ?? "none").debugDescription), focus in \(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nothing")")
+        let url = directory.appending(path: "quote-diff-\(title).png")
+        try await saveSnapshot(of: window, to: url)
+        written.append(url)
+        tab.cancelReply(to: thread)
     }
     windows.select(selected)
     return written

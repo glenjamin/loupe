@@ -110,6 +110,8 @@ struct MarkdownTextView: NSViewRepresentable {
     var isPreviewing = false
     /// What ⌘⇧P does, if anything.
     var togglePreview: (() -> Void)?
+    /// Counts requests to take the focus with the cursor at the end, as after a quote is added.
+    var focusRequests = 0
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -145,6 +147,10 @@ struct MarkdownTextView: NSViewRepresentable {
         if !context.coordinator.hasFocused || toggled, let window = textView.window {
             context.coordinator.hasFocused = window.makeFirstResponder(textView)
         }
+        if focusRequests != context.coordinator.focusRequests {
+            context.coordinator.focusRequests = focusRequests
+            textView.focusAtEnd()
+        }
     }
 
     @MainActor
@@ -152,6 +158,8 @@ struct MarkdownTextView: NSViewRepresentable {
         var text: Binding<String>
         var hasFocused = false
         var wasPreviewing = false
+        /// The focus requests acted on.
+        var focusRequests = 0
 
         init(text: Binding<String>) {
             self.text = text
@@ -177,6 +185,25 @@ final class MarkdownEditingTextView: NSTextView {
     var isPreviewing = false
     /// The fixed end of a selection made by code words, so the other end moves on the next one.
     private var wordSelectionAnchor: Int?
+    /// Whether to take the focus once it's in a window.
+    private var focusesInWindow = false
+
+    /// Takes the focus with the cursor at the end, now or once it's in a window.
+    func focusAtEnd() {
+        guard let window, window.makeFirstResponder(self) else {
+            focusesInWindow = true
+            return
+        }
+        focusesInWindow = false
+        let end = NSRange(location: (string as NSString).length, length: 0)
+        setSelectedRange(end)
+        scrollRangeToVisible(end)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if focusesInWindow, window != nil { focusAtEnd() }
+    }
 
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
