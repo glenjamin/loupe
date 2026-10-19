@@ -17,13 +17,16 @@ public final class IncomingLinks {
         self.openInBrowser = openInBrowser
     }
 
-    /// Opens each link in turn, or keeps them until `ready` if the tabs aren't there yet.
+    /// Opens each link, or keeps them until `ready` if the tabs aren't there yet. Every PR's tab
+    /// shows at once, in the order the links came; returns once any looked up have been found
+    /// or failed.
     public func open(_ urls: [URL]) async {
         guard let tabs else {
             waiting += urls
             return
         }
-        for url in urls { await open(url, in: tabs) }
+        let lookups = urls.compactMap { open($0, in: tabs) }
+        for lookup in lookups { await lookup.value }
     }
 
     /// The tabs can now show PRs; opens the links that arrived before them.
@@ -34,27 +37,17 @@ public final class IncomingLinks {
         await open(urls)
     }
 
-    private func open(_ url: URL, in tabs: TabsModel) async {
+    private func open(_ url: URL, in tabs: TabsModel) -> Task<Void, Never>? {
         if let link = PullRequestLink(url: url) {
             bringForward()
-            // A PR GitHub won't show us still opens somewhere, so the click isn't lost.
-            if await !tabs.open(link), let web = webURL(url) { openInBrowser(web) }
+            return tabs.open(link)
         } else if ["http", "https"].contains(url.scheme?.lowercased()) {
             openInBrowser(url)
         } else {
             log("Ignoring a link Loupe can't open: \(url.absoluteString)")
         }
+        return nil
     }
-}
-
-/// The page on github.com a PR link names: itself for http and https, and for Loupe's own
-/// scheme the same path there.
-private func webURL(_ url: URL) -> URL? {
-    guard url.scheme?.lowercased() == "loupe" else { return url }
-    guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-    components.scheme = "https"
-    if components.host?.isEmpty ?? true { components.host = "github.com" }
-    return components.url
 }
 
 private func log(_ message: String) {

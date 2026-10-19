@@ -98,7 +98,7 @@ public final class PullRequestTab: Identifiable {
     @ObservationIgnored public var beforeStep: @MainActor (DiffStep) async -> Void = { _ in }
 
     /// Opens a linked PR in its own tab; set by `TabsModel`.
-    @ObservationIgnored var linkOpener: @MainActor (PullRequestLink) async -> Bool = { _ in false }
+    @ObservationIgnored var linkOpener: @MainActor (PullRequestLink) async -> Void = { _ in }
 
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
@@ -203,17 +203,16 @@ public final class PullRequestTab: Identifiable {
         lists.pullRequest(id: id) ?? opened
     }
 
-    /// Opens the PR a link in this one names, in its own tab. False when it can't, so the link
-    /// can go to the browser instead.
-    public func open(_ link: PullRequestLink) async -> Bool {
+    /// Opens the PR a link in this one names, in its own tab, returning once it's shown or its
+    /// tab says why it can't be.
+    public func open(_ link: PullRequestLink) async {
         await linkOpener(link)
     }
 
     /// `repo #number`.
     public var title: String {
         let pullRequest = pullRequest
-        let name = pullRequest.repository.split(separator: "/").last.map(String.init) ?? pullRequest.repository
-        return "\(name) #\(pullRequest.number)"
+        return tabTitle(repository: pullRequest.repository, number: pullRequest.number)
     }
 
     /// How the PR has changed on GitHub since its diff was produced, if in a way that waits for

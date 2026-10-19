@@ -58,7 +58,7 @@ final class WindowManager {
 
     /// What the window is titled with `id` shown, nil being the lists.
     func title(of id: String?) -> String {
-        id.flatMap(tabs.tab(id:))?.title ?? "Pull Requests"
+        id.flatMap(tabs.item(id:))?.title ?? "Pull Requests"
     }
 
     /// Shows the lists.
@@ -75,11 +75,11 @@ final class WindowManager {
     /// Shows the strip's item `number`, counting from 1 with the lists first; 9 is always the
     /// last, as in browsers.
     func selectTab(number: Int) {
-        let index = number == 9 ? tabs.tabs.count - 1 : number - 2
+        let index = number == 9 ? tabs.items.count - 1 : number - 2
         if index < 0 {
             showLists()
-        } else if tabs.tabs.indices.contains(index) {
-            select(tabs.tabs[index].id)
+        } else if tabs.items.indices.contains(index) {
+            select(tabs.items[index].id)
         }
     }
 
@@ -118,20 +118,31 @@ final class WindowManager {
 
     /// Brings the strip, the shown content and the review keys' target up to date with the model.
     private func render() {
-        let selected = tabs.selected.flatMap(tabs.tab(id:))
-        content.strip.update(
-            tabs: tabs.tabs.map { TabStripItem(id: $0.id, title: $0.title, status: TabStatus($0.pullRequest), subtitle: $0.pullRequest.title) },
-            selected: selected?.id
-        )
-        content.discard(keeping: Set(tabs.tabs.map(\.id)))
+        let selected = tabs.selected.flatMap(tabs.item(id:))
+        content.strip.update(tabs: tabs.items.map(stripItem), selected: selected?.id)
+        content.discard(keeping: Set(tabs.items.map(\.id)))
         content.show(selected?.id) {
-            if let selected {
-                hostingController(PullRequestView(tab: selected, checkoutSearchRoots: tabs.lists.checkoutSearchRoots))
-            } else {
+            switch selected {
+            case let .pullRequest(tab):
+                hostingController(PullRequestView(tab: tab, checkoutSearchRoots: tabs.lists.checkoutSearchRoots))
+            case let .pending(pending):
+                hostingController(PendingTabView(pending: pending, retry: { [tabs] in tabs.retry(pending) }, close: { [weak self] in self?.close(pending.id) }))
+            case nil:
                 hostingController(ListsContent(lists: tabs.lists))
             }
         }
-        ReviewWindows.shared.show(selected, in: window)
+        ReviewWindows.shared.show(selected?.pullRequestTab, in: window)
+    }
+
+    /// A PR's tab shows its state and title; a link's being looked up shows a spinner in their
+    /// place, and once it's failed says so.
+    private func stripItem(_ item: TabItem) -> TabStripItem {
+        switch item {
+        case let .pullRequest(tab):
+            TabStripItem(id: tab.id, title: tab.title, status: TabStatus(tab.pullRequest), subtitle: tab.pullRequest.title)
+        case let .pending(pending):
+            TabStripItem(id: pending.id, title: pending.title, status: nil, subtitle: pending.error == nil ? "" : "Couldn't open", isLookingUp: pending.error == nil)
+        }
     }
 
     /// Renders again whenever the tabs, the selection or a tab's titles change.
@@ -226,14 +237,14 @@ private struct WindowChrome: View {
     @AppStorage("showsClosedPullRequests") private var showsClosed = false
 
     var body: some View {
-        let tab = tabs.selected.flatMap(tabs.tab(id:))
+        let item = tabs.selected.flatMap(tabs.item(id:))
         ControllerView(controller: content)
-            .navigationTitle(tab?.title ?? "Pull Requests")
-            .navigationSubtitle(tab?.pullRequest.title ?? "")
+            .navigationTitle(item?.title ?? "Pull Requests")
+            .navigationSubtitle(item?.pullRequestTab?.pullRequest.title ?? "")
             .toolbar {
                 ToolbarItemGroup {
-                    if let tab {
-                        let url = tab.pullRequest.url
+                    if let item {
+                        let url = item.url
                         Button("Open on GitHub", systemImage: "safari") { openInBrowser(url) }
                             .help("Open on GitHub")
                         Button("Copy Link", systemImage: "link") { copyLink(url) }

@@ -11,8 +11,8 @@ import WebKit
 @MainActor
 class GitHubWebPage: NSObject {
     let webView: WKWebView
-    /// Opens a linked PR in the app, returning whether it could; set by whoever makes the page.
-    var openPullRequestLink: @MainActor (PullRequestLink) async -> Bool = { _ in false }
+    /// Opens a linked PR in the app; set by whoever makes the page.
+    var openPullRequestLink: @MainActor (PullRequestLink) async -> Void = { _ in }
     /// Acts on a link to one of the page's review threads; set by whoever makes the page.
     var openThreadLink: @MainActor (ThreadLink) -> Void = { _ in }
     /// Adds or takes away the viewer's reaction a link names; set by whoever makes the page.
@@ -100,18 +100,16 @@ extension GitHubWebPage: WKNavigationDelegate, WKUIDelegate {
     }
 }
 
-/// Opens a link to a PR in the app, unless asked for a browser tab or the app can't, and any
-/// other web or mail link in the default browser.
+/// Opens a link to a PR in the app, unless asked for a browser tab, and any other web or mail
+/// link in the default browser.
 @MainActor
-func followLink(_ url: URL?, inBrowserTab: Bool, openPullRequest: @escaping @MainActor (PullRequestLink) async -> Bool) {
+func followLink(_ url: URL?, inBrowserTab: Bool, openPullRequest: @escaping @MainActor (PullRequestLink) async -> Void) {
     guard let url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else { return }
     guard !inBrowserTab, let link = PullRequestLink(url: url) else {
         openInBrowser(url)
         return
     }
-    Task {
-        if await !openPullRequest(link) { openInBrowser(url) }
-    }
+    Task { await openPullRequest(link) }
 }
 
 /// AppKit's number for the middle mouse button, as `WKNavigationAction.buttonNumber` reports it.

@@ -156,7 +156,7 @@ private final class LazyDraftPreviewPage {
     func page(for tab: PullRequestTab) -> DraftPreviewPage {
         if let made { return made }
         let page = DraftPreviewPage()
-        page.openPullRequestLink = { [weak tab] in await tab?.open($0) ?? false }
+        page.openPullRequestLink = { [weak tab] in await tab?.open($0) }
         made = page
         return page
     }

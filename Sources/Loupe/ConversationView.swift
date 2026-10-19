@@ -193,7 +193,7 @@ final class ConversationPage: GitHubWebPage {
         if let page = pages.object(forKey: tab) { return page }
         let page = ConversationPage()
         page.tab = tab
-        page.openPullRequestLink = { [weak tab] in await tab?.open($0) ?? false }
+        page.openPullRequestLink = { [weak tab] in await tab?.open($0) }
         page.openThreadLink = { [weak tab] link in Task { await tab?.follow(link) } }
         page.openReactionLink = { [weak tab] link in Task { await tab?.react(link) } }
         page.openCommentLink = { [weak tab] link in Task { await tab?.follow(link) } }

@@ -58,7 +58,8 @@ actor FakeGitHub: HTTPTransport {
     private(set) var notificationPolls: [Int] = []
     /// The kinds of read a test can hold unanswered, as over a slow network.
     enum Gate: Hashable {
-        case search, lookup
+        /// `lookup` is by id; `numberLookup` by repo and number, as for a link.
+        case search, lookup, numberLookup
     }
     private var held: Set<Gate> = []
     /// The requests waiting at the gate, by kind.
@@ -285,6 +286,7 @@ actor FakeGitHub: HTTPTransport {
         let body = try JSONDecoder().decode(GraphQLRequest.self, from: try #require(request.httpBody))
         if body.variables.query != nil { await pass(.search) }
         if body.variables.ids != nil, !body.query.contains("contexts"), body.query.contains("fragment PullRequestRow") { await pass(.lookup) }
+        if body.variables.number != nil { await pass(.numberLookup) }
         if body.query.contains("mergePullRequest(") {
             return (try mergePullRequest(try #require(body.variables.input)), httpResponse(url, status: 200))
         }

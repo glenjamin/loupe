@@ -55,9 +55,12 @@ enum SnapshotRun {
     private static let isHoldingChecks = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_HOLD_CHECK"] == "1"
     /// A run that holds each PR's conversation fetch unanswered, so its wait is drawn.
     private static let isHoldingConversations = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_HOLD_CONVERSATION"] == "1"
-    private static let gitHubHold = GitHubHold(holdsConversations: isHoldingConversations)
+    /// A link to open as if from another app, its lookup held unanswered unless asked not to.
+    private static let openedLink = directory == nil ? nil : ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_OPEN_LINK"].flatMap(URL.init(string:))
+    private static let isHoldingLinkLookups = openedLink != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_OPEN_LINK_ANSWERED"] != "1"
+    private static let gitHubHold = GitHubHold(holdsConversations: isHoldingConversations, holdsNumberLookups: isHoldingLinkLookups)
     /// How the app talks to GitHub: directly, except in a run that holds some of it.
-    static let gitHubClient = isHoldingChecks || isHoldingConversations ? GitHubClient(transport: gitHubHold) : GitHubClient()
+    static let gitHubClient = isHoldingChecks || isHoldingConversations || isHoldingLinkLookups ? GitHubClient(transport: gitHubHold) : GitHubClient()
 
     static func start(windows: WindowManager) {
         guard let directory else { return }
@@ -72,6 +75,18 @@ enum SnapshotRun {
         Task {
             let lists = tabs.lists
             await wait(until: deadline) { !lists.isLoading && (lists.error != nil || (lists.lastRefreshed ?? .distantPast) >= started) }
+            // LOUPE_SNAPSHOT_OPEN_LINK=<url> opens the link as one from another app would, its
+            // PR's lookup held so its tab waits; with LOUPE_SNAPSHOT_OPEN_LINK_ANSWERED=1 the
+            // lookup goes through, so a link to a PR GitHub hasn't got shows why.
+            if let openedLink, let links = AppDelegate.incomingLinks {
+                let opening = Task { await links.open([openedLink]) }
+                if isHoldingLinkLookups {
+                    await wait(until: .now.addingTimeInterval(5)) { tabs.selected.flatMap(tabs.item(id:))?.pending != nil }
+                } else {
+                    await opening.value
+                }
+                print("\(openedLink.absoluteString): \(linkState(in: tabs))")
+            }
             // A tab's content is made when it's first shown, so each is shown once, and its diff
             // asked for in case hidden content doesn't load it.
             let selected = tabs.selected
@@ -576,7 +591,7 @@ func saveSnapshotsOfAllTabs(in windows: WindowManager, to directory: URL) async 
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let selected = windows.tabs.selected
     var written: [URL] = []
-    for (index, id) in ([nil] + windows.tabs.tabs.map(\.id)).enumerated() {
+    for (index, id) in ([nil] + windows.tabs.items.map(\.id)).enumerated() {
         windows.select(id)
         let url = directory.appending(path: "\(index + 1)-\(sanitised(windows.title(of: id))).png")
         try await saveSnapshot(of: window, to: url)
@@ -1640,14 +1655,27 @@ private final class StepHold {
     }
 }
 
+/// What the shown tab is, once a link has been opened: the link's tab waiting or failed, or the
+/// PR's own.
+@MainActor
+private func linkState(in tabs: TabsModel) -> String {
+    switch tabs.selected.flatMap(tabs.item(id:)) {
+    case let .pending(pending)?: pending.error.map { "failed: \($0)" } ?? "looking up, held"
+    case let .pullRequest(tab)?: "opened \(tab.title)"
+    case nil: "nothing shown"
+    }
+}
+
 /// Sends requests to GitHub until started, then holds every one unanswered for good; asked to,
-/// it holds every conversation fetch from the outset.
+/// it holds every conversation fetch, or every lookup of a PR by number, from the outset.
 private final class GitHubHold: HTTPTransport {
     private let isHolding = OSAllocatedUnfairLock(initialState: false)
     private let holdsConversations: Bool
+    private let holdsNumberLookups: Bool
 
-    init(holdsConversations: Bool) {
+    init(holdsConversations: Bool, holdsNumberLookups: Bool) {
         self.holdsConversations = holdsConversations
+        self.holdsNumberLookups = holdsNumberLookups
     }
 
     func start() {
@@ -1655,9 +1683,17 @@ private final class GitHubHold: HTTPTransport {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        if isHolding.withLock({ $0 }) || holdsConversations && isConversationFetch(request) { try await Task.sleep(for: .seconds(3600)) }
+        if isHolding.withLock({ $0 }) || holdsConversations && isConversationFetch(request) || holdsNumberLookups && isNumberLookup(request) {
+            try await Task.sleep(for: .seconds(3600))
+        }
         return try await URLSession.shared.send(request)
     }
+}
+
+/// Whether the request looks a PR up by its repo and number, as for a link.
+private func isNumberLookup(_ request: URLRequest) -> Bool {
+    guard let body = request.httpBody else { return false }
+    return String(decoding: body, as: UTF8.self).contains("pullRequest(number:")
 }
 
 /// Whether the request asks for a page of a PR's conversation, the only queries that spread its

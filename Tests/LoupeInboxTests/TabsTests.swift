@@ -31,12 +31,12 @@ struct TabsTests {
         let tab = try #require(app.tabs.tab(id: second.id))
         let requests = await app.github.requestCount
 
-        #expect(await tab.open(try link(to: first, after: "#issuecomment-1")))
+        await tab.open(try link(to: first, after: "#issuecomment-1"))
         #expect(app.tabs.tabs.map(\.id) == [first.id, second.id], "not opened twice")
         #expect(app.tabs.selected == first.id)
 
         let differentCase = PullRequestLink(repository: linked.repository.uppercased(), number: linked.number)
-        #expect(await tab.open(differentCase))
+        await tab.open(differentCase)
         #expect(app.tabs.tabs.map(\.id) == [first.id, second.id, linked.id])
         #expect(app.tabs.selected == linked.id)
         #expect(await app.github.requestCount == requests)
@@ -51,7 +51,7 @@ struct TabsTests {
         let link = try #require(PullRequestLink(url: url))
         #expect(app.tabs.lists.pullRequest(repository: link.repository, number: link.number) == nil, "merged, so in neither list")
 
-        #expect(await tab.open(link))
+        await tab.open(link)
 
         #expect(await app.github.numberLookups == ["tamarinworks/porter#1522"])
         let selected = try #require(app.tabs.selected)
@@ -62,7 +62,7 @@ struct TabsTests {
 
         #expect(!app.tabs.lists.pullRequests(in: .mine, includingClosed: true).contains { $0.id == opened.id }, "the viewer's, but merged")
 
-        #expect(await tab.open(link))
+        await tab.open(link)
         #expect(await app.github.numberLookups.count == 1, "known now, so not looked up again")
 
         // A refresh drops PRs in neither list unless a tab holds them.
@@ -77,7 +77,7 @@ struct TabsTests {
         let created = try await app.github.openPullRequest(number: 2001, by: FakeGitHub.viewer)
         let searches = await app.github.searches
 
-        #expect(await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number)))
+        await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number))?.value
 
         #expect(app.tabs.lists.pullRequests(in: .mine).contains { $0.id == created.id })
         #expect(!app.tabs.lists.pullRequests(in: .toReview).contains { $0.id == created.id })
@@ -89,7 +89,7 @@ struct TabsTests {
         let created = try await app.github.openPullRequest(number: 2002, by: "kit-vance", asking: [.user(FakeGitHub.viewer)])
         let requested = try #require(created.requestEvents.last).createdAt
 
-        #expect(await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number)))
+        await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number))?.value
 
         let listed = try #require(app.toReview.first { $0.id == created.id })
         #expect(listed.reviewRequestedAt == wholeSeconds(requested))
@@ -100,7 +100,7 @@ struct TabsTests {
         let app = try await App()
         let created = try await app.github.openPullRequest(number: 2005, by: "kit-vance", asking: [.team("backend")])
 
-        #expect(await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number)))
+        await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number))?.value
         #expect(app.toReview.contains { $0.id == created.id }, "any team might be the viewer's")
 
         await app.tabs.lists.refresh()
@@ -114,7 +114,7 @@ struct TabsTests {
         let app = try await App()
         let created = try await app.github.openPullRequest(number: 2003, by: "kit-vance", asking: [.user("pat-barrow")])
 
-        #expect(await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number)))
+        await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number))?.value
 
         #expect(app.tabs.tab(id: created.id) != nil)
         for list in PullRequestList.allCases {
@@ -125,7 +125,7 @@ struct TabsTests {
     @Test func aNotificationThatAnOpenPullRequestNowAsksForTheViewersReviewPutsItInToReview() async throws {
         let app = try await App()
         let created = try await app.github.openPullRequest(number: 2004, by: "kit-vance")
-        #expect(await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number)))
+        await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number))?.value
         #expect(!app.toReview.contains { $0.id == created.id })
 
         try await app.github.requestReview(of: created.id)
@@ -139,20 +139,85 @@ struct TabsTests {
         #expect(app.toReview.contains { $0.id == created.id }, "the search agrees")
     }
 
-    @Test func aLinkGitHubCantResolveOrAnsweredWithAFailureIsLeftForTheBrowser() async throws {
+    @Test func aLinkToAnUnstoredPullRequestShowsItsTabAtOnceWhichBecomesThePullRequestsInPlace() async throws {
+        let app = try await App()
+        let (first, second) = (app.toReview[0], app.toReview[1])
+        app.tabs.open(first)
+        let link = PullRequestLink(repository: "tamarinworks/porter", number: 1522)
+        await app.github.hold(.numberLookup)
+
+        let lookup = try #require(app.tabs.open(link))
+        await app.github.arrival(of: .numberLookup)
+
+        let pending = try #require(app.tabs.items.last?.pending, "a tab from the link alone, before GitHub answers")
+        #expect(pending.title == "porter #1522")
+        #expect(pending.error == nil, "still being looked up")
+        #expect(pending.url.absoluteString == "https://github.com/tamarinworks/porter/pull/1522")
+        #expect(app.tabs.selected == pending.id)
+        #expect(app.shown.last == pending.id, "brought forward at once")
+        #expect(try app.relaunch().tabs.map(\.id) == [first.id], "nothing to store until the PR is found")
+
+        app.tabs.open(PullRequestLink(repository: "TamarinWorks/Porter", number: 1522))
+        #expect(app.tabs.items.count == 2, "a second link to it finds its tab")
+
+        app.tabs.open(second)
+        app.tabs.select(pending.id)
+        await app.github.release(.numberLookup)
+        await lookup.value
+
+        #expect(await app.github.numberLookups == ["tamarinworks/porter#1522"], "looked up once")
+        let opened = try #require(app.tabs.tabs.first { $0.title == "porter #1522" })
+        #expect(app.tabs.items.map(\.id) == [first.id, opened.id, second.id], "in the link's place")
+        #expect(app.tabs.selected == opened.id)
+        #expect(app.shown.last == opened.id)
+        let nextRun = try app.relaunch()
+        #expect(nextRun.tabs.map(\.id) == [first.id, opened.id, second.id])
+        #expect(nextRun.selected == opened.id)
+    }
+
+    @Test func aLinkWhoseTabClosesBeforeThePullRequestIsFoundOpensNothing() async throws {
+        let app = try await App()
+        let from = app.toReview[0]
+        app.tabs.open(from)
+        await app.github.hold(.numberLookup)
+
+        let lookup = try #require(app.tabs.open(PullRequestLink(repository: "tamarinworks/porter", number: 1522)))
+        let pending = try #require(app.tabs.items.last?.pending)
+        app.tabs.close(pending.id)
+        #expect(app.tabs.selected == from.id)
+        await app.github.release(.numberLookup)
+        await lookup.value
+
+        #expect(app.tabs.items.map(\.id) == [from.id])
+        #expect(try app.relaunch().tabs.map(\.id) == [from.id])
+    }
+
+    @Test func aLinkGitHubCantResolveOrAnsweredWithAFailureKeepsItsTabSayingWhyUntilRetried() async throws {
         let app = try await App()
         let from = app.toReview[0]
         app.tabs.open(from)
         let tab = try #require(app.tabs.tab(id: from.id))
 
-        #expect(await !tab.open(PullRequestLink(repository: "tamarinworks/porter", number: 999_999)))
-        #expect(await !tab.open(PullRequestLink(repository: "tamarinworks/nowhere", number: 1)))
+        await tab.open(PullRequestLink(repository: "tamarinworks/porter", number: 999_999))
+        await tab.open(PullRequestLink(repository: "tamarinworks/nowhere", number: 1))
         await app.github.fail(with: .status(502))
-        #expect(await !tab.open(PullRequestLink(repository: "tamarinworks/porter", number: 1522)))
+        await tab.open(PullRequestLink(repository: "tamarinworks/porter", number: 1522))
 
         #expect(await app.github.numberLookups == ["tamarinworks/porter#999999", "tamarinworks/nowhere#1"])
+        let failed = app.tabs.items.compactMap(\.pending)
+        #expect(failed.map(\.title) == ["porter #999999", "nowhere #1", "porter #1522"])
+        #expect(failed.allSatisfy { $0.error != nil })
+        #expect(app.tabs.selected == failed.last?.id, "still shown, saying why")
         #expect(app.tabs.tabs.map(\.id) == [from.id])
-        #expect(app.tabs.selected == from.id)
+
+        await app.github.recover()
+        let retried = try #require(failed.last)
+        await app.tabs.retry(retried).value
+
+        let opened = try #require(app.tabs.tabs.last)
+        #expect(opened.title == "porter #1522")
+        #expect(app.tabs.items.map(\.id) == [from.id, failed[0].id, failed[1].id, opened.id])
+        #expect(app.tabs.selected == opened.id)
     }
 
     @Test func linksFromOtherAppsWaitForTheTabsThenOpenPullRequestsAndPassOtherPagesToTheBrowser() async throws {
@@ -173,18 +238,27 @@ struct TabsTests {
         #expect(app.tabs.selected == second.id)
         #expect(outside.broughtForward == 2)
 
-        let urls = [
+        let urls = try [
+            "https://github.com/tamarinworks/porter/pull/1522",
             "https://github.com/tamarinworks/porter/issues/1522",
             "loupe:///tamarinworks/porter/pull/999999#issuecomment-1",
             "loupe://example.com/nothing",
-        ]
-        await links.open(try urls.map { try #require(URL(string: $0)) })
-        #expect(outside.browsed == [
-            "https://github.com/tamarinworks/porter/issues/1522",
-            "https://github.com/tamarinworks/porter/pull/999999#issuecomment-1",
-        ], "a PR GitHub can't find goes to its page; a loupe link that names no PR is dropped")
-        #expect(outside.broughtForward == 3, "only for the PR")
-        #expect(app.tabs.tabs.map(\.id) == [first.id, second.id])
+        ].map { try #require(URL(string: $0)) }
+        await app.github.hold(.numberLookup)
+        let opening = Task { await links.open(urls) }
+        await app.github.arrival(of: .numberLookup)
+        let pending = app.tabs.items.compactMap(\.pending)
+        #expect(pending.map(\.title) == ["porter #1522", "porter #999999"], "each shown before GitHub answers either")
+        #expect(app.tabs.selected == pending.last?.id)
+        #expect(outside.broughtForward == 4, "only for the PRs")
+
+        await app.github.release(.numberLookup)
+        await opening.value
+        #expect(outside.browsed == ["https://github.com/tamarinworks/porter/issues/1522"], "a loupe link that names no PR is dropped")
+        let found = try #require(app.tabs.tabs.last)
+        #expect(found.title == "porter #1522")
+        #expect(app.tabs.items.map(\.id) == [first.id, second.id, found.id, pending[1].id])
+        #expect(pending[1].error != nil, "GitHub has no such PR, which its tab says")
     }
 
     @Test func closingAPullRequestsTabForgetsItForNextLaunchAndShowsItsNeighbour() async throws {

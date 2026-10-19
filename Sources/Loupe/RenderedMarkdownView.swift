@@ -69,7 +69,7 @@ final class MarkdownPage: GitHubWebPage {
     static func page(for tab: PullRequestTab) -> MarkdownPage {
         if let page = pages.object(forKey: tab) { return page }
         let page = MarkdownPage()
-        page.openPullRequestLink = { [weak tab] in await tab?.open($0) ?? false }
+        page.openPullRequestLink = { [weak tab] in await tab?.open($0) }
         pages.setObject(page, forKey: tab)
         return page
     }

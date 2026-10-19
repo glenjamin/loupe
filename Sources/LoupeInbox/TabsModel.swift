@@ -11,8 +11,9 @@ import Observation
 @MainActor
 public final class TabsModel {
     public let lists: PullRequestListModel
-    /// In the order they were opened.
-    public private(set) var tabs: [PullRequestTab] = []
+    /// The strip's tabs after the lists, in the order they were opened: PRs, and links to PRs
+    /// still being looked up.
+    public private(set) var items: [TabItem] = []
     /// Nil when the PR lists are shown.
     public private(set) var selected: String?
     /// Shows the PR's tab; set by the app.
@@ -63,7 +64,7 @@ public final class TabsModel {
         self.showDelay = showDelay
         do {
             let saved = try store.openTabs()
-            tabs = saved.pullRequests.map(makeTab)
+            items = saved.pullRequests.map { .pullRequest(makeTab($0)) }
             selected = saved.selected
         } catch {
             log("Couldn't restore open tabs: \(error)")
@@ -71,49 +72,63 @@ public final class TabsModel {
         lists.onOpen = { [weak self] in self?.open($0) }
     }
 
+    /// The open PRs, in the order they were opened, leaving out links still being looked up.
+    public var tabs: [PullRequestTab] {
+        items.compactMap(\.pullRequestTab)
+    }
+
     public func tab(id: String) -> PullRequestTab? {
         tabs.first { $0.id == id }
     }
 
-    /// Opens the PR, or focuses it if it's already open.
-    public func open(_ pullRequest: PullRequestSummary) {
-        if tab(id: pullRequest.id) == nil {
-            tabs.append(makeTab(pullRequest))
-        }
-        selected = pullRequest.id
-        save()
-        show(pullRequest.id)
-        checkShownForChanges()
+    public func item(id: String) -> TabItem? {
+        items.first { $0.id == id }
     }
 
-    /// Opens the PR a link names, or focuses its tab: at once when it's stored, otherwise once
-    /// it's been looked up on GitHub and stored like any listed PR. False when GitHub has no such
-    /// PR the viewer can see, or can't be reached, so the link can go to the browser instead.
-    public func open(_ link: PullRequestLink) async -> Bool {
-        let named = { (pullRequest: PullRequestSummary) in
-            pullRequest.number == link.number && pullRequest.repository.caseInsensitiveCompare(link.repository) == .orderedSame
-        }
-        if let known = tabs.map(\.pullRequest).first(where: named) ?? lists.pullRequest(repository: link.repository, number: link.number) {
-            open(known)
-            return true
-        }
-        do {
-            guard let found = try await lists.lookUpPullRequest(repository: link.repository, number: link.number) else {
-                log("No pull request \(link.repository)#\(link.number) on GitHub, or none visible; opening the link in the browser")
-                return false
+    /// Opens the PR, or focuses it if it's already open. A tab waiting on a link to it becomes
+    /// its tab in place.
+    public func open(_ pullRequest: PullRequestSummary) {
+        if tab(id: pullRequest.id) == nil {
+            let tab = TabItem.pullRequest(makeTab(pullRequest))
+            if let index = items.firstIndex(where: { $0.pending.map { $0.link.names(pullRequest) } ?? false }) {
+                items[index] = tab
+            } else {
+                items.append(tab)
             }
-            try await store.addOpenTab(found)
-            open(found)
-            return true
-        } catch {
-            log("Couldn't look up \(link.repository)#\(link.number), opening the link in the browser: \(error.localizedDescription)")
-            return false
         }
+        reveal(pullRequest.id)
+    }
+
+    /// Opens the PR a link names, or focuses its tab. A stored PR opens at once. Any other gets
+    /// a tab from the link alone at once, while it's looked up on GitHub and stored like any
+    /// listed PR, then becomes the PR's tab in place; if it can't be found the tab says why.
+    /// Returns that lookup, for whoever wants to wait for it.
+    @discardableResult
+    public func open(_ link: PullRequestLink) -> Task<Void, Never>? {
+        if let known = tabs.map(\.pullRequest).first(where: link.names) ?? lists.pullRequest(repository: link.repository, number: link.number) {
+            open(known)
+            return nil
+        }
+        if let pending = items.lazy.compactMap(\.pending).first(where: { $0.link.names(link) }) {
+            reveal(pending.id)
+            return retry(pending)
+        }
+        let pending = PendingTab(link: link)
+        items.append(.pending(pending))
+        reveal(pending.id)
+        return startLookUp(pending)
+    }
+
+    /// Looks the link's PR up again after it failed; while a lookup is underway, returns that.
+    @discardableResult
+    public func retry(_ pending: PendingTab) -> Task<Void, Never> {
+        if pending.error == nil, let lookup = pending.lookup { return lookup }
+        return startLookUp(pending)
     }
 
     /// Records which PR is shown, or nil for the lists.
     public func select(_ id: String?) {
-        guard id.map({ tab(id: $0) != nil }) ?? true, id != selected else { return }
+        guard id.map({ item(id: $0) != nil }) ?? true, id != selected else { return }
         selected = id
         save()
         checkShownForChanges()
@@ -143,7 +158,7 @@ public final class TabsModel {
     /// Shows the item `offset` places along from the shown one, the lists coming before the first
     /// PR and after the last.
     public func selectAdjacent(_ offset: Int) {
-        let order = [nil] + tabs.map(\.id)
+        let order = [nil] + items.map(\.id)
         let position = order.firstIndex(of: selected) ?? 0
         select(order[((position + offset) % order.count + order.count) % order.count])
     }
@@ -151,10 +166,10 @@ public final class TabsModel {
     /// Forgets the PR, as its tab has closed. Closing the shown tab shows the one that took its
     /// place, or the one before it when it was last, as browsers do.
     public func close(_ id: String) {
-        guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-        tabs.remove(at: index)
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items.remove(at: index)
         if selected == id {
-            selected = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id
+            selected = items.isEmpty ? nil : items[min(index, items.count - 1)].id
             checkShownForChanges()
         }
         save()
@@ -162,7 +177,7 @@ public final class TabsModel {
 
     /// Forgets every open PR, leaving the lists shown.
     public func closeAll() {
-        tabs = []
+        items = []
         selected = nil
         save()
         checkShownForChanges()
@@ -229,18 +244,110 @@ public final class TabsModel {
     /// How soon a PR checked once can be checked again on being shown.
     private static let recheckInterval = Duration.seconds(10)
 
+    /// Shows the tab with `id`, already among the items.
+    private func reveal(_ id: String) {
+        selected = id
+        save()
+        show(id)
+        checkShownForChanges()
+    }
+
+    private func startLookUp(_ pending: PendingTab) -> Task<Void, Never> {
+        pending.error = nil
+        let lookup = Task { await lookUp(pending) }
+        pending.lookup = lookup
+        return lookup
+    }
+
+    /// Finds the link's PR on GitHub and puts its tab where the link's was, unless that has
+    /// closed meanwhile; otherwise says on the link's tab why it can't be opened.
+    private func lookUp(_ pending: PendingTab) async {
+        let link = pending.link
+        do {
+            guard let found = try await lists.lookUpPullRequest(repository: link.repository, number: link.number) else {
+                log("No pull request \(link.repository)#\(link.number) on GitHub, or none visible")
+                pending.error = "GitHub has no pull request \(link.repository) #\(link.number), or none you can see."
+                return
+            }
+            guard item(id: pending.id) != nil else { return }
+            try await store.addOpenTab(found)
+            place(found, replacing: pending)
+        } catch {
+            log("Couldn't look up \(link.repository)#\(link.number): \(error.localizedDescription)")
+            pending.error = error.localizedDescription
+        }
+    }
+
+    /// Swaps the link's tab for the PR's, in the same place and shown if it was. Saved either
+    /// way, so the stored tabs follow the strip even if the link's tab has just closed.
+    private func place(_ found: PullRequestSummary, replacing pending: PendingTab) {
+        guard let index = items.firstIndex(where: { $0.id == pending.id }) else { return save() }
+        let wasShown = selected == pending.id
+        if tab(id: found.id) == nil {
+            items[index] = .pullRequest(makeTab(found))
+        } else {
+            // Already open, as when the link named the repo by an old name.
+            items.remove(at: index)
+        }
+        if wasShown {
+            reveal(found.id)
+        } else {
+            save()
+        }
+    }
+
     private func makeTab(_ pullRequest: PullRequestSummary) -> PullRequestTab {
         let tab = PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ, client: client, candidates: candidates, sleep: sleep)
-        tab.linkOpener = { [weak self] link in await self?.open(link) ?? false }
+        tab.linkOpener = { [weak self] link in await self?.open(link)?.value }
         return tab
     }
 
+    /// Only PRs' tabs are stored: a link still being looked up has no PR to store yet, so the
+    /// lists are stored as shown while it is.
     private func save() {
         do {
-            try store.saveOpenTabs(tabs.map(\.id), selected: selected)
+            try store.saveOpenTabs(tabs.map(\.id), selected: selected.flatMap(tab(id:))?.id)
         } catch {
             log("Couldn't save open tabs: \(error)")
         }
+    }
+}
+
+/// One of the strip's tabs: an open PR, or a link to one still being looked up.
+@MainActor
+public enum TabItem: Identifiable {
+    case pullRequest(PullRequestTab)
+    case pending(PendingTab)
+
+    public nonisolated var id: String {
+        switch self {
+        case let .pullRequest(tab): tab.id
+        case let .pending(pending): pending.id
+        }
+    }
+
+    /// `repo #number`.
+    public var title: String {
+        switch self {
+        case let .pullRequest(tab): tab.title
+        case let .pending(pending): pending.title
+        }
+    }
+
+    /// The PR's page on github.com.
+    public var url: URL {
+        switch self {
+        case let .pullRequest(tab): tab.pullRequest.url
+        case let .pending(pending): pending.url
+        }
+    }
+
+    public var pullRequestTab: PullRequestTab? {
+        if case let .pullRequest(tab) = self { tab } else { nil }
+    }
+
+    public var pending: PendingTab? {
+        if case let .pending(pending) = self { pending } else { nil }
     }
 }
 
@@ -254,6 +361,17 @@ public enum ChangeSignal: Sendable, Equatable {
 
 private func log(_ message: String) {
     FileHandle.standardError.write(Data("\(message)\n".utf8))
+}
+
+private extension PullRequestLink {
+    /// Repo names aren't case-sensitive, as on GitHub.
+    func names(_ pullRequest: PullRequestSummary) -> Bool {
+        pullRequest.number == number && pullRequest.repository.caseInsensitiveCompare(repository) == .orderedSame
+    }
+
+    func names(_ other: PullRequestLink) -> Bool {
+        other.number == number && other.repository.caseInsensitiveCompare(repository) == .orderedSame
+    }
 }
 
 private extension PullRequestSummary {

@@ -79,6 +79,8 @@ struct TabStripItem: Equatable {
     /// Shown after the title; nil for the lists.
     let status: TabStatus?
     let subtitle: String
+    /// A link's PR being looked up, shown by a spinner where the PR's title will be.
+    var isLookingUp = false
 }
 
 /// A PR's state in the list rows' badge words, so the strip shows which tabs are merged or
@@ -195,6 +197,8 @@ private final class TabStripItemView: NSView {
             statusLabel.stringValue = item.status?.word ?? ""
             statusLabel.textColor = item.status?.colour ?? .secondaryLabelColor
             subtitleLabel.stringValue = item.subtitle
+            spinner.isHidden = !item.isLookingUp
+            if item.isLookingUp { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
             let heading = item.status.map { "\(item.title) \($0.word)" } ?? item.title
             toolTip = item.subtitle.isEmpty ? heading : "\(heading)\n\(item.subtitle)"
             needsLayout = true
@@ -215,6 +219,7 @@ private final class TabStripItemView: NSView {
     private let statusLabel = label(font: .systemFont(ofSize: 12), colour: .secondaryLabelColor)
     private let subtitleLabel = label(font: .systemFont(ofSize: 11), colour: .secondaryLabelColor)
     private let icon = NSImageView()
+    private let spinner = NSProgressIndicator()
     private let closeButton = NSButton()
     private var isHovered = false {
         didSet {
@@ -237,6 +242,11 @@ private final class TabStripItemView: NSView {
         } else {
             addSubview(statusLabel)
             addSubview(subtitleLabel)
+            spinner.style = .spinning
+            spinner.controlSize = .small
+            spinner.isDisplayedWhenStopped = false
+            spinner.isHidden = true
+            addSubview(spinner)
             closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")
             closeButton.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
             closeButton.isBordered = false
@@ -308,6 +318,8 @@ private final class TabStripItemView: NSView {
         titleLabel.frame = NSRect(x: padding, y: top, width: titleWidth, height: titleHeight)
         statusLabel.frame = NSRect(x: titleLabel.frame.maxX + statusGap, y: top, width: statusWidth, height: titleHeight)
         subtitleLabel.frame = NSRect(x: padding, y: top + titleHeight + 1, width: textWidth, height: subtitleHeight)
+        let spinnerSize = spinner.fittingSize
+        spinner.frame = NSRect(origin: NSPoint(x: padding, y: subtitleLabel.frame.midY - spinnerSize.height / 2), size: spinnerSize)
         closeButton.frame = NSRect(x: bounds.width - padding - Self.closeSize, y: (bounds.height - Self.closeSize) / 2, width: Self.closeSize, height: Self.closeSize)
     }
 
