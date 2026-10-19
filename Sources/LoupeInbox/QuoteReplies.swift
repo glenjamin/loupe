@@ -9,8 +9,7 @@ extension PullRequestTab {
     /// quote after it.
     public func quoteInConversation(_ markdown: String, fromThread threadId: String?) {
         let quote = QuoteReply.quoted(markdown)
-        guard !quote.isEmpty else { return }
-        if let thread = threadId.flatMap(reviewThread), thread.viewerCanReply, !thread.isPending {
+        if let thread = threadId.flatMap(reviewThread), takesQuote(thread) {
             replyInConversation(to: thread)
             if let draft = threadActivity.replies[thread.id] { draft.addQuote(quote) }
             return
@@ -20,16 +19,20 @@ extension PullRequestTab {
     }
 
     /// Quotes `markdown`, selected in one of the thread's comments, into its reply, opening one
-    /// if need be, and returns whether it could; a thread in the viewer's pending review, or
-    /// one they can't reply to, takes none.
+    /// if need be, and returns whether it could.
     @discardableResult
     public func quoteInReply(_ markdown: String, to thread: ReviewThread) -> Bool {
-        let quote = QuoteReply.quoted(markdown)
-        guard !quote.isEmpty, thread.viewerCanReply, !thread.isPending else { return false }
+        guard takesQuote(thread) else { return false }
         startReply(to: thread)
         guard let draft = threadActivity.replies[thread.id] else { return false }
-        draft.addQuote(quote)
+        draft.addQuote(QuoteReply.quoted(markdown))
         return true
+    }
+
+    /// Whether a quote from the thread can go in its reply: not for one in the viewer's pending
+    /// review, or one they can't reply to.
+    public func takesQuote(_ thread: ReviewThread) -> Bool {
+        thread.viewerCanReply && !thread.isPending
     }
 }
 

@@ -21,7 +21,9 @@ struct QuoteReplyTests {
         #expect(draft.focusRequests == 2)
         #expect(tab.threadActivity.replyingInConversation == nil, "the diff's own composer")
 
-        #expect(!tab.quoteInReply(" \n", to: thread), "nothing to quote")
+        // As github.com's, a quote goes a blank line after what's written, as it is.
+        #expect(tab.quoteInReply("again", to: thread))
+        #expect(draft.text == "> Why `three`?\n\nBecause of the header row.\n\n> three\n\n\n\n> again\n\n")
         #expect(await app.conversations.repliesReceived.isEmpty, "nothing is sent")
     }
 
@@ -30,6 +32,7 @@ struct QuoteReplyTests {
         let pending = try #require(tab.thread(pendingId))
         #expect(pending.isPending)
 
+        #expect(!tab.takesQuote(pending))
         #expect(!tab.quoteInReply("Keep this?", to: pending))
         #expect(tab.threadActivity.replies[pendingId] == nil)
     }
@@ -45,7 +48,7 @@ struct QuoteReplyTests {
         tab.quoteInConversation("Looks good\n\n- one", fromThread: nil)
         let comment = try #require(tab.conversationComment.draft)
         #expect(tab.conversationComment.isOpen)
-        #expect(comment.text == "> Looks good\n>\n> - one\n\n")
+        #expect(comment.text == "> Looks good\n> \n> - one\n\n", "every line marked, blank ones too")
         #expect(comment.focusRequests == 1)
 
         tab.conversationComment.close()
@@ -53,12 +56,12 @@ struct QuoteReplyTests {
         tab.quoteInConversation("ship it", fromThread: nil)
         #expect(tab.conversationComment.isOpen, "opened again")
         #expect(tab.conversationComment.draft === comment)
-        #expect(comment.text == "> Looks good\n>\n> - one\n\nAgreed.\n\n> ship it\n\n")
+        #expect(comment.text == "> Looks good\n> \n> - one\n\nAgreed.\n\n> ship it\n\n")
 
         // A thread that takes no reply, here one in the viewer's pending review, is quoted on the PR.
         tab.quoteInConversation("Keep this?", fromThread: pendingId)
         #expect(tab.threadActivity.replies[pendingId] == nil)
-        #expect(comment.text.hasSuffix("> ship it\n\n> Keep this?\n\n"))
+        #expect(comment.text.hasSuffix("> ship it\n\n\n\n> Keep this?\n\n"))
         #expect(await app.conversations.repliesReceived.isEmpty, "nothing is sent")
     }
 

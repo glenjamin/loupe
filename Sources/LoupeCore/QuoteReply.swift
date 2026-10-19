@@ -1,163 +1,107 @@
 import Foundation
+import WebKit
 
-/// A selection in a comment quoted into a reply as github.com's `r` does: the selected text
-/// written back as markdown, every line marked `> `, then a blank line to write after.
+/// A selection in a comment quoted into a reply as github.com's `r` does: the selected part of
+/// GitHub's rendering written back as markdown by github.com's own code, quote-selection, run in
+/// WebKit, every line then marked `> ` and a blank line left to write after.
 public enum QuoteReply {
-    /// The markdown for a selection in a comment GitHub rendered, from the selected HTML with
-    /// the elements it's inside around it.
-    public static func markdown(fromHTML html: String) -> String {
-        markdown(CommentBlock.blocks(fromHTML: html))
-    }
-
-    /// The markdown for the characters `range` (in UTF-16) selects in one block's `text` of a
-    /// comment shown natively from `blocks`, or nil if no block has that text. A selection from
-    /// a list item's start keeps its marker and depth, and one inside a quote stays quoted.
-    public static func markdown(selecting range: NSRange, of text: String, in blocks: [CommentBlock]) -> String? {
-        guard range.length > 0, let found = block(withText: text, in: blocks),
-              let selected = Range(range, in: text) else { return nil }
-        let part: CommentBlock
-        switch found.block {
-        case let .code(code):
-            part = .code(String(code[selected]))
-        case let .text(attributed, indent):
-            guard let lower = AttributedString.Index(selected.lowerBound, within: attributed),
-                  let upper = AttributedString.Index(selected.upperBound, within: attributed) else { return nil }
-            part = .text(AttributedString(attributed[lower..<upper]), indent: range.location == 0 ? indent : 0)
-        case .quote, .rule:
-            return nil
-        }
-        let wrapped = (0..<found.depth).reduce(part) { inner, _ in .quote([inner]) }
-        return markdown([wrapped])
-    }
-
-    /// `markdown` as a quote, each line marked, ending in a blank line; empty for nothing but
-    /// whitespace.
+    /// `markdown` as github.com quotes it: `> ` before every line, blank ones too, then a blank
+    /// line.
     public static func quoted(_ markdown: String) -> String {
-        let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        return trimmed.split(separator: "\n", omittingEmptySubsequences: false)
-            .map { $0.isEmpty ? ">" : "> \($0)" }
-            .joined(separator: "\n") + "\n\n"
+        "> " + markdown.components(separatedBy: "\n").joined(separator: "\n> ") + "\n\n"
     }
 
-    /// `text` with `quote` after it, a blank line apart, as github.com adds a second quote to a
-    /// reply already being written.
+    /// `text` with `quote` added as github.com adds one to a reply: a blank line after anything
+    /// already written, as it is.
     public static func appending(_ quote: String, to text: String) -> String {
-        var base = Substring(text)
-        while let last = base.last, last.isWhitespace { base.removeLast() }
-        return base.isEmpty ? quote : base + "\n\n" + quote
+        text.isEmpty ? quote : text + "\n\n" + quote
     }
 
-    /// Blocks as markdown: a blank line between them, and none between items of a list.
-    static func markdown(_ blocks: [CommentBlock]) -> String {
-        var written = ""
-        var lastWasItem = false
-        for block in blocks {
-            let isItem = if case let .text(text, _) = block { isListItem(String(text.characters)) } else { false }
-            let markdown = self.markdown(block)
-            guard !markdown.isEmpty else { continue }
-            if !written.isEmpty { written += isItem && lastWasItem ? "\n" : "\n\n" }
-            written += markdown
-            lastWasItem = isItem
+    /// The body of a function for a page of comments, as the conversation's, that quotes the
+    /// page's selection: `{ text, thread }`, the markdown of what's selected from where it starts
+    /// in a comment's `.body` and the `data-thread-id` of the thread it's in, or null when nothing
+    /// is selected or it starts outside a comment. The selection is gone afterwards, as on
+    /// github.com.
+    public static var selectionScript: String? {
+        script.map { $0 + "\nreturn quoteSelection()" }
+    }
+
+    /// quote-selection, then github.com's rules around it; nil if the app is missing them.
+    static let script: String? = {
+        let files = ["quote-selection.js", "quote-reply.js"].map { name in
+            bundledResource(name, in: "Loupe_LoupeCore").flatMap { try? String(contentsOf: $0, encoding: .utf8) }
         }
-        return written
+        let read = files.compactMap { $0 }
+        return read.count == files.count ? read.joined(separator: "\n") : nil
+    }()
+}
+
+/// Quotes a selection in a comment shown natively, from its blocks, by finding the same selection
+/// in GitHub's rendering of it in a web view kept off screen, and quoting that as github.com
+/// would.
+@MainActor
+public final class QuoteConverter: NSObject {
+    public static let shared = QuoteConverter()
+
+    private var webView: WKWebView?
+    private var isLoaded = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    /// The markdown for the characters `range` (in UTF-16) selects in the block of the comment
+    /// `html` whose text is `text`, as `CommentBlock` shows it; nil if no block has that text or
+    /// nothing is selected.
+    public func markdown(selecting range: NSRange, of text: String, inComment html: String) async -> String? {
+        guard range.length > 0, range.location >= 0,
+              let source = CommentBlock.sources(fromHTML: html).first(where: { $0.text == text }),
+              NSMaxRange(range) <= source.spans.count
+        else { return nil }
+        let start = source.spans[range.location].start
+        let end = source.spans[NSMaxRange(range) - 1].end
+        guard let script = QuoteReply.script else { return nil }
+        let view = await loadedView()
+        let body = script + "\ndocument.getElementById('source').innerHTML = html\nreturn quoteRange(start, end)"
+        let arguments: [String: Any] = ["html": html, "start": [start.node, start.offset], "end": [end.node, end.offset]]
+        return try? await view.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: .defaultClient) as? String
     }
 
-    private static func markdown(_ block: CommentBlock) -> String {
-        switch block {
-        case let .text(text, indent):
-            var line = inline(text)
-            // The bullet `CommentBlock` draws for an unordered item, and its task box.
-            if line.hasPrefix("• ") { line = "- " + line.dropFirst(2) }
-            for (box, written) in [("☐ ", "[ ] "), ("☑ ", "[x] ")] where line.hasPrefix("- \(box)") {
-                line = "- " + written + line.dropFirst(2 + box.count)
-            }
-            return String(repeating: "  ", count: indent) + line
-        case let .code(code):
-            let fence = String(repeating: "`", count: max(3, longestRun(of: "`", in: code) + 1))
-            return "\(fence)\n\(code)\n\(fence)"
-        case let .quote(inner):
-            let written = markdown(inner)
-            return written.split(separator: "\n", omittingEmptySubsequences: false)
-                .map { $0.isEmpty ? ">" : "> \($0)" }
-                .joined(separator: "\n")
-        case .rule:
-            return "---"
-        }
+    private func loadedView() async -> WKWebView {
+        let view = webView ?? makeView()
+        if !isLoaded { await withCheckedContinuation { waiting.append($0) } }
+        return view
     }
 
-    /// Inline text as markdown: links, then code, bold, italic and struck-through runs within
-    /// them.
-    private static func inline(_ text: AttributedString) -> String {
-        var written = ""
-        for (link, range) in text.runs[\.link] {
-            var inner = ""
-            for run in text[range].runs {
-                inner += styled(String(text[run.range].characters), run.inlinePresentationIntent ?? [])
-            }
-            guard let link else {
-                written += inner
-                continue
-            }
-            let plain = String(text[range].characters)
-            if plain == link.absoluteString || plain.hasPrefix("@") || plain.hasPrefix("#") {
-                // A bare URL, a mention or a reference, which GitHub links again by itself.
-                written += plain
-            } else if plain.hasPrefix("["), plain.hasSuffix("]") {
-                // An image, which `CommentBlock` shows as its alt text linked to itself.
-                written += "![\(plain.dropFirst().dropLast())](\(link.absoluteString))"
-            } else {
-                written += "[\(inner)](\(link.absoluteString))"
-            }
-        }
-        return written
+    private func makeView() -> WKWebView {
+        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        view.navigationDelegate = self
+        webView = view
+        // Nothing the comment links to or shows is fetched.
+        let page = """
+            <!doctype html><html><head><meta charset="utf-8">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+            </head><body><div id="source" hidden></div></body></html>
+            """
+        view.loadHTMLString(page, baseURL: URL(string: "https://github.com/"))
+        return view
     }
 
-    /// A run's text marked with its styles, the markers kept inside any spaces at its ends.
-    private static func styled(_ text: String, _ intent: InlinePresentationIntent) -> String {
-        if intent.contains(.code) {
-            let ticks = String(repeating: "`", count: longestRun(of: "`", in: text) + 1)
-            let pad = text.hasPrefix("`") || text.hasSuffix("`") ? " " : ""
-            return ticks + pad + text + pad + ticks
-        }
-        let core = text.trimmingCharacters(in: .whitespaces)
-        guard !core.isEmpty else { return text }
-        var marked = core
-        if intent.contains(.strikethrough) { marked = "~~\(marked)~~" }
-        if intent.contains(.emphasized) { marked = "_\(marked)_" }
-        if intent.contains(.stronglyEmphasized) { marked = "**\(marked)**" }
-        let leading = text.prefix { $0.isWhitespace }
-        let trailing = String(text.reversed().prefix { $0.isWhitespace })
-        return leading + marked + trailing
+    private func finishLoading() {
+        isLoaded = true
+        let resumed = waiting
+        waiting = []
+        for continuation in resumed { continuation.resume() }
+    }
+}
+
+extension QuoteConverter: WKNavigationDelegate {
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        finishLoading()
     }
 
-    private static func isListItem(_ text: String) -> Bool {
-        text.hasPrefix("• ") || text.prefixMatch(of: #/\d+\. /#) != nil
+    public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finishLoading()
     }
 
-    /// The block whose text is `text`, depth first, and how many quotes it's inside.
-    private static func block(withText text: String, in blocks: [CommentBlock], depth: Int = 0) -> (block: CommentBlock, depth: Int)? {
-        for block in blocks {
-            switch block {
-            case let .text(attributed, _) where String(attributed.characters) == text:
-                return (block, depth)
-            case let .code(code) where code == text:
-                return (block, depth)
-            case let .quote(inner):
-                if let found = self.block(withText: text, in: inner, depth: depth + 1) { return found }
-            default:
-                continue
-            }
-        }
-        return nil
-    }
-
-    private static func longestRun(of character: Character, in text: String) -> Int {
-        var longest = 0, current = 0
-        for each in text {
-            current = each == character ? current + 1 : 0
-            longest = max(longest, current)
-        }
-        return longest
+    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        finishLoading()
     }
 }

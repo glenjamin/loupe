@@ -589,9 +589,8 @@ private struct CommentView: View {
                 if let edit {
                     CommentEditor(tab: tab, edit: edit)
                 } else {
-                    let blocks = commentBlocks(comment.bodyHTML)
-                    CommentBody(blocks: blocks)
-                        .background(QuoteSource(threadId: thread.id, blocks: blocks))
+                    CommentBody(blocks: commentBlocks(comment.bodyHTML))
+                        .background(QuoteSource(threadId: thread.id, bodyHTML: comment.bodyHTML))
                 }
                 // A pending comment can't be reacted to until its review is submitted, nor one
                 // GitHub doesn't have yet.
@@ -765,11 +764,11 @@ struct CommentBody: View {
 /// thread's reply.
 struct QuoteSource: NSViewRepresentable {
     let threadId: String
-    let blocks: [CommentBlock]
+    let bodyHTML: String
 
     final class Marker: NSView {
         var threadId = ""
-        var blocks: [CommentBlock] = []
+        var bodyHTML = ""
 
         // Only marks the place; clicks go to the comment it's behind.
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -779,22 +778,26 @@ struct QuoteSource: NSViewRepresentable {
 
     func updateNSView(_ view: Marker, context: Context) {
         view.threadId = threadId
-        view.blocks = blocks
+        view.bodyHTML = bodyHTML
     }
 }
 
 /// Quotes the text selected in a thread comment's body, drawn natively in `window`, into the
-/// thread's reply, as github.com's `r` does, and returns whether it could. A selection in a
-/// comment's body is made in the window's field editor for one of the body's blocks.
+/// thread's reply, as github.com's `r` does, and returns whether it's taking it. A selection in
+/// a comment's body is made in the window's field editor for one of the body's blocks, and found
+/// again in GitHub's rendering of the comment to be quoted as github.com would.
 @MainActor
 func quoteSelectedComment(in window: NSWindow, of tab: PullRequestTab) -> Bool {
     guard let editor = window.firstResponder as? NSTextView, !editor.isEditable, editor.selectedRange().length > 0,
           let field = editor.delegate as? NSTextField, let root = window.contentView else { return false }
     let center = field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil)
-    guard let source = quoteSource(at: center, in: root), let thread = tab.reviewThread(source.threadId),
-          let markdown = QuoteReply.markdown(selecting: editor.selectedRange(), of: editor.string, in: source.blocks)
-    else { return false }
-    return tab.quoteInReply(markdown, to: thread)
+    guard let source = quoteSource(at: center, in: root), let thread = tab.reviewThread(source.threadId), tab.takesQuote(thread) else { return false }
+    let (range, text, html) = (editor.selectedRange(), editor.string, source.bodyHTML)
+    Task {
+        guard let markdown = await QuoteConverter.shared.markdown(selecting: range, of: text, inComment: html) else { return }
+        tab.quoteInReply(markdown, to: thread)
+    }
+    return true
 }
 
 /// Marks a comment, or a thread, in the viewer's review not yet submitted.
