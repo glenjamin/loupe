@@ -182,7 +182,7 @@ struct PullRequestRow: View {
                     Text(author)
                 }
                 if let verdict {
-                    ViewerVerdictBadge(verdict: verdict)
+                    ViewerVerdictBadge(verdict: verdict, detail: pullRequest.viewerVerdict)
                 }
                 // GitHub's verdict repeats the viewer's when they're the same.
                 if showsReviewRequired || ([.approved, .changesRequested].contains(pullRequest.reviewDecision) && pullRequest.reviewDecision?.rawValue != verdict?.rawValue) {
@@ -274,21 +274,28 @@ struct SelfReviewedBadge: View {
 }
 
 /// The viewer's own approval or request for changes on a PR in To review, so the list reads as
-/// what needs them apart from what waits to be merged or on its author.
+/// what needs them apart from what waits to be merged or on its author. Its tooltip says when,
+/// and whether the PR has changed since, where that's known.
 struct ViewerVerdictBadge: View {
     let verdict: ReviewState
+    /// Nil until the to-review check has said when and on which head.
+    let detail: ViewerVerdict?
 
     var body: some View {
         switch verdict {
         case .approved:
-            Badge(text: "Approved", tint: .diffSuccess)
-                .help("You approved this; it's waiting to be merged")
+            Badge(text: "You approved", tint: .diffSuccess)
+                .help("\(summary ?? "You approved this"); it's waiting to be merged")
         case .changesRequested:
-            Badge(text: "Changes requested", tint: .diffDanger)
-                .help("You asked for changes; it's waiting on its author")
+            Badge(text: "You requested changes", tint: .diffDanger)
+                .help("\(summary ?? "You requested changes"); it's waiting on its author")
         default:
             EmptyView()
         }
+    }
+
+    private var summary: String? {
+        detail.flatMap { $0.state == verdict ? $0.summary : nil }
     }
 }
 

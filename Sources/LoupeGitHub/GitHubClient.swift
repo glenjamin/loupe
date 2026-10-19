@@ -183,7 +183,7 @@ public struct GitHubClient: Sendable {
             }
           }
         }
-        latestOpinionatedReviews(first: 50) { nodes { state author { login } } }
+        latestOpinionatedReviews(first: 50) { nodes { state submittedAt commit { oid } author { login } } }
         """
 
     static let searchPageQuery = """

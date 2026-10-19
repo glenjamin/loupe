@@ -422,6 +422,11 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_SHOW_CHECKS"] == "1" {
                     for url in try await saveSnapshotsOfChecks(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_SHOW_VERDICT=1 prints the viewer's verdict on each PR, once its
+                // conversation has arrived, and opens the header's popover about it, and snapshots it.
+                if environment["LOUPE_SNAPSHOT_SHOW_VERDICT"] == "1" {
+                    for url in try await saveSnapshotsOfVerdicts(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_SHOW_THREAD=1 clicks each conversation's first "Show in diff", or
                 // =reply its first "Reply…", and snapshots the conversation and what the click showed.
                 if let wanted = environment["LOUPE_SNAPSHOT_SHOW_THREAD"] {
@@ -1339,6 +1344,45 @@ private func saveSnapshotsOfChecks(in windows: WindowManager, to directory: URL)
         try? await Task.sleep(for: .milliseconds(300))
         placePopover(under: anchor, in: window)
         let url = directory.appending(path: "checks-\(sanitised(windows.title(of: id))).png")
+        try await saveSnapshot(of: window, to: url)
+        anchor.closePopover()
+        written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
+/// For each PR, once its conversation has settled and its diff has been counted, prints the
+/// viewer's verdict and, where the header shows it, opens its popover as resting on it would,
+/// writing `verdict-<title>.png`.
+@MainActor
+private func saveSnapshotsOfVerdicts(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs {
+        windows.select(tab.id)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !tab.isConversationSettled, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        let title = windows.title(of: tab.id)
+        guard let verdict = tab.viewerVerdict else {
+            print("\(title): no verdict of the viewer's")
+            continue
+        }
+        print("\(title): \(verdict.state.rawValue) on \(verdict.commitOid.map { String($0.prefix(7)) } ?? "?"), \(verdict.since.map(\.description) ?? "since unknown"), \(tab.canReview ? "shown" : "not shown, as the viewer can't review it")")
+        try? await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+        guard let root = window.contentView,
+              let anchor = descendants(of: root).lazy.compactMap({ $0 as? HoverPopoverAnchor.AnchorView })
+                  .first(where: { !$0.isHiddenOrHasHiddenAncestor && ($0.content as? HoverHelp)?.title.hasPrefix("You ") == true })
+        else { continue }
+        anchor.showPopover()
+        try? await Task.sleep(for: .milliseconds(300))
+        placePopover(under: anchor, in: window)
+        let url = directory.appending(path: "verdict-\(sanitised(title)).png")
         try await saveSnapshot(of: window, to: url)
         anchor.closePopover()
         written.append(url)

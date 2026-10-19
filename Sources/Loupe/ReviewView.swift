@@ -69,28 +69,31 @@ struct ReviewControls: View {
     }
 
     private func verdictButton(_ event: ReviewEvent) -> some View {
-        Button {
+        // Approve reads as done while the head is what the viewer approved; it still approves again.
+        let isApproved = event == .approve && tab.viewerVerdict.map { $0.state == .approved && $0.isCurrent } == true
+        return Button {
             Task { await tab.submitReview(as: event) }
         } label: {
             Label {
-                Text(event.title)
+                Text(isApproved ? "Approved" : event.title)
             } icon: {
-                Image(systemName: event.symbol)
+                Image(systemName: isApproved ? "checkmark.circle.fill" : event.symbol)
                     .foregroundStyle(event.colour ?? .primary)
             }
         }
         .buttonStyle(.bordered)
         .tint(event.colour)
         .disabled(!tab.canSubmitReview(as: event))
-        .help(help(for: event))
+        .help(help(for: event, isApproved: isApproved))
     }
 
-    private func help(for event: ReviewEvent) -> String {
+    private func help(for event: ReviewEvent, isApproved: Bool) -> String {
         if !tab.canSubmitReview(as: event), !tab.reviewDraft.isSubmitting {
             return "Write a summary or add comments first, to \(event == .requestChanges ? "request changes" : "submit without approving")"
         }
         let pending = tab.pendingReview.map { " with its \($0.commentCount) pending \($0.commentCount == 1 ? "comment" : "comments")" } ?? ""
         guard tab.canReview else { return "Submits your review\(pending) now, as a comment. Authors can't approve or request changes on their own PR." }
+        if isApproved { return "You've approved this as it is. Clicking approves it again, submitting your review\(pending) now." }
         return "\(event.summary) Submits your review\(pending) now."
     }
 

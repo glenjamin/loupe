@@ -161,10 +161,11 @@ actor FakeGitHub: HTTPTransport {
     }
 
     /// Submits a review of the PR with `id` by `login`, as GitHub does: an approval or request
-    /// for changes answers their request for review, while a comment leaves it pending.
-    func review(_ id: String, by login: String = viewer, _ state: String) throws {
+    /// for changes answers their request for review, while a comment leaves it pending. It's on
+    /// `commit`, or the PR's head.
+    func review(_ id: String, by login: String = viewer, _ state: String, commit: String? = nil) throws {
         try edit(id) { pullRequest in
-            pullRequest.reviews.append(.init(login: login, state: state))
+            pullRequest.reviews.append(.init(login: login, state: state, submittedAt: .now, commit: commit ?? pullRequest.headRefOid))
             if state != "COMMENTED" { pullRequest.requestedReviewers.removeAll { $0 == .user(login) } }
         }
     }
@@ -532,6 +533,9 @@ struct FakePullRequest: Codable, Sendable {
         let login: String
         /// `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED` or `DISMISSED`.
         var state: String
+        var submittedAt: Date?
+        /// The head it was made on.
+        var commit: String?
     }
 
     struct Login: Codable, Sendable { let login: String }
@@ -579,7 +583,9 @@ struct FakePullRequest: Codable, Sendable {
         requestEvents = try requests.decodeIfPresent(NodesPayload.Connection<NodesPayload.Event>.self, forKey: .requestEvents)?.nodes
             .compactMap { event in try event.requestedReviewer.fake.map { RequestEvent(reviewer: $0, createdAt: try Date(event.createdAt, strategy: .iso8601)) } } ?? []
         reviews = try requests.decodeIfPresent(NodesPayload.Connection<NodesPayload.Verdict>.self, forKey: .latestOpinionatedReviews)?.nodes
-            .compactMap { verdict in verdict.author.map { Review(login: $0.login, state: verdict.state) } } ?? []
+            .compactMap { verdict in
+                verdict.author.map { Review(login: $0.login, state: verdict.state, submittedAt: verdict.submittedAt.flatMap { try? Date($0, strategy: .iso8601) }, commit: verdict.commit?.oid) }
+            } ?? []
     }
 }
 
@@ -600,7 +606,9 @@ private extension FakePullRequest {
         let latest = opinionated.enumerated().filter { index, review in
             !opinionated[(index + 1)...].contains { $0.login == review.login }
         }
-        return .init(nodes: latest.map { .init(state: $0.element.state, author: .init(login: $0.element.login)) })
+        return .init(nodes: latest.map { _, review in
+            .init(state: review.state, author: .init(login: review.login), submittedAt: review.submittedAt?.formatted(.iso8601), commit: review.commit.map { .init(oid: $0) })
+        })
     }
 
     /// The last 20, oldest first, as GitHub returns them to the app's query.
@@ -818,6 +826,11 @@ private struct NodesPayload: Encodable {
     struct Verdict: Codable {
         let state: String
         let author: FakePullRequest.Login?
+        /// Missing from probes recorded before the app asked for them.
+        let submittedAt: String?
+        let commit: Commit?
+
+        struct Commit: Codable { let oid: String }
     }
     struct Request: Codable { let requestedReviewer: Reviewer }
 

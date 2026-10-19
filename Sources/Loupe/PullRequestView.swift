@@ -178,7 +178,8 @@ struct ConversationRow: View {
 /// Three sections on one row: the PR's name, state and branches; on the viewer's own PRs, while
 /// it's open, a Merge button about 70% across, and on any merged or closed PR when that happened;
 /// and their reviewers at the right, with any review of their own pending beneath them. On anyone
-/// else's open PR the right holds the viewer's own review, and the middle is empty.
+/// else's open PR the right holds the viewer's own review, and the middle their standing
+/// approval or request for changes, if they've given one.
 struct PullRequestHeader: View {
     let pullRequest: PullRequestSummary
     let tab: PullRequestTab
@@ -233,6 +234,8 @@ struct PullRequestHeader: View {
                     MergeBox(tab: tab, readiness: readiness)
                 } else if let outcome = PullRequestOutcome(pullRequest) {
                     OutcomeLabel(outcome: outcome)
+                } else if tab.canReview, let verdict = tab.viewerVerdict {
+                    ViewerVerdictLabel(verdict: verdict)
                 }
                 if let error = tab.mergeError {
                     MergeErrorLabel(error: error)

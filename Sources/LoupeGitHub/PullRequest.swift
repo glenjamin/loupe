@@ -105,7 +105,9 @@ extension ReviewRequests {
             state: state,
             reviewers: requests.map(\.reviewer),
             events: events.map { ReviewRequestEvent(reviewer: $0.requestedReviewer?.reviewer ?? .other, createdAt: $0.createdAt) },
-            verdicts: verdicts.compactMap { verdict in verdict.author.map { ReviewVerdict(login: $0.login, state: verdict.state) } }
+            verdicts: verdicts.compactMap { verdict in
+                verdict.author.map { ReviewVerdict(login: $0.login, state: verdict.state, submittedAt: verdict.submittedAt, commitOid: verdict.commit?.oid) }
+            }
         )
     }
 }
@@ -145,6 +147,11 @@ struct NodesResponse: Decodable {
         let state: ReviewState
         /// Null when the reviewer's account has been deleted.
         let author: SearchPageResponse.Login?
+        let submittedAt: Date?
+        /// The head it was given on; null where its commit is gone from the repo.
+        let commit: Commit?
+
+        struct Commit: Decodable { let oid: String }
     }
 
     struct ReviewRequest: Decodable {

@@ -62,7 +62,8 @@ extension PullRequestStore {
                 pendingReviewBody: conversation.pendingReview?.body,
                 pendingReviewCommentCount: conversation.pendingReview?.commentCount,
                 viewerReviewCommitOid: conversation.viewerReview?.commitOid,
-                viewerReviewedAt: conversation.viewerReview?.submittedAt
+                viewerReviewedAt: conversation.viewerReview?.submittedAt,
+                viewerReviewState: conversation.viewerReview?.state.rawValue
             ).upsert(db)
             try insertReactions(conversation.reactions, of: pullRequestId, in: pullRequestId, db)
             try insertTimeline(conversation.items, of: pullRequestId, in: db)
@@ -121,6 +122,9 @@ extension PullRequestStore {
             row.pendingReviewId = conversation.pendingReview?.id
             row.pendingReviewBody = conversation.pendingReview?.body
             row.pendingReviewCommentCount = conversation.pendingReview?.commentCount
+            row.viewerReviewCommitOid = conversation.viewerReview?.commitOid
+            row.viewerReviewedAt = conversation.viewerReview?.submittedAt
+            row.viewerReviewState = conversation.viewerReview?.state.rawValue
             try row.update(db)
         }
     }
@@ -180,13 +184,16 @@ private struct ConversationRow: Codable, FetchableRecord, PersistableRecord {
     var pendingReviewCommentCount: Int?
     var viewerReviewCommitOid: String?
     var viewerReviewedAt: Date?
+    var viewerReviewState: String?
 
     var pendingReview: PendingReview? {
         pendingReviewId.map { PendingReview(id: $0, body: pendingReviewBody ?? "", commentCount: pendingReviewCommentCount ?? 0) }
     }
 
     var viewerReview: ViewerReview? {
-        viewerReviewCommitOid.map { ViewerReview(commitOid: $0, submittedAt: viewerReviewedAt) }
+        viewerReviewCommitOid.map { oid in
+            ViewerReview(state: viewerReviewState.map(ReviewState.init(lenientRawValue:)) ?? .unknown, commitOid: oid, submittedAt: viewerReviewedAt)
+        }
     }
 }
 

@@ -235,7 +235,7 @@ struct ChangesSinceTests {
 /// The app's models over the PR fixture and an in-memory store, with a conversation for each
 /// PR from `FakeConversations`, and a repo whose checkout the PR is diffed from.
 @MainActor
-private struct SinceApp {
+struct SinceApp {
     let github: FakeGitHub
     let details = FakePullRequestDetails()
     let store: PullRequestStore

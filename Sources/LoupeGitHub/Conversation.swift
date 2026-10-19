@@ -220,7 +220,7 @@ private struct ConversationResponse: Decodable {
     }
 
     struct ViewerLatestReview: Decodable {
-        let state: String
+        let state: ReviewState
         let submittedAt: Date?
         let commit: Commit?
 
@@ -228,8 +228,8 @@ private struct ConversationResponse: Decodable {
 
         /// Nil for a pending review, which isn't one the viewer has made yet.
         var viewerReview: ViewerReview? {
-            guard state != "PENDING", let commit else { return nil }
-            return ViewerReview(commitOid: commit.oid, submittedAt: submittedAt)
+            guard state != .pending, let commit else { return nil }
+            return ViewerReview(state: state, commitOid: commit.oid, submittedAt: submittedAt)
         }
     }
 

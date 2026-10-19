@@ -36,20 +36,27 @@ public struct PullRequestOutcome: Sendable, Equatable {
     /// Relative within the last week ("3 hours ago"), where that reads at a glance; beyond it a
     /// date and time ("14 Oct 2026 at 15:02"), as "4 weeks ago" is too vague to place.
     public func when(now: Date = .now, locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent) -> String? {
-        guard let date else { return nil }
-        if now.timeIntervalSince(date) < recentInterval {
-            let formatter = RelativeDateTimeFormatter()
-            formatter.locale = locale
-            formatter.dateTimeStyle = .named
-            return formatter.localizedString(for: date, relativeTo: now)
-        }
-        return date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: locale, timeZone: timeZone))
+        date?.recentOrDated(now: now, locale: locale, timeZone: timeZone)
     }
 
     /// The full date and time, for a tooltip, whichever way `when` puts it.
     public func help(locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent) -> String {
         guard let date else { return title }
         return "\(title) \(date.formatted(Date.FormatStyle(date: .complete, time: .shortened, locale: locale, timeZone: timeZone)))"
+    }
+}
+
+extension Date {
+    /// Relative within the last week ("3 hours ago"), where that reads at a glance; beyond it a
+    /// date and time ("14 Oct 2026 at 15:02"), as "4 weeks ago" is too vague to place.
+    public func recentOrDated(now: Date = .now, locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent) -> String {
+        if now.timeIntervalSince(self) < recentInterval {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.locale = locale
+            formatter.dateTimeStyle = .named
+            return formatter.localizedString(for: self, relativeTo: now)
+        }
+        return formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: locale, timeZone: timeZone))
     }
 }
 

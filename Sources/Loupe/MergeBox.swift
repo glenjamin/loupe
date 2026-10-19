@@ -110,6 +110,41 @@ struct OutcomeLabel: View {
     }
 }
 
+/// In the merge button's place on someone else's open PR: the viewer's own approval or request
+/// for changes, with when and whether the PR has changed since beneath it, where the button's
+/// reason sits. Resting on it says which commit it was on and what's changed.
+struct ViewerVerdictLabel: View {
+    let verdict: ViewerVerdict
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Label(verdict.title, systemImage: verdict.symbol)
+                .font(.headline)
+                .foregroundStyle(verdict.tint)
+            TimelineView(.everyMinute) { context in
+                caption(now: context.date)
+                    .font(.caption)
+            }
+        }
+        .fixedSize()
+        .background(HoverPopoverAnchor(content: HoverHelp(verdict: verdict)))
+    }
+
+    /// When, then how it's moved on since, which stands out once there's something new.
+    private func caption(now: Date) -> Text {
+        let when = verdict.submittedAt.map { Text(verbatim: $0.recentOrDated(now: now)).foregroundStyle(.secondary) }
+        let since = verdict.since.map { since in
+            Text(verbatim: since.description).foregroundStyle(since == .unchanged ? .secondary : Color.diffAttention)
+        }
+        switch (when, since) {
+        case let (when?, since?): return when + Text(verbatim: " · ").foregroundStyle(.secondary) + since
+        case let (when?, nil): return when
+        case let (nil, since?): return since
+        case (nil, nil): return Text(verbatim: "")
+        }
+    }
+}
+
 /// GitHub's refusal of a merge or of leaving draft, under the button, wrapping within the
 /// merge section.
 struct MergeErrorLabel: View {
@@ -122,5 +157,60 @@ struct MergeErrorLabel: View {
             .lineLimit(3)
             .multilineTextAlignment(.center)
             .textSelection(.enabled)
+    }
+}
+
+extension HoverHelp {
+    /// Which commit the viewer's verdict was on, when, and what's happened since.
+    init(verdict: ViewerVerdict) {
+        let on = [
+            verdict.commitOid.map { "On \($0.prefix(7))" },
+            verdict.submittedAt.map { $0.formatted(date: .complete, time: .shortened) },
+        ].compactMap(\.self).joined(separator: ", ")
+        let since = switch verdict.since {
+        case .unchanged: "Nothing has been pushed since: the PR is as you saw it."
+        case .commits(1): "1 commit has been pushed on top since. \"Since your last review\" in the commit picker shows it."
+        case let .commits(count): "\(count) commits have been pushed on top since. \"Since your last review\" in the commit picker shows them."
+        case .changed: "The branch has changed since. \"Since your last review\" in the commit picker shows what's new."
+        case nil: ""
+        }
+        self.init(title: "\(verdict.title) this", detail: [on.isEmpty ? "" : "\(on).", since].filter { !$0.isEmpty }.joined(separator: " "))
+    }
+}
+
+extension ViewerVerdict {
+    var title: String {
+        state == .approved ? "You approved" : "You requested changes"
+    }
+
+    var symbol: String {
+        state == .approved ? "checkmark.circle.fill" : "xmark.circle.fill"
+    }
+
+    var tint: Color {
+        state == .approved ? .diffSuccess : .diffDanger
+    }
+
+    /// For a tooltip: what, when and whether it's changed since, e.g. "You approved this 2 days
+    /// ago, with no changes since".
+    var summary: String {
+        let when = submittedAt.map { " \($0.recentOrDated())" } ?? ""
+        let since = switch since {
+        case .unchanged: ", with no changes since"
+        case .commits, .changed: ", and it's changed since"
+        case nil: ""
+        }
+        return "\(title) this\(when)\(since)"
+    }
+}
+
+extension ViewerVerdict.Since: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .unchanged: "no changes since"
+        case .commits(1): "1 commit since"
+        case let .commits(count): "\(count) commits since"
+        case .changed: "changed since"
+        }
     }
 }

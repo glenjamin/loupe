@@ -165,14 +165,15 @@ extension PullRequestTab {
         defer { draft.isSubmitting = false }
         let sending = sendingReview(ReviewState(event), summary: summary, replacing: pendingId)
         draft.reset()
-        let change = make(.submitted(sending))
+        let head = if case let .ready(review) = phase { review.headOid } else { pullRequest.headRefOid }
+        // Until GitHub says otherwise, it's taken to be on the head shown, as a new review is.
+        let change = make(.submitted(sending, commit: head))
         await storeOwnChanges()
         let posted: PostedReview
         do {
             if let pendingId {
                 posted = try await client.submitReview(pendingId, event: event, body: summary)
             } else {
-                let head = if case let .ready(review) = phase { review.headOid } else { pullRequest.headRefOid }
                 posted = try await client.addReview(toPullRequest: id, commitId: head, body: summary.isEmpty ? nil : summary, event: event, threads: [])
             }
         } catch {
@@ -185,6 +186,13 @@ extension PullRequestTab {
         }
         confirm(change, review: sending.id, as: posted)
         await storeOwnChanges()
+        if let viewer {
+            do {
+                try await lists.viewerGave(ReviewVerdict(login: viewer, state: posted.state, submittedAt: posted.date, commitOid: head), on: id)
+            } catch {
+                log("Couldn't store your review of \(title): \(error)")
+            }
+        }
         await refreshConversation()
         // The review's comments are the viewer's own, so they show as submitted at once even
         // while new commits wait for a reload.

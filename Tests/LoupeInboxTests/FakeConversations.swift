@@ -45,6 +45,8 @@ actor FakeConversations {
     struct PendingReviewState {
         let id: String
         var body: String
+        /// The head it was started on, which it's submitted on; nil for the PR's head then.
+        var commit: String?
     }
 
     enum ReviewMutation: Equatable {
@@ -688,11 +690,12 @@ actor FakeConversations {
             comments += self.threads(of: id).filter { $0["id"] as? String == threadId }.flatMap { self.comments(of: $0) }
         }
         let state: String
+        let commit = input["commitOID"] as? String
         if let event {
-            state = try await recordReview(event, body: body ?? "", on: id)
+            state = try await recordReview(event, body: body ?? "", on: id, commit: commit)
         } else {
             state = "PENDING"
-            pendingReviews[id] = PendingReviewState(id: reviewId, body: body ?? "")
+            pendingReviews[id] = PendingReviewState(id: reviewId, body: body ?? "", commit: commit)
         }
         let payload: [String: Any] = ["addPullRequestReview": ["pullRequestReview": try postedReview(reviewId, state: state, body: body ?? "", comments: comments)]]
         return (try JSONSerialization.data(withJSONObject: ["data": payload]), fakeResponse(url, status: 200))
@@ -728,6 +731,7 @@ actor FakeConversations {
         if event != "APPROVE", (body ?? "").isEmpty, pendingComments(of: id) == 0 {
             return try unprocessable("submitPullRequestReview", "Review body is required for \(event)", url)
         }
+        let commit = pendingReviews[id]?.commit
         pendingReviews[id] = nil
         setThreads(threads(of: id).map { thread in
             var thread = thread
@@ -737,7 +741,7 @@ actor FakeConversations {
             thread["comments"] = ["nodes": comments.map { $0.merging(["state": "SUBMITTED"]) { $1 } }]
             return thread
         }, of: id)
-        let state = try await recordReview(event, body: body ?? "", on: id, as: reviewId)
+        let state = try await recordReview(event, body: body ?? "", on: id, as: reviewId, commit: commit)
         let payload: [String: Any] = ["submitPullRequestReview": ["pullRequestReview": try postedReview(reviewId, state: state, body: body ?? "", comments: [])]]
         return (try JSONSerialization.data(withJSONObject: ["data": payload]), fakeResponse(url, status: 200))
     }
@@ -782,12 +786,16 @@ actor FakeConversations {
         return (try JSONSerialization.data(withJSONObject: ["data": ["deletePullRequestReviewComment": payload]]), fakeResponse(url, status: 200))
     }
 
-    /// The viewer's submitted review: their latest, in the timeline, and the PR's review
-    /// decision where it decides one. Returns its state.
+    /// The viewer's submitted review, on `commit` or else the PR's head as the PR's rows have
+    /// it: their latest, in the timeline, among the reviews the rows are checked for, and the
+    /// PR's review decision where it decides one. Returns its state.
     @discardableResult
-    private func recordReview(_ event: String, body: String, on id: String, as reviewId: String? = nil) async throws -> String {
+    private func recordReview(_ event: String, body: String, on id: String, as reviewId: String? = nil, commit: String? = nil) async throws -> String {
         let state = ["APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED"][event] ?? "COMMENTED"
-        try review(state, by: FakeGitHub.viewer, on: id)
+        var head = commit
+        if head == nil, let github { head = try await github.head(of: id) }
+        try review(state, by: FakeGitHub.viewer, on: id, commit: head)
+        try await github?.review(id, state, commit: head)
         let index = timelines[id, default: []].count
         let submittedId = reviewId ?? "PRR_fake_timeline_\(index)"
         timelines[id, default: []].append([

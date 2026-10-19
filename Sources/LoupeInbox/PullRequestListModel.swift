@@ -198,6 +198,17 @@ public final class PullRequestListModel {
         }
     }
 
+    /// Records the viewer's approval or request for changes on the PR with `id`, once GitHub has
+    /// accepted it from here, so its row says so before the next refresh. It answers their
+    /// request for review, as on GitHub.
+    func viewerGave(_ verdict: ReviewVerdict, on id: String) async throws {
+        guard verdict.state.isVerdict else { return }
+        if let requested = pullRequest(id: id)?.requestedReviewers, requested.contains(where: { $0.isUser(verdict.login) }) {
+            snapshot = try await store.updateRequestedReviewers([id: requested.filter { !$0.isUser(verdict.login) }])
+        }
+        snapshot = try await store.updateViewerReviews([id: verdict])
+    }
+
     /// Nil until the repo's checkout has been looked for.
     public func checkout(for repository: String) -> CheckoutStatus? {
         checkouts[repository]
@@ -279,7 +290,7 @@ public final class PullRequestListModel {
         guard !ids.isEmpty else { return checked }
         let toReview = requests.filter { ids.contains($0.key) }
         checked = try await store.updateReviewRequestTimes(toReview.mapValues { $0.lastRequested(of: login) })
-        checked = try await store.updateViewerReviews(toReview.mapValues { $0.latestVerdict(by: login) })
+        checked = try await store.updateViewerReviews(toReview.mapValues { $0.latestVerdictReview(by: login) })
         let leaving = ids.filter { requests[$0]?.belongsInToReview(of: login) != true }
         guard !leaving.isEmpty else { return checked }
         return try await store.remove(leaving, from: .toReview)
@@ -301,7 +312,7 @@ public final class PullRequestListModel {
         if !requested.isEmpty {
             let times = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.lastRequested(of: login)) }) { $1 }
             snapshot = try await store.updateReviewRequestTimes(times)
-            let verdicts = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.latestVerdict(by: login)) }) { $1 }
+            let verdicts = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.latestVerdictReview(by: login)) }) { $1 }
             snapshot = try await store.updateViewerReviews(verdicts)
         }
         for lookup in lookups {

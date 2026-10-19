@@ -26,9 +26,10 @@ struct OwnChange {
         case deleted(commentId: String)
         /// The viewer's pending review abandoned, with its comments.
         case discarded(reviewId: String)
-        /// The viewer's review submitted: its comments no longer pending, and `review` in the
-        /// timeline in place of the pending one.
-        case submitted(TimelineItem)
+        /// The viewer's review submitted: its comments no longer pending, `review` in the
+        /// timeline in place of the pending one, and it the viewer's latest, on `commit` where
+        /// that's known.
+        case submitted(TimelineItem, commit: String?)
         /// A comment on the PR itself, at the end of the timeline.
         case conversationComment(TimelineItem)
         /// The body of the viewer's comment, thread comment or review with `id` edited: as
@@ -77,6 +78,8 @@ struct ConversationUndo {
     var addedItems: Set<String> = []
     /// The pending review as it was, if the change altered it.
     var pendingReview: PendingReview??
+    /// The viewer's latest review as it was, if the change altered it.
+    var viewerReview: ViewerReview??
 
     init(from before: Conversation, to after: Conversation) {
         threads = ThreadsUndo(from: before.threads, to: after.threads)
@@ -86,6 +89,7 @@ struct ConversationUndo {
         }
         addedItems = Set(after.items.map(\.id)).subtracting(before.items.map(\.id))
         pendingReview = before.pendingReview == after.pendingReview ? nil : .some(before.pendingReview)
+        viewerReview = before.viewerReview == after.viewerReview ? nil : .some(before.viewerReview)
     }
 }
 
@@ -131,13 +135,16 @@ extension PullRequestTab {
 
     /// GitHub has the review submitted: it takes the provisional one's place in the timeline.
     func confirm(_ change: Int, review provisionalId: String, as posted: PostedReview) {
-        guard let index = ownChanges.firstIndex(where: { $0.id == change }), case let .submitted(item) = ownChanges[index].kind else { return }
+        guard let index = ownChanges.firstIndex(where: { $0.id == change }), case let .submitted(item, commit) = ownChanges[index].kind else { return }
         let review = TimelineItem(
             id: posted.id, date: posted.date, actor: posted.author ?? item.actor,
             event: .review(state: posted.state, bodyHTML: posted.bodyHTML, comments: item.reviewComments)
         )
-        ownChanges[index].kind = .submitted(review)
+        ownChanges[index].kind = .submitted(review, commit: commit)
         ownChanges[index].answeredBefore = fetchesStarted
+        if let commit {
+            conversation?.viewerReview = ViewerReview(state: posted.state, commitOid: commit, submittedAt: posted.date)
+        }
         guard let at = conversation?.items.firstIndex(where: { $0.id == provisionalId }) else { return }
         conversation?.items[at] = review
     }
@@ -298,13 +305,19 @@ extension Conversation {
             threads.make(change)
             pendingReview = nil
             items.removeAll { $0.id == reviewId || $0.isPendingReview }
-        case let .submitted(review):
+        case let .submitted(review, commit):
             threads.make(change)
             pendingReview = nil
-            guard let index = items.firstIndex(where: { $0.id == review.id }) else { return items.append(review) }
-            // GitHub's copy, once submitted, is the one to show.
-            guard items[index].isSending || items[index].isPendingReview else { return }
-            items[index] = review
+            if let index = items.firstIndex(where: { $0.id == review.id }) {
+                // GitHub's copy, once submitted, is the one to show.
+                guard items[index].isSending || items[index].isPendingReview else { return }
+                items[index] = review
+            } else {
+                items.append(review)
+            }
+            if let commit, case let .review(state, _, _) = review.event {
+                viewerReview = ViewerReview(state: state, commitOid: commit, submittedAt: review.date)
+            }
         case let .conversationComment(comment):
             guard !items.contains(where: { $0.id == comment.id }) else { return }
             items.append(comment)
@@ -367,6 +380,7 @@ extension Conversation {
             }
         }
         if let pending = undo.pendingReview { pendingReview = pending }
+        if let latest = undo.viewerReview { viewerReview = latest }
     }
 
     /// Shows a comment starting a thread in the timeline, as GitHub does in the review it's in:

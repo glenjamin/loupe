@@ -47,10 +47,13 @@ public struct Conversation: Sendable, Equatable {
 
 /// The viewer's latest submitted review of a PR, by the head commit it was made against.
 public struct ViewerReview: Sendable, Equatable {
+    /// `.unknown` in a conversation stored before the state was, until it's next fetched.
+    public var state: ReviewState
     public var commitOid: String
     public var submittedAt: Date?
 
-    public init(commitOid: String, submittedAt: Date?) {
+    public init(state: ReviewState, commitOid: String, submittedAt: Date?) {
+        self.state = state
         self.commitOid = commitOid
         self.submittedAt = submittedAt
     }

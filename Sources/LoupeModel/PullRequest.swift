@@ -49,6 +49,10 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     /// The state of the viewer's latest approval or request for changes, dismissed or not, as
     /// the to-review list's check found it. Nil until checked, or when they've given neither.
     public let viewerReview: ReviewState?
+    /// When the viewer gave that verdict, and the head it was given on. Nil until checked, or
+    /// on rows checked before these were fetched.
+    public let viewerReviewedAt: Date?
+    public let viewerReviewCommitOid: String?
 
     public init(
         id: String,
@@ -76,7 +80,9 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         reviewThreadCount: Int? = nil,
         reviewRequestedAt: Date? = nil,
         requestedReviewers: [RequestedReviewer]? = nil,
-        viewerReview: ReviewState? = nil
+        viewerReview: ReviewState? = nil,
+        viewerReviewedAt: Date? = nil,
+        viewerReviewCommitOid: String? = nil
     ) {
         self.id = id
         self.repository = repository
@@ -104,6 +110,8 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.reviewRequestedAt = reviewRequestedAt
         self.requestedReviewers = requestedReviewers
         self.viewerReview = viewerReview
+        self.viewerReviewedAt = viewerReviewedAt
+        self.viewerReviewCommitOid = viewerReviewCommitOid
     }
 
     /// The approval or request for changes `login` has made and still stands by, while they
@@ -173,7 +181,12 @@ public struct ReviewRequests: Sendable, Equatable {
     /// The state of `login`'s latest approval or request for changes, nil if they've given
     /// neither.
     public func latestVerdict(by login: String) -> ReviewState? {
-        verdicts.last { $0.login.caseInsensitiveCompare(login) == .orderedSame }?.state
+        latestVerdictReview(by: login)?.state
+    }
+
+    /// `login`'s latest approval or request for changes, nil if they've given neither.
+    public func latestVerdictReview(by login: String) -> ReviewVerdict? {
+        verdicts.last { $0.login.caseInsensitiveCompare(login) == .orderedSame }
     }
 
     /// Whether the PR belongs in `login`'s To review: open, and either waiting on their review
@@ -200,10 +213,15 @@ public struct ReviewRequests: Sendable, Equatable {
 public struct ReviewVerdict: Sendable, Equatable {
     public let login: String
     public let state: ReviewState
+    public let submittedAt: Date?
+    /// The head it was given on.
+    public let commitOid: String?
 
-    public init(login: String, state: ReviewState) {
+    public init(login: String, state: ReviewState, submittedAt: Date? = nil, commitOid: String? = nil) {
         self.login = login
         self.state = state
+        self.submittedAt = submittedAt
+        self.commitOid = commitOid
     }
 }
 
@@ -244,7 +262,7 @@ public enum RequestedReviewer: Sendable, Hashable {
     }
 
     /// Whether this is the user `login`, not a team they may be in.
-    func isUser(_ login: String) -> Bool {
+    public func isUser(_ login: String) -> Bool {
         if case let .user(requested) = self { requested.caseInsensitiveCompare(login) == .orderedSame } else { false }
     }
 

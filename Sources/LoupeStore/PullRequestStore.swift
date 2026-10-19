@@ -145,14 +145,17 @@ public struct PullRequestStore: Sendable {
         }
     }
 
-    /// Records the state of the viewer's latest approval or request for changes on each PR in
-    /// `reviews`, keyed by id, nil where they've given neither. PRs no longer stored are left
-    /// out.
+    /// Records the viewer's latest approval or request for changes on each PR in `reviews`,
+    /// keyed by id, with when and on which head, nil where they've given neither. PRs no longer
+    /// stored are left out.
     @discardableResult
-    public func updateViewerReviews(_ reviews: [String: ReviewState?]) async throws -> PullRequestSnapshot {
+    public func updateViewerReviews(_ reviews: [String: ReviewVerdict?]) async throws -> PullRequestSnapshot {
         try await database.write { db in
             for (id, review) in reviews {
-                try db.execute(sql: "UPDATE pullRequest SET viewerReview = ? WHERE id = ?", arguments: [review?.rawValue, id])
+                try db.execute(
+                    sql: "UPDATE pullRequest SET viewerReview = ?, viewerReviewedAt = ?, viewerReviewCommitOid = ? WHERE id = ?",
+                    arguments: [review?.state.rawValue, review?.submittedAt, review?.commitOid, id]
+                )
             }
             return try Self.snapshot(db)
         }
@@ -526,6 +529,18 @@ public struct PullRequestStore: Sendable {
                 t.column("seenAt", .datetime).notNull()
             }
         }
+        // The viewer's verdict with when and on which head, so the header and To review can say
+        // whether the PR has changed since: null until the conversation is next fetched, or the
+        // to-review check next runs.
+        migrator.registerMigration("Viewer verdicts") { db in
+            try db.alter(table: "conversation") { t in
+                t.add(column: "viewerReviewState", .text)
+            }
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "viewerReviewedAt", .datetime)
+                t.add(column: "viewerReviewCommitOid", .text)
+            }
+        }
         return migrator
     }
 
@@ -610,6 +625,8 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let reviewRequestedAt: Date?
     let requestedReviewers: [StoredReviewer]?
     let viewerReview: String?
+    let viewerReviewedAt: Date?
+    let viewerReviewCommitOid: String?
 
     /// Anything `pullRequest` lacks because only a lookup by id fetches it is kept from `stored`.
     init(_ pullRequest: PullRequestSummary, keepingLookupsFrom stored: PullRequestRow?) {
@@ -638,6 +655,9 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         reviewRequestedAt = pullRequest.reviewRequestedAt ?? stored?.reviewRequestedAt
         requestedReviewers = pullRequest.requestedReviewers.map { $0.map(StoredReviewer.init) } ?? stored?.requestedReviewers
         viewerReview = pullRequest.viewerReview?.rawValue ?? stored?.viewerReview
+        // When and on which head go with the verdict they describe.
+        viewerReviewedAt = pullRequest.viewerReview == nil ? stored?.viewerReviewedAt : pullRequest.viewerReviewedAt
+        viewerReviewCommitOid = pullRequest.viewerReview == nil ? stored?.viewerReviewCommitOid : pullRequest.viewerReviewCommitOid
     }
 
     func summary(checkContexts: [CheckContext]) -> PullRequestSummary {
@@ -668,7 +688,9 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             reviewThreadCount: reviewThreadCount,
             reviewRequestedAt: reviewRequestedAt,
             requestedReviewers: requestedReviewers?.map(\.reviewer),
-            viewerReview: viewerReview.map(ReviewState.init(lenientRawValue:))
+            viewerReview: viewerReview.map(ReviewState.init(lenientRawValue:)),
+            viewerReviewedAt: viewerReviewedAt,
+            viewerReviewCommitOid: viewerReviewCommitOid
         )
     }
 }
