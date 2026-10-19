@@ -40,12 +40,12 @@ enum Git {
     }
 
     /// git's stdout, given `input` on stdin and `environment` added to its own. Runs on a
-    /// background queue, as it blocks until git exits, and kills git if it outlasts `timeout`.
+    /// thread of its own, as it blocks until git exits, and kills git if it outlasts `timeout`.
     /// `statuses` are the exit statuses that aren't failures, for commands such as `merge-tree`
     /// that answer with their status as well as their output.
     static func run(_ arguments: [String], in directory: URL, input: Data? = nil, environment: [String: String] = [:], timeout: Duration = .seconds(30), succeedingOn statuses: Set<Int32> = [0]) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            onOwnThread {
                 continuation.resume(with: Result {
                     try runBlocking(arguments, in: directory, input: input, environment: environment, timeout: timeout, succeedingOn: statuses) { String(decoding: $0.readDataToEndOfFile(), as: UTF8.self) }
                 })
@@ -56,7 +56,7 @@ enum Git {
     /// git's stdout as bytes, for output that isn't text, such as an image's blob.
     static func data(_ arguments: [String], in directory: URL, environment: [String: String] = [:], timeout: Duration = .seconds(30)) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            onOwnThread {
                 continuation.resume(with: Result { try runBlocking(arguments, in: directory, input: nil, environment: environment, timeout: timeout) { $0.readDataToEndOfFile() } })
             }
         }
@@ -77,7 +77,7 @@ enum Git {
         let input = Data(sendable.map { $0.name + "\n" }.joined().utf8)
         let lines = sendable.map(\.lines)
         let heads = try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            onOwnThread {
                 continuation.resume(with: Result {
                     try runBlocking(["cat-file", "--batch"], in: directory, input: input, environment: environment, timeout: timeout) { output in
                         var reader = BatchReader(lines: lines)
@@ -110,7 +110,7 @@ enum Git {
         try process.run()
         if let stdin, let input {
             // Written alongside the reads below, so a large input can't deadlock against git's output.
-            DispatchQueue.global().async {
+            onOwnThread {
                 try? stdin.fileHandleForWriting.write(contentsOf: input)
                 try? stdin.fileHandleForWriting.close()
             }
@@ -243,7 +243,7 @@ private final class Drain: @unchecked Sendable {
 
     init(_ handle: FileHandle) {
         group.enter()
-        DispatchQueue.global().async {
+        onOwnThread {
             self.data = handle.readDataToEndOfFile()
             self.group.leave()
         }
@@ -276,4 +276,13 @@ private func version(of executable: URL) -> String {
     let output = stdout.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     return String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// Runs blocking work on a thread of its own rather than GCD's global pool. That pool's threads
+/// are capped, and a git run blocks waiting on its stdin writer, its stderr drain and its
+/// watchdog, so enough runs at once holding every pool thread would leave those never run.
+private func onOwnThread(_ work: @escaping @Sendable () -> Void) {
+    let thread = Thread(block: work)
+    thread.qualityOfService = .userInitiated
+    thread.start()
 }
