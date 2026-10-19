@@ -111,7 +111,7 @@ private struct SummaryPopover: View {
             Text("Review summary")
                 .font(.headline)
             // ⌘↩ and Escape only close it: the verdict is chosen in the header.
-            MarkdownEditor(text: $draft.body, isEditable: !draft.isSubmitting, tab: tab, save: close, cancel: close, font: .systemFont(ofSize: NSFont.systemFontSize), height: 110)
+            MarkdownEditor(text: $draft.body, isEditable: !draft.isSubmitting, tab: tab, save: close, cancel: close, font: .systemFont(ofSize: NSFont.systemFontSize), minHeight: 110)
             Text(tab.canReview ? "Leave a comment. Markdown. Sent with Request changes, Submit or Approve." : "Leave a comment. Markdown. Sent with Submit.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

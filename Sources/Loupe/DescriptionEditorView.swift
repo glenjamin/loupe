@@ -112,6 +112,8 @@ struct MarkdownTextView: NSViewRepresentable {
     var togglePreview: (() -> Void)?
     /// Counts requests to take the focus with the cursor at the end, as after a quote is added.
     var focusRequests = 0
+    /// Told how tall the text is laid out whenever that changes, for a box that fits it.
+    var contentHeightChanged: ((CGFloat) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -140,6 +142,11 @@ struct MarkdownTextView: NSViewRepresentable {
         textView.onAlternateSave = alternateSave
         textView.onCancel = cancel
         textView.onTogglePreview = togglePreview
+        textView.onContentHeight = contentHeightChanged.map { changed in
+            // Later, as it's often learnt while SwiftUI is updating the view.
+            { height in DispatchQueue.main.async { changed(height) } }
+        }
+        textView.reportContentHeight()
         // Typing can start straight away, and again on coming back from the preview, which is
         // switched to and from this box alone.
         let toggled = context.coordinator.wasPreviewing != isPreviewing
@@ -182,7 +189,10 @@ final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
     var onAlternateSave: (() -> Void)?
     var onCancel: () -> Void = {}
     var onTogglePreview: (() -> Void)?
+    /// Told the height of the laid-out text whenever it changes.
+    var onContentHeight: ((CGFloat) -> Void)?
     var isPreviewing = false
+    private var reportedHeight: CGFloat?
     /// The fixed end of a selection made by code words, so the other end moves on the next one.
     private var wordSelectionAnchor: Int?
     /// Whether to take the focus once it's in a window.
@@ -198,6 +208,28 @@ final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
         let end = NSRange(location: (string as NSString).length, length: 0)
         setSelectedRange(end)
         scrollRangeToVisible(end)
+    }
+
+    /// Tells `onContentHeight` the text's height, insets included, if it's changed.
+    func reportContentHeight() {
+        // Until it has a width, every character would be a line of its own.
+        guard let onContentHeight, frame.width > 0, let layoutManager, let textContainer else { return }
+        layoutManager.ensureLayout(for: textContainer)
+        let height = ceil(layoutManager.usedRect(for: textContainer).height + textContainerInset.height * 2)
+        guard height != reportedHeight else { return }
+        reportedHeight = height
+        onContentHeight(height)
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        reportContentHeight()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let rewraps = newSize.width != frame.width
+        super.setFrameSize(newSize)
+        if rewraps { reportContentHeight() }
     }
 
     override func viewDidMoveToWindow() {

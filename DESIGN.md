@@ -805,6 +805,12 @@ The link's tab isn't stored, as the `openTab` table holds PRs by id and there's 
 
 It's one key monitor, `TextEditingKeys`, which hands such a key to the window to deliver to the focused text, past the menus, rather than each box catching keys or each shortcut checking the focus, so a new shortcut or text field can't bring the problem back. ⌘↓ stays the menu's shortcut, shown there, for the diff. Everything else goes the usual way: ⌘↩, Esc and Tab, so a dialog's default and cancel buttons and ⌃Tab's tab switching still work from a field; ⌘⇧[ and ⌘⇧], ⌘1 to ⌘9 and ⌘W, which no text uses, stay the tabs' everywhere; and ⌘A was always the Edit menu's Select All, sent to the focused text.
 
+### A comment box grows with what's written, or previewed, up to 400pt
+
+This revises "Every markdown box has Write and Preview, rendered by GitHub", where the preview showed in the box's place with its height unchanged. Each comment box (a line comment, a reply, an edit, the PR's comment and the review summary) starts at the height it had, and grows with the text as it's typed, so a long comment can be read back whole while it's written, up to 400pt, then scrolls inside; it shrinks again as text is deleted, never below where it started. Preview sizes to GitHub's rendering the same way, within the same bounds, measured from the page as it lays out (a script in the app's own world watching the page's content), so each mode fits its own content and switching between them moves the box only by how much the two differ. While the preview is rendered, or says there's nothing to preview or why it failed, the box is at its least. The description's editor still fills its pane.
+
+400pt is a fixed cap rather than a share of the window, as the boxes live in both the diff and popovers, which have no pane to take a share of: it's about 25 lines of text, enough for most comments, and leaves the line commented on and the box's buttons in view together in a window of ordinary size. On the diff, a thread's block already takes the height its view measures, so the rows below move with the box; a popover follows its content's size, kept by its link.
+
 ## Not yet decided
 
 Nothing is pending.

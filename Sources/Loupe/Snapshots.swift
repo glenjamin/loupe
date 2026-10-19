@@ -49,6 +49,13 @@ enum SnapshotRun {
     }
     /// A run whose markdown boxes open on Preview rather than Write.
     static let previewsDrafts = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_PREVIEW"] == "1"
+    /// What a run fills the comments it starts with: `LOUPE_SNAPSHOT_DRAFT=long` asks for a draft
+    /// longer than any box grows to, `short` (or previewing alone) for the sample.
+    fileprivate static let draft: String? = switch ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_DRAFT"] {
+    case "long"?: longDraft
+    case "short"?: sampleDraft
+    default: previewsDrafts ? sampleDraft : nil
+    }
     /// A run driving pulls with synthesised events, where a pull that fires only says so.
     static let isRehearsingPulls = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_PULL_EVENTS"] != nil
     /// A run that holds the PRs' checks on GitHub unanswered, so the header's spinner is drawn.
@@ -229,16 +236,22 @@ enum SnapshotRun {
                 }
                 windows.select(tabs.selected)
             }
-            // LOUPE_SNAPSHOT_PREVIEW=1 opens every markdown box on Preview, and fills each comment
-            // started on a line with some markdown for GitHub to render (read-only), writing
-            // `preview-end-<title>.png` with the preview scrolled to its end. Nothing is sent.
-            if previewsDrafts {
+            // LOUPE_SNAPSHOT_DRAFT=<short|long> fills each comment started on a line with that
+            // draft. LOUPE_SNAPSHOT_PREVIEW=1 opens every markdown box on Preview, and fills
+            // each such comment with the short one unless asked for the long, for GitHub to
+            // render (read-only), writing `preview-end-<title>.png` with the preview scrolled to
+            // its end. Nothing is sent.
+            if let draft {
                 for tab in tabs.tabs {
                     guard let comment = tab.threadActivity.newComment else { continue }
                     windows.select(tab.id)
-                    comment.draft.text = sampleDraft
-                    await wait(until: .now + 10) { tab.markdown.preview(ofDraft: sampleDraft).map { $0 != .rendering } ?? true }
-                    print("\(tab.title): previewing a comment on line \(comment.anchor.line), \(String(describing: tab.markdown.preview(ofDraft: sampleDraft)).prefix(80))")
+                    comment.draft.text = draft
+                    guard previewsDrafts else {
+                        print("\(tab.title): writing a comment of \(draft.count) characters on line \(comment.anchor.line)")
+                        continue
+                    }
+                    await wait(until: .now + 10) { tab.markdown.preview(ofDraft: draft).map { $0 != .rendering } ?? true }
+                    print("\(tab.title): previewing a comment on line \(comment.anchor.line), \(String(describing: tab.markdown.preview(ofDraft: draft)).prefix(80))")
                     // The preview's page loads once drawn.
                     try? await Task.sleep(for: .milliseconds(1500))
                     guard let window = windows.mainWindow, let content = window.contentView else { continue }
@@ -430,7 +443,7 @@ enum SnapshotRun {
         }
     }
 
-    private static func wait(until deadline: Date, for isDone: () -> Bool) async {
+    fileprivate static func wait(until deadline: Date, for isDone: () -> Bool) async {
         while Date.now < deadline, !isDone() {
             try? await Task.sleep(for: .milliseconds(250))
         }
@@ -1022,6 +1035,15 @@ private func saveSnapshotsOfConversationComments(in windows: WindowManager, to d
         try? await Task.sleep(for: .milliseconds(1200))
         let comment = tab.conversationComment
         print("\(tab.title): clicked \(link); comment open \(comment.isOpen), draft \(comment.draft == nil ? "none" : "kept"), \(page.commentPopover == nil ? "no popover" : "in a popover by the link")")
+        if let draft = SnapshotRun.draft, let commentDraft = comment.draft {
+            commentDraft.text = draft
+            if SnapshotRun.previewsDrafts {
+                await SnapshotRun.wait(until: .now + 10) { tab.markdown.preview(ofDraft: draft).map { $0 != .rendering } ?? true }
+            }
+            // The popover grows to the draft, and a preview's page loads, once drawn.
+            try? await Task.sleep(for: .milliseconds(1500))
+            print("\(tab.title): comment filled with \(draft.count) characters, popover \(page.commentPopover.map { "\($0.contentSize)" } ?? "none")")
+        }
         if let popover = page.commentPopover {
             placePopover(under: page.webView.convert(popover.positioningRect, to: nil), in: window)
         }
@@ -1748,6 +1770,9 @@ private func printShownChanges(of tab: PullRequestTab) {
     let unseparated = tab.unseparatedPaths.sorted().joined(separator: ", ")
     print("\(tab.title): showing \(tab.shownChoice), section \(tab.section), files \(files), unseparated [\(unseparated)], stat \(tab.diffStat(of: tab.shownChoice).map(String.init(describing:)) ?? "none")")
 }
+
+/// A comment longer than any markdown box grows to, for `LOUPE_SNAPSHOT_DRAFT=long`.
+private let longDraft = (1...4).map { "\($0). \(sampleDraft)" }.joined(separator: "\n\n")
 
 /// A comment for `LOUPE_SNAPSHOT_PREVIEW` to preview, with the markdown comments use most.
 private let sampleDraft = """

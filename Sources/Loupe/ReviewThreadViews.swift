@@ -669,7 +669,7 @@ struct CommentComposer: View {
         VStack(alignment: .leading, spacing: 6) {
             MarkdownEditor(
                 text: $draft.text, isEditable: true, tab: tab, save: { send(actions.first) }, alternateSave: alternateSave, cancel: escape ?? cancelAsking,
-                font: .systemFont(ofSize: NSFont.systemFontSize), height: 96, focusRequests: takesFocus ? draft.focusRequests : 0
+                font: .systemFont(ofSize: NSFont.systemFontSize), minHeight: 96, focusRequests: takesFocus ? draft.focusRequests : 0
             )
             HStack(spacing: 8) {
                 Text(caption)
