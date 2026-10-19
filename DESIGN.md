@@ -841,6 +841,12 @@ In the native UI, each relative label now sits in its own `TimelineView(.everyMi
 
 This reverses "Double-clicking a row starts a comment on it". A double-click should select a word, as it does in any text view, and taking it on commentable rows meant copying a word from most of the diff needed a drag. A double-click (and a triple-click) now selects as NSTextView does everywhere in the diff. A middle click anywhere on a row that offers the "+", its gutter or its code, starts a comment there instead, so the large target stays; elsewhere a middle click does nothing. It uses the same row lookup as the "+", so they still can't disagree about which rows take comments, and the "+"'s tooltip mentions it.
 
+### What the viewer approved or asked changes of is hidden after a month without activity
+
+Searching `reviewed-by:@me` brought back every open PR the viewer had ever given a verdict on, abandoned ones from 2023 included: Glen's To review had 22 rows, 15 there only for his verdicts. Such a row now follows the same rule as a review request: listed while the PR has had activity within the stale requests' month, measured from its `updatedAt` (which the verdict itself bumps), and otherwise left out, counted by the column's caption and listed with the stale requests when it's clicked, all of them last and newest first. Activity on the PR brings it back. The searches and the to-review check by id are unchanged, so nothing about what's fetched or stored differs. Glen chose the same rule over a separate window for verdicts. With it, his To review lists 5 and tucks 17 away.
+
+The caption already read "N older than a month hidden" and "Hide N older than a month", which say nothing of requests, so it stays as it is. A stale verdict's row has no "requested …" label, as its own time already says when it last saw activity. In code, "stale request" became "stale" (`isStale`, `staleCount`, `includingStale:`).
+
 ## Not yet decided
 
 Nothing is pending.

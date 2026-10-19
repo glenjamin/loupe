@@ -80,11 +80,11 @@ struct PullRequestColumn: View {
     let model: PullRequestListModel
     /// Moved with the arrow keys; Return opens it.
     @State private var selection: PullRequestSummary.ID?
-    /// Lists the PRs held back for their review request's age, for this session only.
-    @State private var showsStaleRequests = false
+    /// Lists the PRs held back as stale, for this session only.
+    @State private var showsStale = false
 
     var body: some View {
-        let pullRequests = model.pullRequests(in: list, includingClosed: showsClosed, includingStaleRequests: showsStaleRequests)
+        let pullRequests = model.pullRequests(in: list, includingClosed: showsClosed, includingStale: showsStale)
         VStack(alignment: .leading, spacing: 0) {
             Text("\(title) (\(pullRequests.count))")
                 .font(.headline)
@@ -124,15 +124,15 @@ struct PullRequestColumn: View {
                     return .handled
                 }
             }
-            let stale = model.staleRequestCount(in: list, includingClosed: showsClosed)
+            let stale = model.staleCount(in: list, includingClosed: showsClosed)
             if stale > 0 {
-                Button(showsStaleRequests ? "Hide \(stale) older than a month" : "\(stale) older than a month hidden") {
-                    showsStaleRequests.toggle()
+                Button(showsStale ? "Hide \(stale) older than a month" : "\(stale) older than a month hidden") {
+                    showsStale.toggle()
                 }
                 .buttonStyle(.borderless)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .background(StaleRequestsToggleMarker())
+                .background(StaleToggleMarker())
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
             }
@@ -141,9 +141,9 @@ struct PullRequestColumn: View {
     }
 
     /// When the viewer was asked to review a PR listed only because the hidden ones are shown,
-    /// so its row can say how long it has waited.
+    /// so its row can say how long it has waited. A verdict's row has its own time instead.
     private func staleRequestedAt(of pullRequest: PullRequestSummary) -> Date? {
-        guard model.isStaleRequest(pullRequest, in: list) else { return nil }
+        guard model.isStale(pullRequest, in: list), model.verdict(on: pullRequest, in: list) == nil else { return nil }
         return pullRequest.reviewRequestedAt ?? pullRequest.updatedAt
     }
 }
@@ -357,7 +357,7 @@ struct ChecksIcon: View {
 }
 
 /// Lets the snapshot run find the To review column's caption to click.
-struct StaleRequestsToggleMarker: NSViewRepresentable {
+struct StaleToggleMarker: NSViewRepresentable {
     final class Marker: NSView {}
 
     func makeNSView(context: Context) -> Marker { Marker() }

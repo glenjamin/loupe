@@ -64,6 +64,8 @@ actor FakeGitHub: HTTPTransport {
     private var held: Set<Gate> = []
     /// The requests waiting at the gate, by kind.
     private var waiting: [Gate: [CheckedContinuation<Void, Never>]] = [:]
+    /// How far GitHub's clock is ahead of the real one, so a test can make changes later on.
+    private var timePassed: TimeInterval = 0
 
     /// Serves the PRs captured in a probe response, with review requested of the viewer on
     /// the to-review ones just now. The probe asked GitHub to sort by update time; `reversed`
@@ -120,7 +122,7 @@ actor FakeGitHub: HTTPTransport {
         try change(&pullRequests[index])
         // A second on from the last at least, as the update time is in whole seconds and a test's
         // changes come quicker than a person's.
-        pullRequests[index].updatedAt = max(.now, previous + 1).formatted(.iso8601)
+        pullRequests[index].updatedAt = max(.now + timePassed, previous + 1).formatted(.iso8601)
         // A second on from the last at least, so each change reaches a poll that saw the last;
         // HTTP dates are whole seconds.
         notified[id] = max(.now, (notified.values.max() ?? Self.quietSince) + 1)
@@ -151,9 +153,10 @@ actor FakeGitHub: HTTPTransport {
         return try #require(pullRequests.first { $0.id == pullRequest.id })
     }
 
-    /// Asks `reviewer` to review the PR with `id` at `date`, as a request or re-request, which
-    /// GitHub records as an update.
-    func requestReview(of id: String, from reviewer: FakePullRequest.Reviewer = .user(viewer), at date: Date = .now) throws {
+    /// Asks `reviewer` to review the PR with `id` at `date`, or now, as a request or re-request,
+    /// which GitHub records as an update.
+    func requestReview(of id: String, from reviewer: FakePullRequest.Reviewer = .user(viewer), at date: Date? = nil) throws {
+        let date = date ?? .now + timePassed
         try edit(id) { pullRequest in
             pullRequest.requestEvents.append(.init(reviewer: reviewer, createdAt: date))
             if !pullRequest.requestedReviewers.contains(reviewer) { pullRequest.requestedReviewers.append(reviewer) }
@@ -164,8 +167,9 @@ actor FakeGitHub: HTTPTransport {
     /// for changes answers their request for review, while a comment leaves it pending. It's on
     /// `commit`, or the PR's head.
     func review(_ id: String, by login: String = viewer, _ state: String, commit: String? = nil) throws {
+        let submittedAt = Date.now + timePassed
         try edit(id) { pullRequest in
-            pullRequest.reviews.append(.init(login: login, state: state, submittedAt: .now, commit: commit ?? pullRequest.headRefOid))
+            pullRequest.reviews.append(.init(login: login, state: state, submittedAt: submittedAt, commit: commit ?? pullRequest.headRefOid))
             if state != "COMMENTED" { pullRequest.requestedReviewers.removeAll { $0 == .user(login) } }
         }
     }
@@ -176,6 +180,11 @@ actor FakeGitHub: HTTPTransport {
             let index = try #require(pullRequest.reviews.lastIndex { $0.login == login && ["APPROVED", "CHANGES_REQUESTED"].contains($0.state) })
             pullRequest.reviews[index].state = "DISMISSED"
         }
+    }
+
+    /// Moves GitHub's clock on by `interval`, so later changes are dated that much later.
+    func passTime(_ interval: TimeInterval) {
+        timePassed += interval
     }
 
     /// Makes `events` the whole history of review requests on the PR with `id`, as though made

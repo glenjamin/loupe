@@ -89,16 +89,16 @@ public final class PullRequestListModel {
 
     /// Newest first, those waiting on the viewer's review before those they've approved or asked
     /// changes of, so what needs them leads. Closed and merged PRs stay stored, but are left out
-    /// unless asked for. So do PRs whose request for the viewer's review has gone unanswered too
-    /// long to be worth listing; a fresh request brings one back. Asked for, those come last,
-    /// newest first, so the rest keep their place.
-    public func pullRequests(in list: PullRequestList, includingClosed: Bool = false, includingStaleRequests: Bool = false) -> [PullRequestSummary] {
+    /// unless asked for. So are stale ones, too old to be worth listing; a fresh request, or
+    /// activity on a PR the viewer gave a verdict on, brings one back. Asked for, those come
+    /// last, newest first, so the rest keep their place.
+    public func pullRequests(in list: PullRequestList, includingClosed: Bool = false, includingStale: Bool = false) -> [PullRequestSummary] {
         let listed = listed(in: list, includingClosed: includingClosed)
-        let awaiting = listed.filter { verdict(on: $0, in: list) == nil }
-        let recent = awaiting.filter { !isStaleRequest($0, in: list) }
-        let reviewed = listed.filter { verdict(on: $0, in: list) != nil }
-        guard includingStaleRequests else { return recent + reviewed }
-        return recent + reviewed + awaiting.filter { isStaleRequest($0, in: list) }
+        let recent = listed.filter { !isStale($0, in: list) }
+        let awaiting = recent.filter { verdict(on: $0, in: list) == nil }
+        let reviewed = recent.filter { verdict(on: $0, in: list) != nil }
+        guard includingStale else { return awaiting + reviewed }
+        return awaiting + reviewed + listed.filter { isStale($0, in: list) }
     }
 
     /// The viewer's approval or request for changes on a PR in `list` that's there for it
@@ -109,10 +109,9 @@ public final class PullRequestListModel {
         return pullRequest.standingVerdict(of: viewer)
     }
 
-    /// How many PRs `pullRequests(in:includingClosed:)` leaves out for their review request's
-    /// age.
-    public func staleRequestCount(in list: PullRequestList, includingClosed: Bool = false) -> Int {
-        listed(in: list, includingClosed: includingClosed).count { isStaleRequest($0, in: list) }
+    /// How many PRs `pullRequests(in:includingClosed:)` leaves out as stale.
+    public func staleCount(in list: PullRequestList, includingClosed: Bool = false) -> Int {
+        listed(in: list, includingClosed: includingClosed).count { isStale($0, in: list) }
     }
 
     /// Whether there's anything from GitHub to show yet, even if out of date.
@@ -387,9 +386,10 @@ public final class PullRequestListModel {
     /// GitHub's search index lagging behind its updates.
     static let refreshOverlap = Duration.seconds(120)
 
-    /// How long a request for the viewer's review stays listed unanswered before it's hidden as
-    /// stale; the list's caption shows the hidden ones again in a click, so it can be tight.
-    static let staleRequestAge: TimeInterval = 30 * 24 * 60 * 60
+    /// How long a request for the viewer's review stays listed unanswered, or a PR they gave a
+    /// verdict on stays listed without activity, before it's hidden as stale; the list's caption
+    /// shows the hidden ones again in a click, so it can be tight.
+    static let staleAge: TimeInterval = 30 * 24 * 60 * 60
 
     /// Counts the PRs with `ids` as being looked up on GitHub while `body` runs.
     private func checking(_ ids: [String], during body: () async throws -> Void) async rethrows {
@@ -411,14 +411,14 @@ public final class PullRequestListModel {
         return [isMine ? .mine : nil, lookup.reviewRequests.belongsInToReview(of: login) ? .toReview : nil].compactMap(\.self)
     }
 
-    /// Whether `pullRequest` waits on a review request older than `staleRequestAge`. GitHub
-    /// records a request as an update, so the PR's update time stands in when no request of the
-    /// viewer is known. A PR the viewer has given a verdict on waits on its author or a merge,
-    /// not on them, so it's never stale.
-    public func isStaleRequest(_ pullRequest: PullRequestSummary, in list: PullRequestList) -> Bool {
-        guard list == .toReview, verdict(on: pullRequest, in: list) == nil else { return false }
-        let requestedAt = pullRequest.reviewRequestedAt ?? pullRequest.updatedAt
-        return now().timeIntervalSince(requestedAt) > Self.staleRequestAge
+    /// Whether `pullRequest` has sat in To review longer than `staleAge`: since the viewer was
+    /// asked to review it or, once they've given a verdict and it waits on its author or a merge,
+    /// since its last activity. GitHub records a request or review as an update, so the PR's
+    /// update time also stands in when no request of the viewer is known.
+    public func isStale(_ pullRequest: PullRequestSummary, in list: PullRequestList) -> Bool {
+        guard list == .toReview else { return false }
+        let requestedAt = verdict(on: pullRequest, in: list) == nil ? pullRequest.reviewRequestedAt : nil
+        return now().timeIntervalSince(requestedAt ?? pullRequest.updatedAt) > Self.staleAge
     }
 }
 

@@ -430,9 +430,9 @@ enum SnapshotRun {
                     for url in try await saveSnapshotsAfterClickingFolder(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
                 // LOUPE_SNAPSHOT_SHOW_STALE=1 clicks the To review column's caption to list the
-                // requests hidden for their age, and snapshots the result.
+                // PRs hidden as stale, and snapshots the result.
                 if environment["LOUPE_SNAPSHOT_SHOW_STALE"] == "1" {
-                    print(try await saveSnapshotAfterShowingStaleRequests(in: windows, to: directory).path(percentEncoded: false))
+                    print(try await saveSnapshotAfterShowingStale(in: windows, to: directory).path(percentEncoded: false))
                 }
                 // LOUPE_SNAPSHOT_OPEN_COMMITS=1 opens each PR's list of commits to pick from, once
                 // they're counted, and snapshots it.
@@ -811,17 +811,17 @@ private func saveSnapshotsAfterClickingFolder(in windows: WindowManager, to dire
     return written
 }
 
-/// Shows the lists, clicks the caption counting To review's hidden requests through the window
+/// Shows the lists, clicks the caption counting To review's stale PRs through the window
 /// as the mouse would, and writes `stale-shown.png`.
 @MainActor
-private func saveSnapshotAfterShowingStaleRequests(in windows: WindowManager, to directory: URL) async throws -> URL {
+private func saveSnapshotAfterShowingStale(in windows: WindowManager, to directory: URL) async throws -> URL {
     guard let window = windows.mainWindow else { throw SnapshotError.noSuchTab("lists") }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     windows.select(nil)
     try? await Task.sleep(for: .milliseconds(300))
     window.layoutIfNeeded()
     if let root = window.contentView,
-       let caption = descendants(of: root).first(where: { $0 is StaleRequestsToggleMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }) {
+       let caption = descendants(of: root).first(where: { $0 is StaleToggleMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }) {
         let point = caption.convert(NSPoint(x: caption.bounds.midX, y: caption.bounds.midY), to: nil)
         // The mouse-up is queued first, so a tracking loop started by the mouse-down finds it.
         let events = [NSEvent.EventType.leftMouseUp, .leftMouseDown].compactMap { type in
@@ -830,10 +830,10 @@ private func saveSnapshotAfterShowingStaleRequests(in windows: WindowManager, to
         if events.count == 2 {
             NSApp.postEvent(events[0], atStart: false)
             window.sendEvent(events[1])
-            print("clicked the hidden requests caption at \(point)")
+            print("clicked the hidden PRs caption at \(point)")
         }
     } else {
-        print("no hidden requests caption to click")
+        print("no hidden PRs caption to click")
     }
     try? await Task.sleep(for: .milliseconds(300))
     let url = directory.appending(path: "stale-shown.png")
