@@ -82,6 +82,58 @@ struct MarkdownTests {
         tab.markdown.setRendered(false, path: "a.md")
         #expect(!tab.markdown.isRendered("a.md"))
     }
+
+    @Test func aDraftPreviewsAsGitHubRendersItInThePullRequestsRepoOnceAndKept() async throws {
+        let app = try await MarkdownApp()
+        let tab = try await app.openFirstPullRequest()
+        let draft = "# Looks good\n\nThanks @octocat, see #12 & `run()`."
+
+        #expect(tab.markdown.preview(ofDraft: draft) == .rendering, "a draft not yet rendered is waited for")
+        await tab.renderDraft(draft)
+        #expect(tab.markdown.preview(ofDraft: draft) == .ready("<h1>Looks good</h1>\n<p>Thanks @octocat, see #12 &amp; `run()`.</p>"))
+        #expect(await app.markdown.requests == [
+            FakeMarkdown.Request(text: draft, mode: "gfm", context: tab.pullRequest.repository),
+        ])
+
+        await tab.renderDraft(draft)
+        #expect(await app.markdown.requests.count == 1, "a draft's rendering is kept")
+
+        let edited = draft + "\n\nOne more thing."
+        #expect(tab.markdown.preview(ofDraft: edited) == .rendering)
+        await tab.renderDraft(edited)
+        #expect(tab.markdown.preview(ofDraft: edited) == .ready("<h1>Looks good</h1>\n<p>Thanks @octocat, see #12 &amp; `run()`.</p>\n<p>One more thing.</p>"))
+        #expect(tab.markdown.preview(ofDraft: draft) != .rendering, "going back to an earlier text is instant")
+        #expect(await app.markdown.requests.count == 2)
+    }
+
+    @Test func aBlankDraftHasNothingToPreviewAndIsNotSent() async throws {
+        let app = try await MarkdownApp()
+        let tab = try await app.openFirstPullRequest()
+
+        for blank in ["", "  \n\t\n"] {
+            #expect(tab.markdown.preview(ofDraft: blank) == nil)
+            await tab.renderDraft(blank)
+            #expect(tab.markdown.preview(ofDraft: blank) == nil)
+        }
+        #expect(await app.markdown.requests.isEmpty)
+    }
+
+    @Test func aDraftsFailedPreviewSaysWhyAndCanBeTriedAgain() async throws {
+        let app = try await MarkdownApp()
+        let tab = try await app.openFirstPullRequest()
+
+        await app.markdown.fail()
+        await tab.renderDraft("Ship it")
+        guard case let .failed(message)? = tab.markdown.preview(ofDraft: "Ship it") else {
+            Issue.record("expected a failure, got \(String(describing: tab.markdown.preview(ofDraft: "Ship it")))")
+            return
+        }
+        #expect(message.contains("500"))
+
+        await app.markdown.recover()
+        await tab.renderDraft("Ship it")
+        #expect(tab.markdown.preview(ofDraft: "Ship it") == .ready("<p>Ship it</p>"))
+    }
 }
 
 /// The app's models over the PR fixture and an in-memory store, with markdown rendered by
@@ -116,6 +168,13 @@ private struct MarkdownApp {
         try await github.edit(listed.id) { $0.headRefOid = head; $0.baseRefOid = branchPoint }
         await tabs.lists.refresh()
         return try #require(tabs.lists.pullRequest(id: listed.id))
+    }
+
+    /// The first to-review PR's tab, as for writing on it; no diff is made.
+    func openFirstPullRequest() async throws -> PullRequestTab {
+        let listed = try #require(tabs.lists.pullRequests(in: .toReview).first)
+        tabs.open(listed)
+        return try #require(tabs.tab(id: listed.id))
     }
 
     func open(_ pullRequest: PullRequestSummary) async throws -> PullRequestTab {

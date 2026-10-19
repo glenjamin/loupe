@@ -47,6 +47,8 @@ enum SnapshotRun {
     static let directory = ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_DIR"].map {
         URL(filePath: $0, directoryHint: .isDirectory)
     }
+    /// A run whose markdown boxes open on Preview rather than Write.
+    static let previewsDrafts = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_PREVIEW"] == "1"
     /// A run driving pulls with synthesised events, where a pull that fires only says so.
     static let isRehearsingPulls = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_PULL_EVENTS"] != nil
     /// A run that holds the PRs' checks on GitHub unanswered, so the header's spinner is drawn.
@@ -196,6 +198,33 @@ enum SnapshotRun {
                     visibleDiff(in: window)?.commentButton.performClick(nil)
                     try? await Task.sleep(for: .milliseconds(800))
                     _ = hoverRow(ofNewLine: line, in: window)
+                }
+                windows.select(tabs.selected)
+            }
+            // LOUPE_SNAPSHOT_PREVIEW=1 opens every markdown box on Preview, and fills each comment
+            // started on a line with some markdown for GitHub to render (read-only), writing
+            // `preview-end-<title>.png` with the preview scrolled to its end. Nothing is sent.
+            if previewsDrafts {
+                for tab in tabs.tabs {
+                    guard let comment = tab.threadActivity.newComment else { continue }
+                    windows.select(tab.id)
+                    comment.draft.text = sampleDraft
+                    await wait(until: .now + 10) { tab.markdown.preview(ofDraft: sampleDraft).map { $0 != .rendering } ?? true }
+                    print("\(tab.title): previewing a comment on line \(comment.anchor.line), \(String(describing: tab.markdown.preview(ofDraft: sampleDraft)).prefix(80))")
+                    // The preview's page loads once drawn.
+                    try? await Task.sleep(for: .milliseconds(1500))
+                    guard let window = windows.mainWindow, let content = window.contentView else { continue }
+                    let previews = descendants(of: content).compactMap { $0 as? UnfocusedWebView }
+                    for preview in previews {
+                        _ = try? await preview.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight)", in: nil, contentWorld: .defaultClient)
+                    }
+                    try? await Task.sleep(for: .milliseconds(300))
+                    let url = directory.appending(path: "preview-end-\(sanitised(windows.title(of: tab.id))).png")
+                    try? await saveSnapshot(of: window, to: url)
+                    print(url.path(percentEncoded: false))
+                    for preview in previews {
+                        _ = try? await preview.evaluateJavaScript("window.scrollTo(0, 0)", in: nil, contentWorld: .defaultClient)
+                    }
                 }
                 windows.select(tabs.selected)
             }
@@ -1366,3 +1395,15 @@ private func editorPlan(for tab: PullRequestTab) async -> String {
     }
     return "\(tab.title): editor: \(editor.name), branch \(pullRequest.headRefName), checkout \(checkout.path(percentEncoded: false)), \(state)"
 }
+
+/// A comment for `LOUPE_SNAPSHOT_PREVIEW` to preview, with the markdown comments use most.
+private let sampleDraft = """
+    Looks good, two small things:
+
+    - Rename `fetchAll`, as it only gets **one page**
+    - Keep the retry; see [GitHub's REST docs](https://docs.github.com/en/rest)
+
+    ```go
+    page, err := client.FetchPage(ctx, cursor)
+    ```
+    """

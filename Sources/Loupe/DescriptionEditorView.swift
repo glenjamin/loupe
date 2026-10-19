@@ -29,7 +29,7 @@ struct DescriptionEditorView: View {
                 }
             case .editing, .saving:
                 VStack(spacing: 0) {
-                    MarkdownTextView(text: $editor.draft, isEditable: editor.phase == .editing, save: save, cancel: cancel)
+                    MarkdownEditor(text: $editor.draft, isEditable: editor.phase == .editing, tab: tab, save: save, cancel: cancel)
                     Divider()
                     footer
                 }
@@ -106,6 +106,10 @@ struct MarkdownTextView: NSViewRepresentable {
     var alternateSave: (() -> Void)?
     let cancel: () -> Void
     var font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    /// Whether a preview covers it, while it keeps the keyboard but takes no typing.
+    var isPreviewing = false
+    /// What ⌘⇧P does, if anything.
+    var togglePreview: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -128,12 +132,17 @@ struct MarkdownTextView: NSViewRepresentable {
         context.coordinator.text = $text
         guard let textView = scrollView.documentView as? MarkdownEditingTextView else { return }
         if textView.string != text { textView.string = text }
-        textView.isEditable = isEditable
+        textView.isEditable = isEditable && !isPreviewing
+        textView.isPreviewing = isPreviewing
         textView.onSave = save
         textView.onAlternateSave = alternateSave
         textView.onCancel = cancel
-        // Typing can start straight away.
-        if !context.coordinator.hasFocused, let window = textView.window {
+        textView.onTogglePreview = togglePreview
+        // Typing can start straight away, and again on coming back from the preview, which is
+        // switched to and from this box alone.
+        let toggled = context.coordinator.wasPreviewing != isPreviewing
+        context.coordinator.wasPreviewing = isPreviewing
+        if !context.coordinator.hasFocused || toggled, let window = textView.window {
             context.coordinator.hasFocused = window.makeFirstResponder(textView)
         }
     }
@@ -142,6 +151,7 @@ struct MarkdownTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
         var hasFocused = false
+        var wasPreviewing = false
 
         init(text: Binding<String>) {
             self.text = text
@@ -157,10 +167,14 @@ struct MarkdownTextView: NSViewRepresentable {
 /// Takes ⌘↩, ⌘⇧↩ when given something to do with it, and Esc itself while it has focus, as a
 /// text view would otherwise insert a newline or offer completions. ⌥← and ⌥→ move by code words
 /// rather than natural-language ones, as comments are mostly about code; with ⇧ they select.
+/// ⌘⇧P switches to and from a preview while it has focus, ahead of any menu's use of the key;
+/// under a preview it ignores every other key, so the hidden text and selection stay as they were.
 final class MarkdownEditingTextView: NSTextView {
     var onSave: () -> Void = {}
     var onAlternateSave: (() -> Void)?
     var onCancel: () -> Void = {}
+    var onTogglePreview: (() -> Void)?
+    var isPreviewing = false
     /// The fixed end of a selection made by code words, so the other end moves on the next one.
     private var wordSelectionAnchor: Int?
 
@@ -177,11 +191,23 @@ final class MarkdownEditingTextView: NSTextView {
             onSave()
         } else if isReturn, modifiers == [.command, .shift], let onAlternateSave {
             onAlternateSave()
+        } else if isPreviewing {
+            if event.keyCode == escapeKeyCode { onCancel() }
         } else if let arrow, arrowModifiers == .option || arrowModifiers == [.option, .shift] {
             moveByCodeWord(arrow, extendingSelection: arrowModifiers.contains(.shift))
         } else {
             super.keyDown(with: event)
         }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if let onTogglePreview, window?.firstResponder === self, modifiers == [.command, .shift],
+           event.charactersIgnoringModifiers?.lowercased() == "p" {
+            onTogglePreview()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
 
@@ -241,5 +267,6 @@ final class MarkdownEditingTextView: NSTextView {
 
 private let returnKeyCode: UInt16 = 36
 private let enterKeyCode: UInt16 = 76
+private let escapeKeyCode: UInt16 = 53
 private let leftArrowKeyCode: UInt16 = 123
 private let rightArrowKeyCode: UInt16 = 124

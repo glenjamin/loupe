@@ -334,6 +334,9 @@ time { color: var(--muted); }
 /* GitHub's API renders a soft line break as `<br>`, as comments show it; a file shows a space. */
 .file .body p > br { display: none; }
 
+/* A draft's preview, set in its box as a comment's body is in its card, at the text's inset. */
+.draft { padding: 10px 8px; }
+
 /* Primer's syntax colours, for GitHub's highlighted code blocks. */
 .pl-c { color: var(--muted); }
 .pl-c1, .pl-s .pl-v { color: #0550ae; }

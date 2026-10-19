@@ -7,6 +7,7 @@ import Observation
 /// An open PR's markdown files rendered by GitHub, for reading as github.com shows them beside
 /// their diff. A file's rendering is kept by the commit it's of, so going back and forth between
 /// source and rendered is instant, and which files show rendered is kept while the tab lives.
+/// Drafts written on the PR are previewed by the same renderer, each text's rendering kept too.
 @Observable
 @MainActor
 public final class MarkdownPreviews {
@@ -15,6 +16,7 @@ public final class MarkdownPreviews {
     /// The paths shown rendered; any other shows its diff.
     private var renderedPaths: Set<String> = []
     private var renderings: [MarkdownSource: MarkdownRendering] = [:]
+    private var draftRenderings: [String: MarkdownRendering] = [:]
 
     init(client: GitHubClient, differ: PullRequestDiffer) {
         self.client = client
@@ -53,6 +55,33 @@ public final class MarkdownPreviews {
             renderings[source] = .failed(error.localizedDescription)
         }
     }
+
+    /// What a draft previews as: nil for a blank one, which has nothing to render, and rendering
+    /// until GitHub has answered for its text.
+    public func preview(ofDraft text: String) -> MarkdownRendering? {
+        guard hasText(text) else { return nil }
+        return draftRenderings[text] ?? .rendering
+    }
+
+    /// Has GitHub render a draft as a comment in `repository`, unless it's blank or that's done or
+    /// underway. A failed rendering is tried again.
+    func renderDraft(_ text: String, in repository: String) async {
+        guard hasText(text) else { return }
+        switch draftRenderings[text] {
+        case .ready, .rendering: return
+        case .failed, nil: break
+        }
+        draftRenderings[text] = .rendering
+        do {
+            draftRenderings[text] = .ready(try await client.renderMarkdown(text, in: repository))
+        } catch {
+            draftRenderings[text] = .failed(error.localizedDescription)
+        }
+    }
+
+    private func hasText(_ text: String) -> Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 /// A markdown file as it is in one commit of a repo.
@@ -84,5 +113,11 @@ extension PullRequestTab {
     public func renderMarkdown(_ source: MarkdownSource) async {
         guard let checkout else { return }
         await markdown.render(source, checkout: checkout)
+    }
+
+    /// Renders a draft written on the PR as GitHub will show it, mentions and references
+    /// resolved against the PR's repo, unless it's blank or that's done or underway.
+    public func renderDraft(_ text: String) async {
+        await markdown.renderDraft(text, in: pullRequest.repository)
     }
 }

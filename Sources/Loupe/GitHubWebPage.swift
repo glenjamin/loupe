@@ -27,7 +27,7 @@ class GitHubWebPage: NSObject {
     override init() {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        webView = Self.makeWebView(configuration: configuration)
         // GitHub's light theme whatever the system appearance: WebKit takes the page's
         // `prefers-color-scheme` from the view's appearance, and GitHub's HTML has dark variants.
         webView.appearance = NSAppearance(named: .aqua)
@@ -44,6 +44,11 @@ class GitHubWebPage: NSObject {
 
     /// Called once the latest page has loaded.
     func didFinishLoading() {}
+
+    /// The web view a page of this kind is shown in.
+    class func makeWebView(configuration: WKWebViewConfiguration) -> WKWebView {
+        WKWebView(frame: .zero, configuration: configuration)
+    }
 
     /// `Resources/conversation.html` and `conversation.css`, read once.
     static let template: (html: String, css: String) = {

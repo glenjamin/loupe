@@ -13,4 +13,10 @@ public enum MarkdownHTML {
     public static func page(_ renderedHTML: String, template: String, stylesheet: String) -> String {
         ConversationHTML.fill(template, layout: "file", content: #"<article class="body markdown-body">\#(renderedHTML)</article>"#, stylesheet: stylesheet)
     }
+
+    /// The page for `renderedHTML`, GitHub's rendering of a draft, styled as a comment's body is
+    /// in the conversation. It goes in verbatim, as GitHub has already sanitised it.
+    public static func draftPage(_ renderedHTML: String, template: String, stylesheet: String) -> String {
+        ConversationHTML.fill(template, layout: "draft", content: #"<div class="body markdown-body">\#(renderedHTML)</div>"#, stylesheet: stylesheet)
+    }
 }

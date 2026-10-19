@@ -63,7 +63,7 @@ private struct NewCommentCard: View {
                         .textSelection(.enabled)
                         .help(error)
                 }
-                CommentComposer(draft: comment.draft, caption: caption, actions: actions, cancel: { tab.cancelComment() })
+                CommentComposer(tab: tab, draft: comment.draft, caption: caption, actions: actions, cancel: { tab.cancelComment() })
             }
             .font(.callout)
             .padding(10)
@@ -408,6 +408,7 @@ struct ConversationCommentView: View {
             }
             if let draft = comment.draft {
                 CommentComposer(
+                    tab: tab,
                     draft: draft, caption: "Markdown. Posts to the conversation at once.",
                     actions: [ComposerAction(label: "Comment", help: "Comment on the pull request at once, not as part of a review") {
                         Task { await tab.sendConversationComment() }
@@ -495,6 +496,7 @@ struct CommentEditor: View {
                 .frame(minHeight: 96)
             case .editing:
                 CommentComposer(
+                    tab: tab,
                     draft: edit.draft, caption: "Markdown. Saves to GitHub at once.",
                     actions: [ComposerAction(label: "Save", help: "Save your edit to GitHub") { Task { await tab.saveEdit(of: edit.commentId) } }],
                     cancel: { tab.cancelEdit(of: edit.commentId) },
@@ -515,6 +517,7 @@ private struct ReplyComposer: View {
 
     var body: some View {
         CommentComposer(
+            tab: tab,
             draft: draft, caption: "Markdown. Posts at once, not as part of a review.",
             actions: [ComposerAction(label: "Reply", help: "Reply at once, not as part of a review") { Task { await tab.sendReply(to: thread) } }],
             cancel: { tab.cancelReply(to: thread) },
@@ -645,6 +648,8 @@ struct ComposerAction {
 /// and Esc cancels, asking first if anything has been typed, or for an edit changed, unless
 /// it's given something else to do.
 struct CommentComposer: View {
+    /// The PR it's written on, for its preview.
+    let tab: PullRequestTab
     @Bindable var draft: CommentDraft
     let caption: String
     let actions: [ComposerAction]
@@ -655,10 +660,7 @@ struct CommentComposer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            MarkdownTextView(text: $draft.text, isEditable: true, save: { send(actions.first) }, alternateSave: alternateSave, cancel: escape ?? cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize))
-                .frame(height: 96)
-                .background(Color(nsColor: .textBackgroundColor))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))
+            MarkdownEditor(text: $draft.text, isEditable: true, tab: tab, save: { send(actions.first) }, alternateSave: alternateSave, cancel: escape ?? cancelAsking, font: .systemFont(ofSize: NSFont.systemFontSize), height: 96)
             HStack(spacing: 8) {
                 Text(caption)
                     .foregroundStyle(.secondary)
