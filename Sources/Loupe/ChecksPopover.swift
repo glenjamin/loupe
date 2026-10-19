@@ -48,8 +48,9 @@ struct ChecksPopoverContent: View {
 }
 
 /// Opens an `NSPopover` of `content` once the pointer has rested on the view it's behind, and
-/// closes it once the pointer has left both for a moment. An `NSPopover` rather than SwiftUI's
-/// `.popover`, as it's shown on hover and must leave the keyboard where it was.
+/// closes it once the pointer has left both for a moment, fading quickly either way. An
+/// `NSPopover` rather than SwiftUI's `.popover`, as it's shown on hover and must leave the
+/// keyboard where it was.
 struct ChecksPopoverAnchor: NSViewRepresentable {
     let content: ChecksPopoverContent
 
@@ -60,9 +61,11 @@ struct ChecksPopoverAnchor: NSViewRepresentable {
     final class AnchorView: NSView, NSPopoverDelegate {
         /// How long the pointer rests on the glyph before the popover opens: well under a
         /// tooltip's delay, but long enough that sweeping or scrolling past doesn't open it.
-        static let dwell = Duration.milliseconds(200)
+        static let dwell = Duration.milliseconds(120)
         /// How long the pointer may be off both glyph and popover, to cross the gap between them.
-        static let grace = Duration.milliseconds(300)
+        static let grace = Duration.milliseconds(150)
+        /// How long the popover fades in or out, in place of `NSPopover`'s much slower animation.
+        static let fade: TimeInterval = 0.08
 
         var content: ChecksPopoverContent {
             didSet { hosting?.rootView = reporting(content) }
@@ -103,8 +106,17 @@ struct ChecksPopoverAnchor: NSViewRepresentable {
             popover.behavior = .transient
             popover.contentViewController = hosting
             popover.delegate = self
+            popover.animates = false
             let wasKey = window.isKeyWindow
             popover.show(relativeTo: bounds, of: self, preferredEdge: .minY)
+            // Made clear before it's first drawn, then faded in.
+            if let shown = hosting.view.window {
+                shown.alphaValue = 0
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = Self.fade
+                    shown.animator().alphaValue = 1
+                }
+            }
             // The list or diff keeps the keyboard; the popover is only to read and click.
             if wasKey, !window.isKeyWindow { window.makeKey() }
             self.popover = popover
@@ -113,7 +125,14 @@ struct ChecksPopoverAnchor: NSViewRepresentable {
 
         func closePopover() {
             waiting?.cancel()
-            popover?.close()
+            guard let popover else { return }
+            guard let shown = popover.contentViewController?.view.window else { return popover.close() }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Self.fade
+                shown.animator().alphaValue = 0
+            } completionHandler: {
+                MainActor.assumeIsolated { popover.close() }
+            }
         }
 
         func popoverDidClose(_ notification: Notification) {

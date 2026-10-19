@@ -727,6 +727,10 @@ So the quote has github.com's quirks as well as its fidelity, and they're kept: 
 
 On the diff, a comment is SwiftUI text, so `CommentBlock` now records where in the comment's `bodyHTML` each character of each block came from: a text node and offset, or an element a character stands for, such as an image's or a task's box. The selection in a block is made into the same range of that HTML in a web view kept off screen, and quoted there by the same code as the conversation, so both give github.com's markdown, with the heading levels and code languages that the blocks don't keep. The quote is added a moment after `r`, once WebKit answers. A selection on the diff can't cross blocks, as SwiftUI selects within one text, so what github.com writes for a selection across a heading and what follows can only be had in the conversation.
 
+### The checks popover opens and closes with a quick fade
+
+This revises the timings of "The checks glyph opens a popover after a short rest, not a tooltip". Most of the wait was `NSPopover`'s own animation, measured at about half a second to show and the same to close, on top of the 200ms rest and 300ms grace, so the popover took about 0.7s to be readable and 0.8s to go. Its animation is now off and the popover's window fades in and out over 80ms instead; `NSPopover` offers only its animation or none, and none made it pop in and out more abruptly than a fast fade. The rest is now 120ms, still longer than the pointer takes to sweep across the glyph, and the grace 150ms, enough to cross the popover's arrow from the glyph. A click elsewhere still closes it at once, with no fade. The checks glyph's is the only popover opened by hovering; the reviewers, avatars and other hover text are native tooltips, and popovers opened by a click keep `NSPopover`'s animation.
+
 ## Not yet decided
 
 Nothing is pending.
