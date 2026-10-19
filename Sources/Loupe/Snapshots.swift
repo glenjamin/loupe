@@ -69,11 +69,6 @@ enum SnapshotRun {
         // that step, before any tab is shown and starts one, so the wait can be drawn.
         let hold = StepHold(step: environment["LOUPE_SNAPSHOT_HOLD_PHASE"].flatMap(DiffStep.init(named:)))
         for tab in tabs.tabs { tab.beforeStep = { await hold.wait(at: $0) } }
-        // LOUPE_SNAPSHOT_SPLIT=1 shows diffs split for this run only, before any is made.
-        let isSplit = environment["LOUPE_SNAPSHOT_SPLIT"] == "1"
-        if isSplit {
-            UserDefaults.standard.setVolatileDomain([DiffSettings.splitDiffKey: true], forName: UserDefaults.argumentDomain)
-        }
         Task {
             let lists = tabs.lists
             await wait(until: deadline) { !lists.isLoading && (lists.error != nil || (lists.lastRefreshed ?? .distantPast) >= started) }
@@ -244,19 +239,6 @@ enum SnapshotRun {
                     try? await Task.sleep(for: .milliseconds(800))
                     let selected = visibleDiff(in: window)?.selectedRange().length ?? 0
                     print("double-clicking new line \(line): \(tab.threadActivity.newComment.map { "a comment is open on \($0.anchor.side) line \($0.anchor.line)" } ?? "no comment is open"), \(selected) characters selected")
-                }
-                windows.select(tabs.selected)
-            }
-            // With LOUPE_SNAPSHOT_SPLIT=1, each shown diff says how it's laid out, and selects down
-            // its right side across the left between, as a drag would, printing what it copies.
-            if isSplit {
-                for tab in tabs.tabs {
-                    windows.select(tab.id)
-                    try? await Task.sleep(for: .milliseconds(800))
-                    guard let window = windows.mainWindow, let textView = visibleDiff(in: window) else { continue }
-                    print("split: \(tab.selectedFile ?? "no file") is \(textView.rendered?.layout.rawValue ?? "not shown"), \(Int(textView.bounds.width))pt wide")
-                    selectDownRightSide(of: textView)
-                    print("split: selecting down the right side copies \(copiedSelection(of: textView).debugDescription)")
                 }
                 windows.select(tabs.selected)
             }
@@ -533,32 +515,6 @@ enum SnapshotRun {
             NSApp.postEvent(events[0], atStart: false)
             window.sendEvent(events[1])
         }
-    }
-
-    /// Selects from the code of the first split row with a line on both sides, on its right,
-    /// to the end of the right side three rows down, through the selection path a drag takes,
-    /// and scrolls it into view. Synthesised drags can't be used: the run's window is never key,
-    /// and a text view only tracks a drag in a key window.
-    private static func selectDownRightSide(of textView: DiffTextView) {
-        guard let rendered = textView.rendered,
-              let first = rendered.rowSides.indices.first(where: { rendered.rowSides[$0] == .right && rendered.rowAnchors[$0] != nil && rendered.rowAnchors[$0 - 1] != nil })
-        else { return print("split: no row with lines on both sides to select from") }
-        let rights = rendered.rowSides.indices.filter { $0 >= first && rendered.rowSides[$0] == .right }
-        let last = rights[min(3, rights.count - 1)]
-        let start = rendered.rowStarts[first] + 8
-        let end = (last + 1 < rendered.rowStarts.count ? rendered.rowStarts[last + 1] : rendered.text.length) - 1
-        textView.setSelectedRange(NSRange(location: start, length: end - start), affinity: .downstream, stillSelecting: true)
-        textView.setSelectedRange(NSRange(location: start, length: end - start), affinity: .downstream, stillSelecting: false)
-        textView.scrollRangeToVisible(NSRange(location: start, length: 0))
-    }
-
-    /// What copying the text view's selection would put on the pasteboard.
-    private static func copiedSelection(of textView: DiffTextView) -> String {
-        let board = NSPasteboard(name: NSPasteboard.Name("LoupeSnapshot-\(UUID())"))
-        defer { board.releaseGlobally() }
-        board.clearContents()
-        _ = textView.writeSelection(to: board, type: .string)
-        return board.string(forType: .string) ?? ""
     }
 
     /// Scrolls the shown diff so the row of a new line is a little way down the view, and gives

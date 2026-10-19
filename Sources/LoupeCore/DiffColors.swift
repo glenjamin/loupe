@@ -28,11 +28,6 @@ public enum DiffColors {
     // Words that changed within a modified line, drawn over the row's tint.
     public static let additionWordBackground = dynamic(light: (0xAB, 0xF2, 0xBC, 1), dark: (0x2E, 0xA0, 0x43, 0.4))
     public static let deletionWordBackground = dynamic(light: (0xFF, 0x81, 0x82, 0.4), dark: (0xF8, 0x51, 0x49, 0.4))
-
-    // A split diff's empty cell, beside a line the other side doesn't have, and the rule
-    // between the two sides.
-    public static let emptyCellBackground = dynamic(light: (0xF6, 0xF8, 0xFA, 1), dark: (0x6E, 0x76, 0x81, 0.1))
-    public static let splitDivider = dynamic(light: (0xD1, 0xD9, 0xE0, 1), dark: (0x3D, 0x44, 0x4D, 1))
 }
 
 private typealias RGBA = (r: Int, g: Int, b: Int, a: CGFloat)

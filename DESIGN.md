@@ -771,6 +771,10 @@ Each side is a row of its own to everything that maps a click or a line to a row
 
 Split always wraps, each side within its half; sideways scrolling of two halves together would hide one side's code to read the other's. A diff pane too narrow for two sides of about 50 columns of code shows unified instead, without changing the setting, and goes back to split once it's wide enough again, so a narrow window is still readable. TextKit hangs the right side's first line like a continuation, as it isn't the paragraph's first, so split rows have no paragraph indent and the container hangs continuations itself; tabs in code that has wrapped are measured from the continuation's start.
 
+### Text diffs are unified only; side by side is for images
+
+This reverses "A split diff is the same text view, each row one paragraph with its sides side by side". Side by side only matters to me for images, which already compare old and new 2-up, so the text split view, its menu item, header button and shortcut are gone, and unchanged lines take comments on the new side only again. The approach above is kept here in case it's wanted later.
+
 ## Not yet decided
 
 Nothing is pending.

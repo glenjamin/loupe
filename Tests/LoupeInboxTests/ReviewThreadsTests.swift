@@ -171,12 +171,12 @@ struct NewCommentTests {
         #expect(commentable.contains(DiffAnchor(path: "app.go", side: .left, line: 50)), "a deleted line")
         #expect(commentable.contains(DiffAnchor(path: "app.go", side: .right, line: 9)), "an unchanged line in a hunk")
         #expect(!commentable.contains(DiffAnchor(path: "app.go", side: .right, line: 30)), "a line hidden between hunks")
-        #expect(commentable.contains(DiffAnchor(path: "app.go", side: .left, line: 9)), "unchanged lines take comments on the old side too, as a split diff offers")
+        #expect(!commentable.contains(DiffAnchor(path: "app.go", side: .left, line: 9)), "unchanged lines take comments on the new side")
 
         await tab.expandContext(of: file, ContextExpansion(hunk: 1, direction: .above))
         let revealed = try #require(tab.commentableAnchors(of: tab.expandedFile(file)))
         #expect(revealed.contains(DiffAnchor(path: "app.go", side: .right, line: 30)), "a line revealed around a hunk")
-        #expect(revealed.contains(DiffAnchor(path: "app.go", side: .left, line: 28)), "revealed lines take comments on either side")
+        #expect(!revealed.contains(DiffAnchor(path: "app.go", side: .left, line: 28)), "revealed lines take comments on the new side")
 
         await tab.show(.commit(try #require(tab.ready?.commits.first).oid))
         #expect(tab.commentableAnchors(of: try #require(tab.file("app.go"))) == nil, "not on one commit's changes")
