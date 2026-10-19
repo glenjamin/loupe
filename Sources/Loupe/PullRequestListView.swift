@@ -327,7 +327,7 @@ struct ChecksIcon: View {
     var body: some View {
         glyph
             .fontWeight(.semibold)
-            .background(ChecksPopoverAnchor(content: ChecksPopoverContent(state: state, contexts: contexts)))
+            .background(HoverPopoverAnchor(content:ChecksPopoverContent(state: state, contexts: contexts)))
     }
 
     @ViewBuilder private var glyph: some View {

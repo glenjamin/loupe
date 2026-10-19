@@ -140,7 +140,7 @@ extension PullRequestTab {
             threadActivity.unshown = UnshownThread(threadId: thread.id, reason: reason, isFileSelected: isFileSelected)
             return
         }
-        if shownCommit != nil { await showCommit(nil) }
+        if shownChoice != .all { await show(.all) }
         selectedFile = thread.path
         section = .files
         if thread.isResolved { threadActivity.expanded.insert(thread.id) }
@@ -163,9 +163,10 @@ extension PullRequestTab {
     }
 
     /// The PR's review threads placed on `file`, as shown with any lines revealed around its
-    /// hunks. Nil when one commit's changes are shown: threads belong to the whole PR's diff.
+    /// hunks. Nil when one commit's changes, or those since an anchor, are shown: threads belong
+    /// to the whole PR's diff.
     public func threads(on file: FileDiff) -> FileThreads? {
-        guard shownCommit == nil, conversation != nil else { return nil }
+        guard shownChoice == .all, conversation != nil else { return nil }
         var anchored: [LineThreads] = []
         var elsewhere: [ReviewThread] = []
         for thread in placedThreads where thread.path == file.path {
@@ -184,17 +185,18 @@ extension PullRequestTab {
     }
 
     /// How many threads on the file at `path` aren't resolved, hidden files' included. Nil when
-    /// one commit's changes are shown, as its diff shows no threads.
+    /// only some of the PR's changes are shown, as their diff shows no threads.
     public func unresolvedThreadCount(of path: String) -> Int? {
-        guard shownCommit == nil else { return nil }
+        guard shownChoice == .all else { return nil }
         return conversation?.threads.count { $0.path == path && !$0.isResolved } ?? 0
     }
 
     /// The rows of a file a comment can be started on: every line of `file` as shown, those
     /// revealed around its hunks included, with unchanged lines on the new side as on
-    /// github.com. Nil when one commit's changes are shown, as comments go on the whole PR's diff.
+    /// github.com. Nil when only some of the PR's changes are shown, as comments go on the whole
+    /// PR's diff.
     public func commentableAnchors(of file: FileDiff) -> Set<DiffAnchor>? {
-        guard shownCommit == nil else { return nil }
+        guard shownChoice == .all else { return nil }
         return Set(file.hunks.flatMap(\.lines).map { line in
             switch line.kind {
             case let .context(_, new), let .addition(new): DiffAnchor(path: file.path, side: .right, line: new)

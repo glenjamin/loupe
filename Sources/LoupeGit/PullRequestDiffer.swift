@@ -45,6 +45,22 @@ public struct PullRequestDiffer: Sendable {
         return PullRequestDiff(headOid: fetched.headOid, mergeBase: mergeBase, commits: commits, text: changes.text, hidden: changes.hidden)
     }
 
+    /// Whether `oid`, an earlier head of PR `repository`, is still in the history of `head`, so
+    /// the changes since it are `oid..head`, or the PR was rebased since. A commit the checkout
+    /// lacks is fetched by oid from the repo's remote, with no ref made for it.
+    public func ancestry(of oid: String, toHead head: String, of repository: String, in checkout: URL) async throws -> Ancestry {
+        if await !Git.succeeds(["cat-file", "-e", "\(oid)^{commit}"], in: checkout) {
+            let remote = await Git.remotes(of: checkout).matching(repository)?.name ?? "origin"
+            try await git(["fetch", "--no-tags", "--no-write-fetch-head", remote, oid], in: checkout, timeout: fetchTimeout)
+        }
+        do {
+            try await git(["merge-base", "--is-ancestor", oid, head], in: checkout)
+            return .ancestor
+        } catch let error as GitError where error.status == 1 {
+            return .rebased
+        }
+    }
+
     /// The changes between two commits: the diff of the paths to review, and the hidden paths
     /// listed but not diffed, as a vendored tree can be enormous.
     public func diff(_ range: DiffRange, in checkout: URL) async throws -> RangeDiff {
@@ -348,6 +364,14 @@ public struct RangeDiff: Sendable, Equatable {
     public let text: String
     /// Changed paths left out of `text`.
     public let hidden: [ChangedFile]
+}
+
+/// How an earlier head of a PR stands to its head now.
+public enum Ancestry: Sendable, Equatable {
+    /// In the head's history: the PR has only gained commits since.
+    case ancestor
+    /// Not in it: the PR was rebased or force-pushed since.
+    case rebased
 }
 
 /// What `git diff <base> <head>` compares.

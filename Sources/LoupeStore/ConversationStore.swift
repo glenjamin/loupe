@@ -38,7 +38,8 @@ extension PullRequestStore {
                 },
                 reviewRequests: reviewers.filter { $0.role == ReviewerRow.request }.compactMap(\.reviewer),
                 latestReviews: reviewers.filter { $0.role == ReviewerRow.review }.compactMap(\.latestReview),
-                pendingReview: row.pendingReview
+                pendingReview: row.pendingReview,
+                viewerReview: row.viewerReview
             )
         }
     }
@@ -59,7 +60,9 @@ extension PullRequestStore {
                 fetchedAt: fetchedAt,
                 pendingReviewId: conversation.pendingReview?.id,
                 pendingReviewBody: conversation.pendingReview?.body,
-                pendingReviewCommentCount: conversation.pendingReview?.commentCount
+                pendingReviewCommentCount: conversation.pendingReview?.commentCount,
+                viewerReviewCommitOid: conversation.viewerReview?.commitOid,
+                viewerReviewedAt: conversation.viewerReview?.submittedAt
             ).upsert(db)
             try insertReactions(conversation.reactions, of: pullRequestId, in: pullRequestId, db)
             try insertTimeline(conversation.items, of: pullRequestId, in: db)
@@ -175,9 +178,15 @@ private struct ConversationRow: Codable, FetchableRecord, PersistableRecord {
     var pendingReviewId: String?
     var pendingReviewBody: String?
     var pendingReviewCommentCount: Int?
+    var viewerReviewCommitOid: String?
+    var viewerReviewedAt: Date?
 
     var pendingReview: PendingReview? {
         pendingReviewId.map { PendingReview(id: $0, body: pendingReviewBody ?? "", commentCount: pendingReviewCommentCount ?? 0) }
+    }
+
+    var viewerReview: ViewerReview? {
+        viewerReviewCommitOid.map { ViewerReview(commitOid: $0, submittedAt: viewerReviewedAt) }
     }
 }
 

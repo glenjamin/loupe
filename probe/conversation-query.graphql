@@ -34,6 +34,7 @@ query($id: ID!, $after: String) {
       }
       reviewRequests(first: 20) { nodes { requestedReviewer { ...Reviewer } } }
       latestReviews(first: 50) { nodes { state submittedAt author { ...Reviewer } } }
+      viewerLatestReview { state submittedAt commit { oid } }
     }
   }
 }

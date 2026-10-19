@@ -315,19 +315,19 @@ struct TabsTests {
         #expect(tab.ready?.commits.map(\.oid) == [first, second])
         #expect(tab.selectedFile == "app.go")
 
-        await tab.showCommit(second)
-        #expect(tab.shownCommit == second)
+        await tab.show(.commit(second))
+        #expect(tab.shownChoice == .commit(second))
         #expect(tab.shown?.files.map(\.path) == ["README"])
         #expect(tab.shown?.hidden.isEmpty == true)
         #expect(tab.selectedFile == "README", "app.go isn't in this commit")
 
-        await tab.showCommit(first)
+        await tab.show(.commit(first))
         #expect(tab.shown?.files.map(\.path) == ["app.go"])
         #expect(tab.shown?.hidden.map(\.path).sorted() == ["vendor/example.com/lib/lib.go", "yarn.lock"])
         #expect(tab.selectedFile == "app.go")
 
         tab.selectedFile = "yarn.lock"
-        await tab.showCommit(nil)
+        await tab.show(.all)
         #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
         #expect(tab.selectedFile == "yarn.lock", "still in the whole PR's changes")
         #expect(tab.ready?.changes.files.count == 2, "the whole PR's diff is kept")
@@ -335,12 +335,12 @@ struct TabsTests {
         // A commit picked before is shown again without git.
         let moved = repo.root.appending(path: "moved")
         try FileManager.default.moveItem(at: repo.checkout, to: moved)
-        await tab.showCommit(second)
+        await tab.show(.commit(second))
         #expect(tab.shown?.files.map(\.path) == ["README"])
         try FileManager.default.moveItem(at: moved, to: repo.checkout)
 
         await tab.reload()
-        #expect(tab.shownCommit == nil)
+        #expect(tab.shownChoice == .all)
         #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
     }
 
@@ -406,34 +406,34 @@ struct TabsTests {
         var gate = StepGate(holding: .diffing)
         tab.beforeStep = { await gate.pass($0) }
 
-        let picking = Task { await tab.showCommit(second) }
+        let picking = Task { await tab.show(.commit(second)) }
         await gate.reached()
 
-        #expect(tab.pendingCommit == second)
+        #expect(tab.pendingChoice == .commit(second))
         #expect(tab.isReplacingShownChanges)
-        #expect(tab.shownCommit == nil, "the whole PR's changes are still shown")
+        #expect(tab.shownChoice == .all, "the whole PR's changes are still shown")
         #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
         #expect(tab.selectedFile == "app.go")
 
         gate.release()
         await picking.value
 
-        #expect(tab.pendingCommit == nil)
+        #expect(tab.pendingChoice == nil)
         #expect(!tab.isReplacingShownChanges)
-        #expect(tab.shownCommit == second)
+        #expect(tab.shownChoice == .commit(second))
         #expect(tab.shown?.files.map(\.path) == ["README"])
         #expect(tab.selectedFile == "README")
 
         // A pick overtaken by another before its diff is ready isn't shown when it is.
         gate = StepGate(holding: .diffing)
-        let overtaken = Task { await tab.showCommit(first) }
+        let overtaken = Task { await tab.show(.commit(first)) }
         await gate.reached()
-        await tab.showCommit(nil)
-        #expect(tab.pendingCommit == nil)
-        #expect(tab.shownCommit == nil)
+        await tab.show(.all)
+        #expect(tab.pendingChoice == nil)
+        #expect(tab.shownChoice == .all)
         gate.release()
         await overtaken.value
-        #expect(tab.shownCommit == nil, "the whole PR's changes were picked last")
+        #expect(tab.shownChoice == .all, "the whole PR's changes were picked last")
         #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
     }
 
@@ -446,27 +446,27 @@ struct TabsTests {
         await tab.reload()
 
         // The vendored file and the lockfile aren't counted, as they aren't reviewed.
-        #expect(tab.diffStat(ofCommit: nil) == DiffStat(files: 2, additions: 3, deletions: 2))
-        #expect(tab.diffStat(ofCommit: first) == nil, "commits are counted when asked")
+        #expect(tab.diffStat(of: .all) == DiffStat(files: 2, additions: 3, deletions: 2))
+        #expect(tab.diffStat(of: .commit(first)) == nil, "commits are counted when asked")
 
         await tab.countCommitChanges()
-        #expect(tab.diffStat(ofCommit: first) == DiffStat(files: 1, additions: 1, deletions: 1))
-        #expect(tab.diffStat(ofCommit: second) == DiffStat(files: 1, additions: 2, deletions: 1))
+        #expect(tab.diffStat(of: .commit(first)) == DiffStat(files: 1, additions: 1, deletions: 1))
+        #expect(tab.diffStat(of: .commit(second)) == DiffStat(files: 1, additions: 2, deletions: 1))
 
         // Counted once: asking again needs no git.
         let moved = repo.root.appending(path: "moved")
         try FileManager.default.moveItem(at: repo.checkout, to: moved)
         await tab.countCommitChanges()
-        #expect(tab.diffStat(ofCommit: second) == DiffStat(files: 1, additions: 2, deletions: 1))
+        #expect(tab.diffStat(of: .commit(second)) == DiffStat(files: 1, additions: 2, deletions: 1))
         try FileManager.default.moveItem(at: moved, to: repo.checkout)
 
         let third = try await app.pushCommit(["app.go": "package app\n"], to: pullRequest, in: repo)
         await app.tabs.lists.refresh()
         await tab.reload()
-        #expect(tab.diffStat(ofCommit: third) == nil, "reloading starts the counts afresh")
+        #expect(tab.diffStat(of: .commit(third)) == nil, "reloading starts the counts afresh")
         await tab.countCommitChanges()
-        #expect(tab.diffStat(ofCommit: third) == DiffStat(files: 1, additions: 0, deletions: 2))
-        #expect(tab.diffStat(ofCommit: first) == DiffStat(files: 1, additions: 1, deletions: 1))
+        #expect(tab.diffStat(of: .commit(third)) == DiffStat(files: 1, additions: 0, deletions: 2))
+        #expect(tab.diffStat(of: .commit(first)) == DiffStat(files: 1, additions: 1, deletions: 1))
     }
 
     @Test func hiddenFilesAreListedAndDiffedOnlyWhenAskedFor() async throws {
@@ -503,7 +503,7 @@ struct TabsTests {
 
         tab.selectedFile = "yarn.lock"
         await tab.diffHiddenFile("yarn.lock")
-        await tab.showCommit(first)
+        await tab.show(.commit(first))
 
         #expect(tab.hiddenFileDiff(of: "yarn.lock") == nil, "not yet diffed in this commit")
         #expect(tab.lastHiddenFileDiff(of: "yarn.lock")?.hunks.flatMap(\.lines).map(\.text) == ["# lockfile"])

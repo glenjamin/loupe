@@ -28,7 +28,8 @@ extension GitHubClient {
             checks: pullRequest.commits.nodes.first?.commit.statusCheckRollup?.contexts.nodes.compactMap(\.check) ?? [],
             reviewRequests: pullRequest.reviewRequests.nodes.compactMap { $0.requestedReviewer?.reviewer },
             latestReviews: pullRequest.latestReviews.nodes.compactMap(\.latestReview),
-            pendingReview: pullRequest.pendingReview.nodes.first?.pendingReview
+            pendingReview: pullRequest.pendingReview.nodes.first?.pendingReview,
+            viewerReview: pullRequest.viewerLatestReview?.viewerReview
         )
     }
 
@@ -72,6 +73,7 @@ extension GitHubClient {
               }
               reviewRequests(first: 20) { nodes { requestedReviewer { ...Reviewer } } }
               latestReviews(first: 50) { nodes { state submittedAt author { ...Reviewer } } }
+              viewerLatestReview { state submittedAt commit { oid } }
               \(pendingReviewField)
             }
           }
@@ -200,6 +202,7 @@ private struct ConversationResponse: Decodable {
         let reviewRequests: Connection<Request>
         let latestReviews: Connection<Review>
         let pendingReview: Connection<PendingReviewNode>
+        let viewerLatestReview: ViewerLatestReview?
     }
 
     struct Request: Decodable {
@@ -213,6 +216,20 @@ private struct ConversationResponse: Decodable {
 
         var latestReview: LatestReview? {
             author?.reviewer.map { LatestReview(reviewer: $0, state: state, submittedAt: submittedAt) }
+        }
+    }
+
+    struct ViewerLatestReview: Decodable {
+        let state: String
+        let submittedAt: Date?
+        let commit: Commit?
+
+        struct Commit: Decodable { let oid: String }
+
+        /// Nil for a pending review, which isn't one the viewer has made yet.
+        var viewerReview: ViewerReview? {
+            guard state != "PENDING", let commit else { return nil }
+            return ViewerReview(commitOid: commit.oid, submittedAt: submittedAt)
         }
     }
 

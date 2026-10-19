@@ -104,8 +104,7 @@ extension PullRequestTab {
     /// What a markdown file in the shown changes renders: its version at their head, or for a
     /// deleted file its version at their base. Nil for any other file, or until the diff is ready.
     public func markdownSource(of file: FileDiff) -> MarkdownSource? {
-        guard MarkdownHTML.isMarkdown(file.path), case let .ready(review) = phase else { return nil }
-        let range = review.commits.first { $0.oid == shownCommit }?.range ?? DiffRange(base: review.mergeBase, head: review.headOid)
+        guard MarkdownHTML.isMarkdown(file.path), let range = shownRange else { return nil }
         return MarkdownSource(repository: pullRequest.repository, path: file.path, oid: file.change == .deleted ? range.base : range.head)
     }
 

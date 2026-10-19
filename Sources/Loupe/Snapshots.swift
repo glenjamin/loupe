@@ -110,7 +110,7 @@ enum SnapshotRun {
             if let wanted = environment["LOUPE_SNAPSHOT_COMMIT"] {
                 for tab in tabs.tabs {
                     guard case .ready(let review) = tab.phase, let commit = review.commits.picked(by: wanted) else { continue }
-                    await tab.showCommit(commit.oid)
+                    await tab.show(.commit(commit.oid))
                 }
             }
             // LOUPE_SNAPSHOT_FILE picks the first file whose path contains it, hidden ones after
@@ -271,7 +271,7 @@ enum SnapshotRun {
                 hold.step = .diffing
                 for tab in tabs.tabs {
                     guard case .ready(let review) = tab.phase, let commit = review.commits.picked(by: wanted) else { continue }
-                    Task { await tab.showCommit(commit.oid) }
+                    Task { await tab.show(.commit(commit.oid)) }
                 }
             }
             // LOUPE_SNAPSHOT_HOLD_RELOAD=1 reloads each PR's diff and holds it as it diffs, so the
@@ -702,8 +702,10 @@ private func saveSnapshotAfterShowingStaleRequests(in windows: WindowManager, to
     return url
 }
 
-/// Opens each diffed PR's list of commits to pick from, once they're counted, and writes the
-/// window with it open as `commits-<title>.png`.
+/// Opens each diffed PR's list of commits to pick from, once they're counted and the changes since
+/// each earlier head the viewer saw are looked at, and writes the window with it open as
+/// `commits-<title>.png`. When the changes since one can't be shown, its row's popover saying why
+/// is opened too, and written as `commits-help-<title>.png`.
 @MainActor
 private func saveSnapshotsOfCommitLists(in windows: WindowManager, to directory: URL) async throws -> [URL] {
     guard let window = windows.mainWindow else { return [] }
@@ -713,6 +715,15 @@ private func saveSnapshotsOfCommitLists(in windows: WindowManager, to directory:
     for tab in windows.tabs.tabs {
         guard case .ready = tab.phase else { continue }
         await tab.countCommitChanges()
+        // The viewer's latest review comes with the conversation.
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !tab.isConversationSettled, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        await tab.prepareAnchors()
+        for anchor in tab.anchors {
+            print("\(tab.title): since \(anchor.kind) at \(anchor.oid.prefix(7)): \(tab.anchorState(of: anchor).map(String.init(describing:)) ?? "not looked at")")
+        }
         windows.select(tab.id)
         try? await Task.sleep(for: .milliseconds(300))
         tab.isPickingCommit = true
@@ -721,13 +732,33 @@ private func saveSnapshotsOfCommitLists(in windows: WindowManager, to directory:
            let picker = descendants(of: root).first(where: { $0 is CommitPickerMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }) {
             placePopover(under: picker, in: window)
         }
-        let url = directory.appending(path: "commits-\(sanitised(windows.title(of: tab.id))).png")
+        let name = sanitised(windows.title(of: tab.id))
+        let url = directory.appending(path: "commits-\(name).png")
         try await saveSnapshot(of: window, to: url)
-        tab.isPickingCommit = false
         written.append(url)
+        if let list = window.childWindows?.first(where: \.isVisible), let content = list.contentView,
+           let help = descendants(of: content).lazy.compactMap({ $0 as? HoverPopoverAnchor.AnchorView }).first {
+            help.showPopover()
+            try? await Task.sleep(for: .milliseconds(300))
+            placeNestedPopover(under: help, in: list)
+            let url = directory.appending(path: "commits-help-\(name).png")
+            try await saveSnapshot(of: window, to: url)
+            help.closePopover()
+            written.append(url)
+        }
+        tab.isPickingCommit = false
     }
     windows.select(selected)
     return written
+}
+
+/// Moves a popover opened from `view`, inside the popover window `parent`, to just under it, as
+/// AppKit moves it onto a screen, away from the off-screen window.
+@MainActor
+private func placeNestedPopover(under view: NSView, in parent: NSWindow) {
+    guard let popover = parent.childWindows?.first(where: \.isVisible) else { return }
+    let anchor = view.convert(view.bounds, to: nil)
+    popover.setFrameTopLeftPoint(NSPoint(x: parent.frame.minX + anchor.minX, y: parent.frame.minY + anchor.minY))
 }
 
 /// Opens the review's summary on each PR the viewer can review, or their own with a review
@@ -1156,7 +1187,7 @@ private func saveSnapshotsOfChecks(in windows: WindowManager, to directory: URL)
         try? await Task.sleep(for: .milliseconds(300))
         window.layoutIfNeeded()
         guard let root = window.contentView,
-              let anchor = descendants(of: root).lazy.compactMap({ $0 as? ChecksPopoverAnchor.AnchorView })
+              let anchor = descendants(of: root).lazy.compactMap({ $0 as? HoverPopoverAnchor.AnchorView })
                   .filter({ !$0.isHiddenOrHasHiddenAncestor })
                   .min(by: { readsBefore($0, $1) })
         else {
@@ -1358,15 +1389,17 @@ private func placePopover(under anchor: NSRect, in window: NSWindow) {
     popover.setFrameTopLeftPoint(NSPoint(x: window.frame.minX + x, y: window.frame.minY + top))
 }
 
-/// Draws the content of `window`'s visible child windows, such as an open popover, over where
-/// they sit on it onto `rep`, which holds the window as drawn. A popover's frame is a material
-/// that doesn't draw off screen, so a plain rounded panel stands in for it.
+/// Draws the content of `window`'s visible child windows, such as an open popover, and theirs in
+/// turn, over where they sit on `base` onto `rep`, which holds `base` as drawn. A popover's frame
+/// is a material that doesn't draw off screen, so a plain rounded panel stands in for it.
 @MainActor
-private func drawChildWindows(of window: NSWindow, onto rep: NSBitmapImageRep) {
+private func drawChildWindows(of window: NSWindow, onto rep: NSBitmapImageRep, over base: NSWindow? = nil) {
+    let base = base ?? window
     for child in window.childWindows ?? [] where child.isVisible {
+        defer { drawChildWindows(of: child, onto: rep, over: base) }
         guard let view = child.contentView, let image = render(view) else { continue }
         let inChild = view.convert(view.bounds, to: nil)
-        let rect = inChild.offsetBy(dx: child.frame.minX - window.frame.minX, dy: child.frame.minY - window.frame.minY)
+        let rect = inChild.offsetBy(dx: child.frame.minX - base.frame.minX, dy: child.frame.minY - base.frame.minY)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         let panel = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)

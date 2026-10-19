@@ -511,6 +511,21 @@ public struct PullRequestStore: Sendable {
                 }
             }
         }
+        // The viewer's latest submitted review, by the commit it was made against, null in a
+        // conversation stored before until it's next fetched; and the head of each PR's diff last
+        // shown, apart from `pullRequestDiff` so it outlasts the PR's row once its tab closes and
+        // it leaves the lists.
+        migrator.registerMigration("Changes since") { db in
+            try db.alter(table: "conversation") { t in
+                t.add(column: "viewerReviewCommitOid", .text)
+                t.add(column: "viewerReviewedAt", .datetime)
+            }
+            try db.create(table: "seenHead") { t in
+                t.primaryKey("pullRequestId", .text)
+                t.column("headRefOid", .text).notNull()
+                t.column("seenAt", .datetime).notNull()
+            }
+        }
         return migrator
     }
 

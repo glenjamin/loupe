@@ -379,11 +379,11 @@ struct FileDetail: View {
             LoadingLabel(title: "Diffing…")
         case let .failed(message):
             ContentUnavailableView {
-                Label("Couldn't diff this commit", systemImage: "exclamationmark.triangle")
+                Label(failureTitle, systemImage: "exclamationmark.triangle")
             } description: {
                 Text(message).textSelection(.enabled)
             } actions: {
-                Button("Try Again") { Task { await tab.showCommit(tab.shownCommit) } }
+                Button("Try Again") { Task { await tab.show(tab.shownChoice) } }
             }
         case let .ready(changes):
             if let file = changes.files.first(where: { $0.id == tab.selectedFile }) {
@@ -391,8 +391,8 @@ struct FileDetail: View {
             } else if let file = changes.hidden.first(where: { $0.id == tab.selectedFile }) {
                 hiddenFile(file)
                     // Diffed only once shown, as a vendored file can be enormous.
-                    .task(id: "\(tab.shownCommit ?? "")\0\(file.path)") { await tab.diffHiddenFile(file.path) }
-                    .task(id: "\(tab.shownCommit ?? "")\0\(file.path)") { await tab.comparePackageLock(file.path) }
+                    .task(id: ShownFile(choice: tab.shownChoice, path: file.path)) { await tab.diffHiddenFile(file.path) }
+                    .task(id: ShownFile(choice: tab.shownChoice, path: file.path)) { await tab.comparePackageLock(file.path) }
             } else {
                 Text(changes.files.isEmpty && changes.hidden.isEmpty ? "No changes to review" : "No file selected")
                     .foregroundStyle(.secondary)
@@ -432,7 +432,11 @@ struct FileDetail: View {
             commentable: tab.commentableAnchors(of: shown), onComment: { anchor in tab.startComment(at: anchor) }
         )
         // Read when shown, so the lines after the last hunk can be offered as well.
-        .task(id: "\(tab.shownCommit ?? "")\0\(file.path)") { await tab.readContext(of: file) }
+        .task(id: ShownFile(choice: tab.shownChoice, path: file.path)) { await tab.readContext(of: file) }
+    }
+
+    private var failureTitle: String {
+        if case .commit = tab.shownChoice { "Couldn't diff this commit" } else { "Couldn't diff these changes" }
     }
 
     private func review(of file: FileDiff) -> FileReview {
@@ -445,7 +449,11 @@ struct FileDetail: View {
         } else if let nextCommit {
             isViewed ? "Next commit · \(shortened(nextCommit.headline))" : "Mark reviewed · next commit"
         } else if isViewed {
-            tab.shownCommit == nil ? "All files reviewed" : "All this commit's files reviewed"
+            switch tab.shownChoice {
+            case .all: "All files reviewed"
+            case .commit: "All this commit's files reviewed"
+            case .since: "All these files reviewed"
+            }
         } else {
             "Mark reviewed · last file"
         }
@@ -490,7 +498,7 @@ struct CommitPicker: View {
                 .frame(minWidth: 90, maxWidth: .infinity, alignment: .leading)
                 .padding(.trailing, 4)
                 // Kept whole, truncating the name instead; when narrow, the line counts alone.
-                if let stat = tab.diffStat(ofCommit: tab.pendingCommit ?? tab.shownCommit) {
+                if let stat = tab.diffStat(of: tab.pendingChoice ?? tab.shownChoice) {
                     ViewThatFits(in: .horizontal) {
                         DiffStatLabel(stat: stat).fixedSize()
                         LineCounts(additions: stat.additions, deletions: stat.deletions).fixedSize()
@@ -509,13 +517,15 @@ struct CommitPicker: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Show the changes of the whole PR or of one commit")
+        .help("Show the changes of the whole PR, of one commit, or since you last saw it")
         .background(CommitPickerMarker())
         .popover(isPresented: $tab.isPickingCommit, arrowEdge: .bottom) {
             CommitList(tab: tab, commits: commits)
         }
         // Counted as soon as the commits are shown, so the list opens complete; it's cheap.
         .task(id: commits.map(\.oid)) { await tab.countCommitChanges() }
+        // Likewise each earlier head the viewer saw, fetched first if the checkout lacks it.
+        .task(id: tab.anchors) { await tab.prepareAnchors() }
         .background(
             isHovered || tab.isPickingCommit ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
             in: RoundedRectangle(cornerRadius: 5)
@@ -525,36 +535,51 @@ struct CommitPicker: View {
         .padding([.horizontal, .bottom], 8)
     }
 
-    /// Names the commit picked at once, even while its changes are still being diffed.
+    /// Names the changes picked at once, even while they're still being diffed.
     private var shownLabel: Text {
-        guard let commit = commits.first(where: { $0.oid == tab.pendingCommit ?? tab.shownCommit }) else { return Text(verbatim: allCommitsTitle(commits.count)) }
-        return Text(verbatim: String(commit.oid.prefix(7))).monospaced() + Text(verbatim: "  \(commit.headline)")
+        switch tab.pendingChoice ?? tab.shownChoice {
+        case let .since(anchor):
+            return Text(verbatim: anchorTitle(anchor.kind))
+        case let .commit(oid):
+            if let commit = commits.first(where: { $0.oid == oid }) {
+                return Text(verbatim: String(commit.oid.prefix(7))).monospaced() + Text(verbatim: "  \(commit.headline)")
+            }
+        case .all:
+            break
+        }
+        return Text(verbatim: allCommitsTitle(commits.count))
     }
 }
 
-/// The choices of changes to show, each with its diff-stat, the shown one ticked. A click picks
-/// one; the arrow keys move between them and Return picks.
+/// The choices of changes to show, each with its diff-stat, the shown one ticked: the whole PR's,
+/// then those since the viewer last reviewed it or last opened it, then each commit's. A click
+/// picks one; the arrow keys move between them and Return picks. The changes since a head the PR
+/// was rebased from can't be picked yet, and say so when hovered.
 struct CommitList: View {
     @Bindable var tab: PullRequestTab
     let commits: [PullRequestCommit]
-    @State private var highlighted: CommitChoice?
+    @State private var highlighted: ChangesChoice?
     @FocusState private var isFocused: Bool
 
     var body: some View {
+        let anchors = tab.anchors
         List(selection: $highlighted) {
             row(.all, title: allCommitsTitle(commits.count), oid: nil)
+            ForEach(anchors, id: \.self) { anchor in
+                anchorRow(anchor)
+            }
             Section("Commits") {
                 ForEach(commits) { commit in
                     row(.commit(commit.oid), title: commit.headline, oid: commit.oid)
                 }
             }
         }
-        .contextMenu(forSelectionType: CommitChoice.self) { _ in } primaryAction: { choices in
+        .contextMenu(forSelectionType: ChangesChoice.self) { _ in } primaryAction: { choices in
             if let choice = choices.first { pick(choice) }
         }
         .focused($isFocused)
         // Wide enough that most first lines fit whole; longer ones wrap.
-        .frame(width: 480, height: min(CGFloat(commits.count + 1) * 60 + 50, 480))
+        .frame(width: 480, height: min(CGFloat(commits.count + anchors.count + 1) * 60 + 50, 480))
         .onAppear {
             highlighted = shown
             isFocused = true
@@ -562,25 +587,18 @@ struct CommitList: View {
     }
 
     /// The choice last picked, ticked even while it's still being diffed.
-    private var shown: CommitChoice {
-        (tab.pendingCommit ?? tab.shownCommit).map(CommitChoice.commit) ?? .all
+    private var shown: ChangesChoice {
+        tab.pendingChoice ?? tab.shownChoice
     }
 
-    private func row(_ choice: CommitChoice, title: String, oid: String?) -> some View {
+    private func row(_ choice: ChangesChoice, title: String, oid: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: "checkmark")
-                .font(.caption.bold())
-                .opacity(choice == shown ? 1 : 0)
+            tick(choice)
             VStack(alignment: .leading, spacing: 3) {
                 Text(verbatim: title)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
-                    if let stat = tab.diffStat(ofCommit: oid) {
-                        DiffStatLabel(stat: stat)
-                    } else {
-                        // Holds the row's height until the commit's counted.
-                        Text(verbatim: " ")
-                    }
+                    stat(of: choice)
                     Spacer(minLength: 0)
                     if let oid {
                         Text(verbatim: String(oid.prefix(7)))
@@ -598,13 +616,117 @@ struct CommitList: View {
         .tag(choice)
     }
 
-    private func pick(_ choice: CommitChoice) {
-        tab.isPickingCommit = false
-        let oid: String? = switch choice {
-        case .all: nil
-        case let .commit(oid): oid
+    /// The changes since an earlier head: named for how the viewer saw it, its stat, when they
+    /// saw it and its short oid. Until they can be shown it's dimmed and can't be picked; when
+    /// they can't be at all, the row says why in brief, and in full when hovered.
+    private func anchorRow(_ anchor: ChangesAnchor) -> some View {
+        let choice = ChangesChoice.since(anchor)
+        let state = tab.anchorState(of: anchor)
+        let isReady = state == .ready
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            tick(choice)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(verbatim: anchorTitle(anchor.kind))
+                    .foregroundStyle(isReady ? .primary : .tertiary)
+                HStack(spacing: 8) {
+                    switch state {
+                    case .ready:
+                        stat(of: choice)
+                    case .rebased:
+                        Label("Rebased since", systemImage: "info.circle")
+                    case .failed:
+                        Label("Couldn't fetch \(String(anchor.oid.prefix(7)))", systemImage: "exclamationmark.triangle")
+                    case .checking, nil:
+                        // Holds the row's height until it's looked at.
+                        Text(verbatim: " ")
+                    }
+                    Spacer(minLength: 0)
+                    if let at = anchor.at {
+                        Text(verbatim: "\(anchorVerb(anchor.kind)) \(at.formatted(.relative(presentation: .named)))")
+                            .foregroundStyle(.tertiary)
+                    }
+                    Text(verbatim: String(anchor.oid.prefix(7)))
+                        .monospaced()
+                        .foregroundStyle(.tertiary)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
-        Task { await tab.showCommit(oid) }
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .background {
+            if let help = AnchorHelp(anchor: anchor, state: state) {
+                HoverPopoverAnchor(content: help)
+            }
+        }
+        .onTapGesture { pick(choice) }
+        .tag(choice)
+        .selectionDisabled(!isReady)
+    }
+
+    private func tick(_ choice: ChangesChoice) -> some View {
+        Image(systemName: "checkmark")
+            .font(.caption.bold())
+            .opacity(choice == shown ? 1 : 0)
+    }
+
+    @ViewBuilder
+    private func stat(of choice: ChangesChoice) -> some View {
+        if let stat = tab.diffStat(of: choice) {
+            DiffStatLabel(stat: stat)
+        } else {
+            // Holds the row's height until the changes are counted.
+            Text(verbatim: " ")
+        }
+    }
+
+    private func pick(_ choice: ChangesChoice) {
+        if case let .since(anchor) = choice, tab.anchorState(of: anchor) != .ready { return }
+        tab.isPickingCommit = false
+        Task { await tab.show(choice) }
+    }
+}
+
+/// Why the changes since an earlier head can't be shown, in a popover as the checks' is, opened
+/// by resting the pointer on its row. Nil when they can, or until that's known.
+private struct AnchorHelp: HoverPopoverContent {
+    let title: String
+    let detail: String
+    var onPointerOver: (Bool) -> Void = { _ in }
+    var onOpen: () -> Void = {}
+
+    init?(anchor: ChangesAnchor, state: AnchorState?) {
+        let oid = String(anchor.oid.prefix(7))
+        let when = switch anchor.kind {
+        case .lastReview: "you last reviewed it, at \(oid)"
+        case .lastOpened: "you last opened it, at \(oid)"
+        }
+        switch state {
+        case .rebased:
+            title = "Rebased since \(when)"
+            detail = "Its changes since then would be mixed with those from its base. Showing the changes across a rebase isn't built yet."
+        case let .failed(message):
+            title = "Couldn't fetch \(oid) from the remote"
+            detail = message
+        case .ready, .checking, nil:
+            return nil
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(verbatim: title)
+                .font(.headline)
+            Text(verbatim: detail)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(width: 320, alignment: .leading)
+        .onHover(perform: onPointerOver)
     }
 }
 
@@ -874,10 +996,10 @@ func repositoryName(_ pullRequest: PullRequestSummary) -> String {
     pullRequest.repository.split(separator: "/").last.map(String.init) ?? pullRequest.repository
 }
 
-/// One of the changes a `CommitList` offers, as a list needs a selection that isn't nil.
-private enum CommitChoice: Hashable {
-    case all
-    case commit(String)
+/// Which file is shown of which changes, for work done once per file shown.
+private struct ShownFile: Equatable {
+    let choice: ChangesChoice
+    let path: String
 }
 
 /// `3 files  +42 −7`, as github.com counts them, with no thousands separators: the lines coloured
@@ -969,6 +1091,22 @@ private func allCommitsTitle(_ count: Int) -> String {
     case 0: "All commits"
     case 1: "All 1 commit"
     default: "All \(count) commits"
+    }
+}
+
+/// How the changes since an earlier head the viewer saw are named in the picker.
+private func anchorTitle(_ kind: ChangesAnchor.Kind) -> String {
+    switch kind {
+    case .lastReview: "Since your last review"
+    case .lastOpened: "Since you last opened it"
+    }
+}
+
+/// What the viewer did when they saw an earlier head, before when they did it.
+private func anchorVerb(_ kind: ChangesAnchor.Kind) -> String {
+    switch kind {
+    case .lastReview: "reviewed"
+    case .lastOpened: "opened"
     }
 }
 

@@ -43,16 +43,16 @@ public final class PullRequestTab: Identifiable {
     public var isCheckingGitHub: Bool {
         isFetchingConversation || catchingUpThreads > 0 || lists.isChecking(id)
     }
-    /// Which commit's changes are shown, by oid, or nil for the whole PR's.
-    public private(set) var shownCommit: String?
-    /// The commit picked to show next, by oid, while its changes are diffed. The changes shown
-    /// stay until they're ready, so they don't blank out for a moment.
-    public private(set) var pendingCommit: String?
+    /// Which changes are shown: the whole PR's, one commit's, or those since an earlier head.
+    public private(set) var shownChoice = ChangesChoice.all
+    /// The changes picked to show next, while they're diffed. The changes shown stay until
+    /// they're ready, so they don't blank out for a moment.
+    public private(set) var pendingChoice: ChangesChoice?
 
-    /// Whether the changes shown are on their way out: being reloaded, or a commit's being
-    /// diffed to replace them.
+    /// Whether the changes shown are on their way out: being reloaded, or other changes picked
+    /// are being diffed to replace them.
     public var isReplacingShownChanges: Bool {
-        reloading != nil || pendingCommit != nil
+        reloading != nil || pendingChoice != nil
     }
     /// Whether the list of commits to pick from is open, kept while switching between tabs.
     public var isPickingCommit = false
@@ -134,11 +134,19 @@ public final class PullRequestTab: Identifiable {
     /// The checkout the diff was produced from, for diffing a commit or hidden file, or reading
     /// a file to render, later.
     private(set) var checkout: URL?
-    /// Each commit's changes once asked for. A range names its commits, so these never go stale.
-    private var commitChanges: [DiffRange: DiffState<ReviewChanges>] = [:]
-    /// Each commit's diff-stat once counted, which like its changes never goes stale.
-    private var commitStats: [DiffRange: DiffStat] = [:]
+    /// The changes of each commit, or since an anchor, once asked for. A range names its commits,
+    /// so these never go stale.
+    private var pickedChanges: [DiffRange: DiffState<ReviewChanges>] = [:]
+    /// Each commit's diff-stat, or the changes' since an anchor, once counted, which like their
+    /// changes never go stale.
+    private var rangeStats: [DiffRange: DiffStat] = [:]
     private var countingCommits: Task<Void, Never>?
+    /// The head of the PR's diff shown the last time it was opened before this tab, read as the
+    /// tab is made, so it stays put while the tab is open whatever's shown meanwhile.
+    private let lastOpened: SeenHead?
+    /// Whether the changes since each anchor can be shown, by the range they'd be.
+    private var anchorStates: [DiffRange: AnchorState] = [:]
+    private var preparingAnchors: Task<Void, Never>?
     /// Each hidden file's diff once asked for, by range and path.
     private var hiddenFileDiffs: [HiddenFileKey: DiffState<FileDiff>] = [:]
     /// Each hidden file's latest diff, of whichever range, to show while another is made.
@@ -159,6 +167,12 @@ public final class PullRequestTab: Identifiable {
         self.candidates = candidates
         markdown = MarkdownPreviews(client: client, differ: differ)
         contextExpansions = ContextExpansions(differ: differ)
+        do {
+            lastOpened = try store.seenHead(of: id)
+        } catch {
+            lastOpened = nil
+            log("Couldn't read when \(opened.repository)#\(opened.number) was last opened: \(error)")
+        }
         do {
             viewedStates = try store.viewedStates(of: id)
         } catch {
@@ -318,37 +332,37 @@ public final class PullRequestTab: Identifiable {
         return progress.isSelfReviewed(pullRequest, viewer: viewerLogin)
     }
 
-    /// The changes shown: the whole PR's, or the shown commit's. Nil until the PR's diff is
-    /// ready.
+    /// The changes shown: the whole PR's, one commit's, or those since an anchor. Nil until the
+    /// PR's diff is ready.
     public var shownChanges: DiffState<ReviewChanges>? {
         guard case let .ready(review) = phase else { return nil }
-        guard let commit = shownCommitRange(in: review) else { return .ready(review.changes) }
-        return commitChanges[commit] ?? .diffing
+        guard shownChoice != .all, let range = range(of: shownChoice, in: review) else { return .ready(review.changes) }
+        return pickedChanges[range] ?? .diffing
     }
 
-    /// Shows one commit's changes, by oid, or the whole PR's for nil, diffing the commit the
-    /// first time it's picked; until then it's pending and the changes shown stay. Keeps the
-    /// shown file if the commit changed it.
-    public func showCommit(_ oid: String?) async {
+    /// Shows the changes `choice` names, diffing them the first time they're picked; until then
+    /// they're pending and the changes shown stay. Keeps the shown file if they change it. The
+    /// changes since an anchor can be picked only once it's known they can be shown.
+    public func show(_ choice: ChangesChoice) async {
         guard case let .ready(review) = phase, let checkout else { return }
-        guard let commit = review.commits.first(where: { $0.oid == oid }) else {
-            pendingCommit = nil
-            shownCommit = nil
+        if case let .since(anchor) = choice, anchorState(of: anchor) != .ready { return }
+        guard choice != .all, let range = range(of: choice, in: review) else {
+            pendingChoice = nil
+            shownChoice = .all
             return keepSelection(in: review.changes)
         }
-        let range = commit.range
-        switch commitChanges[range] {
+        switch pickedChanges[range] {
         case let .ready(changes):
-            pendingCommit = nil
-            shownCommit = commit.oid
+            pendingChoice = nil
+            shownChoice = choice
             return keepSelection(in: changes)
         case .diffing:
-            pendingCommit = commit.oid
+            pendingChoice = choice
             return
         case .failed, nil:
-            pendingCommit = commit.oid
+            pendingChoice = choice
         }
-        commitChanges[range] = .diffing
+        pickedChanges[range] = .diffing
         await beforeStep(.diffing)
         let state: DiffState<ReviewChanges>
         do {
@@ -358,21 +372,21 @@ public final class PullRequestTab: Identifiable {
         } catch {
             state = .failed(error.localizedDescription)
         }
-        commitChanges[range] = state
+        pickedChanges[range] = state
         // Unless another choice, or a reload, has come since.
-        guard pendingCommit == commit.oid else { return }
-        pendingCommit = nil
-        shownCommit = commit.oid
+        guard pendingChoice == choice else { return }
+        pendingChoice = nil
+        shownChoice = choice
         if case let .ready(changes) = state { keepSelection(in: changes) }
     }
 
-    /// How much a commit, by oid, or the whole PR for nil, changes the files to review: the
-    /// whole PR's from its diff, a commit's once counted. Hidden files aren't counted, as in the
+    /// How much `choice` changes the files to review: the whole PR's from its diff, a commit's
+    /// or the changes since an anchor once counted. Hidden files aren't counted, as in the
     /// count of files reviewed.
-    public func diffStat(ofCommit oid: String?) -> DiffStat? {
+    public func diffStat(of choice: ChangesChoice) -> DiffStat? {
         guard case let .ready(review) = phase else { return nil }
-        guard let oid else { return DiffStat(review.changes.files) }
-        return review.commits.first { $0.oid == oid }.flatMap { commitStats[$0.range] }
+        guard choice != .all else { return DiffStat(review.changes.files) }
+        return range(of: choice, in: review).flatMap { rangeStats[$0] }
     }
 
     /// Counts each commit's changes with git, unless already counted. A failure leaves them
@@ -383,17 +397,71 @@ public final class PullRequestTab: Identifiable {
             return await countCommitChanges()
         }
         guard case let .ready(review) = phase, let checkout else { return }
-        let ranges = review.commits.map(\.range).filter { commitStats[$0] == nil }
+        let ranges = review.commits.map(\.range).filter { rangeStats[$0] == nil }
         guard !ranges.isEmpty else { return }
         let task = Task {
             do {
-                commitStats.merge(try await differ.stats(of: ranges, in: checkout)) { $1 }
+                rangeStats.merge(try await differ.stats(of: ranges, in: checkout)) { $1 }
             } catch {
                 log("Couldn't count the changes of \(title)'s commits: \(error.localizedDescription)")
             }
             countingCommits = nil
         }
         countingCommits = task
+        await task.value
+    }
+
+    /// The earlier heads of the PR the viewer saw that the changes since can be picked from: the
+    /// one their latest submitted review was made against, then the one shown when the PR was
+    /// last opened before this tab. Each only once known and if the head has moved on from it.
+    public var anchors: [ChangesAnchor] {
+        guard case let .ready(review) = phase else { return [] }
+        let lastReview = conversation?.viewerReview.map { ChangesAnchor(kind: .lastReview, oid: $0.commitOid, at: $0.submittedAt) }
+        let lastOpened = lastOpened.map { ChangesAnchor(kind: .lastOpened, oid: $0.headRefOid, at: $0.seenAt) }
+        return [lastReview, lastOpened].compactMap { $0 }.filter { $0.oid != review.headOid }
+    }
+
+    /// Whether the changes since `anchor` can be shown, once it's been looked at.
+    public func anchorState(of anchor: ChangesAnchor) -> AnchorState? {
+        guard case let .ready(review) = phase else { return nil }
+        return anchorStates[DiffRange(base: anchor.oid, head: review.headOid)]
+    }
+
+    /// Looks at each anchor not yet looked at, or that failed, bringing its commit into the
+    /// checkout from the remote if it isn't there: if the head has only gained commits since, its
+    /// changes since are counted and can be shown; if the PR was rebased since, they can't yet.
+    public func prepareAnchors() async {
+        if let preparingAnchors {
+            await preparingAnchors.value
+            return await prepareAnchors()
+        }
+        guard case let .ready(review) = phase, let checkout else { return }
+        let ranges = anchors.map { DiffRange(base: $0.oid, head: review.headOid) }.filter { range in
+            switch anchorStates[range] {
+            case nil, .failed: true
+            case .checking, .ready, .rebased: false
+            }
+        }
+        guard !ranges.isEmpty else { return }
+        let repository = pullRequest.repository
+        let task = Task {
+            for range in ranges { anchorStates[range] = .checking }
+            for range in ranges {
+                do {
+                    switch try await differ.ancestry(of: range.base, toHead: range.head, of: repository, in: checkout) {
+                    case .ancestor:
+                        rangeStats.merge(try await differ.stats(of: [range], in: checkout)) { $1 }
+                        anchorStates[range] = .ready
+                    case .rebased:
+                        anchorStates[range] = .rebased
+                    }
+                } catch {
+                    anchorStates[range] = .failed(error.localizedDescription)
+                }
+            }
+            preparingAnchors = nil
+        }
+        preparingAnchors = task
         await task.value
     }
 
@@ -516,8 +584,8 @@ public final class PullRequestTab: Identifiable {
             selectedFile = next
         } else if let commit = nextCommit {
             async let marking: Void = setViewed(true, path: current)
-            await showCommit(commit.oid)
-            if shownCommit == commit.oid, case let .ready(changes)? = shownChanges {
+            await show(.commit(commit.oid))
+            if shownChoice == .commit(commit.oid), case let .ready(changes)? = shownChanges {
                 // The file just marked counts as viewed, whether or not GitHub has answered yet.
                 let files = FileTree(paths: changes.files.map(\.path)).files
                 selectedFile = files.first { $0 != current && !viewedState(of: $0).isViewed } ?? files.first ?? selectedFile
@@ -528,10 +596,12 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// The commit after the one shown, in the picker's order, where moving on goes once the shown
-    /// commit's files are all viewed. Nil while the whole PR's changes are shown, or the last
-    /// commit's.
+    /// commit's files are all viewed. Nil while the whole PR's changes, those since an earlier
+    /// head, or the last commit's are shown.
     public var nextCommit: PullRequestCommit? {
-        guard case let .ready(review) = phase, let index = review.commits.firstIndex(where: { $0.oid == shownCommit }) else { return nil }
+        guard case let .ready(review) = phase, case let .commit(oid) = shownChoice,
+              let index = review.commits.firstIndex(where: { $0.oid == oid })
+        else { return nil }
         return review.commits.indices.contains(index + 1) ? review.commits[index + 1] : nil
     }
 
@@ -876,11 +946,16 @@ public final class PullRequestTab: Identifiable {
     /// The range of the changes shown, once the PR's diff is ready.
     var shownRange: DiffRange? {
         guard case let .ready(review) = phase else { return nil }
-        return shownCommitRange(in: review) ?? DiffRange(base: review.mergeBase, head: review.headOid)
+        return range(of: shownChoice, in: review) ?? DiffRange(base: review.mergeBase, head: review.headOid)
     }
 
-    private func shownCommitRange(in review: ReviewDiff) -> DiffRange? {
-        review.commits.first { $0.oid == shownCommit }?.range
+    /// What `choice` diffs, or nil for a commit that isn't the PR's.
+    private func range(of choice: ChangesChoice, in review: ReviewDiff) -> DiffRange? {
+        switch choice {
+        case .all: DiffRange(base: review.mergeBase, head: review.headOid)
+        case let .commit(oid): review.commits.first { $0.oid == oid }?.range
+        case let .since(anchor): DiffRange(base: anchor.oid, head: review.headOid)
+        }
     }
 
     /// Keeps the shown file if `changes` has it, hidden or not, else shows the first file the
@@ -915,13 +990,16 @@ public final class PullRequestTab: Identifiable {
             // Bookkeeping only; a failure to record mustn't keep the diff from showing.
             let record = DiffRecord(pullRequestId: id, headRefOid: diff.headOid, mergeBase: diff.mergeBase, producedAt: .now, reviewablePaths: files.map(\.path))
             try? await store.recordDiff(record)
+            // For the next tab to open on the PR; this one's anchor stays as it was read.
+            try? await store.recordSeenHead(diff.headOid, of: id, at: .now)
             lists.reviewProgressChanged(of: id)
             let review = ReviewDiff(headOid: diff.headOid, mergeBase: diff.mergeBase, commits: diff.commits, changes: ReviewChanges(files: files, hidden: diff.hidden))
             self.checkout = checkout
-            shownCommit = nil
-            pendingCommit = nil
-            commitChanges = [:]
-            commitStats = [:]
+            shownChoice = .all
+            pendingChoice = nil
+            pickedChanges = [:]
+            rangeStats = [:]
+            anchorStates = [:]
             hiddenFileDiffs = [:]
             packageLockChanges = [:]
             contextExpansions.reset()
@@ -982,6 +1060,50 @@ public struct ReviewDiff: Sendable {
 public struct ReviewChanges: Sendable {
     public let files: [FileDiff]
     public let hidden: [ChangedFile]
+}
+
+/// Which changes the files show, as the commit picker picks them.
+public enum ChangesChoice: Hashable, Sendable {
+    /// The whole PR's, from where it branched off.
+    case all
+    /// One commit's, by oid.
+    case commit(String)
+    /// The PR's head's since an earlier head the viewer saw.
+    case since(ChangesAnchor)
+}
+
+/// An earlier head of the PR the viewer saw, which the changes since can be shown from.
+public struct ChangesAnchor: Hashable, Sendable {
+    public enum Kind: Hashable, Sendable {
+        /// The head the viewer's latest submitted review was made against.
+        case lastReview
+        /// The head shown the last time the viewer opened the PR, before the tab open now.
+        case lastOpened
+    }
+
+    public let kind: Kind
+    public let oid: String
+    /// When the viewer reviewed or opened it, if known.
+    public let at: Date?
+
+    public init(kind: Kind, oid: String, at: Date?) {
+        self.kind = kind
+        self.oid = oid
+        self.at = at
+    }
+}
+
+/// Whether the changes since an anchor can be shown.
+public enum AnchorState: Sendable, Equatable {
+    /// Its commit is being brought in, or looked at.
+    case checking
+    /// The head has only gained commits since, and the changes are counted.
+    case ready
+    /// The PR was rebased or force-pushed since, so its changes since would be swamped by its
+    /// base's; a view across a rebase isn't built yet.
+    case rebased
+    /// Why its commit couldn't be fetched or looked at, including git's own message.
+    case failed(String)
 }
 
 /// Where a diff made on demand has got to.

@@ -47,12 +47,21 @@ struct ChecksPopoverContent: View {
     }
 }
 
+/// What a `HoverPopoverAnchor` shows: told when the pointer enters or leaves it, so it stays
+/// while being read, and given a way to close it once it has done its job.
+protocol HoverPopoverContent: View {
+    var onPointerOver: (Bool) -> Void { get set }
+    var onOpen: () -> Void { get set }
+}
+
+extension ChecksPopoverContent: HoverPopoverContent {}
+
 /// Opens an `NSPopover` of `content` once the pointer has rested on the view it's behind, and
 /// closes it once the pointer has left both for a moment, fading quickly either way. An
 /// `NSPopover` rather than SwiftUI's `.popover`, as it's shown on hover and must leave the
 /// keyboard where it was.
-struct ChecksPopoverAnchor: NSViewRepresentable {
-    let content: ChecksPopoverContent
+struct HoverPopoverAnchor: NSViewRepresentable {
+    let content: any HoverPopoverContent
 
     func makeNSView(context: Context) -> AnchorView { AnchorView(content: content) }
     func updateNSView(_ view: AnchorView, context: Context) { view.content = content }
@@ -67,16 +76,16 @@ struct ChecksPopoverAnchor: NSViewRepresentable {
         /// How long the popover fades in or out, in place of `NSPopover`'s much slower animation.
         static let fade: TimeInterval = 0.08
 
-        var content: ChecksPopoverContent {
+        var content: any HoverPopoverContent {
             didSet { hosting?.rootView = reporting(content) }
         }
         private var popover: NSPopover?
-        private var hosting: NSHostingController<ChecksPopoverContent>?
+        private var hosting: NSHostingController<AnyView>?
         private var isPointerOverPopover = false
         /// Waiting out the dwell before opening, or the grace before closing.
         private var waiting: Task<Void, Never>?
 
-        init(content: ChecksPopoverContent) {
+        init(content: any HoverPopoverContent) {
             self.content = content
             super.init(frame: .zero)
             addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
@@ -163,7 +172,7 @@ struct ChecksPopoverAnchor: NSViewRepresentable {
             }
         }
 
-        private func reporting(_ content: ChecksPopoverContent) -> ChecksPopoverContent {
+        private func reporting(_ content: any HoverPopoverContent) -> AnyView {
             var content = content
             content.onPointerOver = { [weak self] isOver in
                 guard let self else { return }
@@ -171,7 +180,7 @@ struct ChecksPopoverAnchor: NSViewRepresentable {
                 if isOver { waiting?.cancel() } else { pointerLeft() }
             }
             content.onOpen = { [weak self] in self?.closePopover() }
-            return content
+            return AnyView(content)
         }
 
         private var placeInWindow: NSRect { convert(bounds, to: nil) }

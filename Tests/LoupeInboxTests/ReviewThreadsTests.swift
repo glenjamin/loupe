@@ -50,10 +50,10 @@ struct ReviewThreadsTests {
 
         // They belong to the whole PR's diff, so a commit's shows none.
         let commit = try #require(tab.ready?.commits.first)
-        await tab.showCommit(commit.oid)
+        await tab.show(.commit(commit.oid))
         #expect(tab.threads(on: try #require(tab.file("app.go"))) == nil)
         #expect(tab.unresolvedThreadCount(of: "app.go") == nil)
-        await tab.showCommit(nil)
+        await tab.show(.all)
         #expect(tab.threads(on: tab.expandedFile(file))?.anchored.count == 3)
     }
 
@@ -178,7 +178,7 @@ struct NewCommentTests {
         #expect(revealed.contains(DiffAnchor(path: "app.go", side: .right, line: 30)), "a line revealed around a hunk")
         #expect(!revealed.contains(DiffAnchor(path: "app.go", side: .left, line: 28)), "revealed lines take comments on the new side")
 
-        await tab.showCommit(try #require(tab.ready?.commits.first).oid)
+        await tab.show(.commit(try #require(tab.ready?.commits.first).oid))
         #expect(tab.commentableAnchors(of: try #require(tab.file("app.go"))) == nil, "not on one commit's changes")
         #expect(await app.conversations.commentsReceived.isEmpty, "nothing is posted until a comment is sent")
     }
@@ -258,14 +258,14 @@ struct ThreadLinksTests {
     @Test func showingAThreadOpensItsFileInTheWholePRsDiffScrolledToIt() async throws {
         let (_, tab, threadId) = try await ThreadsApp.withThread()
         let commit = try #require(tab.ready?.commits.last)
-        await tab.showCommit(commit.oid)
+        await tab.show(.commit(commit.oid))
         tab.selectedFile = "new.go"
         tab.section = .conversation
 
         await tab.follow(ThreadLink(.show, thread: threadId))
 
         #expect(tab.section == .files)
-        #expect(tab.shownCommit == nil, "threads are placed on the whole PR's diff")
+        #expect(tab.shownChoice == .all, "threads are placed on the whole PR's diff")
         #expect(tab.selectedFile == "app.go")
         #expect(tab.threadActivity.revealing == threadId, "for the diff to scroll to once drawn")
         #expect(tab.threadActivity.highlighted == threadId)

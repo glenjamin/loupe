@@ -288,14 +288,18 @@ actor FakeConversations {
     }
 
     /// Submits a review of the PR by the user with `login`, which becomes their latest and
-    /// answers any request of them, as on GitHub.
-    func review(_ state: String, by login: String, on id: String) throws {
+    /// answers any request of them, as on GitHub. The viewer's is also the PR's
+    /// `viewerLatestReview`, made against the PR's head `commit`.
+    func review(_ state: String, by login: String, on id: String, commit: String? = nil) throws {
         let user = try self.user(login)
         var node = try #require(nodes[id])
         var reviews = ((node["latestReviews"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
         reviews.removeAll { ($0["author"] as? [String: Any])?["login"] as? String == login }
         reviews.append(["state": state, "submittedAt": Date.now.formatted(.iso8601), "author": user])
         node["latestReviews"] = ["nodes": reviews]
+        if login == FakeGitHub.viewer {
+            node["viewerLatestReview"] = ["state": state, "submittedAt": Date.now.formatted(.iso8601), "commit": commit.map { ["oid": $0] as Any } ?? NSNull()]
+        }
         let requests = ((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
         node["reviewRequests"] = ["nodes": requests.filter { ($0["requestedReviewer"] as? [String: Any])?["login"] as? String != login }]
         nodes[id] = node

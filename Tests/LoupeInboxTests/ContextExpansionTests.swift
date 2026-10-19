@@ -53,10 +53,10 @@ struct ContextExpansionTests {
 
         // A commit's own changes are a different range, so nothing is revealed there yet.
         let commit = try #require(tab.ready?.commits.first)
-        await tab.showCommit(commit.oid)
+        await tab.show(.commit(commit.oid))
         let inCommit = try #require(tab.file("app.go"))
         #expect(tab.expandedFile(inCommit).hunks[0].newStart == 7)
-        await tab.showCommit(nil)
+        await tab.show(.all)
         #expect(tab.expandedFile(diff).hunks[0].newStart == 1)
 
         await tab.reload()
@@ -77,10 +77,10 @@ struct ContextExpansionTests {
 
         // What's revealed in a commit's own changes is its own, so it stays.
         let commit = try #require(tab.ready?.commits.first)
-        await tab.showCommit(commit.oid)
+        await tab.show(.commit(commit.oid))
         let inCommit = try #require(tab.file("app.go"))
         await tab.expandContext(of: inCommit, ContextExpansion(hunk: 0, direction: .above))
-        await tab.showCommit(nil)
+        await tab.show(.all)
 
         tab.collapseContext(of: diff)
         #expect(!tab.hasRevealedContext(of: diff))
@@ -88,7 +88,7 @@ struct ContextExpansionTests {
         #expect(shown.hunks.map(\.header) == diff.hunks.map(\.header), "back to the diff as produced")
         #expect(shown.hunks.map(\.lines) == diff.hunks.map(\.lines))
 
-        await tab.showCommit(commit.oid)
+        await tab.show(.commit(commit.oid))
         #expect(tab.hasRevealedContext(of: inCommit))
         #expect(tab.expandedFile(inCommit).hunks[0].newStart == 1)
     }

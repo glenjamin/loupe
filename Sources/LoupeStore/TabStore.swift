@@ -27,6 +27,17 @@ public struct DiffRecord: Sendable, Equatable {
     }
 }
 
+/// The head of a PR's diff the viewer was shown, and when.
+public struct SeenHead: Sendable, Equatable {
+    public let headRefOid: String
+    public let seenAt: Date
+
+    public init(headRefOid: String, seenAt: Date) {
+        self.headRefOid = headRefOid
+        self.seenAt = seenAt
+    }
+}
+
 extension PullRequestStore {
     public func openTabs() throws -> SavedTabs {
         try database.read { db in
@@ -87,6 +98,21 @@ extension PullRequestStore {
         }
     }
 
+    /// Records `headRefOid` as the head of the PR's diff the viewer was last shown. Kept after
+    /// the PR leaves the lists and its tab closes, for when it's next opened.
+    public func recordSeenHead(_ headRefOid: String, of pullRequestId: String, at seenAt: Date) async throws {
+        try await database.write { db in
+            try SeenHeadRow(pullRequestId: pullRequestId, headRefOid: headRefOid, seenAt: seenAt).upsert(db)
+        }
+    }
+
+    /// The head of the PR's diff the viewer was last shown, and when; nil if never.
+    public func seenHead(of pullRequestId: String) throws -> SeenHead? {
+        try database.read { db in
+            try SeenHeadRow.fetchOne(db, key: pullRequestId).map { SeenHead(headRefOid: $0.headRefOid, seenAt: $0.seenAt) }
+        }
+    }
+
     /// How far the review of each PR whose diff has been produced has got, by PR id.
     public func reviewProgress() throws -> [String: ReviewProgress] {
         try database.read { db in
@@ -138,6 +164,14 @@ private struct DiffRecordRow: Codable, FetchableRecord, PersistableRecord {
     func record(reviewablePaths: [String]) -> DiffRecord {
         DiffRecord(pullRequestId: pullRequestId, headRefOid: headRefOid, mergeBase: mergeBase, producedAt: producedAt, reviewablePaths: reviewablePaths)
     }
+}
+
+private struct SeenHeadRow: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "seenHead"
+
+    let pullRequestId: String
+    let headRefOid: String
+    let seenAt: Date
 }
 
 private struct DiffFileRow: Codable, FetchableRecord, PersistableRecord {

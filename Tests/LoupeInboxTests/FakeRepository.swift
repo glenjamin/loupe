@@ -33,6 +33,8 @@ final class FakeRepository: Sendable {
             ".gitattributes": "gen/** linguist-generated=true\nvendor/patched/** linguist-vendored=false\npinned/** linguist-generated=false\n",
         ], message: "Start the app")
         try await git(["clone", "--quiet", "--bare", contributor.path(percentEncoded: false), origin.path(percentEncoded: false)], in: root)
+        // GitHub serves any commit in the repo by oid, even one no ref holds since a force-push.
+        try await git(["config", "uploadpack.allowAnySHA1InWant", "true"], in: origin)
         try await git(["remote", "add", "origin", origin.path(percentEncoded: false)], in: contributor)
         try await git(["clone", "--quiet", origin.path(percentEncoded: false), checkout.path(percentEncoded: false)], in: root)
         try await git(["remote", "set-url", "origin", "https://github.com/tamarinworks/app"], in: checkout)

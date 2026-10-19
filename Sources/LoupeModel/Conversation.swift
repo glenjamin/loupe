@@ -24,8 +24,11 @@ public struct Conversation: Sendable, Equatable {
     public var latestReviews: [LatestReview]
     /// The viewer's review not yet submitted, if they have one; only they can see it.
     public var pendingReview: PendingReview?
+    /// The viewer's latest submitted review, if any. `latestReviews` leaves a reviewer out once
+    /// they're asked to review again, which is when what's changed since matters most.
+    public var viewerReview: ViewerReview?
 
-    public init(id: String, author: Participant?, createdAt: Date, bodyHTML: String, body: String = "", reactions: [ReactionGroup] = [], items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext], reviewRequests: [Reviewer] = [], latestReviews: [LatestReview] = [], pendingReview: PendingReview? = nil) {
+    public init(id: String, author: Participant?, createdAt: Date, bodyHTML: String, body: String = "", reactions: [ReactionGroup] = [], items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext], reviewRequests: [Reviewer] = [], latestReviews: [LatestReview] = [], pendingReview: PendingReview? = nil, viewerReview: ViewerReview? = nil) {
         self.id = id
         self.author = author
         self.createdAt = createdAt
@@ -38,6 +41,18 @@ public struct Conversation: Sendable, Equatable {
         self.reviewRequests = reviewRequests
         self.latestReviews = latestReviews
         self.pendingReview = pendingReview
+        self.viewerReview = viewerReview
+    }
+}
+
+/// The viewer's latest submitted review of a PR, by the head commit it was made against.
+public struct ViewerReview: Sendable, Equatable {
+    public var commitOid: String
+    public var submittedAt: Date?
+
+    public init(commitOid: String, submittedAt: Date?) {
+        self.commitOid = commitOid
+        self.submittedAt = submittedAt
     }
 }
 
