@@ -374,6 +374,28 @@ enum SnapshotRun {
                     print(await editorPlan(for: tab))
                 }
             }
+            // LOUPE_SNAPSHOT_LATER=<seconds> snapshots each shown conversation as
+            // `later-before-<title>.png`, moves its page's clock on that far, which rewords its
+            // times in place as the minute tick would once that long had passed, and snapshots
+            // it again as `later-after-<title>.png`.
+            if let later = environment["LOUPE_SNAPSHOT_LATER"].flatMap(TimeInterval.init) {
+                for tab in conversations {
+                    guard let page = ConversationPage.existingPage(for: tab) else { continue }
+                    windows.select(tab.id)
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard let window = windows.mainWindow else { continue }
+                    let name = sanitised(windows.title(of: tab.id))
+                    let before = directory.appending(path: "later-before-\(name).png")
+                    try? await saveSnapshot(of: window, to: before)
+                    print(before.path(percentEncoded: false))
+                    print("\(tab.title): \(await page.moveClock(by: later)) times reworded \(Int(later)) seconds on")
+                    try? await Task.sleep(for: .milliseconds(300))
+                    let after = directory.appending(path: "later-after-\(name).png")
+                    try? await saveSnapshot(of: window, to: after)
+                    print(after.path(percentEncoded: false))
+                }
+                windows.select(tabs.selected)
+            }
             // A moment for the final state to be drawn.
             try? await Task.sleep(for: .milliseconds(500))
             do {

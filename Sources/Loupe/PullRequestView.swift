@@ -647,8 +647,10 @@ struct CommitList: View {
                     }
                     Spacer(minLength: 0)
                     if let at = anchor.at {
-                        Text(verbatim: "\(anchorVerb(anchor.kind)) \(at.formatted(.relative(presentation: .named)))")
-                            .foregroundStyle(.tertiary)
+                        TimelineView(.everyMinute) { _ in
+                            Text(verbatim: "\(anchorVerb(anchor.kind)) \(at.formatted(.relative(presentation: .named)))")
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                     if anchor.kind != .forcePush {
                         Text(verbatim: String(anchor.oid.prefix(7)))

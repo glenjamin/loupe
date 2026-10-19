@@ -18,7 +18,7 @@ let package = Package(
                 "CodeEditLanguages",
                 "TreeSitterProto",
             ],
-            resources: [.copy("Resources/linguist"), .copy("Resources/quote-selection.js"), .copy("Resources/quote-reply.js")]
+            resources: [.copy("Resources/linguist"), .copy("Resources/quote-selection.js"), .copy("Resources/quote-reply.js"), .copy("Resources/relative-times.js")]
         ),
         // Protocol Buffers, which CodeEditLanguages lacks, vendored by Scripts/update-tree-sitter-proto.sh.
         .target(

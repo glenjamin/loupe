@@ -829,6 +829,14 @@ The verdict is GitHub's `viewerLatestReview`, already fetched with the conversat
 
 In To review, the chip that said "Approved" or "Changes requested" now says "You approved" or "You requested changes", as it sits beside GitHub's own verdict wording and read as the PR's overall state. Its tooltip says when and whether it's changed since ("You approved this 2 days ago, with no changes since; it's waiting to be merged"), from `latestOpinionatedReviews`, which the to-review check now asks for with `submittedAt` and `commit`; it can only say changed or not, as a row has no list of commits to count.
 
+### The conversation's "N ago" times keep current in the page, from a script in the app's own world
+
+The conversation page's relative times were worded once, when the page was written, so a tab left open said "3 minutes ago" for hours. Reloading the page to reword them would risk the reader's place, selection and open `<details>`, so the times are reworded in place instead. Each is a `<time>` carrying its ISO 8601 `datetime`, with the full date as its hover `title`. A `WKUserScript` in `.defaultClient`, the content world the app's other page scripts already run in, rewords them when the page loads, each minute while the page is visible and as soon as it's visible again, touching only those whose words have changed. The page's policy still allows it no script of its own, and nothing in GitHub's `bodyHTML` can reach the app's world.
+
+A Swift ticker pushing strings formatted in Swift was considered, as it keeps one formatter. A script in the page is simpler (no visibility tracking or round trips) and works on its own clock, so Glen chose it. The cost is a second implementation of the wording. `relative-times.js` ports `Date.RelativeFormatStyle(presentation: .named)` (en_US) from swift-foundation: seconds rounded first; hours, minutes and seconds rounded on the next unit down; days, weeks, months and years counted from the edge of the local day, week (the calendar's first weekday, passed in by the app), month or year; ICU's wording via `Intl.RelativeTimeFormat` with `numeric: 'auto'`. Swift still writes the first wording, and a test compares the two across about 2,000 offsets from a second to two years, so they can't drift apart unnoticed.
+
+In the native UI, each relative label now sits in its own `TimelineView(.everyMinute)`. One wrapped round the whole of the lists never reached the rows, since SwiftUI skips views whose inputs haven't changed. The commit picker's "reviewed 2 days ago" rows didn't tick at all; now they do. The To review chip's tooltip is worded from the tick's time too.
+
 ## Not yet decided
 
 Nothing is pending.

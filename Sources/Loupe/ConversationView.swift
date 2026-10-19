@@ -210,12 +210,23 @@ final class ConversationPage: GitHubWebPage {
     private override init() {
         super.init()
         webView.isHidden = true
+        // Keeps the page's "N ago" times current in place, from the app's own script world.
+        if let script = RelativeTimes.pageScript() {
+            webView.configuration.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        }
+    }
+
+    /// Moves the page's clock on by `interval` and rewords its times, as they'd read that much
+    /// later; returns how many changed. For a snapshot run, to show them updating.
+    func moveClock(by interval: TimeInterval) async -> Int {
+        let changed = try? await webView.evaluateJavaScript("moveClock(\(Int(interval * 1000)))", in: nil, contentWorld: .defaultClient)
+        return changed as? Int ?? 0
     }
 
     /// Loads the page for `conversation`, unless it's already showing it, keeping the reader's
     /// place when it replaces one, as it does when the conversation updates in the background.
-    /// Times are relative to when it's loaded, so an unchanged conversation isn't reloaded just
-    /// to update them. A page replacing one is covered by a picture of the old until it's ready.
+    /// Its times are kept current in place, so an unchanged conversation is never reloaded for
+    /// them. A page replacing one is covered by a picture of the old until it's ready.
     func show(_ conversation: Conversation) {
         if shown == conversation { return }
         let isReplacing = shown != nil

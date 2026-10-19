@@ -252,10 +252,12 @@ public enum ConversationHTML {
         return delete + (canEdit ? editLink(id) : "")
     }
 
+    /// A relative time, which `RelativeTimes` keeps current by its `datetime`, the full date
+    /// shown on hover.
     private static func time(_ date: Date, now: Date) -> String {
-        let relative = date.formatted(.relative(presentation: .named).locale(Locale(identifier: "en_US")))
-        let exact = date.formatted(.iso8601)
-        return #"<time datetime="\#(exact)" title="\#(exact)">\#(escape(date > now ? "just now" : relative))</time>"#
+        let relative = date > now ? "just now" : date.formatted(.relative(presentation: .named).locale(Locale(identifier: "en_US")))
+        let full = date.formatted(Date.FormatStyle(date: .complete, time: .shortened))
+        return #"<time datetime="\#(date.formatted(.iso8601))" title="\#(escape(full))">\#(escape(relative))</time>"#
     }
 
     private static func reviewAction(_ state: ReviewState) -> String {

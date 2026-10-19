@@ -2,6 +2,7 @@ import Foundation
 import LoupeCore
 import LoupeModel
 import Testing
+import WebKit
 
 struct ConversationHTMLTests {
     @Test func gitHubsHTMLGoesInVerbatimAndEverythingElseIsEscaped() throws {
@@ -177,6 +178,48 @@ struct ConversationHTMLTests {
         #expect(CommentLink(url: deletion.url) == deletion && deletion != link)
         #expect(CommentLink(url: try #require(URL(string: "loupe-comment://delete/"))) == nil)
         #expect(CommentLink(url: try #require(URL(string: "loupe-comment://hide/c1"))) == nil)
+    }
+
+    @Test func everyTimeOnThePageCarriesWhenItWasAndShowsTheFullDateOnHover() throws {
+        let events: [TimelineEvent] = [.forcePushed(before: nil, after: nil), .merged(commit: nil, into: "main"), .closed, .reopened, .readyForReview]
+        var everything = conversation
+        everything.items += events.enumerated().map { index, event in
+            TimelineItem(id: "e\(index)", date: now.addingTimeInterval(Double(index * 1000 - 20_000)), actor: nil, event: event)
+        }
+        let page = try render(everything)
+        let times = page.matches(of: /<time datetime="([^"]+)" title="([^"]+)">/).map { (String($0.1), String($0.2)) }
+
+        let threadComments = everything.threads.flatMap(\.comments).map(\.createdAt)
+        let dates = [everything.createdAt] + everything.items.prefix(4).filter { $0.id != "commit1" }.map(\.date) + threadComments + everything.items.suffix(events.count).map(\.date)
+        #expect(times.map(\.0) == dates.map { $0.formatted(.iso8601) }, "the description, comments, review, each thread comment and every event, in order; a commit has none")
+        #expect(times.map(\.1) == dates.map { $0.formatted(date: .complete, time: .shortened) })
+    }
+
+    @MainActor
+    @Test func aPagesTimesAreRewordedInPlaceAsTimePassesLeavingTheRestBe() async throws {
+        let now = Date.now
+        var recent = conversation
+        // Years ago, so two hours on can't cross into another day and change its words.
+        recent.createdAt = now.addingTimeInterval(-900 * 86_400)
+        recent.items = [TimelineItem(id: "c1", date: now.addingTimeInterval(-30_000), actor: nil, event: .comment(bodyHTML: "<p>Hi</p>", isMinimized: false))]
+        recent.threads = []
+        let (template, stylesheet) = try templates()
+        let page = ConversationHTML.page(recent, template: template, stylesheet: stylesheet, now: now)
+        let script = try #require(RelativeTimes.functions())
+        let body = script + """
+
+            document.documentElement.innerHTML = page;
+            const before = Array.from(document.querySelectorAll('time'), time => time.textContent);
+            const changed = moveClock(2 * 60 * 60 * 1000);
+            return { before, changed, after: Array.from(document.querySelectorAll('time'), time => time.textContent) };
+            """
+        let found = try await WKWebView().callAsyncJavaScript(body, arguments: ["page": page], in: nil, contentWorld: .defaultClient)
+        let result = try #require(found as? [String: Any])
+
+        let opened = recent.createdAt.formatted(.relative(presentation: .named).locale(Locale(identifier: "en_US")))
+        #expect(result["before"] as? [String] == [opened, "8 hours ago"], "as Swift wrote them")
+        #expect(result["after"] as? [String] == [opened, "10 hours ago"], "two hours on")
+        #expect(result["changed"] as? Int == 1, "only the time whose words moved on is touched")
     }
 
     @Test func aCommentOnItsWayShowsAsSendingWithNothingToReactTo() throws {

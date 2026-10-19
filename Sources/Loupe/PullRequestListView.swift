@@ -11,18 +11,15 @@ struct PullRequestListView: View {
     var body: some View {
         Group {
             if model.hasStoredLists {
-                // Re-render each minute so the "N ago" labels don't go stale between refreshes.
-                TimelineView(.everyMinute) { _ in
-                    HStack(spacing: 0) {
-                        PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, showsClosed: showsClosed, model: model)
-                        Divider()
-                        PullRequestColumn(title: "To review", list: .toReview, showsAuthor: true, showsClosed: showsClosed, model: model)
-                    }
-                    .safeAreaInset(edge: .top, spacing: 0) {
-                        if let error = model.error {
-                            RefreshErrorBanner(error: error, lastRefreshed: model.lastRefreshed, isLoading: model.isLoading) {
-                                Task { await model.refresh() }
-                            }
+                HStack(spacing: 0) {
+                    PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, showsClosed: showsClosed, model: model)
+                    Divider()
+                    PullRequestColumn(title: "To review", list: .toReview, showsAuthor: true, showsClosed: showsClosed, model: model)
+                }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if let error = model.error {
+                        RefreshErrorBanner(error: error, lastRefreshed: model.lastRefreshed, isLoading: model.isLoading) {
+                            Task { await model.refresh() }
                         }
                     }
                 }
@@ -54,7 +51,10 @@ struct RefreshErrorBanner: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text(headline).font(.callout.weight(.semibold))
+                // Each "N ago" label ticks itself, as a tick further up leaves unchanged views be.
+                TimelineView(.everyMinute) { _ in
+                    Text(headline).font(.callout.weight(.semibold))
+                }
                 Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
             Spacer(minLength: 0)
@@ -182,7 +182,9 @@ struct PullRequestRow: View {
                     Text(author)
                 }
                 if let verdict {
-                    ViewerVerdictBadge(verdict: verdict, detail: pullRequest.viewerVerdict)
+                    TimelineView(.everyMinute) { context in
+                        ViewerVerdictBadge(verdict: verdict, detail: pullRequest.viewerVerdict, now: context.date)
+                    }
                 }
                 // GitHub's verdict repeats the viewer's when they're the same.
                 if showsReviewRequired || ([.approved, .changesRequested].contains(pullRequest.reviewDecision) && pullRequest.reviewDecision?.rawValue != verdict?.rawValue) {
@@ -192,11 +194,16 @@ struct PullRequestRow: View {
                     ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
                 }
                 Spacer(minLength: 0)
+                // Each "N ago" label ticks itself, as a tick further up leaves unchanged views be.
                 if let staleRequestedAt {
-                    Text("requested \(staleRequestedAt.formatted(.relative(presentation: .named)))")
-                        .foregroundStyle(.tertiary)
+                    TimelineView(.everyMinute) { _ in
+                        Text("requested \(staleRequestedAt.formatted(.relative(presentation: .named)))")
+                            .foregroundStyle(.tertiary)
+                    }
                 }
-                Text(pullRequest.updatedAt.formatted(.relative(presentation: .named)))
+                TimelineView(.everyMinute) { _ in
+                    Text(pullRequest.updatedAt.formatted(.relative(presentation: .named)))
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -280,6 +287,8 @@ struct ViewerVerdictBadge: View {
     let verdict: ReviewState
     /// Nil until the to-review check has said when and on which head.
     let detail: ViewerVerdict?
+    /// What the tooltip's "N ago" is from.
+    var now: Date = .now
 
     var body: some View {
         switch verdict {
@@ -295,7 +304,7 @@ struct ViewerVerdictBadge: View {
     }
 
     private var summary: String? {
-        detail.flatMap { $0.state == verdict ? $0.summary : nil }
+        detail.flatMap { $0.state == verdict ? $0.summary(now: now) : nil }
     }
 }
 
