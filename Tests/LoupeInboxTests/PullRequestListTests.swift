@@ -488,7 +488,7 @@ struct PullRequestListTests {
         #expect(model.staleCount(in: .toReview) == 0)
 
         // A month on, every other PR has been asked of the viewer again, but the approved one is untouched.
-        try await github.passTime(days(31))
+        await github.passTime(days(31))
         for pullRequest in toReview.dropFirst() {
             try await github.requestReview(of: pullRequest.id)
         }

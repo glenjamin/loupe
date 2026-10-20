@@ -105,7 +105,7 @@ private struct FileHeader: View {
                     .help("Hide the revealed lines")
             }
             if let markdown {
-                Picker("Show", selection: Binding(get: { markdown.isRendered }, set: markdown.setRendered)) {
+                Picker("Show", selection: Binding(get: { markdown.isRendered }, set: { markdown.setRendered($0) })) {
                     Text("Source").tag(false)
                     Text("Rendered").tag(true)
                 }
@@ -116,7 +116,7 @@ private struct FileHeader: View {
                 .help("Show the diff, or the file as GitHub renders it")
             }
             if let image, image.isSVG {
-                Picker("Show", selection: Binding(get: { image.isRendered }, set: image.setRendered)) {
+                Picker("Show", selection: Binding(get: { image.isRendered }, set: { image.setRendered($0) })) {
                     Text("Source").tag(false)
                     Text("Rendered").tag(true)
                 }
@@ -127,7 +127,7 @@ private struct FileHeader: View {
                 .help("Show the diff, or the image it draws")
             }
             if let packageLock, packageLock.failure == nil {
-                Picker("Show", selection: Binding(get: { packageLock.showsRawDiff }, set: packageLock.setShowsRawDiff)) {
+                Picker("Show", selection: Binding(get: { packageLock.showsRawDiff }, set: { packageLock.setShowsRawDiff($0) })) {
                     Text("Changes").tag(false)
                     Text("Raw diff").tag(true)
                 }

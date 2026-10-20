@@ -477,7 +477,7 @@ struct TabsTests {
         let second = try await app.pushCommit(["README": "An app that says hi.\n"], to: pullRequest, in: repo)
         await app.tabs.lists.refresh()
         await tab.reload()
-        var gate = StepGate(holding: .diffing)
+        let gate = StepGate(holding: .diffing)
         tab.beforeStep = { await gate.pass($0) }
 
         let picking = Task { await tab.show(.commit(second)) }
@@ -499,13 +499,14 @@ struct TabsTests {
         #expect(tab.selectedFile == "README")
 
         // A pick overtaken by another before its diff is ready isn't shown when it is.
-        gate = StepGate(holding: .diffing)
+        let overtakenGate = StepGate(holding: .diffing)
+        tab.beforeStep = { await overtakenGate.pass($0) }
         let overtaken = Task { await tab.show(.commit(first)) }
-        await gate.reached()
+        await overtakenGate.reached()
         await tab.show(.all)
         #expect(tab.pendingChoice == nil)
         #expect(tab.shownChoice == .all)
-        gate.release()
+        overtakenGate.release()
         await overtaken.value
         #expect(tab.shownChoice == .all, "the whole PR's changes were picked last")
         #expect(tab.shown?.files.map(\.path) == ["README", "app.go"])
