@@ -157,10 +157,15 @@ public struct TimelineItem: Sendable, Equatable, Identifiable {
     /// A comment's or review's REST id, which github.com's links to it name; nil for other
     /// events, and until GitHub has said.
     public var databaseId: Int?
+    /// A comment's markdown as written, which keeps what its rendering drops, such as a bot's
+    /// `<!-- marker -->`; nil for other kinds, and until a comment stored without it is fetched.
+    public var body: String?
+    /// When a comment was last edited, or made if never; nil as for `body`.
+    public var updatedAt: Date?
 
     public init(
         id: String, date: Date, actor: Participant?, event: TimelineEvent, reactions: [ReactionGroup] = [], isSending: Bool = false, viewerCanUpdate: Bool = false,
-        viewerCanDelete: Bool = false, isSaving: Bool = false, databaseId: Int? = nil
+        viewerCanDelete: Bool = false, isSaving: Bool = false, databaseId: Int? = nil, body: String? = nil, updatedAt: Date? = nil
     ) {
         self.id = id
         self.databaseId = databaseId
@@ -172,6 +177,8 @@ public struct TimelineItem: Sendable, Equatable, Identifiable {
         self.viewerCanUpdate = viewerCanUpdate
         self.viewerCanDelete = viewerCanDelete
         self.isSaving = isSaving
+        self.body = body
+        self.updatedAt = updatedAt
     }
 }
 

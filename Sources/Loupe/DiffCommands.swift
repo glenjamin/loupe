@@ -21,6 +21,9 @@ struct DiffCommands: Commands {
             Button("Files Changed") { windows.shownTab?.section = .files }
                 .keyboardShortcut("2", modifiers: .control)
                 .disabled(windows.shownTab == nil)
+            Button("Visual Review") { windows.shownTab?.showVisualReview() }
+                .keyboardShortcut("3", modifiers: .control)
+                .disabled(windows.shownTab?.visualReview == nil)
         }
         CommandMenu("Review") {
             // Only while the files are shown, where there's a file to act on.

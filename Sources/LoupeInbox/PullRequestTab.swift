@@ -839,6 +839,23 @@ public final class PullRequestTab: Identifiable {
     /// The signed-in user's login, once known.
     public var viewer: String? { viewerLogin }
 
+    /// What CI's diff-book comment says of the PR's visual baselines, from the latest such
+    /// comment in the conversation; nil when there's none.
+    public var visualReview: VisualReview? {
+        conversation.flatMap { VisualReview.latest(in: $0.items) }
+    }
+
+    /// What's shown beside the sidebar: the section chosen, or the conversation in place of a
+    /// visual review the conversation no longer has.
+    public var shownSection: ReviewSection {
+        section == .visualReview && visualReview == nil ? .conversation : section
+    }
+
+    /// Shows the visual review's report in place of the diff or conversation, if there is one.
+    public func showVisualReview() {
+        if visualReview != nil { section = .visualReview }
+    }
+
     /// Whether the viewer can edit the description, which is only offered on their own PRs.
     public var canEditDescription: Bool {
         isViewersOwn
@@ -1142,10 +1159,12 @@ public enum PendingChange: Sendable, Equatable {
     case newCommits
 }
 
-/// The PR view's two tabs, as on github.com.
+/// What the PR view shows beside its sidebar: the conversation, the files, or CI's visual
+/// review report.
 public enum ReviewSection: Sendable, Hashable {
     case conversation
     case files
+    case visualReview
 }
 
 /// Where a tab's diff has got to.

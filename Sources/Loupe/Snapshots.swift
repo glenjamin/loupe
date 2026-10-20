@@ -490,6 +490,12 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_SHOW_VERDICT"] == "1" {
                     for url in try await saveSnapshotsOfVerdicts(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_VISUAL_REVIEW=1 prints each PR's visual review, opens its header
+                // flag's popover, then clicks its sidebar row and snapshots the report once it has
+                // loaded or failed.
+                if environment["LOUPE_SNAPSHOT_VISUAL_REVIEW"] == "1" {
+                    for url in try await saveSnapshotsOfVisualReviews(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_SHOW_THREAD=1 clicks each conversation's first "Show in diff", or
                 // =reply its first "Reply…", and snapshots the conversation and what the click showed.
                 if let wanted = environment["LOUPE_SNAPSHOT_SHOW_THREAD"] {
@@ -1703,6 +1709,81 @@ private func saveSnapshotsOfVerdicts(in windows: WindowManager, to directory: UR
     return written
 }
 
+/// For each PR with CI's visual review in its conversation, prints it, opens the header flag's
+/// popover as resting on it would and writes `visual-badge-<title>.png`, then clicks the sidebar's
+/// Visual review row through the window as the mouse would, waits until the report has loaded or
+/// failed, prints which, and writes `visual-<title>.png`.
+@MainActor
+private func saveSnapshotsOfVisualReviews(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs {
+        windows.select(tab.id)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !tab.isConversationSettled, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        let title = windows.title(of: tab.id)
+        guard let review = tab.visualReview else {
+            print("\(title): no visual review")
+            continue
+        }
+        let stories = review.stories.map { "\($0.name) \($0.status.label)" }.joined(separator: ", ")
+        print("\(title): visual review \(review.summary ?? "uncounted"), rendered \(review.rendered.map { "\($0.count) of \($0.total)" } ?? "unknown"), updated \(review.updatedAt), report \(review.reportURL.absoluteString), stories [\(stories)]")
+        try? await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+        guard let root = window.contentView else { continue }
+        if let anchor = descendants(of: root).lazy.compactMap({ $0 as? HoverPopoverAnchor.AnchorView })
+            .first(where: { !$0.isHiddenOrHasHiddenAncestor && $0.content is VisualReviewPopover }) {
+            anchor.showPopover()
+            try? await Task.sleep(for: .milliseconds(300))
+            placePopover(under: anchor, in: window)
+            let url = directory.appending(path: "visual-badge-\(sanitised(title)).png")
+            try await saveSnapshot(of: window, to: url)
+            anchor.closePopover()
+            written.append(url)
+        } else {
+            print("\(title): no visual changes flag in the header")
+        }
+        guard let row = descendants(of: root).first(where: { $0 is VisualReviewRowMarker.Marker && !$0.isHiddenOrHasHiddenAncestor }) else {
+            print("\(title): no Visual review row")
+            continue
+        }
+        let point = row.convert(NSPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil)
+        let before = tab.section
+        // The mouse-up is queued first, so a tracking loop started by the mouse-down finds it.
+        let events = [NSEvent.EventType.leftMouseUp, .leftMouseDown].compactMap { type in
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+        }
+        guard events.count == 2 else { continue }
+        NSApp.postEvent(events[0], atStart: false)
+        window.sendEvent(events[1])
+        try? await Task.sleep(for: .milliseconds(300))
+        print("clicking Visual review at \(point) switched \(title) from \(before) to \(tab.section)")
+        let loaded = ContinuousClock.now + .seconds(20)
+        while ContinuousClock.now < loaded, VisualReviewPage.existingPage(for: tab).map({ $0.cover == .loading }) ?? true {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        // Lets the page draw a frame once loaded.
+        try? await Task.sleep(for: .milliseconds(500))
+        if let page = VisualReviewPage.existingPage(for: tab) {
+            let state = switch page.cover {
+            case nil: "loaded"
+            case .loading: "still loading"
+            case let .failed(failure): "failed: \(failure.title)"
+            }
+            print("\(title): report \(state) at \(page.webView.url?.absoluteString ?? "nothing"), titled \(page.webView.title ?? "nothing")")
+        }
+        let url = directory.appending(path: "visual-\(sanitised(title)).png")
+        try await saveSnapshot(of: window, to: url)
+        written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
 /// Pulls each PR's shown diff `travel` past its end with trackpad scroll events sent through the
 /// scroll view, as the fingers would, from the diff scrolled to its end and at rest. Writes
 /// `pull-<title>.png` halfway and `armed-<title>.png` at the end, scrolls `back` that far if
@@ -2033,6 +2114,7 @@ private extension ReviewSection {
         switch name {
         case "conversation": self = .conversation
         case "files": self = .files
+        case "visual": self = .visualReview
         default: return nil
         }
     }

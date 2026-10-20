@@ -642,6 +642,14 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "databaseId", .integer)
             }
         }
+        // A comment's markdown and when it was last edited, for what only the markdown says, such
+        // as CI's diff-book report: null until the conversation is next fetched.
+        migrator.registerMigration("Comment markdown") { db in
+            try db.alter(table: "timelineItem") { t in
+                t.add(column: "body", .text)
+                t.add(column: "updatedAt", .datetime)
+            }
+        }
         return migrator
     }
 

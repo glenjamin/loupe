@@ -1,0 +1,9 @@
+{
+  "id": 7100000001,
+  "node_id": "IC_kwDOdiffbook01",
+  "user": { "login": "tamarindeployer", "type": "User" },
+  "created_at": "2026-10-20T14:49:18Z",
+  "updated_at": "2026-10-20T15:17:45Z",
+  "html_url": "https://github.com/tamarinworks/marmot/pull/14589#issuecomment-7100000001",
+  "body": "<!-- diff-book-review -->\n### Visual baselines changed\n\n4 baseline(s) on this branch differ from `master`: 4 changed, 0 new, 0 removed.\n\n**[Open the review report](https://output.circle-artifacts.com/output/job/11111111-2222-4333-8444-555555555555/artifacts/0/diff-book/review/index.html)** — side-by-side, swipe and difference\nviews for each one. If that link doesn't resolve, it's on the\n[artifacts tab](https://app.circleci.com/pipelines/github/tamarinworks/marmot/41230/workflows/66666666-7777-4888-9999-aaaaaaaaaaaa/jobs/301122/artifacts) of this job.\n\n- `integrations-sheets-widget-configuration-preview--primary` — changed\n- `visualizations-legacy--classic` — changed\n- `visualizations-legacy--fixies` — changed\n- `visualizations-linechart--cumulative` — changed\n\n<sub>524 of 593 stories were rendered — only those that can reach a\nfile this branch changed. The rest kept the baseline the manifest already\nnamed.</sub>\n\n<sub>Baselines are only published from a developer's machine, so this is a\nrecord of what was accepted, not something CI can change.</sub>"
+}

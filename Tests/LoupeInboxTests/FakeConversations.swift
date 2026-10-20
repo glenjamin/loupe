@@ -194,9 +194,10 @@ actor FakeConversations {
     }
 
     /// Adds a comment to the end of the PR's timeline, returning its id; with its `markdown`,
-    /// that's what editing it starts from.
+    /// that's what editing it starts from, and its `body`; without, its rendering with the tags
+    /// taken out is.
     @discardableResult
-    func comment(_ bodyHTML: String, on id: String, by login: String = "octocat", markdown: String? = nil) -> String {
+    func comment(_ bodyHTML: String, on id: String, by login: String = "octocat", markdown: String? = nil, at date: Date = .now) -> String {
         let index = timelines[id, default: []].count
         let commentId = "IC_fake_\(index)"
         timelines[id, default: []].append([
@@ -204,7 +205,9 @@ actor FakeConversations {
             "id": commentId,
             "databaseId": 800_000 + index,
             "bodyHTML": bodyHTML,
-            "createdAt": Date.now.formatted(.iso8601),
+            "body": markdown ?? bodyHTML.replacing(/<[^>]+>/, with: ""),
+            "createdAt": date.formatted(.iso8601),
+            "updatedAt": date.formatted(.iso8601),
             "isMinimized": false,
             "viewerCanUpdate": login == FakeGitHub.viewer,
             "viewerCanDelete": login == FakeGitHub.viewer,
@@ -219,6 +222,18 @@ actor FakeConversations {
     /// name.
     func databaseId(of id: String, on pullRequestId: String) -> Int? {
         timelines[pullRequestId]?.first { $0["id"] as? String == id }?["databaseId"] as? Int
+    }
+
+    /// Rewrites a comment in place, as a bot does that keeps one comment current; GitHub renders
+    /// it as `bodyHTML` and marks it updated `at`.
+    func edit(comment commentId: String, on id: String, to markdown: String, bodyHTML: String, at date: Date = .now) throws {
+        var timeline = try #require(timelines[id])
+        let index = try #require(timeline.firstIndex { $0["id"] as? String == commentId })
+        timeline[index]["body"] = markdown
+        timeline[index]["bodyHTML"] = bodyHTML
+        timeline[index]["updatedAt"] = date.formatted(.iso8601)
+        timelines[id] = timeline
+        self.markdown[commentId] = markdown
     }
 
     /// Adds a force-push replacing head `before` with `after` to the end of the PR's timeline,
@@ -1098,6 +1113,9 @@ actor FakeConversations {
         markdown[id] = body
         if let pendingReview { pendingReviews[pendingReview]?.body = body }
         setBodyHTML(bodyHTML, of: id)
+        for (pullRequest, timeline) in timelines {
+            timelines[pullRequest] = timeline.map { $0["id"] as? String == id && $0["body"] != nil ? $0.merging(["body": body]) { $1 } : $0 }
+        }
         let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: mutation.probe))) as? [String: Any])
         var payload = try #require((probe["data"] as? [String: Any])?[mutation.rawValue] as? [String: Any])
         var edited = try #require(payload[mutation.payloadField] as? [String: Any])

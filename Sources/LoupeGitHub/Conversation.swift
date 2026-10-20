@@ -127,7 +127,7 @@ extension GitHubClient {
           pageInfo { hasNextPage endCursor }
           nodes {
             __typename
-            ... on IssueComment { id databaseId bodyHTML createdAt isMinimized viewerCanUpdate viewerCanDelete author { login avatarUrl } \(reactionGroupsField) }
+            ... on IssueComment { id databaseId bodyHTML body createdAt updatedAt isMinimized viewerCanUpdate viewerCanDelete author { login avatarUrl } \(reactionGroupsField) }
             ... on PullRequestReview {
               id databaseId state bodyHTML createdAt submittedAt viewerCanUpdate author { login avatarUrl } \(reactionGroupsField)
               comments(first: 50) { nodes { id bodyHTML path line originalLine diffHunk outdated isMinimized replyTo { id } } }
@@ -363,7 +363,10 @@ private struct TimelineNode: Decodable {
     let id: String?
     let databaseId: Int?
     let bodyHTML: String?
+    /// A comment's markdown; missing from captures that didn't ask for it.
+    let body: String?
     let createdAt: Date?
+    let updatedAt: Date?
     let submittedAt: Date?
     let isMinimized: Bool?
     let viewerCanUpdate: Bool?
@@ -422,7 +425,8 @@ private struct TimelineNode: Decodable {
             guard let createdAt else { return nil }
             return TimelineItem(
                 id: id, date: createdAt, actor: author?.participant, event: .comment(bodyHTML: bodyHTML ?? "", isMinimized: isMinimized ?? false),
-                reactions: reactionGroups.shown, viewerCanUpdate: viewerCanUpdate ?? false, viewerCanDelete: viewerCanDelete ?? false, databaseId: databaseId
+                reactions: reactionGroups.shown, viewerCanUpdate: viewerCanUpdate ?? false, viewerCanDelete: viewerCanDelete ?? false, databaseId: databaseId,
+                body: body, updatedAt: updatedAt
             )
         case "PullRequestReview":
             // A pending review has no submission time yet.

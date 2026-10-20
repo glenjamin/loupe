@@ -27,9 +27,11 @@ struct PullRequestView: View {
             HSplitView {
                 ReviewSidebar(tab: tab)
                     .frame(minWidth: 200, idealWidth: 300, maxWidth: 500)
-                // Both stay once made, so switching keeps each one's place.
+                // Each stays once made, so switching keeps each one's place.
                 ZStack {
-                    let showsFiles = tab.section == .files
+                    let section = tab.shownSection
+                    let showsFiles = section == .files
+                    let showsConversation = section == .conversation
                     content(pullRequest)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .opacity(showsFiles ? 1 : 0)
@@ -37,12 +39,19 @@ struct PullRequestView: View {
                         .accessibilityHidden(!showsFiles)
                     // The description's editor takes the conversation's place while open; the web
                     // view stays behind it, keeping its place.
-                    let editor = showsFiles ? nil : tab.descriptionEditor
-                    if let page = showsFiles ? ConversationPage.existingPage(for: tab) : ConversationPage.page(for: tab) {
-                        ConversationView(page: page, pullRequest: pullRequest, conversation: tab.conversation, error: tab.isFetchingConversation ? nil : tab.conversationError, isShown: !showsFiles && editor == nil)
+                    let editor = showsConversation ? tab.descriptionEditor : nil
+                    if let page = showsConversation ? ConversationPage.page(for: tab) : ConversationPage.existingPage(for: tab) {
+                        ConversationView(page: page, pullRequest: pullRequest, conversation: tab.conversation, error: tab.isFetchingConversation ? nil : tab.conversationError, isShown: showsConversation && editor == nil)
                     }
                     if let editor {
                         DescriptionEditorView(editor: editor, tab: tab)
+                    }
+                    let showsVisualReview = section == .visualReview
+                    if let review = tab.visualReview, let page = showsVisualReview ? VisualReviewPage.page(for: tab) : VisualReviewPage.existingPage(for: tab) {
+                        VisualReviewPane(page: page, review: review, isShown: showsVisualReview)
+                            .opacity(showsVisualReview ? 1 : 0)
+                            .allowsHitTesting(showsVisualReview)
+                            .accessibilityHidden(!showsVisualReview)
                     }
                 }
                 .frame(minWidth: 400)
@@ -97,6 +106,9 @@ struct ReviewSidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             ConversationRow(tab: tab)
+            if let review = tab.visualReview {
+                VisualReviewRow(tab: tab, review: review)
+            }
             switch tab.phase {
             case let .ready(diff):
                 CommitPicker(tab: tab, commits: diff.commits)
@@ -146,7 +158,7 @@ struct ConversationRow: View {
     @Bindable var tab: PullRequestTab
 
     var body: some View {
-        let isShown = tab.section == .conversation
+        let isShown = tab.shownSection == .conversation
         HStack(spacing: 4) {
             Button { tab.section = .conversation } label: {
                 Label("Conversation", systemImage: "bubble.left.and.bubble.right")
@@ -193,6 +205,9 @@ struct PullRequestHeader: View {
                     StateBadge(pullRequest: pullRequest, showsOpen: true)
                     ConflictsBadge(pullRequest: pullRequest)
                     SelfReviewedBadge(isSelfReviewed: tab.isSelfReviewed)
+                    if let review = tab.visualReview {
+                        VisualReviewBadge(tab: tab, review: review)
+                    }
                     Text(pullRequest.title)
                         .font(.title3)
                         .lineLimit(1)

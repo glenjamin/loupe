@@ -938,6 +938,18 @@ GitHub's links name REST database ids, so each issue comment and review in the t
 
 A link to a PR that isn't stored lands once its tab becomes the PR's; a second link to it meanwhile says where to land instead. A link to an open PR lands in its tab. A landing gives up if another starts, or if the viewer moves to the other section while it waits, so a slow fetch never drags them back.
 
+### CI's visual review report shows in the PR, from its diff-book comment
+
+polecat's CI posts, and edits in place on each run, a comment marked `<!-- diff-book-review -->` with how many visual baselines differ from the base, each story's status, how many stories were rendered and a link to an interactive report (side-by-side, swipe and difference views) among the job's artifacts. Loupe reads the most recently updated such comment from the conversation and flags it in the header as a quiet "Visual changes N" badge, its hover popover listing the stories, and adds a "Visual review" row under Conversation, drawn like it, that shows the report beside the sidebar. A report saying nothing differs shows no badge, as there's nothing to look at, but keeps its row. The parse keys on the marker and the links: wording it can't read loses the counts or stories, never the report. The marker is an HTML comment, which GitHub's `bodyHTML` drops, so issue comments' markdown `body` and `updatedAt` are now fetched and stored with the timeline. ⌃3 shows the report, after ⌃1 and ⌃2, rather than renumbering the files' ⌃2 to follow the rows' order.
+
+The report gets its own web view per tab, kept while the tab lives like the conversation's, and unlike every other web view in Loupe it runs the page's scripts, since the report is an interactive page of someone else's. To keep that contained it loads only the report's artifact host and sends any other page to the browser, and keeps no cookies or storage between runs.
+
+### The report is fetched with the user's CircleCI token, through Loupe's own URL scheme
+
+The report's link is `output.circle-artifacts.com`, which for a private project redirects to `app.circleci.com/private/output/…` and answers 404 without a CircleCI session (checked with a plain GET). Signing in inside the view would mean letting CircleCI's and GitHub's sign-in pages into it and keeping their cookies, and Glen found needing a separate CircleCI login annoying, so Loupe uses the user's CircleCI token instead, as it borrows `gh`'s for GitHub. The installed `circleci` CLI has no command that prints its token (`setting list` masks it), so it's read where the CLI documents keeping one: `CIRCLE_TOKEN`, else `token:` in its config file, which `circleci setting set token` writes. It's kept in memory only, and read again once CircleCI refuses it. A token from `circleci auth login`'s OAuth flow, which isn't kept in that file, isn't found; the pane then says to store a personal API token with `circleci setting set token`.
+
+The page is loaded as `loupe-artifact://<artifact host>/<path>`, and a `WKURLSchemeHandler` fetches each request, the page and every relative file it loads, from the same path over https with `Circle-Token` added, so the token never enters the page, its URLs or WebKit's storage. The handler fetches only CircleCI's artifact hosts, and a redirect away from CircleCI's hosts is followed without the token. Absolute links to other hosts go to the browser. This supersedes the persistent website data store and in-view sign-in first planned for the report.
+
 ## Not yet decided
 
 Nothing is pending.
