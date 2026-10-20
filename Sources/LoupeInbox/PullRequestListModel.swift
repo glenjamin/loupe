@@ -34,8 +34,8 @@ public final class PullRequestListModel {
     private let staleAfter: Duration
     /// Waits out the refresh interval; tests pass one they control.
     private let sleep: @Sendable (Duration) async throws -> Void
-    /// The time to judge review requests' age by; tests pass one they control.
-    private let now: @MainActor () -> Date
+    /// The time to judge review requests' and PRs' age by; tests pass one they control.
+    let now: @MainActor () -> Date
 
     public init(
         client: GitHubClient = GitHubClient(),
@@ -464,8 +464,13 @@ public final class PullRequestListModel {
 
     /// How long a request for the viewer's review stays listed unanswered, or a PR they gave a
     /// verdict on stays listed without activity, before it's hidden as stale; the list's caption
-    /// shows the hidden ones again in a click, so it can be tight.
+    /// shows the hidden ones again in a click, so it can be tight. Also how long the viewer's own
+    /// PR goes without activity before TODO mode moves it out of Yours and Waiting.
     static let staleAge: TimeInterval = 30 * 24 * 60 * 60
+
+    /// How long the viewer's own PR goes without activity before TODO mode files it with the
+    /// longest quiet, folded away.
+    static let longQuietAge: TimeInterval = 6 * staleAge
 
     /// Counts the PRs with `ids` as being looked up on GitHub while `body` runs.
     private func checking(_ ids: [String], during body: () async throws -> Void) async rethrows {

@@ -118,7 +118,7 @@ struct TodoListTests {
         #expect(waiting.map(\.reason) == reasons)
         #expect(!todo.yours.contains { [answered, awaitingReview].contains($0.id) })
         let mine = model.pullRequests(in: .mine).map(\.id)
-        let placed: [String] = (todo.yours + todo.waiting).flatMap { item in [item.id] + item.stacked.map(\.id) }
+        let placed: [String] = (todo.yours + todo.waiting + todo.overAMonth + todo.overSixMonths).flatMap { item in [item.id] + item.stacked.map(\.id) }
         #expect(Set(placed) == Set(mine), "every PR of the viewer's is somewhere")
     }
 
@@ -142,6 +142,71 @@ struct TodoListTests {
         #expect(stack.stacked.map(\.depth) == [1, 2])
         let rows = (todo.review + todo.yours + todo.waiting).map(\.id)
         #expect(!rows.contains(middle) && !rows.contains(top), "the rest are only under their stack's row")
+    }
+
+    @Test func theViewersQuietPullRequestsAreKeptApartByHowLongTheyveBeenQuiet() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let clock = TodoClock(at: .now)
+        let model = try todoModel(github, now: { clock.now })
+        let sevenMonths = try await ownPullRequest(9031, in: github, approved: true)
+        await elapse(days(15), github, clock)
+        let overSixWaiting = try await ownPullRequest(9032, in: github)
+        await elapse(days(10), github, clock)
+        let underSixDraft = try await ownPullRequest(9033, in: github, mergeState: "BLOCKED")
+        try await github.edit(underSixDraft) { $0.isDraft = true }
+        await elapse(days(140), github, clock)
+        let monthReady = try await ownPullRequest(9034, in: github, approved: true)
+        await elapse(days(2), github, clock)
+        let monthDraft = try await ownPullRequest(9035, in: github, mergeState: "BLOCKED")
+        try await github.edit(monthDraft) { $0.isDraft = true }
+        await elapse(days(2), github, clock)
+        let monthWaiting = try await ownPullRequest(9036, in: github)
+        await elapse(days(2), github, clock)
+        let recentReady = try await ownPullRequest(9037, in: github, approved: true)
+        let recentWaiting = try await ownPullRequest(9038, in: github)
+        await elapse(days(29), github, clock)
+
+        await model.refresh()
+
+        let ids = [sevenMonths, overSixWaiting, underSixDraft, monthReady, monthDraft, monthWaiting, recentReady, recentWaiting]
+        let todo = model.todo()
+        #expect(todo.yours.map(\.id).filter(ids.contains) == [recentReady], "quiet 29 days is recent")
+        #expect(todo.waiting.map(\.id).filter(ids.contains) == [recentWaiting])
+        // Nearest done first, then by recency, then what waits on others, though it's the newest.
+        let overAMonth = todo.overAMonth.filter { ids.contains($0.id) }
+        #expect(overAMonth.map(\.id) == [monthReady, monthDraft, underSixDraft, monthWaiting], "quiet 31 days to 175 days")
+        let monthReasons: [TodoReason] = [.readyToMerge, .draft, .draft, .waitingOnReview]
+        #expect(overAMonth.map(\.reason) == monthReasons)
+        let overSixMonths = todo.overSixMonths.filter { ids.contains($0.id) }
+        #expect(overSixMonths.map(\.id) == [sevenMonths, overSixWaiting], "nearest done first, though older")
+        let sixMonthReasons: [TodoReason] = [.readyToMerge, .waitingOnReview]
+        #expect(overSixMonths.map(\.reason) == sixMonthReasons)
+
+        clock.now += days(6)
+
+        let later = model.todo()
+        #expect(later.yours.map(\.id).filter(ids.contains).isEmpty && later.waiting.map(\.id).filter(ids.contains).isEmpty, "quiet 35 days")
+        #expect(later.overAMonth.map(\.id).filter(ids.contains) == [recentReady, monthReady, monthDraft, recentWaiting, monthWaiting])
+        #expect(later.overSixMonths.map(\.id).filter(ids.contains) == [sevenMonths, underSixDraft, overSixWaiting], "quiet 181 days")
+    }
+
+    @Test func aQuietStackIsPlacedByItsBottomPullRequest() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let clock = TodoClock(at: .now)
+        let model = try todoModel(github, now: { clock.now })
+        let bottom = try await ownPullRequest(9041, in: github, approved: true)
+        let top = try await ownPullRequest(9042, in: github)
+        try await github.stack(top, on: bottom)
+        await elapse(days(40), github, clock)
+        try await github.push(to: top)
+
+        await model.refresh()
+
+        let todo = model.todo()
+        let stack = try #require(todo.overAMonth.first { $0.id == bottom })
+        #expect(stack.stacked.map(\.id) == [top], "though the top is recent")
+        let rows = (todo.yours + todo.waiting + todo.overAMonth + todo.overSixMonths).map(\.id)
+        #expect(!rows.contains(top))
     }
 }
 
@@ -171,6 +236,13 @@ private func ownPullRequest(
 @MainActor
 private func todoModel(_ github: FakeGitHub, now: @escaping @MainActor () -> Date = { .now }) throws -> PullRequestListModel {
     try PullRequestListModel(client: github.client(), store: .inMemory(), checkoutSearchRoots: [], now: now, onOpen: { _ in })
+}
+
+/// Moves GitHub's clock and the model's on together.
+@MainActor
+private func elapse(_ interval: TimeInterval, _ github: FakeGitHub, _ clock: TodoClock) async {
+    await github.passTime(interval)
+    clock.now += interval
 }
 
 private func days(_ count: Double) -> TimeInterval {

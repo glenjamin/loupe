@@ -13,13 +13,18 @@ enum ListMode: String {
 }
 
 /// The lists as one list in sections: what awaits the viewer's review, their own PRs nearest
-/// done first, and, folded away, their PRs that wait on others. Each row says why it's there.
+/// done first, and, folded away, their PRs that wait on others, all recently active; then their
+/// PRs quiet for over a month, and, folded away, over six months. Each row says why it's there.
 struct TodoListView: View {
     let model: PullRequestListModel
     /// Moved with the arrow keys; Return opens it.
     @State private var selection: PullRequestSummary.ID?
     /// Lists the PRs that wait on others, for this session only.
     @State private var showsWaiting = false
+    /// Lists the PRs quiet for over a month, for this session only.
+    @State private var showsOverAMonth = true
+    /// Lists the PRs quiet for over six months, for this session only.
+    @State private var showsOverSixMonths = false
     /// The stacks whose PRs above the bottom one are listed, by the bottom PR's id.
     @State private var expandedStacks: Set<String> = []
 
@@ -28,6 +33,8 @@ struct TodoListView: View {
         let review = rows(todo.review)
         let yours = rows(todo.yours)
         let waiting = showsWaiting ? rows(todo.waiting) : []
+        let overAMonth = showsOverAMonth ? rows(todo.overAMonth) : []
+        let overSixMonths = showsOverSixMonths ? rows(todo.overSixMonths) : []
         if todo.isEmpty {
             Text("Nothing to do")
                 .foregroundStyle(.secondary)
@@ -52,25 +59,26 @@ struct TodoListView: View {
                     Section {
                         ForEach(waiting) { row($0) }
                     } header: {
-                        Button {
-                            showsWaiting.toggle()
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "chevron.right")
-                                    .rotationEffect(.degrees(showsWaiting ? 90 : 0))
-                                    .font(.caption.weight(.semibold))
-                                sectionTitle("Waiting on others", count: todo.waiting.count)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .background(SnapshotClickMarker(name: "waiting"))
-                        .help(showsWaiting ? "Hide your PRs that wait on reviewers or checks" : "Show your PRs that wait on reviewers or checks")
+                        foldingTitle("Waiting on others", count: todo.waiting.count, shows: $showsWaiting, marker: "waiting", what: "your PRs that wait on reviewers or checks")
+                    }
+                }
+                if !todo.overAMonth.isEmpty {
+                    Section {
+                        ForEach(overAMonth) { row($0) }
+                    } header: {
+                        foldingTitle("Over a month", count: todo.overAMonth.count, shows: $showsOverAMonth, marker: "over-a-month", what: "your PRs quiet for over a month")
+                    }
+                }
+                if !todo.overSixMonths.isEmpty {
+                    Section {
+                        ForEach(overSixMonths) { row($0) }
+                    } header: {
+                        foldingTitle("Over 6 months", count: todo.overSixMonths.count, shows: $showsOverSixMonths, marker: "over-6-months", what: "your PRs quiet for over six months")
                     }
                 }
             }
             .onKeyPress(.return) {
-                guard let pullRequest = (review + yours + waiting).first(where: { $0.id == selection })?.pullRequest else { return .ignored }
+                guard let pullRequest = (review + yours + waiting + overAMonth + overSixMonths).first(where: { $0.id == selection })?.pullRequest else { return .ignored }
                 model.open(pullRequest)
                 return .handled
             }
@@ -81,6 +89,24 @@ struct TodoListView: View {
         Text("\(title) (\(count))")
             .font(.headline)
             .foregroundStyle(.primary)
+    }
+
+    /// A section's title with its count, which folds and unfolds the section when clicked.
+    private func foldingTitle(_ title: String, count: Int, shows: Binding<Bool>, marker: String, what: String) -> some View {
+        Button {
+            shows.wrappedValue.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.right")
+                    .rotationEffect(.degrees(shows.wrappedValue ? 90 : 0))
+                    .font(.caption.weight(.semibold))
+                sectionTitle(title, count: count)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(SnapshotClickMarker(name: marker))
+        .help(shows.wrappedValue ? "Hide \(what)" : "Show \(what)")
     }
 
     private func row(_ row: TodoRow) -> some View {

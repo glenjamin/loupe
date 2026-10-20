@@ -883,6 +883,12 @@ A stack of the viewer's PRs is one row, for the lowest of them listed, ranked by
 
 Glen's Mine holds many PRs years old, which TODO ranks like any other, so Yours runs long; the lists show them too, and no age rule was added without asking.
 
+### TODO mode keeps the viewer's quiet PRs apart, by how long they've been quiet
+
+With 110 PRs of Glen's, many years old, ranking by how near done put old PRs in early steps above recent ones in later steps. Glen asked for three sections: recent, over a month, over six months. Yours and Waiting on others now hold only the viewer's PRs active within `staleAge` (a month, the clock that hides stale requests in To review, judged by the PR's `updatedAt` as there), and are otherwise unchanged. After them, "Over a month (N)" holds those quiet one to six months and "Over 6 months (N)" those quiet longer (`longQuietAge`, six times `staleAge`). The headers say only how long, as the section's rows are the viewer's own and the badges say the rest.
+
+Each older section is ordered as Yours, nearest done first then most recently updated first, followed by the PRs that wait on others, most recently updated first, still with their "Waiting on review" badges, so nothing goes missing and there's no third fold per band. A stack is placed by its bottom PR's activity, as it's ranked by it, though a PR above may be newer. Over a month starts unfolded, as those are still worth a look; Over 6 months starts folded with its count showing, like Waiting; each fold is remembered for the session. Review is unchanged, as stale requests already stay out of it. On Glen's data, 20 recent PRs, 20 over a month and 70 over six months.
+
 ## Not yet decided
 
 Nothing is pending.

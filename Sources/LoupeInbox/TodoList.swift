@@ -2,17 +2,24 @@ import Foundation
 import LoupeModel
 
 /// The lists as one list of what to do next: PRs awaiting the viewer's review, then their own
-/// PRs nearest done first, then their own PRs that wait on someone else, apart.
+/// recent PRs nearest done first, then their own recent PRs that wait on someone else, apart, then
+/// their own PRs gone quiet, by how long.
 public struct TodoList: Sendable, Equatable {
     /// Waiting on the viewer's review, longest asked first.
     public let review: [TodoItem]
-    /// The viewer's own PRs with something for them to do, nearest done first.
+    /// The viewer's own recently active PRs with something for them to do, nearest done first.
     public let yours: [TodoItem]
-    /// The viewer's own PRs waiting on reviewers or checks, most recently updated first.
+    /// The viewer's own recently active PRs waiting on reviewers or checks, most recently
+    /// updated first.
     public let waiting: [TodoItem]
+    /// The viewer's own PRs quiet for over a month but not six: those with something for them to
+    /// do nearest done first, then those waiting on others, most recently updated first.
+    public let overAMonth: [TodoItem]
+    /// The viewer's own PRs quiet for over six months, ordered as `overAMonth`.
+    public let overSixMonths: [TodoItem]
 
     public var isEmpty: Bool {
-        review.isEmpty && yours.isEmpty && waiting.isEmpty
+        review.isEmpty && yours.isEmpty && waiting.isEmpty && overAMonth.isEmpty && overSixMonths.isEmpty
     }
 }
 
@@ -131,9 +138,10 @@ extension PullRequestListModel {
     /// the viewer, or updated since their review, oldest request first by when they were first
     /// asked, so a PR asked again is nearer done than a new one; stale requests stay out as in
     /// the lists, as do PRs the viewer approved that only wait to be merged. The viewer's own
-    /// open PRs go in Yours by how near done they are, most recently updated first within each
-    /// step, or in Waiting when only others can move them on. A stack of their PRs is one row,
-    /// for its lowest listed PR, ranked by that PR.
+    /// open PRs active within `staleAge` go in Yours by how near done they are, most recently
+    /// updated first within each step, or in Waiting when only others can move them on; quieter
+    /// ones go in a section by how long they've been quiet, Yours' order then Waiting's. A stack
+    /// of their PRs is one row, for its lowest listed PR, ranked and placed by that PR.
     public func todo() -> TodoList {
         let review = pullRequests(in: .toReview).compactMap { pullRequest -> TodoItem? in
             let mark = reviewMark(on: pullRequest, in: .toReview)
@@ -158,16 +166,37 @@ extension PullRequestListModel {
                 mine.append(TodoItem(pullRequest: listed.pullRequest, reason: TodoReason(yours: listed.pullRequest), list: .mine, parent: listed.parent, stacked: []))
             }
         }
-        let newestFirst = { (a: TodoItem, b: TodoItem) in a.pullRequest.updatedAt > b.pullRequest.updatedAt }
-        let yours = mine.filter { $0.reason.tier != nil }.sorted { a, b in
-            let (tierA, tierB) = (a.reason.tier ?? 0, b.reason.tier ?? 0)
-            return tierA == tierB ? newestFirst(a, b) : tierA < tierB
+        let quiet = Dictionary(grouping: mine) { item in
+            let interval = now().timeIntervalSince(item.pullRequest.updatedAt)
+            return interval > Self.longQuietAge ? QuietFor.overSixMonths : interval > Self.staleAge ? .overAMonth : .recently
         }
-        return TodoList(review: review, yours: yours, waiting: mine.filter { $0.reason.tier == nil }.sorted(by: newestFirst))
+        let recent = quiet[.recently, default: []]
+        return TodoList(
+            review: review,
+            yours: Self.nearestDoneFirst(recent.filter { $0.reason.tier != nil }),
+            waiting: Self.nearestDoneFirst(recent.filter { $0.reason.tier == nil }),
+            overAMonth: Self.nearestDoneFirst(quiet[.overAMonth, default: []]),
+            overSixMonths: Self.nearestDoneFirst(quiet[.overSixMonths, default: []])
+        )
+    }
+
+    /// Nearest done first, then those that wait on others; most recently updated first within each.
+    private static func nearestDoneFirst(_ items: [TodoItem]) -> [TodoItem] {
+        items.sorted { a, b in
+            let (tierA, tierB) = (a.reason.tier ?? Int.max, b.reason.tier ?? Int.max)
+            return tierA == tierB ? a.pullRequest.updatedAt > b.pullRequest.updatedAt : tierA < tierB
+        }
     }
 
     /// When the viewer was first asked to review the PR, as far as known.
     private static func firstAsked(_ pullRequest: PullRequestSummary) -> Date {
         pullRequest.firstReviewRequestedAt ?? pullRequest.reviewRequestedAt ?? pullRequest.updatedAt
     }
+}
+
+/// How long one of the viewer's own PRs has gone without activity, by TODO mode's sections.
+private enum QuietFor {
+    case recently
+    case overAMonth
+    case overSixMonths
 }
