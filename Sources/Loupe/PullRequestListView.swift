@@ -108,7 +108,7 @@ struct PullRequestColumn: View {
                 List(listing, selection: $selection) { listed in
                     let pullRequest = listed.pullRequest
                     Button { model.open(pullRequest) } label: {
-                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, isSelfReviewed: model.isSelfReviewed(pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent, reviewMark: model.reviewMark(on: pullRequest, in: list))
+                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, selfReview: model.selfReview(of: pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent, reviewMark: model.reviewMark(on: pullRequest, in: list))
                             .padding(.leading, CGFloat(listed.depth) * Self.stackIndent)
                     }
                     .buttonStyle(.plain)
@@ -176,7 +176,8 @@ struct PullRequestRow: View {
     /// Off where every PR is awaiting the viewer's review, so saying a review is required or
     /// asked for would say nothing.
     let showsReviewRequired: Bool
-    let isSelfReviewed: Bool
+    /// Set on the viewer's own PR whose current head has been diffed here.
+    let selfReview: SelfReview?
     /// Set on a PR whose request for review is old enough to be hidden by default.
     var staleRequestedAt: Date? = nil
     /// The viewer's approval or request for changes, set where that's why the PR is listed.
@@ -208,7 +209,7 @@ struct PullRequestRow: View {
                 if reason != .conflicts {
                     ConflictsBadge(pullRequest: pullRequest)
                 }
-                SelfReviewedBadge(isSelfReviewed: isSelfReviewed)
+                SelfReviewBadge(selfReview: selfReview)
                 if let stackedOn {
                     StackedOnLabel(parent: stackedOn)
                 }
@@ -325,6 +326,22 @@ struct SelfReviewedBadge: View {
         if isSelfReviewed {
             Badge(text: "Self-reviewed", tint: .diffSuccess)
                 .help("You've marked every file to review as viewed, so it's ready for others to review")
+        }
+    }
+}
+
+/// How far the viewer has reviewed their own PR: "Self-reviewed" once done, and quietly how many
+/// files are viewed while part way, so a PR nearly ready for others shows it. Nothing before the
+/// first file is viewed.
+struct SelfReviewBadge: View {
+    let selfReview: SelfReview?
+
+    var body: some View {
+        if let selfReview, selfReview.isComplete {
+            SelfReviewedBadge(isSelfReviewed: true)
+        } else if let selfReview, selfReview.viewed > 0 {
+            Badge(text: "Self-reviewed \(selfReview.viewed) of \(selfReview.total)", tint: .secondary)
+                .help(Text(verbatim: "You've marked \(selfReview.viewed) of the \(selfReview.total) files to review as viewed"))
         }
     }
 }

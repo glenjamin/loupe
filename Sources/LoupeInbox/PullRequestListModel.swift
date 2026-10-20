@@ -76,6 +76,12 @@ public final class PullRequestListModel {
         reviewProgress[pullRequest.id]?.isSelfReviewed(pullRequest, viewer: viewer) ?? false
     }
 
+    /// How much of their own PR's diff of the current head the viewer has marked viewed; nil for
+    /// others' PRs, and for the viewer's whose current head hasn't been diffed here.
+    public func selfReview(of pullRequest: PullRequestSummary) -> SelfReview? {
+        reviewProgress[pullRequest.id]?.selfReview(of: pullRequest, viewer: viewer)
+    }
+
     /// Reads the PR's review progress and the viewer's login from the store again, once a tab has
     /// stored a diff, viewed states or the login.
     func reviewProgressChanged(of id: String) {

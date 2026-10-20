@@ -7,13 +7,15 @@ import LoupeModel
 public struct TodoList: Sendable, Equatable {
     /// Waiting on the viewer's review, longest asked first.
     public let review: [TodoItem]
-    /// The viewer's own recently active PRs with something for them to do, nearest done first.
+    /// The viewer's own recently active PRs with something for them to do, nearest done first,
+    /// then most self-reviewed.
     public let yours: [TodoItem]
-    /// The viewer's own recently active PRs waiting on reviewers or checks, most recently
-    /// updated first.
+    /// The viewer's own recently active PRs waiting on reviewers or checks, most self-reviewed
+    /// then most recently updated first.
     public let waiting: [TodoItem]
     /// The viewer's own PRs quiet for over a month but not six: those with something for them to
-    /// do nearest done first, then those waiting on others, most recently updated first.
+    /// do nearest done first, then those waiting on others, each most self-reviewed then most
+    /// recently updated first.
     public let overAMonth: [TodoItem]
     /// The viewer's own PRs quiet for over six months, ordered as `overAMonth`.
     public let overSixMonths: [TodoItem]
@@ -138,10 +140,11 @@ extension PullRequestListModel {
     /// the viewer, or updated since their review, oldest request first by when they were first
     /// asked, so a PR asked again is nearer done than a new one; stale requests stay out as in
     /// the lists, as do PRs the viewer approved that only wait to be merged. The viewer's own
-    /// open PRs active within `staleAge` go in Yours by how near done they are, most recently
-    /// updated first within each step, or in Waiting when only others can move them on; quieter
-    /// ones go in a section by how long they've been quiet, Yours' order then Waiting's. A stack
-    /// of their PRs is one row, for its lowest listed PR, ranked and placed by that PR.
+    /// open PRs active within `staleAge` go in Yours by how near done they are, the most
+    /// self-reviewed then most recently updated first within each step, or in Waiting when only
+    /// others can move them on; quieter ones go in a section by how long they've been quiet,
+    /// Yours' order then Waiting's. A stack of their PRs is one row, for its lowest listed PR,
+    /// ranked and placed by that PR.
     public func todo() -> TodoList {
         let review = pullRequests(in: .toReview).compactMap { pullRequest -> TodoItem? in
             let mark = reviewMark(on: pullRequest, in: .toReview)
@@ -173,18 +176,22 @@ extension PullRequestListModel {
         let recent = quiet[.recently, default: []]
         return TodoList(
             review: review,
-            yours: Self.nearestDoneFirst(recent.filter { $0.reason.tier != nil }),
-            waiting: Self.nearestDoneFirst(recent.filter { $0.reason.tier == nil }),
-            overAMonth: Self.nearestDoneFirst(quiet[.overAMonth, default: []]),
-            overSixMonths: Self.nearestDoneFirst(quiet[.overSixMonths, default: []])
+            yours: nearestDoneFirst(recent.filter { $0.reason.tier != nil }),
+            waiting: nearestDoneFirst(recent.filter { $0.reason.tier == nil }),
+            overAMonth: nearestDoneFirst(quiet[.overAMonth, default: []]),
+            overSixMonths: nearestDoneFirst(quiet[.overSixMonths, default: []])
         )
     }
 
-    /// Nearest done first, then those that wait on others; most recently updated first within each.
-    private static func nearestDoneFirst(_ items: [TodoItem]) -> [TodoItem] {
-        items.sorted { a, b in
+    /// Nearest done first, then those that wait on others; within each, the most self-reviewed
+    /// first, as a self-review readies a PR for others, then the most recently updated.
+    private func nearestDoneFirst(_ items: [TodoItem]) -> [TodoItem] {
+        let selfReviewed = Dictionary(uniqueKeysWithValues: items.map { ($0.id, selfReview(of: $0.pullRequest)?.fraction ?? 0) })
+        return items.sorted { a, b in
             let (tierA, tierB) = (a.reason.tier ?? Int.max, b.reason.tier ?? Int.max)
-            return tierA == tierB ? a.pullRequest.updatedAt > b.pullRequest.updatedAt : tierA < tierB
+            guard tierA == tierB else { return tierA < tierB }
+            let (reviewedA, reviewedB) = (selfReviewed[a.id, default: 0], selfReviewed[b.id, default: 0])
+            return reviewedA == reviewedB ? a.pullRequest.updatedAt > b.pullRequest.updatedAt : reviewedA > reviewedB
         }
     }
 

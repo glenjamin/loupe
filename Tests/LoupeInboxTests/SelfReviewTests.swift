@@ -13,12 +13,14 @@ struct SelfReviewTests {
         let pullRequest = try await app.push(app.mine[0], changing: ["a.txt", "b.txt", "vendor/lib/lib.go"], in: repo)
         await app.viewed.add(pullRequest.id, files: [("a.txt", .unviewed), ("b.txt", .dismissed), ("vendor/lib/lib.go", .unviewed)])
         #expect(!app.lists.isSelfReviewed(pullRequest), "nothing is known of a PR never opened")
+        #expect(app.lists.selfReview(of: pullRequest) == nil)
 
         let tab = try await app.open(pullRequest)
         #expect(!tab.isSelfReviewed)
         await tab.markViewedAndAdvance()
         #expect(!tab.isSelfReviewed, "a file changed since it was viewed needs another look")
         #expect(!app.lists.isSelfReviewed(pullRequest))
+        #expect(app.lists.selfReview(of: pullRequest) == SelfReview(viewed: 1, total: 2), "part way, the vendored file not counted")
 
         await tab.markViewedAndAdvance()
         #expect(tab.isSelfReviewed, "the vendored file left unviewed doesn't count")

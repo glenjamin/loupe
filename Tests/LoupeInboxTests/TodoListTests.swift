@@ -208,6 +208,39 @@ struct TodoListTests {
         let rows = (todo.yours + todo.waiting + todo.overAMonth + todo.overSixMonths).map(\.id)
         #expect(!rows.contains(top))
     }
+
+    @Test func withinAStepTheMoreSelfReviewedComesFirst() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let store = try PullRequestStore.inMemory()
+        let model = try todoModel(github, store: store)
+        await model.refresh()
+        let full = try await ownPullRequest(9051, in: github, asking: [], mergeState: "BLOCKED")
+        let mostly = try await ownPullRequest(9052, in: github, asking: [], mergeState: "BLOCKED")
+        let barely = try await ownPullRequest(9053, in: github, asking: [], mergeState: "BLOCKED")
+        let none = try await ownPullRequest(9054, in: github, asking: [], mergeState: "BLOCKED")
+        let neverDiffed = try await ownPullRequest(9055, in: github, asking: [], mergeState: "BLOCKED")
+        let pushed = try await ownPullRequest(9056, in: github, asking: [], mergeState: "BLOCKED")
+        let ready = try await ownPullRequest(9057, in: github, approved: true)
+        await model.refresh()
+        try await selfReview(full, viewing: 4, of: 4, in: model, store)
+        try await selfReview(mostly, viewing: 3, of: 4, in: model, store)
+        try await selfReview(barely, viewing: 1, of: 4, in: model, store)
+        try await selfReview(none, viewing: 0, of: 4, in: model, store)
+        try await selfReview(pushed, viewing: 2, of: 2, in: model, store)
+        await github.passTime(60)
+        try await github.push(to: pushed)
+
+        // The next launch reads the review progress stored as tabs mark files viewed.
+        let next = try todoModel(github, store: store)
+        await next.refresh()
+
+        let ids = [full, mostly, barely, none, neverDiffed, pushed, ready]
+        let yours = next.todo().yours.filter { ids.contains($0.id) }
+        #expect(yours.map(\.id) == [ready, full, mostly, barely, pushed, neverDiffed, none], "the step first, then self-review, then most recently updated")
+        let selfReviews = [full, mostly, barely, none, neverDiffed, pushed].map { next.pullRequest(id: $0).flatMap(next.selfReview(of:)) }
+        let expected: [SelfReview?] = [.init(viewed: 4, total: 4), .init(viewed: 3, total: 4), .init(viewed: 1, total: 4), .init(viewed: 0, total: 4), nil, nil]
+        #expect(selfReviews == expected, "a push leaves nothing known until the new head is diffed")
+    }
 }
 
 /// Opens a PR by the viewer asking `reviewers` to review it, with GitHub saying its checks are
@@ -234,8 +267,19 @@ private func ownPullRequest(
 }
 
 @MainActor
-private func todoModel(_ github: FakeGitHub, now: @escaping @MainActor () -> Date = { .now }) throws -> PullRequestListModel {
-    try PullRequestListModel(client: github.client(), store: .inMemory(), checkoutSearchRoots: [], now: now, onOpen: { _ in })
+private func todoModel(_ github: FakeGitHub, store: PullRequestStore? = nil, now: @escaping @MainActor () -> Date = { .now }) throws -> PullRequestListModel {
+    try PullRequestListModel(client: github.client(), store: store ?? .inMemory(), checkoutSearchRoots: [], now: now, onOpen: { _ in })
+}
+
+/// Stores a diff of the PR's current head with `total` files to review, `viewed` of them marked
+/// viewed, as a tab does as the viewer reviews it.
+@MainActor
+private func selfReview(_ id: String, viewing viewed: Int, of total: Int, in model: PullRequestListModel, _ store: PullRequestStore) async throws {
+    let head = try #require(model.pullRequest(id: id)?.headRefOid)
+    let paths = (1...total).map { "file\($0).txt" }
+    try await store.recordDiff(DiffRecord(pullRequestId: id, headRefOid: head, mergeBase: "base", producedAt: .now, reviewablePaths: paths))
+    let states = paths.enumerated().map { index, path in (path, index < viewed ? FileViewedState.viewed : .unviewed) }
+    try await store.replaceViewedStates(of: id, with: Dictionary(uniqueKeysWithValues: states))
 }
 
 /// Moves GitHub's clock and the model's on together.

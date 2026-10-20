@@ -905,6 +905,14 @@ A PR in a GitHub stack, at its bottom, is merged with `PUT /repos/{owner}/{repo}
 
 A refused merge's message now wraps to its full length under the merge row, where it was cut at three lines, and a web address in it is a link.
 
+### TODO mode puts the viewer's more self-reviewed PRs first within each step, and rows show part-way self-reviews
+
+Glen asked for TODO mode to count self-review, a PR the author has reviewed being further along, partly reviewed included. Within each step of the viewer's own PRs, in Yours, Waiting and the quiet sections, the PR with the larger share of its files to review marked viewed now comes first, fully self-reviewed ahead of part way, then the most recently updated as before. The share follows the "Self-reviewed" badge's rules: files to review only, a dismissed file not viewed, and only for a diff of the PR's current head, so a push counts as nothing known until the new head is diffed, the same as a PR never opened in Loupe. A stack still ranks by its bottom PR alone.
+
+Self-review doesn't move a PR between steps. The steps say what GitHub and reviewers make of a PR, which only others can change, while a self-review is the author's own preparation for asking them: a fully self-reviewed PR with no one asked is still "Request reviewers", and the badge beside it says it's ready to be. Lifting it above, say, "Changes requested" would put the author's tidying ahead of a reviewer waiting on them.
+
+Rows show part-way progress as a quiet grey "Self-reviewed 3 of 8" badge where the green "Self-reviewed" goes, worded as the sidebar's "3 of 8 reviewed" and growing into the finished badge; nothing shows before the first file is viewed. The rows are the lists' own, so Mine shows it too. The PR's header still shows only the finished badge, as the sidebar already counts the files there.
+
 ## Not yet decided
 
 Nothing is pending.

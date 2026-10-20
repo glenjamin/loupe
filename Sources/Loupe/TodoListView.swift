@@ -124,7 +124,7 @@ struct TodoListView: View {
         }
         return Button { model.open(pullRequest) } label: {
             PullRequestRow(
-                pullRequest: pullRequest, showsAuthor: isReview, showsReviewRequired: !isReview, isSelfReviewed: model.isSelfReviewed(pullRequest),
+                pullRequest: pullRequest, showsAuthor: isReview, showsReviewRequired: !isReview, selfReview: model.selfReview(of: pullRequest),
                 verdict: model.verdict(on: pullRequest, in: row.list), stackedOn: row.parent, reviewMark: model.reviewMark(on: pullRequest, in: row.list),
                 reason: row.reason, stack: stack
             )
