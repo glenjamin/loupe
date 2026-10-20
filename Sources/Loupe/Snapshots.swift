@@ -232,17 +232,22 @@ enum SnapshotRun {
             }
             // LOUPE_SNAPSHOT_COMMENT=<line> hovers the row of that new line in each shown diff,
             // clicks the "+" that shows, as starting a comment would, then hovers it again, so
-            // the snapshot has both. Nothing is typed or sent.
-            if let line = environment["LOUPE_SNAPSHOT_COMMENT"].flatMap(Int.init) {
+            // the snapshot has both. `<first>-<last>` first selects the rows of those new lines,
+            // as a drag would, so the "+" starts a comment on them all. Nothing is typed or sent.
+            if let lines = environment["LOUPE_SNAPSHOT_COMMENT"].flatMap(snapshotLines) {
+                let line = lines.upperBound
                 for tab in tabs.tabs {
                     windows.select(tab.id)
                     try? await Task.sleep(for: .milliseconds(800))
                     // A diff shown while its tab settles can take longer than that to appear.
                     await wait(until: .now + 10) { windows.mainWindow.flatMap(visibleDiff(in:))?.rendered?.rowAnchors.contains { $0 != nil } == true }
-                    guard let window = windows.mainWindow, hoverRow(ofNewLine: line, in: window) else { continue }
+                    guard let window = windows.mainWindow else { continue }
+                    if lines.count > 1 { selectRows(ofNewLines: lines, in: window) }
+                    guard hoverRow(ofNewLine: line, in: window) else { continue }
                     visibleDiff(in: window)?.commentButton.performClick(nil)
                     try? await Task.sleep(for: .milliseconds(800))
                     _ = hoverRow(ofNewLine: line, in: window)
+                    print("\(tab.title): \(tab.threadActivity.newComment.map(describe) ?? "no comment is open")")
                 }
                 windows.select(tabs.selected)
             }
@@ -260,7 +265,7 @@ enum SnapshotRun {
                     window.makeFirstResponder(editor)
                     pressKeyEquivalent("g", modifiers: .command, keyCode: 5, in: window)
                     try? await Task.sleep(for: .milliseconds(500))
-                    print("\(tab.title): suggesting on line \(comment.anchor.line) offers \(tab.suggestedLines(at: comment.anchor).map(String.init(describing:)) ?? "nothing"), draft \(String(reflecting: comment.draft.text)), cursor at \(editor.selectedRange().location)")
+                    print("\(tab.title): suggesting on line \(comment.anchor.line) offers \(tab.suggestedLines(for: comment).map(String.init(describing:)) ?? "nothing"), draft \(String(reflecting: comment.draft.text)), cursor at \(editor.selectedRange().location)")
                     let written = directory.appending(path: "suggest-\(sanitised(windows.title(of: tab.id))).png")
                     try? await saveSnapshot(of: window, to: written)
                     print(written.path(percentEncoded: false))
@@ -646,6 +651,17 @@ enum SnapshotRun {
 
     /// Scrolls the shown diff so the row of a new line is a little way down, then moves the
     /// mouse over it as the pointer would, printing whether its "+" shows.
+    /// Selects the rows of new lines in the shown diff, first to last, as a drag over them would.
+    private static func selectRows(ofNewLines lines: ClosedRange<Int>, in window: NSWindow) {
+        guard let textView = visibleDiff(in: window), let rendered = textView.rendered,
+              let first = rendered.rowAnchors.firstIndex(where: { $0?.side == .right && $0?.line == lines.lowerBound }),
+              let last = rendered.rowAnchors.firstIndex(where: { $0?.side == .right && $0?.line == lines.upperBound })
+        else { return print("no rows for new lines \(lines) to select") }
+        let end = rendered.rowStarts.indices.contains(last + 1) ? rendered.rowStarts[last + 1] - 1 : rendered.text.length
+        textView.setSelectedRange(NSRange(location: rendered.rowStarts[first], length: end - rendered.rowStarts[first]))
+        print("selected the rows of new lines \(lines.lowerBound)–\(lines.upperBound)")
+    }
+
     private static func hoverRow(ofNewLine line: Int, in window: NSWindow) -> Bool {
         guard let (textView, point) = scrollToRow(ofNewLine: line, in: window) else {
             print("no row for new line \(line) to hover")
@@ -2284,3 +2300,21 @@ private let sampleDraft = """
     page, err := client.FetchPage(ctx, cursor)
     ```
     """
+
+/// `<line>`, or `<first>-<last>`, as a snapshot hook names lines.
+private func snapshotLines(_ value: String) -> ClosedRange<Int>? {
+    let parts = value.split(separator: "-").compactMap { Int($0) }
+    switch parts.count {
+    case 1: return parts[0]...parts[0]
+    case 2 where parts[0] <= parts[1]: return parts[0]...parts[1]
+    default: return nil
+    }
+}
+
+/// Where a comment being started is, as a snapshot run prints it.
+@MainActor
+private func describe(_ comment: NewComment) -> String {
+    let start = comment.start.map { "from \($0.side) line \($0.line) " } ?? ""
+    let commit = comment.target.isWholePullRequest ? "the whole PR's diff" : "commit \(comment.target.commitOid.prefix(7))"
+    return "a comment is open \(start)on \(comment.anchor.side) line \(comment.anchor.line) of \(commit), reviews \(comment.target.takesReviewComments ? "offered" : "not offered")"
+}

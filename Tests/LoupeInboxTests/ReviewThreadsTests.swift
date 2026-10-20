@@ -48,10 +48,10 @@ struct ReviewThreadsTests {
         #expect(expanded.anchored.contains { $0.side == .right && $0.line == 30 && $0.threads.map(\.id) == [hidden] })
         #expect(expanded.elsewhere.map(\.id) == [outdated])
 
-        // They belong to the whole PR's diff, so a commit's shows none.
+        // They were made on the head, so a commit's own changes show none of them.
         let commit = try #require(tab.ready?.commits.first)
         await tab.show(.commit(commit.oid))
-        #expect(tab.threads(on: try #require(tab.file("app.go"))) == nil)
+        #expect(tab.threads(on: try #require(tab.file("app.go")))?.isEmpty == true)
         #expect(tab.unresolvedThreadCount(of: "app.go") == nil)
         await tab.show(.all)
         #expect(tab.threads(on: tab.expandedFile(file))?.anchored.count == 3)
@@ -179,7 +179,8 @@ struct NewCommentTests {
         #expect(!revealed.contains(DiffAnchor(path: "app.go", side: .left, line: 28)), "revealed lines take comments on the new side")
 
         await tab.show(.commit(try #require(tab.ready?.commits.first).oid))
-        #expect(tab.commentableAnchors(of: try #require(tab.file("app.go"))) == nil, "not on one commit's changes")
+        let commitFile = try #require(tab.file("app.go"))
+        #expect(tab.commentableAnchors(of: commitFile)?.contains(DiffAnchor(path: "app.go", side: .right, line: 11)) == true, "one commit's changes take comments on that commit")
         #expect(await app.conversations.commentsReceived.isEmpty, "nothing is posted until a comment is sent")
     }
 
@@ -436,6 +437,7 @@ struct ThreadsApp {
         let head = try await repo.commit(["new.go": "package app\n"], message: "Add new.go")
         try await repo.push(asPullRequest: listed.number)
         try await github.edit(listed.id) { $0.headRefOid = head; $0.baseRefOid = branchPoint }
+        await conversations.setHead(head, of: listed.id)
         await tabs.lists.refresh()
         return try #require(tabs.lists.pullRequest(id: listed.id))
     }

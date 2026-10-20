@@ -90,7 +90,7 @@ extension GitHubClient {
           id isResolved isOutdated path line startLine diffSide startDiffSide originalLine originalStartLine subjectType
           viewerCanReply viewerCanResolve viewerCanUnresolve
           resolvedBy { login }
-          firstComment: comments(first: 1) { nodes { diffHunk } }
+          firstComment: comments(first: 1) { nodes { diffHunk originalCommit { oid } } }
           comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason state viewerCanUpdate viewerCanDelete author { login avatarUrl } \(reactionGroupsField) } }
         }
         """
@@ -279,6 +279,7 @@ private struct ReviewThreadNode: Decodable {
     let line: Int?
     let startLine: Int?
     let diffSide: String?
+    let startDiffSide: String?
     let originalLine: Int?
     let originalStartLine: Int?
     let subjectType: String?
@@ -290,7 +291,13 @@ private struct ReviewThreadNode: Decodable {
     let comments: Connection<Comment>
 
     struct Login: Decodable { let login: String }
-    struct Hunk: Decodable { let diffHunk: String }
+    struct Hunk: Decodable {
+        let diffHunk: String
+        /// Missing in captures that didn't ask for it.
+        let originalCommit: Commit?
+    }
+
+    struct Commit: Decodable { let oid: String }
 
     struct Comment: Decodable {
         let id: String
@@ -312,7 +319,8 @@ private struct ReviewThreadNode: Decodable {
     var thread: ReviewThread {
         ReviewThread(
             id: id, isResolved: isResolved, isOutdated: isOutdated, path: path, line: line, startLine: startLine,
-            side: diffSide.flatMap(ReviewThread.Side.init) ?? .right, originalLine: originalLine, originalStartLine: originalStartLine,
+            side: diffSide.flatMap(ReviewThread.Side.init) ?? .right, startSide: startDiffSide.flatMap(ReviewThread.Side.init),
+            originalLine: originalLine, originalStartLine: originalStartLine, originalCommitOid: firstComment.nodes.first?.originalCommit?.oid,
             isOnFile: subjectType == "FILE", diffHunk: firstComment.nodes.first?.diffHunk ?? "", resolvedBy: resolvedBy?.login,
             viewerCanReply: viewerCanReply, viewerCanResolve: viewerCanResolve, viewerCanUnresolve: viewerCanUnresolve,
             comments: comments.nodes.map {

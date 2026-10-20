@@ -339,8 +339,10 @@ private struct ReviewThreadRow: Codable, FetchableRecord, PersistableRecord {
     let line: Int?
     let startLine: Int?
     let side: String
+    let startSide: String?
     let originalLine: Int?
     let originalStartLine: Int?
+    let originalCommitOid: String?
     let isOnFile: Bool
     let diffHunk: String
     let resolvedBy: String?
@@ -358,8 +360,10 @@ private struct ReviewThreadRow: Codable, FetchableRecord, PersistableRecord {
         line = thread.line
         startLine = thread.startLine
         side = thread.side.rawValue
+        startSide = thread.startSide?.rawValue
         originalLine = thread.originalLine
         originalStartLine = thread.originalStartLine
+        originalCommitOid = thread.originalCommitOid
         isOnFile = thread.isOnFile
         diffHunk = thread.diffHunk
         resolvedBy = thread.resolvedBy
@@ -371,8 +375,8 @@ private struct ReviewThreadRow: Codable, FetchableRecord, PersistableRecord {
     func thread(comments: [ThreadComment]) -> ReviewThread {
         ReviewThread(
             id: id, isResolved: isResolved, isOutdated: isOutdated, path: path, line: line, startLine: startLine,
-            side: ReviewThread.Side(rawValue: side) ?? .right, originalLine: originalLine, originalStartLine: originalStartLine,
-            isOnFile: isOnFile, diffHunk: diffHunk, resolvedBy: resolvedBy, viewerCanReply: viewerCanReply,
+            side: ReviewThread.Side(rawValue: side) ?? .right, startSide: startSide.flatMap(ReviewThread.Side.init),
+            originalLine: originalLine, originalStartLine: originalStartLine, originalCommitOid: originalCommitOid, isOnFile: isOnFile, diffHunk: diffHunk, resolvedBy: resolvedBy, viewerCanReply: viewerCanReply,
             viewerCanResolve: viewerCanResolve, viewerCanUnresolve: viewerCanUnresolve, comments: comments
         )
     }

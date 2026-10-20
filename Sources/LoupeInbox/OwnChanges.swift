@@ -261,13 +261,18 @@ extension PullRequestTab {
         )
     }
 
-    /// A thread for a comment the viewer is starting on `anchor`, until GitHub says which
-    /// thread it made, with the diff's lines up to it as GitHub keeps them.
-    func sendingThread(at anchor: DiffAnchor, in review: ReviewDiff) -> ReviewThread {
-        let file = review.changes.files.first { $0.path == anchor.path } ?? lastHiddenFileDiff(of: anchor.path)
+    /// A thread for a comment the viewer is starting, until GitHub says which thread it made,
+    /// with the diff's lines up to its last as GitHub keeps them. One started on a commit is on
+    /// that commit's lines, and on the whole PR's diff only where they're the head's.
+    func sendingThread(for comment: NewComment, in review: ReviewDiff) -> ReviewThread {
+        let (anchor, start, target) = (comment.anchor, comment.start, comment.target)
+        let file = producedFile(anchor.path) ?? lastHiddenFileDiff(of: anchor.path)
+        let isOnHead = target.isWholePullRequest || (target.commitOid == review.headOid && anchor.side == .right && start?.side != .left)
+        func side(_ anchor: DiffAnchor) -> ReviewThread.Side { anchor.side == .left ? .left : .right }
         return ReviewThread(
-            id: OwnChange.provisionalId(), isResolved: false, isOutdated: false, path: anchor.path, line: anchor.line,
-            side: anchor.side == .left ? .left : .right, originalLine: anchor.line,
+            id: OwnChange.provisionalId(), isResolved: false, isOutdated: false, path: anchor.path,
+            line: isOnHead ? anchor.line : nil, startLine: isOnHead ? start?.line : nil, side: side(anchor), startSide: start.map(side),
+            originalLine: anchor.line, originalStartLine: start?.line, originalCommitOid: target.commitOid,
             diffHunk: file.map { diffHunk(endingOn: anchor, in: expandedFile($0)) } ?? "", comments: []
         )
     }

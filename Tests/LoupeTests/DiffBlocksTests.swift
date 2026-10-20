@@ -81,7 +81,7 @@ struct DiffBlocksTests {
         let added = DiffAnchor(path: "go.mod", side: .right, line: 10)
         view.commentableAnchors = [added]
         var asked: [DiffAnchor] = []
-        view.onComment = { asked.append($0) }
+        view.onComment = { anchor, start in asked.append(anchor); #expect(start == nil) }
 
         try hover(onRowContaining: "transfermanager", in: view)
         #expect(!view.commentButton.isHidden)
@@ -108,7 +108,7 @@ struct DiffBlocksTests {
         let added = DiffAnchor(path: "go.mod", side: .right, line: 10)
         view.commentableAnchors = [added]
         var asked: [DiffAnchor] = []
-        view.onComment = { asked.append($0) }
+        view.onComment = { anchor, start in asked.append(anchor); #expect(start == nil) }
         let text = view.string as NSString
         let code = text.range(of: "transfermanager")
         let row = try #require(view.rendered?.row(at: code.location))
@@ -126,6 +126,38 @@ struct DiffBlocksTests {
         #expect(asked.isEmpty, "a hunk header")
     }
 
+    @Test func thePlusOnASelectionOfSeveralRowsStartsACommentOnThemAll() throws {
+        let goMod = try fixtureFile("go.mod")
+        let view = DiffTextView.make()
+        view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        view.show(RenderedDiff(file: goMod))
+        view.layoutManager?.ensureLayout(for: try #require(view.textContainer))
+        let deleted = DiffAnchor(path: "go.mod", side: .left, line: 10)
+        let added = DiffAnchor(path: "go.mod", side: .right, line: 10)
+        let unchanged = DiffAnchor(path: "go.mod", side: .right, line: 11)
+        view.commentableAnchors = [DiffAnchor(path: "go.mod", side: .right, line: 9), deleted, added, unchanged]
+        var asked: [[DiffAnchor?]] = []
+        view.onComment = { anchor, start in asked.append([start, anchor]) }
+        let text = view.string as NSString
+        // From part way into the deleted row to part way into the unchanged one, as a drag.
+        let from = text.range(of: "aws-sdk-go v1.49.23").location
+        view.setSelectedRange(NSRange(location: from, length: text.range(of: "bugsnag").location - from))
+
+        try hover(onRowContaining: "transfermanager", in: view)
+        #expect(view.commentButton.toolTip?.contains("lines 10–11") == true)
+        view.commentButton.performClick(nil)
+        #expect(asked == [[deleted, unchanged]], "the selection's first and last rows, whichever is clicked")
+        try middleClick(on: text.range(of: "bugsnag"), in: view)
+        #expect(asked.last == [deleted, unchanged], "a middle click in the selection does the same")
+
+        try middleClick(on: text.range(of: "gogen-avro"), in: view)
+        #expect(asked.last == [nil, DiffAnchor(path: "go.mod", side: .right, line: 9)], "a row outside the selection takes a comment of its own")
+        view.setSelectedRange(NSRange(location: from, length: 3))
+        try middleClick(on: text.range(of: "aws-sdk-go v1.49.23"), in: view)
+        #expect(asked.last == [nil, deleted], "a selection within one row")
+
+    }
+
     @Test func doubleClickingARowThatTakesACommentSelectsAWord() throws {
         let goMod = try fixtureFile("go.mod")
         let view = DiffTextView.make()
@@ -138,7 +170,7 @@ struct DiffBlocksTests {
         view.layoutManager?.ensureLayout(for: try #require(view.textContainer))
         view.commentableAnchors = [DiffAnchor(path: "go.mod", side: .right, line: 10)]
         var asked: [DiffAnchor] = []
-        view.onComment = { asked.append($0) }
+        view.onComment = { anchor, start in asked.append(anchor); #expect(start == nil) }
         let word = (view.string as NSString).range(of: "transfermanager")
 
         try doubleClick(on: word, in: view)

@@ -250,9 +250,15 @@ public struct ReviewThread: Sendable, Equatable, Identifiable {
     /// The first line of a thread on several; nil or the same as `line` for one line.
     public var startLine: Int?
     public var side: Side
+    /// The first line's side, for a thread on several lines; nil when it's `side`.
+    public var startSide: Side?
     /// Where the thread was on the commit it was made on, which outlives an outdated thread.
     public var originalLine: Int?
     public var originalStartLine: Int?
+    /// The commit the thread was made on, whose diff `originalLine` is numbered in: the PR's
+    /// head then, or one commit picked on its own. Nil when not known, as for a thread stored
+    /// before it was fetched.
+    public var originalCommitOid: String?
     /// On the file as a whole rather than on lines of it.
     public var isOnFile: Bool
     /// The diff around the first comment, ending on its line, as GitHub keeps it.
@@ -273,8 +279,8 @@ public struct ReviewThread: Sendable, Equatable, Identifiable {
     }
 
     public init(
-        id: String, isResolved: Bool, isOutdated: Bool, path: String, line: Int?, startLine: Int? = nil, side: Side = .right,
-        originalLine: Int? = nil, originalStartLine: Int? = nil, isOnFile: Bool = false, diffHunk: String = "", resolvedBy: String? = nil,
+        id: String, isResolved: Bool, isOutdated: Bool, path: String, line: Int?, startLine: Int? = nil, side: Side = .right, startSide: Side? = nil,
+        originalLine: Int? = nil, originalStartLine: Int? = nil, originalCommitOid: String? = nil, isOnFile: Bool = false, diffHunk: String = "", resolvedBy: String? = nil,
         viewerCanReply: Bool = false, viewerCanResolve: Bool = false, viewerCanUnresolve: Bool = false, comments: [ThreadComment]
     ) {
         self.id = id
@@ -284,8 +290,10 @@ public struct ReviewThread: Sendable, Equatable, Identifiable {
         self.line = line
         self.startLine = startLine
         self.side = side
+        self.startSide = startSide
         self.originalLine = originalLine
         self.originalStartLine = originalStartLine
+        self.originalCommitOid = originalCommitOid
         self.isOnFile = isOnFile
         self.diffHunk = diffHunk
         self.resolvedBy = resolvedBy

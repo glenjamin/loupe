@@ -17,8 +17,13 @@ public final class DiffTextView: NSTextView {
     public var commentableAnchors: Set<DiffAnchor>? {
         didSet { if commentableAnchors != oldValue { hoveredAnchor = nil } }
     }
-    /// Called with the hovered row's anchor when its "+" is clicked.
-    public var onComment: ((DiffAnchor) -> Void)?
+    /// Called when a row's "+" is clicked, or the row middle-clicked: with its anchor, or, when
+    /// the selection spans several rows including it, the last row's anchor and the first's.
+    public var onComment: ((_ anchor: DiffAnchor, _ start: DiffAnchor?) -> Void)?
+    /// The rows a comment being written is on, tinted as github.com marks them.
+    public var commentedAnchors: Set<DiffAnchor> = [] {
+        didSet { if commentedAnchors != oldValue { markCommentedRows() } }
+    }
     /// The quiet "+" in the gutter of the hovered row, as on github.com.
     public let commentButton = CommentButton()
     private var hoveredAnchor: DiffAnchor? {
@@ -74,7 +79,46 @@ public final class DiffTextView: NSTextView {
     }
 
     @objc private func commentClicked() {
-        if let hoveredAnchor { onComment?(hoveredAnchor) }
+        guard let hoveredAnchor, let rendered, let row = rendered.rowAnchors.firstIndex(of: hoveredAnchor) else { return }
+        comment(onRow: row, anchor: hoveredAnchor)
+    }
+
+    /// Starts a comment on the row, or on the selected rows when the selection spans several
+    /// including it.
+    private func comment(onRow row: Int, anchor: DiffAnchor) {
+        if let (start, end) = selectedCommentableRows(including: row) {
+            onComment?(end, start)
+        } else {
+            onComment?(anchor, nil)
+        }
+    }
+
+    /// The first and last rows taking comments that the selection covers, when it covers more
+    /// than one row and `row` is among them.
+    private func selectedCommentableRows(including row: Int) -> (start: DiffAnchor, end: DiffAnchor)? {
+        let selection = selectedRange()
+        guard selection.length > 0, let rendered, let commentableAnchors,
+              let first = rendered.row(at: selection.location), let last = rendered.row(at: NSMaxRange(selection) - 1),
+              first < last, (first...last).contains(row)
+        else { return nil }
+        let anchors = rendered.rowAnchors[first...last].compactMap { $0 }.filter { commentableAnchors.contains($0) }
+        guard let start = anchors.first, let end = anchors.last, start != end else { return nil }
+        return (start, end)
+    }
+
+    /// Tells the layout manager which characters' rows to tint, and redraws them.
+    private func markCommentedRows() {
+        guard let layout = layoutManager as? RowBackgroundLayoutManager else { return }
+        var rows = IndexSet()
+        if let rendered, let textStorage {
+            for (row, anchor) in rendered.rowAnchors.enumerated() where anchor.map(commentedAnchors.contains) == true {
+                let end = rendered.rowStarts.indices.contains(row + 1) ? rendered.rowStarts[row + 1] : textStorage.length
+                rows.insert(integersIn: rendered.rowStarts[row]..<end)
+            }
+        }
+        guard layout.commentedCharacters != rows else { return }
+        layout.commentedCharacters = rows
+        needsDisplay = true
     }
 
     private func showCommentButton(at point: NSPoint) {
@@ -86,7 +130,9 @@ public final class DiffTextView: NSTextView {
         let size = commentButton.intrinsicContentSize
         commentButton.frame = NSRect(x: textContainerOrigin.x + 2, y: fragment.minY + textContainerOrigin.y + (fragment.height - size.height) / 2, width: size.width, height: size.height)
         hoveredAnchor = anchor
-        commentButton.toolTip = "Comment on line \(anchor.line) (or middle-click the row)"
+        let range = selectedCommentableRows(including: row)
+        commentButton.toolTip = range.map { "Comment on lines \($0.start.line)–\($0.end.line), as selected (or middle-click the row)" }
+            ?? "Comment on line \(anchor.line) (or middle-click the row; select several rows first to comment on them all)"
     }
 
     /// The row under a point, gutter or code, and its anchor, when a comment can be started there.
@@ -119,6 +165,7 @@ public final class DiffTextView: NSTextView {
         }
         textStorage?.setAttributedString(rendered.text)
         setSelectedRange(NSRange(location: 0, length: 0))
+        markCommentedRows()
         if let held, let row = held.row.index(in: rendered), let top = top(ofRow: row) {
             scroll(NSPoint(x: visible.minX, y: max(0, top - held.offset)))
         } else {
@@ -223,10 +270,10 @@ public final class DiffTextView: NSTextView {
     /// A middle click on a row that takes comments starts one, as its "+" does, so a reviewer
     /// needn't aim for the "+" at the row's edge.
     public override func otherMouseDown(with event: NSEvent) {
-        guard event.buttonNumber == 2, let (_, anchor) = commentableRow(at: convert(event.locationInWindow, from: nil)) else {
+        guard event.buttonNumber == 2, let (row, anchor) = commentableRow(at: convert(event.locationInWindow, from: nil)) else {
             return super.otherMouseDown(with: event)
         }
-        onComment?(anchor)
+        comment(onRow: row, anchor: anchor)
     }
 
     public override func writeSelection(to pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
@@ -365,6 +412,9 @@ public final class CommentButton: NSButton {
 /// already laid out for drawing; mapping a rect to glyphs from the view forces layout of the whole
 /// file above it. The selection is drawn after, so it shows over the tints.
 private final class RowBackgroundLayoutManager: NSLayoutManager {
+    /// The characters of the rows a comment being written is on.
+    var commentedCharacters = IndexSet()
+
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         if let textStorage, let clip = NSGraphicsContext.current?.cgContext.boundingBoxOfClipPath {
             enumerateLineFragments(forGlyphRange: glyphsToShow) { fragment, _, container, glyphRange, _ in
@@ -387,6 +437,10 @@ private final class RowBackgroundLayoutManager: NSLayoutManager {
                 if let color = kind.emphasisBackground {
                     self.fillEmphasis(in: glyphRange, row: row, origin: origin, container: container, color: color)
                 }
+                if self.commentedCharacters.contains(charIndex) {
+                    NSColor.commentedRow.setFill()
+                    row.fill(using: .sourceOver)
+                }
             }
         }
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
@@ -402,6 +456,15 @@ private final class RowBackgroundLayoutManager: NSLayoutManager {
             let bounds = boundingRect(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil), in: container)
             NSRect(x: bounds.minX + origin.x, y: row.minY, width: bounds.width, height: row.height).fill()
         }
+    }
+}
+
+private extension NSColor {
+    /// github.com's yellow over the lines a comment is on, laid over the row's own tint.
+    static let commentedRow = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.73, green: 0.5, blue: 0.13, alpha: 0.25)
+            : NSColor(srgbRed: 1, green: 0.85, blue: 0.2, alpha: 0.3)
     }
 }
 

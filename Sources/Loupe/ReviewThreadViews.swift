@@ -29,7 +29,7 @@ func threadBlocks(for threads: FileThreads, onFileAt path: String, in tab: PullR
         ))
     }
     // A comment being started goes under its line, after any threads already there.
-    if let comment = tab.threadActivity.newComment, comment.anchor.path == path {
+    if let comment = tab.shownNewComment, comment.anchor.path == path {
         let anchor = comment.anchor
         blocks.append(DiffBlockContent(
             id: "new-comment:\(anchor.side.rawValue):\(anchor.line)",
@@ -47,7 +47,7 @@ private struct NewCommentCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(verbatim: "Comment on line \(comment.anchor.line)\(comment.anchor.side == .left ? " (old)" : "")")
+            Text(verbatim: header)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -65,7 +65,7 @@ private struct NewCommentCard: View {
                 }
                 CommentComposer(
                     tab: tab, draft: comment.draft, caption: caption, actions: actions, cancel: { tab.cancelComment() },
-                    suggestedLines: tab.suggestedLines(at: comment.anchor)
+                    suggestedLines: tab.suggestedLines(for: comment)
                 )
             }
             .font(.callout)
@@ -82,6 +82,10 @@ private struct NewCommentCard: View {
     /// otherwise posts at once, and ⌘⇧↩ does the other.
     private var actions: [ComposerAction] {
         let atOnce = "Post this comment at once, not as part of a review"
+        guard comment.target.takesReviewComments else {
+            let help = "Post this comment on this commit at once; GitHub's reviews only hold comments on the whole pull request's changes"
+            return [ComposerAction(label: "Add single comment", help: help) { Task { await tab.sendComment() } }]
+        }
         guard tab.canStartReview else {
             return [ComposerAction(label: "Comment", help: atOnce) { Task { await tab.sendComment() } }]
         }
@@ -98,7 +102,16 @@ private struct NewCommentCard: View {
         return [add, single]
     }
 
+    /// The lines it's on, and the commit for one started on a commit's own changes.
+    private var header: String {
+        let (start, end) = (comment.start, comment.anchor)
+        let lines = linesText(from: start.map { ($0.line, $0.side == .left) }, to: (end.line, end.side == .left))
+        guard !comment.target.isWholePullRequest else { return "Comment on \(lines)" }
+        return "Comment on \(lines) of commit \(comment.target.commitOid.prefix(7))"
+    }
+
     private var caption: String {
+        guard comment.target.takesReviewComments else { return "Markdown. Posts at once: a review can't hold a comment on one commit." }
         guard tab.canStartReview else { return "Markdown. Posts at once, not as part of a review." }
         return tab.pendingReview == nil
             ? "Markdown. ⌘↩ posts a single comment; ⌘⇧↩ starts a review."
@@ -285,13 +298,13 @@ private struct ThreadCard: View {
         .padding(.vertical, 8)
     }
 
-    /// Which lines it's on, where it was made for an outdated thread.
+    /// Which lines it's on in the changes shown, or where it was made for an outdated thread.
     private var place: String {
-        guard let lines = thread.lines else { return "On the file" }
-        let side = thread.side == .left ? " (old)" : ""
-        let prefix = thread.isOutdated && thread.line == nil ? "Was on " : ""
-        let range = lines.count == 1 ? "line \(lines.lowerBound)" : "lines \(lines.lowerBound)–\(lines.upperBound)"
-        let text = prefix + range + side
+        let placed = tab.placedLines(of: thread)
+        guard let lines = placed ?? thread.lines else { return "On the file" }
+        let prefix = placed == nil && thread.isOutdated && thread.line == nil ? "Was on " : ""
+        let start = lines.count == 1 ? nil : (lines.lowerBound, (thread.startSide ?? thread.side) == .left)
+        let text = prefix + linesText(from: start, to: (lines.upperBound, thread.side == .left))
         return text.prefix(1).uppercased() + text.dropFirst()
     }
 }
@@ -928,6 +941,15 @@ func commentBlocks(_ html: String) -> [CommentBlock] {
 }
 
 @MainActor private var parsedComments: [String: [CommentBlock]] = [:]
+
+/// "line 12", or "lines 12–18" for a range, as a comment's or thread's header names them, with
+/// "(old)" for lines numbered in the base, and each end marked apart when they differ.
+func linesText(from start: (line: Int, isOld: Bool)?, to end: (line: Int, isOld: Bool)) -> String {
+    let old = " (old)"
+    guard let start, start.line != end.line || start.isOld != end.isOld else { return "line \(end.line)\(end.isOld ? old : "")" }
+    guard start.isOld == end.isOld else { return "lines \(start.line)\(start.isOld ? old : "") to \(end.line)\(end.isOld ? old : "")" }
+    return "lines \(start.line)–\(end.line)\(end.isOld ? old : "")"
+}
 
 /// `path:line` for a thread, the conversation's name for where it is: its last line in the
 /// current diff, or where it was made once outdated.

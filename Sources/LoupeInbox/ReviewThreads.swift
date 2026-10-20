@@ -80,10 +80,30 @@ public struct UnshownThread: Sendable, Equatable {
     public let isFileSelected: Bool
 }
 
-/// A comment being written on a line that has no thread of the viewer's making yet.
+/// A comment being written on a line, or a range of lines, that has no thread of the viewer's
+/// making yet.
 public struct NewComment {
+    /// The line it goes under: the last of a range.
     public let anchor: DiffAnchor
+    /// The first line of a comment on several, in the same hunk; nil for one line.
+    public let start: DiffAnchor?
+    /// The changes it was started on, whose lines it's numbered in.
+    public let target: CommentTarget
     public let draft: CommentDraft
+}
+
+/// The commit a new comment on the changes shown is anchored to, as GitHub takes it.
+public struct CommentTarget: Sendable, Equatable {
+    public let commitOid: String
+    /// The whole PR's diff, rather than one commit's own changes.
+    public let isWholePullRequest: Bool
+    /// Whether deleted lines take comments. GitHub numbers a deleted line in the PR's base, so
+    /// only a commit whose parent is that base can number them the same way.
+    public let takesDeletedLines: Bool
+
+    /// Whether a comment on these changes can go into a pending review, which GitHub anchors to
+    /// the one commit the review is on and so only takes on the whole PR's diff.
+    public var takesReviewComments: Bool { isWholePullRequest }
 }
 
 /// A comment being written, as markdown. It closes as it's sent, the comment showing in its
@@ -163,18 +183,22 @@ extension PullRequestTab {
     }
 
     /// The PR's review threads placed on `file`, as shown with any lines revealed around its
-    /// hunks. Nil when one commit's changes, or those since an anchor, are shown: threads belong
-    /// to the whole PR's diff.
+    /// hunks. On one commit's changes, only those made on that commit show, on the lines they
+    /// were made on, as github.com shows them there; the rest belong to the whole PR's diff.
+    /// Nil when the changes shown aren't the PR's or one commit's, as nothing anchors to them.
     public func threads(on file: FileDiff) -> FileThreads? {
-        guard shownChoice == .all, conversation != nil else { return nil }
+        guard let target = commentTarget, conversation != nil else { return nil }
         var anchored: [LineThreads] = []
         var elsewhere: [ReviewThread] = []
-        for thread in placedThreads where thread.path == file.path {
-            guard !thread.isOutdated, !thread.isOnFile, let line = thread.line, file.has(line, on: thread.side) else {
-                elsewhere.append(thread)
+        let threads = target.isWholePullRequest ? placedThreads : (conversation?.threads ?? []).filter { $0.originalCommitOid == target.commitOid }
+        for thread in threads where thread.path == file.path {
+            guard let lines = placedLines(of: thread), file.has(lines.upperBound, on: thread.side),
+                  target.takesDeletedLines || thread.side == .right
+            else {
+                if target.isWholePullRequest { elsewhere.append(thread) }
                 continue
             }
-            let side = DiffAnchor.Side(thread.side)
+            let (side, line) = (DiffAnchor.Side(thread.side), lines.upperBound)
             if let index = anchored.firstIndex(where: { $0.side == side && $0.line == line }) {
                 anchored[index].threads.append(thread)
             } else {
@@ -182,6 +206,33 @@ extension PullRequestTab {
             }
         }
         return FileThreads(anchored: anchored, elsewhere: elsewhere)
+    }
+
+    /// The lines a thread is on in the changes shown: where it is now on the whole PR's diff,
+    /// or where it was made on one commit's. Nil where it has no lines there: outdated, on the
+    /// whole file, or made on another commit.
+    public func placedLines(of thread: ReviewThread) -> ClosedRange<Int>? {
+        guard let target = commentTarget, !thread.isOnFile else { return nil }
+        let (start, end) = if target.isWholePullRequest {
+            thread.isOutdated ? (nil, nil) : (thread.startLine, thread.line)
+        } else {
+            thread.originalCommitOid == target.commitOid ? (thread.originalStartLine, thread.originalLine) : (nil, nil)
+        }
+        guard let end else { return nil }
+        return min(start ?? end, end)...end
+    }
+
+    /// Where new comments on the changes shown go: the PR's head for its whole diff, or the
+    /// commit for one commit's changes, including changes since an earlier head that are
+    /// exactly one commit's. Nil for any other changes, such as several commits' or those
+    /// replayed across a rebase, as GitHub has no commit whose own changes they are.
+    public var commentTarget: CommentTarget? {
+        guard case let .ready(review) = phase else { return nil }
+        if shownChoice == .all {
+            return CommentTarget(commitOid: review.headOid, isWholePullRequest: true, takesDeletedLines: true)
+        }
+        guard let range = shownRange, let commit = review.commits.first(where: { $0.range == range }) else { return nil }
+        return CommentTarget(commitOid: commit.oid, isWholePullRequest: false, takesDeletedLines: range.base == review.mergeBase)
     }
 
     /// How many threads on the file at `path` aren't resolved, hidden files' included. Nil when
@@ -193,26 +244,52 @@ extension PullRequestTab {
 
     /// The rows of a file a comment can be started on: every line of `file` as shown, those
     /// revealed around its hunks included, with unchanged lines on the new side as on
-    /// github.com. Nil when only some of the PR's changes are shown, as comments go on the whole
-    /// PR's diff.
+    /// github.com, and deleted lines only where the commit numbers them as GitHub does. Nil
+    /// when the changes shown have no commit to anchor a comment to.
     public func commentableAnchors(of file: FileDiff) -> Set<DiffAnchor>? {
-        guard shownChoice == .all else { return nil }
-        return Set(file.hunks.flatMap(\.lines).map { line in
-            switch line.kind {
-            case let .context(_, new), let .addition(new): DiffAnchor(path: file.path, side: .right, line: new)
-            case let .deletion(old): DiffAnchor(path: file.path, side: .left, line: old)
-            }
-        })
+        guard let target = commentTarget else { return nil }
+        return Set(file.hunks.flatMap(\.lines).map { $0.anchor(in: file.path) }.filter { target.takesDeletedLines || $0.side == .right })
     }
 
     /// Opens a comment under a row, keeping one already being written there; one elsewhere
-    /// with nothing typed is dropped, and one with text is kept, so it isn't lost.
-    public func startComment(at anchor: DiffAnchor) {
-        if let current = threadActivity.newComment {
-            guard current.anchor != anchor, !current.draft.hasText else { return }
+    /// with nothing typed is dropped, and one with text is kept, so it isn't lost. With `start`,
+    /// a row before it in the same hunk of the diff as produced, it's on every line from there,
+    /// as GitHub takes a comment on several lines; a range it can't take, such as one across
+    /// hunks or onto revealed lines, starts a comment on `anchor` alone.
+    public func startComment(at anchor: DiffAnchor, from start: DiffAnchor? = nil) {
+        guard let target = commentTarget else { return }
+        let start = start.flatMap { start -> DiffAnchor? in
+            guard start != anchor, let file = producedFile(anchor.path), file.anchors(from: start, to: anchor) != nil else { return nil }
+            return start
         }
-        threadActivity.newComment = NewComment(anchor: anchor, draft: CommentDraft())
+        if let current = threadActivity.newComment {
+            guard current.anchor != anchor || current.start != start || current.target != target, !current.draft.hasText else { return }
+        }
+        threadActivity.newComment = NewComment(anchor: anchor, start: start, target: target, draft: CommentDraft())
         threadActivity.newCommentError = nil
+    }
+
+    /// The comment being started on the changes shown, if it was started on them.
+    public var shownNewComment: NewComment? {
+        guard let comment = threadActivity.newComment, comment.target == commentTarget else { return nil }
+        return comment
+    }
+
+    /// The rows of `file`, as shown, that the comment being started there covers: its range's,
+    /// or its one line.
+    public func commentedAnchors(of file: FileDiff) -> Set<DiffAnchor> {
+        guard let comment = shownNewComment, comment.anchor.path == file.path else { return [] }
+        guard let start = comment.start else { return [comment.anchor] }
+        return Set(file.anchors(from: start, to: comment.anchor) ?? [comment.anchor])
+    }
+
+    /// The file at `path` in the changes shown, as produced, without lines revealed around it:
+    /// one to review, or a hidden one once diffed.
+    func producedFile(_ path: String) -> FileDiff? {
+        guard case let .ready(changes)? = shownChanges else { return nil }
+        if let file = changes.files.first(where: { $0.path == path }) { return file }
+        if case let .ready(file)? = hiddenFileDiff(of: path) { return file }
+        return nil
     }
 
     /// Drops the comment being started; asking first is the view's job.
@@ -221,11 +298,11 @@ extension PullRequestTab {
         threadActivity.newCommentError = nil
     }
 
-    /// Posts the new comment at once as a thread on its line, against the head commit the diff
-    /// shows, whose line numbers it uses. It shows there and in the conversation straight away,
-    /// marked as sending until GitHub answers with its copy; then the threads are fetched again
-    /// in case of anything else new. A refusal takes it away and opens the draft again with
-    /// the reason.
+    /// Posts the new comment at once as a thread on its lines, against the commit it was started
+    /// on, whose line numbers it uses: the head of the whole PR's diff, or one commit. It shows
+    /// there and in the conversation straight away, marked as sending until GitHub answers with
+    /// its copy; then the threads are fetched again in case of anything else new. A refusal
+    /// takes it away and opens the draft again with the reason.
     public func sendComment() async {
         guard let comment = threadActivity.newComment, comment.draft.canSend, case let .ready(review) = phase else { return }
         threadActivity.newCommentError = nil
@@ -234,13 +311,14 @@ extension PullRequestTab {
         let text = comment.draft.text
         let sending = sendingComment(text, isPending: false)
         threadActivity.newComment = nil
-        let change = make(.comment(sending, thread: sendingThread(at: comment.anchor, in: review), startsThread: true, reviewId: nil))
+        let change = make(.comment(sending, thread: sendingThread(for: comment, in: review), startsThread: true, reviewId: nil))
         await storeOwnChanges()
         let posted: ThreadComment
         do {
             posted = try await client.addReviewComment(
                 text, path: comment.anchor.path, line: comment.anchor.line, side: comment.anchor.side.rawValue,
-                commitId: review.headOid, inPullRequest: pullRequest.number, of: pullRequest.repository
+                start: comment.start.map { ($0.line, $0.side.rawValue) }, commitId: comment.target.commitOid,
+                inPullRequest: pullRequest.number, of: pullRequest.repository
             )
         } catch {
             undo(change)
@@ -426,6 +504,27 @@ extension FileDiff {
     func has(_ line: Int, on side: ReviewThread.Side) -> Bool {
         hunks.contains { hunk in
             hunk.lines.contains { (side == .right ? $0.newLine : $0.oldLine) == line }
+        }
+    }
+
+    /// The rows from `start` to `end`, in order, when both are in one hunk with `start` first.
+    func anchors(from start: DiffAnchor, to end: DiffAnchor) -> [DiffAnchor]? {
+        for hunk in hunks {
+            let anchors = hunk.lines.map { $0.anchor(in: path) }
+            guard let first = anchors.firstIndex(of: start), let last = anchors.firstIndex(of: end) else { continue }
+            return first < last ? Array(anchors[first...last]) : nil
+        }
+        return nil
+    }
+}
+
+extension DiffLine {
+    /// Where a comment on the row goes: an unchanged or added line on the new side, as on
+    /// github.com, a deleted one on the old.
+    func anchor(in path: String) -> DiffAnchor {
+        switch kind {
+        case let .context(_, new), let .addition(new): DiffAnchor(path: path, side: .right, line: new)
+        case let .deletion(old): DiffAnchor(path: path, side: .left, line: old)
         }
     }
 }

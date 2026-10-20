@@ -100,17 +100,22 @@ extension PullRequestTab {
     /// threads are fetched anyway, so a review started or submitted elsewhere since is known
     /// when it's sent again.
     public func sendReviewComment() async {
-        guard canStartReview, let comment = threadActivity.newComment, comment.draft.canSend, case let .ready(review) = phase else { return }
+        guard canStartReview, let comment = threadActivity.newComment, comment.target.takesReviewComments, comment.draft.canSend,
+              case let .ready(review) = phase
+        else { return }
         threadActivity.newCommentError = nil
         let anchor = comment.anchor
         let text = comment.draft.text
         let sending = sendingComment(text, isPending: true)
         threadActivity.newComment = nil
-        let change = make(.comment(sending, thread: sendingThread(at: anchor, in: review), startsThread: true, reviewId: pendingReview?.id))
+        let change = make(.comment(sending, thread: sendingThread(for: comment, in: review), startsThread: true, reviewId: pendingReview?.id))
         await storeOwnChanges()
         let added: (comment: ThreadComment, threadId: String?, reviewId: String)
         do {
-            added = try await addToReview(DraftThread(path: anchor.path, line: anchor.line, side: anchor.side.rawValue, body: text), of: review.headOid)
+            let thread = DraftThread(
+                path: anchor.path, line: anchor.line, side: anchor.side.rawValue, startLine: comment.start?.line, startSide: comment.start?.side.rawValue, body: text
+            )
+            added = try await addToReview(thread, of: review.headOid)
         } catch {
             undo(change)
             reopen(comment, because: "Couldn't add to your review: \(error.localizedDescription)")

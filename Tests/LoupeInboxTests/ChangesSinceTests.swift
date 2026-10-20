@@ -36,8 +36,10 @@ struct ChangesSinceTests {
         #expect(tab.selectedFile == "app.go")
         #expect(tab.nextCommit == nil, "moving on goes to the next commit only from one commit's changes")
         let shownApp = try #require(tab.file("app.go"))
-        #expect(tab.threads(on: shownApp) == nil, "threads belong to the whole PR's diff, as with one commit's")
-        #expect(tab.commentableAnchors(of: shownApp) == nil)
+        // Exactly the second commit's own changes, so they're commented on as that commit's.
+        #expect(tab.commentTarget?.commitOid == second && tab.commentTarget?.isWholePullRequest == false)
+        #expect(tab.commentableAnchors(of: shownApp)?.isEmpty == false)
+        #expect(tab.threads(on: shownApp)?.isEmpty == true)
         #expect(try app.store.conversation(of: pullRequest.id)?.viewerReview?.commitOid == first, "kept with the conversation")
 
         await tab.reload()
@@ -67,6 +69,12 @@ struct ChangesSinceTests {
         await tab.prepareAnchors()
         await tab.show(.since(opened))
         #expect(tab.shown?.files.map(\.path) == ["README", "notes.md"])
+        let notes = try #require(tab.file("notes.md"))
+        #expect(tab.commentTarget == nil, "two commits' changes have no one commit to comment on")
+        #expect(tab.commentableAnchors(of: notes) == nil)
+        #expect(tab.threads(on: notes) == nil)
+        tab.startComment(at: DiffAnchor(path: "notes.md", side: .right, line: 1))
+        #expect(tab.threadActivity.newComment == nil)
 
         // The next launch opens it from the head last shown.
         let fourth = try await app.pushCommit(["notes.md": "More notes\n"], to: pullRequest)
@@ -113,6 +121,8 @@ struct ChangesSinceTests {
         #expect(lines?.contains("func Hello() string { return \"hey\" }") == true, "from the reviewed version")
         #expect(lines?.contains("func Hello() string { return \"hi\" }") == true)
         #expect(tab.unseparatedPaths.isEmpty)
+        #expect(tab.commentTarget == nil, "a replayed tree is no commit's")
+        #expect(tab.commentableAnchors(of: try #require(tab.file("app.go"))) == nil)
 
         #expect(try await app.repo.checkoutState() == before, "the checkout is left alone")
     }

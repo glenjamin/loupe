@@ -62,6 +62,8 @@ actor FakeConversations {
         let line: Int
         let side: String
         let body: String
+        var startLine: Int? = nil
+        var startSide: String? = nil
     }
 
     /// The kinds of write a test can hold, as over a slow network, and the conversation's first
@@ -118,6 +120,8 @@ actor FakeConversations {
     private var numbers: [Int: String] = [:]
     /// Every new comment received, in order.
     private(set) var commentsReceived: [CommentInput] = []
+    /// Each PR's head, by id, for those given one, which threads are made on unless said.
+    private var heads: [String: String] = [:]
 
     struct CommentInput: Equatable {
         let repository: String
@@ -127,6 +131,13 @@ actor FakeConversations {
         let path: String
         let line: Int
         let side: String
+        var startLine: Int? = nil
+        var startSide: String? = nil
+    }
+
+    /// Says what the PR's head is, as pushing to it does.
+    func setHead(_ oid: String, of id: String) {
+        heads[id] = oid
     }
     /// Every comment on a PR itself received, in order.
     private(set) var conversationCommentsReceived: [ConversationCommentInput] = []
@@ -288,9 +299,13 @@ actor FakeConversations {
     /// Starts a review thread on the PR, as a reviewer does on github.com, in the shape of
     /// `probe/review-threads.json`, and returns its id. An outdated thread has only its
     /// original line, as GitHub keeps it; `line: nil` without that is on the whole file.
-    /// A thread in the viewer's pending review can't be resolved until it's submitted.
+    /// A thread in the viewer's pending review can't be resolved until it's submitted. It's
+    /// made on `commit`, or the PR's head if known, its original commit as GitHub keeps it.
     @discardableResult
-    func startThread(on id: String, path: String, line: Int?, side: String = "RIGHT", startLine: Int? = nil, outdated: Bool = false, resolved: Bool = false, pending: Bool = false, body: String, by login: String = "octocat") throws -> String {
+    func startThread(
+        on id: String, path: String, line: Int?, side: String = "RIGHT", startLine: Int? = nil, startSide: String? = nil, commit: String? = nil,
+        outdated: Bool = false, resolved: Bool = false, pending: Bool = false, body: String, by login: String = "octocat"
+    ) throws -> String {
         var node = try #require(nodes[id])
         var threads = ((node["reviewThreads"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
         let threadId = "PRRT_fake_\(threadCount)"
@@ -304,7 +319,7 @@ actor FakeConversations {
             "line": current as Any? ?? NSNull(),
             "startLine": (outdated ? nil : startLine ?? line) as Any? ?? NSNull(),
             "diffSide": side,
-            "startDiffSide": startLine == nil ? NSNull() : side,
+            "startDiffSide": startLine == nil ? NSNull() : startSide ?? side,
             "originalLine": line as Any? ?? NSNull(),
             "originalStartLine": startLine as Any? ?? NSNull(),
             "subjectType": line == nil ? "FILE" : "LINE",
@@ -312,7 +327,10 @@ actor FakeConversations {
             "viewerCanResolve": !resolved && !pending,
             "viewerCanUnresolve": resolved,
             "resolvedBy": resolved ? ["login": login] : NSNull(),
-            "firstComment": ["nodes": [["diffHunk": "@@ -1,2 +1,2 @@\n-old \(path)\n+new \(path)"]]],
+            "firstComment": ["nodes": [[
+                "diffHunk": "@@ -1,2 +1,2 @@\n-old \(path)\n+new \(path)",
+                "originalCommit": (commit ?? heads[id]).map { ["oid": $0] as Any } ?? NSNull(),
+            ]]],
             "comments": ["nodes": [threadComment(body, by: login, pending: pending)]],
         ])
         node["reviewThreads"] = ["nodes": threads]
@@ -550,12 +568,15 @@ actor FakeConversations {
         return (try JSONSerialization.data(withJSONObject: rest), fakeResponse(url, status: 201))
     }
 
-    /// A new comment on a line, which starts a thread by the viewer at once, answered as
-    /// GitHub does with the comment.
+    /// A new comment on a line, or from `start_line` to `line`, which starts a thread by the
+    /// viewer at once, answered as GitHub does with the comment. It's made on `commit_id`; one
+    /// on a commit older than the head is outdated on the whole PR's diff, as the fake doesn't
+    /// diff to tell whether GitHub could carry it onto the head's lines.
     private func newComment(_ content: [String: Any], repository: String, number: Int, _ url: URL) throws -> (Data, HTTPURLResponse) {
         let input = CommentInput(
             repository: repository, number: number, body: try #require(content["body"] as? String), commitId: try #require(content["commit_id"] as? String),
-            path: try #require(content["path"] as? String), line: try #require(content["line"] as? Int), side: try #require(content["side"] as? String)
+            path: try #require(content["path"] as? String), line: try #require(content["line"] as? Int), side: try #require(content["side"] as? String),
+            startLine: content["start_line"] as? Int, startSide: content["start_side"] as? String
         )
         commentsReceived.append(input)
         if threadChangesRefused {
@@ -564,7 +585,10 @@ actor FakeConversations {
         guard let id = numbers[number] else {
             return (Data(#"{"message":"Not Found","status":"404"}"#.utf8), fakeResponse(url, status: 404))
         }
-        try startThread(on: id, path: input.path, line: input.line, side: input.side, body: input.body, by: FakeGitHub.viewer)
+        try startThread(
+            on: id, path: input.path, line: input.line, side: input.side, startLine: input.startLine, startSide: input.startSide, commit: input.commitId,
+            outdated: heads[id].map { $0 != input.commitId } ?? false, body: input.body, by: FakeGitHub.viewer
+        )
         let comment = try #require(threads(of: id).last.flatMap { (($0["comments"] as? [String: Any])?["nodes"] as? [[String: Any]])?.first })
         var rest = try restComment(comment, body: input.body)
         rest["path"] = input.path
@@ -708,7 +732,10 @@ actor FakeConversations {
         let reviewId = newReviewId()
         var comments: [[String: Any]] = []
         for thread in threads {
-            let threadId = try startThread(on: id, path: thread.path, line: thread.line, side: thread.side, pending: event == nil, body: thread.body, by: FakeGitHub.viewer)
+            let threadId = try startThread(
+            on: id, path: thread.path, line: thread.line, side: thread.side, startLine: thread.startLine, startSide: thread.startSide,
+            commit: input["commitOID"] as? String, pending: event == nil, body: thread.body, by: FakeGitHub.viewer
+        )
             comments += self.threads(of: id).filter { $0["id"] as? String == threadId }.flatMap { self.comments(of: $0) }
         }
         let state: String
@@ -730,7 +757,10 @@ actor FakeConversations {
         reviewMutationsReceived.append(.addThread(reviewId: reviewId, thread))
         if let refusal = try refusalOfReviewChanges("addPullRequestReviewThread", url) { return refusal }
         guard let id = pullRequest(withPendingReview: reviewId) else { return try refusal(unresolved: reviewId, mutation: "addPullRequestReviewThread", url) }
-        let threadId = try startThread(on: id, path: thread.path, line: thread.line, side: thread.side, pending: true, body: thread.body, by: FakeGitHub.viewer)
+        let threadId = try startThread(
+            on: id, path: thread.path, line: thread.line, side: thread.side, startLine: thread.startLine, startSide: thread.startSide,
+            commit: pendingReviews[id]?.commit, pending: true, body: thread.body, by: FakeGitHub.viewer
+        )
         let comments = threads(of: id).filter { $0["id"] as? String == threadId }.flatMap { self.comments(of: $0) }
         let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/add-review-thread.json"))) as? [String: Any])
         var payload = try #require((probe["data"] as? [String: Any])?["addPullRequestReviewThread"] as? [String: Any])
@@ -878,7 +908,8 @@ actor FakeConversations {
     private func threadInput(_ input: [String: Any]) throws -> ThreadInput {
         ThreadInput(
             path: try #require(input["path"] as? String), line: try #require(input["line"] as? Int),
-            side: try #require(input["side"] as? String), body: try #require(input["body"] as? String)
+            side: try #require(input["side"] as? String), body: try #require(input["body"] as? String),
+            startLine: input["startLine"] as? Int, startSide: input["startSide"] as? String
         )
     }
 

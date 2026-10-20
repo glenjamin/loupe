@@ -650,6 +650,15 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "updatedAt", .datetime)
             }
         }
+        // The commit each review thread was made on and its first line's side: null in a
+        // conversation stored before until it's next fetched, so until then its threads show
+        // only on the whole PR's diff.
+        migrator.registerMigration("Review thread commits") { db in
+            try db.alter(table: "reviewThread") { t in
+                t.add(column: "startSide", .text)
+                t.add(column: "originalCommitOid", .text)
+            }
+        }
         return migrator
     }
 

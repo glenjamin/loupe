@@ -14,11 +14,14 @@ extension GitHubClient {
 
     /// Starts a review thread with one comment at once, outside any pending review, on `line`
     /// of `path` as of `commitId`: the head for side RIGHT, the base for LEFT, and returns the
-    /// comment. REST, as GraphQL's mutation for a new thread adds it to a pending review; REST
-    /// doesn't say which thread it started.
+    /// comment. A comment on several lines names its first with `start`. REST, as GraphQL's
+    /// mutation for a new thread adds it to a pending review and takes no commit; REST doesn't
+    /// say which thread it started.
     @discardableResult
-    public func addReviewComment(_ body: String, path: String, line: Int, side: String, commitId: String, inPullRequest number: Int, of repository: String) async throws -> ThreadComment {
-        let comment = NewCommentRequest(body: body, commit_id: commitId, path: path, line: line, side: side)
+    public func addReviewComment(
+        _ body: String, path: String, line: Int, side: String, start: (line: Int, side: String)? = nil, commitId: String, inPullRequest number: Int, of repository: String
+    ) async throws -> ThreadComment {
+        let comment = NewCommentRequest(body: body, commit_id: commitId, path: path, line: line, side: side, start_line: start?.line, start_side: start?.side)
         let answer = try await post(path: "/repos/\(repository)/pulls/\(number)/comments", comment, accept: Self.withHTML)
         return try RESTComment.decode(answer).comment
     }
@@ -56,6 +59,9 @@ private struct NewCommentRequest: Encodable {
     let path: String
     let line: Int
     let side: String
+    /// Left out for a comment on one line.
+    let start_line: Int?
+    let start_side: String?
 }
 
 /// A review comment as REST answers posting one, in its own field names.

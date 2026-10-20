@@ -14,12 +14,17 @@ public struct DraftThread: Sendable, Equatable {
     public var line: Int
     /// `LEFT` for the base, `RIGHT` for the head.
     public var side: String
+    /// The first line and its side, for a comment on several lines.
+    public var startLine: Int?
+    public var startSide: String?
     public var body: String
 
-    public init(path: String, line: Int, side: String, body: String) {
+    public init(path: String, line: Int, side: String, startLine: Int? = nil, startSide: String? = nil, body: String) {
         self.path = path
         self.line = line
         self.side = side
+        self.startLine = startLine
+        self.startSide = startSide
         self.body = body
     }
 }
@@ -71,7 +76,9 @@ extension GitHubClient {
     /// Adds a comment on a line to the viewer's pending review with `reviewId`, as a new thread.
     @discardableResult
     public func addThread(_ thread: DraftThread, toReview reviewId: String) async throws -> PostedThread {
-        let input = AddThreadInput(pullRequestReviewId: reviewId, path: thread.path, line: thread.line, side: thread.side, body: thread.body)
+        let input = AddThreadInput(
+            pullRequestReviewId: reviewId, path: thread.path, line: thread.line, side: thread.side, startLine: thread.startLine, startSide: thread.startSide, body: thread.body
+        )
         let response: AddThreadResponse = try await query(Self.addThreadMutation, variables: Input(input: input))
         guard let thread = response.addPullRequestReviewThread?.thread, let comment = thread.comments.nodes.first else {
             throw GitHubError.graphQL(["GitHub didn't return the comment"])
@@ -164,12 +171,16 @@ private struct ThreadInput: Encodable, Sendable {
     let path: String
     let line: Int
     let side: String
+    let startLine: Int?
+    let startSide: String?
     let body: String
 
     init(_ thread: DraftThread) {
         path = thread.path
         line = thread.line
         side = thread.side
+        startLine = thread.startLine
+        startSide = thread.startSide
         body = thread.body
     }
 }
@@ -179,6 +190,8 @@ private struct AddThreadInput: Encodable, Sendable {
     let path: String
     let line: Int
     let side: String
+    let startLine: Int?
+    let startSide: String?
     let body: String
 }
 

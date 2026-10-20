@@ -453,7 +453,8 @@ struct FileDetail: View {
             expandable: tab.expandableContext(of: file), onExpand: { expansion in Task { await tab.expandContext(of: file, expansion) } },
             onCollapse: tab.hasRevealedContext(of: file) ? { tab.collapseContext(of: file) } : nil,
             blocks: tab.threads(on: shown).map { threadBlocks(for: $0, onFileAt: file.path, in: tab) } ?? [],
-            commentable: tab.commentableAnchors(of: shown), onComment: { anchor in tab.startComment(at: anchor) }
+            commentable: tab.commentableAnchors(of: shown), onComment: { anchor, start in tab.startComment(at: anchor, from: start) },
+            commented: tab.commentedAnchors(of: shown)
         )
         // Read when shown, so the lines after the last hunk can be offered as well.
         .task(id: ShownFile(choice: tab.shownChoice, path: file.path)) { await tab.readContext(of: file) }

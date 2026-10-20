@@ -25,7 +25,10 @@ struct DiffView: View {
     var blocks: [DiffBlockContent] = []
     /// The rows that offer a "+" to start a comment on hover; none when nil.
     var commentable: Set<DiffAnchor>?
-    var onComment: (DiffAnchor) -> Void = { _ in }
+    /// Starts a comment on a row, or on the selected rows from the second anchor to the first.
+    var onComment: (DiffAnchor, DiffAnchor?) -> Void = { _, _ in }
+    /// The rows the comment being written is on.
+    var commented: Set<DiffAnchor> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,7 +50,7 @@ struct DiffView: View {
             ZStack {
                 DiffTextScrollView(
                     file: file, onAnchorClick: onAnchorClick, review: review, expandable: expandable, onExpand: onExpand, blocks: (image?.block).map { [$0] + blocks } ?? blocks,
-                    commentable: commentable, onComment: onComment
+                    commentable: commentable, onComment: onComment, commented: commented
                 )
                 if let markdown, markdown.isRendered {
                     RenderedMarkdownView(preview: markdown)
@@ -193,7 +196,8 @@ private struct DiffTextScrollView: NSViewRepresentable {
     let onExpand: (ContextExpansion) -> Void
     let blocks: [DiffBlockContent]
     let commentable: Set<DiffAnchor>?
-    let onComment: (DiffAnchor) -> Void
+    let onComment: (DiffAnchor, DiffAnchor?) -> Void
+    let commented: Set<DiffAnchor>
     @AppStorage(DiffSettings.wrapLinesKey) var wrapLines = DiffSettings.wrapLinesDefault
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -243,6 +247,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
             coordinator.textView.show(RenderedDiff(file: file, expandable: expandable, blocks: sized), keepingPlace: isSameFile)
         }
         coordinator.showBlocks(blocks)
+        coordinator.textView.commentedAnchors = commented
         if let block = blocks.first(where: { $0.reveal != nil }) {
             coordinator.reveal(block.id)
             // After this update, as it changes what the view is drawn from.
