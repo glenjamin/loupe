@@ -35,6 +35,8 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/Loupe" "$app/Contents/MacOS/Loupe"
 cp Sources/Loupe/Resources/Loupe.icns "$app/Contents/Resources/Loupe.icns"
+# Reads the token the circleci CLI is signed in with, to fetch CI's reports.
+cp Scripts/circleci-token "$app/Contents/Resources/circleci-token"
 # Kept where Xcode puts them; the bundle root would break code signing.
 for bundle in "$bin"/*.bundle; do
   cp -R "$bundle" "$app/Contents/Resources/"

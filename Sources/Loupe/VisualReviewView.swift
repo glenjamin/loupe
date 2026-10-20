@@ -250,10 +250,10 @@ private struct VisualReviewWebView: NSViewRepresentable {
 /// A PR tab's web view of CI's visual review report, made the first time the report is shown
 /// and kept while the tab lives, so its place and chosen comparison survive switching away.
 /// Unlike the conversation's, the report is someone else's interactive page and needs its own
-/// scripts, so this view runs them. The report's job's artifacts are downloaded by the
-/// `circleci` CLI into Loupe's cache and served from there under the `loupe-artifact:` scheme,
-/// that job's files only; the view sends any other page to the browser and keeps no cookies or
-/// storage between runs.
+/// scripts, so this view runs them. The report's job's artifacts are fetched with the `circleci`
+/// CLI's token as the page asks for them, or downloaded whole by the CLI without one, kept in
+/// Loupe's cache and served under the `loupe-artifact:` scheme, that job's files only; the view
+/// sends any other page to the browser and keeps no cookies or storage between runs.
 @MainActor
 @Observable
 final class VisualReviewPage: NSObject {
@@ -317,8 +317,8 @@ final class VisualReviewPage: NSObject {
         if url != reportURL { load(url) }
     }
 
-    /// Loads the report from its job's downloaded artifacts, downloading them first if they
-    /// aren't kept from before.
+    /// Loads the report from its job's kept artifacts, fetching it first if it isn't kept from
+    /// before, or downloading the whole job when there's no token to fetch with.
     func load(_ url: URL) {
         reportURL = url
         opening?.cancel()
@@ -366,7 +366,7 @@ final class VisualReviewPage: NSObject {
         cover = .failed(Failure(title: title, message: message))
     }
 
-    /// A link to the report's own job's artifacts, which is served from the download too.
+    /// A link to the report's own job's artifacts, which is served the same way.
     private func proxied(_ url: URL) -> URL? {
         guard serves(url) else { return nil }
         return CircleCIArtifacts.proxyURL(for: url)
@@ -428,9 +428,9 @@ extension VisualReviewPage: WKNavigationDelegate, WKUIDelegate {
     private static let frameLoadInterruptedByPolicyChange = 102
 }
 
-/// Serves `loupe-artifact:` URLs to the report's web view from its job's downloaded artifacts:
-/// the report, then each file it loads relative to it. Anything else, or a file the job hasn't,
-/// is answered 404, as a server would.
+/// Serves `loupe-artifact:` URLs to the report's web view from its job's artifacts: the report,
+/// then each file it loads relative to it, as CircleCI answers them. Anything else is answered
+/// 404, as a server would.
 @MainActor
 private final class ArtifactSchemeHandler: NSObject, WKURLSchemeHandler {
     let artifacts: CircleCIArtifacts
@@ -450,13 +450,11 @@ private final class ArtifactSchemeHandler: NSObject, WKURLSchemeHandler {
         let isServed = page?.serves(url) == true
         let artifacts = artifacts
         reads[key] = Task { [weak self] in
-            let file = isServed ? await Task.detached { artifacts.contents(of: url) }.value : nil
+            let served = isServed ? await artifacts.serve(url) : .notFound
             guard let self, !Task.isCancelled, reads.removeValue(forKey: key) != nil else { return }
-            let body = file?.data ?? Data("Not found".utf8)
-            let headers = ["Content-Type": file?.mimeType ?? "text/plain", "Content-Length": "\(body.count)"]
-            let status = file == nil ? 404 : 200
-            urlSchemeTask.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers) ?? URLResponse(url: url, mimeType: file?.mimeType, expectedContentLength: body.count, textEncodingName: nil))
-            urlSchemeTask.didReceive(body)
+            let headers = ["Content-Type": served.mimeType, "Content-Length": "\(served.data.count)"]
+            urlSchemeTask.didReceive(HTTPURLResponse(url: url, statusCode: served.status, httpVersion: "HTTP/1.1", headerFields: headers) ?? URLResponse(url: url, mimeType: served.mimeType, expectedContentLength: served.data.count, textEncodingName: nil))
+            urlSchemeTask.didReceive(served.data)
             urlSchemeTask.didFinish()
         }
     }

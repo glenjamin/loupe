@@ -1,0 +1,45 @@
+#!/bin/sh
+# Prints the CircleCI API token the `circleci` CLI is signed in with, for its
+# current host, or exits non-zero saying why not. A stop-gap until the CLI can
+# print its own token (asked for upstream).
+#
+# Mirrors CircleCI-Public/circleci-cli v1.7.0 (1df22bb):
+# - internal/config/config.go: CIRCLE_TOKEN, then CIRCLE_CLI_TOKEN, then the
+#   keychain, then `token:` in the config file (written by --insecure-storage);
+#   the host is CIRCLE_HOST, then the config's `host:`, then circleci.com.
+# - internal/keyring/keyring.go: the keychain item's service is
+#   "com.circleci.cli:<host>" and its account the OS user name.
+# - zalando/go-keyring v0.2.8 keyring_darwin.go: the stored value is
+#   "go-keyring-base64:" and the token in base64.
+# The CLI keeps only an OAuth login's access token, never refreshing it, so a
+# token CircleCI turns down needs `circleci auth login` again.
+set -eu
+
+for token in "${CIRCLE_TOKEN:-}" "${CIRCLE_CLI_TOKEN:-}"; do
+  if [ -n "$token" ]; then printf '%s\n' "$token"; exit 0; fi
+done
+
+config=${XDG_CONFIG_HOME:-$HOME/.config}/circleci/config.yml
+setting() {
+  [ -f "$config" ] || return 0
+  sed -n "s/^$1:[[:space:]]*[\"']\{0,1\}\([^\"'[:space:]]*\).*/\1/p" "$config" | head -n 1
+}
+
+host=${CIRCLE_HOST:-$(setting host)}
+host=${host:-https://circleci.com}
+
+if stored=$(security find-generic-password -s "com.circleci.cli:$host" -a "$(id -un)" -w 2>/dev/null); then
+  case $stored in
+    go-keyring-base64:*) token=$(printf '%s' "${stored#go-keyring-base64:}" | base64 -D) ;;
+    go-keyring-encoded:*) token=$(printf '%s' "${stored#go-keyring-encoded:}" | xxd -r -p) ;;
+    *) token=$stored ;;
+  esac
+else
+  token=$(setting token)
+fi
+
+if [ -z "$token" ]; then
+  echo "The circleci CLI isn't signed in to $host; run \`circleci auth login\`." >&2
+  exit 1
+fi
+printf '%s\n' "$token"
