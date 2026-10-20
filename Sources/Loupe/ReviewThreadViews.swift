@@ -570,8 +570,8 @@ private struct CommentView: View {
                             .foregroundStyle(.secondary)
                             .help(comment.isSending ? "On its way to GitHub" : "Your edit is on its way to GitHub")
                     } else {
-                        TimelineView(.everyMinute) { _ in
-                            Text(verbatim: comment.createdAt.formatted(.relative(presentation: .named)))
+                        EveryMinute { now in
+                            Text(verbatim: comment.createdAt.ago(now: now))
                                 .foregroundStyle(.secondary)
                         }
                         .help(comment.createdAt.formatted(date: .abbreviated, time: .shortened))

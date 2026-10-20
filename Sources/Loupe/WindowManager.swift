@@ -1,5 +1,6 @@
 import AppKit
 import LoupeInbox
+import LoupeModel
 import SwiftUI
 
 /// Owns the app's one window: a strip of tabs under the title bar, the lists as its first item
@@ -265,8 +266,8 @@ private struct WindowChrome: View {
             ProgressView().controlSize(.small)
         }
         if let lastRefreshed = lists.lastRefreshed {
-            TimelineView(.everyMinute) { _ in
-                Text("Refreshed \(lastRefreshed.formatted(.relative(presentation: .named)))")
+            EveryMinute { now in
+                Text("Refreshed \(lastRefreshed.ago(now: now))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

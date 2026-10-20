@@ -214,8 +214,8 @@ struct PullRequestHeader: View {
                     }
                     ReviewDecisionLabel(decision: pullRequest.reviewDecision, requestedReviewers: pullRequest.requestedReviewers)
                     HStack(spacing: 4) {
-                        TimelineView(.everyMinute) { _ in
-                            Text("updated \(pullRequest.updatedAt.formatted(.relative(presentation: .named)))")
+                        EveryMinute { now in
+                            Text("updated \(pullRequest.updatedAt.ago(now: now))")
                         }
                         DelayedSpinner(isActive: tab.isCheckingGitHub)
                             .help("Checking GitHub for changes…")
@@ -653,8 +653,8 @@ struct CommitList: View {
                     }
                     Spacer(minLength: 0)
                     if let at = anchor.at {
-                        TimelineView(.everyMinute) { _ in
-                            Text(verbatim: "\(anchorVerb(anchor.kind)) \(at.formatted(.relative(presentation: .named)))")
+                        EveryMinute { now in
+                            Text(verbatim: "\(anchorVerb(anchor.kind)) \(at.ago(now: now))")
                                 .foregroundStyle(.tertiary)
                         }
                     }

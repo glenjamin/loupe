@@ -47,9 +47,17 @@ public struct PullRequestOutcome: Sendable, Equatable {
 }
 
 extension Date {
+    /// "3 hours ago", worded from the real clock as Foundation's relative style has it. A time
+    /// after `now` is "just now", as GitHub's clock can run a few seconds ahead of the Mac's.
+    public func ago(now: Date = .now, locale: Locale = .autoupdatingCurrent) -> String {
+        self > now ? justNow : formatted(.relative(presentation: .named).locale(locale))
+    }
+
     /// Relative within the last week ("3 hours ago"), where that reads at a glance; beyond it a
-    /// date and time ("14 Oct 2026 at 15:02"), as "4 weeks ago" is too vague to place.
+    /// date and time ("14 Oct 2026 at 15:02"), as "4 weeks ago" is too vague to place. A time
+    /// after `now` is "just now", as GitHub's clock can run a few seconds ahead of the Mac's.
     public func recentOrDated(now: Date = .now, locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent) -> String {
+        if self > now { return justNow }
         if now.timeIntervalSince(self) < recentInterval {
             let formatter = RelativeDateTimeFormatter()
             formatter.locale = locale
@@ -61,3 +69,4 @@ extension Date {
 }
 
 private let recentInterval: TimeInterval = 7 * 24 * 60 * 60
+private let justNow = "just now"

@@ -255,7 +255,7 @@ public enum ConversationHTML {
     /// A relative time, which `RelativeTimes` keeps current by its `datetime`, the full date
     /// shown on hover.
     private static func time(_ date: Date, now: Date) -> String {
-        let relative = date > now ? "just now" : date.formatted(.relative(presentation: .named).locale(Locale(identifier: "en_US")))
+        let relative = date.ago(now: now, locale: Locale(identifier: "en_US"))
         let full = date.formatted(Date.FormatStyle(date: .complete, time: .shortened))
         return #"<time datetime="\#(date.formatted(.iso8601))" title="\#(escape(full))">\#(escape(relative))</time>"#
     }

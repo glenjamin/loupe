@@ -105,8 +105,8 @@ struct OutcomeLabel: View {
             Text(outcome.title)
                 .font(.headline)
                 .foregroundStyle(tint)
-            TimelineView(.everyMinute) { context in
-                if let when = outcome.when(now: context.date) {
+            EveryMinute { now in
+                if let when = outcome.when(now: now) {
                     Text(verbatim: when)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -136,8 +136,8 @@ struct ViewerVerdictLabel: View {
             Label(verdict.title, systemImage: verdict.symbol)
                 .font(.headline)
                 .foregroundStyle(verdict.tint)
-            TimelineView(.everyMinute) { context in
-                caption(now: context.date)
+            EveryMinute { now in
+                caption(now: now)
                     .font(.caption)
             }
         }

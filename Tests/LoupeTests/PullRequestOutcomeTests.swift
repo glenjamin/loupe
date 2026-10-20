@@ -13,6 +13,18 @@ struct PullRequestOutcomeTests {
         #expect(outcome.when(now: now, locale: locale, timeZone: utc) == "3 hours ago")
     }
 
+    @Test func aMergeStampedAFewSecondsAheadOfTheMacsClockWasJustNow() throws {
+        let outcome = try #require(PullRequestOutcome(pullRequest(state: .merged, mergedAt: now.addingTimeInterval(4))))
+        #expect(outcome.when(now: now, locale: locale, timeZone: utc) == "just now")
+    }
+
+    @Test func aTimeAFewSecondsAheadOfTheMacsClockWasJustNow() {
+        let now = Date.now
+        #expect(now.addingTimeInterval(4).ago(now: now) == "just now")
+        #expect(now.addingTimeInterval(4).recentOrDated(now: now) == "just now")
+        #expect(now.addingTimeInterval(-3 * 3600).ago(now: now, locale: locale) == "3 hours ago")
+    }
+
     @Test func givesTheDateAndTimeOfACloseOlderThanAWeek() throws {
         let closedAt = now.addingTimeInterval(-(9 * 24 * 3600 + 20 * 60))
         let outcome = try #require(PullRequestOutcome(pullRequest(state: .closed, closedAt: closedAt)))

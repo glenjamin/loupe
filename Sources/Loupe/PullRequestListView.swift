@@ -61,8 +61,8 @@ struct RefreshErrorBanner: View {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
                 // Each "N ago" label ticks itself, as a tick further up leaves unchanged views be.
-                TimelineView(.everyMinute) { _ in
-                    Text(headline).font(.callout.weight(.semibold))
+                EveryMinute { now in
+                    Text(headline(now: now)).font(.callout.weight(.semibold))
                 }
                 Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
@@ -75,9 +75,9 @@ struct RefreshErrorBanner: View {
         .overlay(alignment: .bottom) { Divider() }
     }
 
-    private var headline: String {
+    private func headline(now: Date) -> String {
         guard let lastRefreshed else { return "Couldn't refresh pull requests" }
-        return "Couldn't refresh. Showing pull requests from \(lastRefreshed.formatted(.relative(presentation: .named)))."
+        return "Couldn't refresh. Showing pull requests from \(lastRefreshed.ago(now: now))."
     }
 }
 
@@ -230,8 +230,8 @@ struct PullRequestRow: View {
                     Text(author)
                 }
                 if let reviewMark {
-                    TimelineView(.everyMinute) { context in
-                        ViewerReviewBadge(mark: reviewMark, now: context.date)
+                    EveryMinute { now in
+                        ViewerReviewBadge(mark: reviewMark, now: now)
                     }
                 }
                 // GitHub's verdict repeats the viewer's when they're the same.
@@ -244,13 +244,13 @@ struct PullRequestRow: View {
                 Spacer(minLength: 0)
                 // Each "N ago" label ticks itself, as a tick further up leaves unchanged views be.
                 if let staleRequestedAt {
-                    TimelineView(.everyMinute) { _ in
-                        Text("requested \(staleRequestedAt.formatted(.relative(presentation: .named)))")
+                    EveryMinute { now in
+                        Text("requested \(staleRequestedAt.ago(now: now))")
                             .foregroundStyle(.tertiary)
                     }
                 }
-                TimelineView(.everyMinute) { _ in
-                    Text(pullRequest.updatedAt.formatted(.relative(presentation: .named)))
+                EveryMinute { now in
+                    Text(pullRequest.updatedAt.ago(now: now))
                 }
             }
             .font(.caption)
