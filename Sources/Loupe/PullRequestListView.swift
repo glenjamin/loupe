@@ -188,6 +188,8 @@ struct PullRequestRow: View {
     var reviewMark: ViewerReviewMark? = nil
     /// Set in the TODO view, saying why the PR is where it is.
     var reason: TodoReason? = nil
+    /// Set in the TODO view on the viewer's own PR, saying what's broken besides the reason.
+    var problems: [TodoProblem] = []
     /// Set in the TODO view on a stack's row, to show or hide the PRs stacked on it.
     var stack: StackDisclosure? = nil
 
@@ -202,11 +204,14 @@ struct PullRequestRow: View {
                 if let reason {
                     TodoReasonBadge(reason: reason)
                 }
-                // The reason may already say it.
+                ForEach(problems, id: \.self) { problem in
+                    Badge(text: problem.label, tint: .diffDanger)
+                }
+                // The reason or problems may already say it.
                 if reason != .draft {
                     StateBadge(pullRequest: pullRequest, showsOpen: false)
                 }
-                if reason != .conflicts {
+                if reason != .approvedConflicts, !problems.contains(.conflicts) {
                     ConflictsBadge(pullRequest: pullRequest)
                 }
                 SelfReviewBadge(selfReview: selfReview)

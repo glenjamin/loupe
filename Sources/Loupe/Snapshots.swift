@@ -887,7 +887,8 @@ private func saveSnapshotsOfTodo(in windows: WindowManager, to directory: URL) a
         for item in items {
             let stacked = item.stacked.isEmpty ? "" : " +\(item.stacked.count) stacked: \(item.stacked.map { "#\($0.pullRequest.number)" }.joined(separator: " "))"
             let quiet = Int(Date.now.timeIntervalSince(item.pullRequest.updatedAt) / 86400)
-            print("  \(item.pullRequest.repository) #\(item.pullRequest.number) — \(item.reason.label), \(quiet)d quiet\(stacked)")
+            let problems = item.problems.map { " + \($0.label)" }.joined()
+            print("  \(item.pullRequest.repository) #\(item.pullRequest.number) — \(item.reason.label)\(problems), \(quiet)d quiet\(stacked)")
         }
     }
     try? await Task.sleep(for: .milliseconds(300))

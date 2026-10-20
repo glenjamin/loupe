@@ -86,15 +86,17 @@ struct TodoListTests {
         // Newest first within a step.
         let order: [String] = [readyLater, ready, behind, running, conflicts, failing, changes, unasked, draft]
         let reasons: [TodoReason] = [
-            .readyToMerge, .readyToMerge, .approvedBehind, .approvedChecksRunning, .conflicts, .checksFailing, .changesRequested, .requestReviewers, .draft,
+            .readyToMerge, .readyToMerge, .approvedBehind, .approvedChecksRunning, .approvedConflicts, .approvedChecksFailing, .changesRequested,
+            .requestReviewers, .draft,
         ]
         let labels: [String] = [
-            "Ready to merge", "Ready to merge", "Approved · behind", "Approved · checks running", "Conflicts", "Checks failing", "Changes requested",
-            "Request reviewers", "Draft",
+            "Ready to merge", "Ready to merge", "Approved · behind", "Approved · checks running", "Approved · conflicts", "Approved · checks failing",
+            "Changes requested", "Request reviewers", "Draft",
         ]
         #expect(yours.map(\.id) == order)
         #expect(yours.map(\.reason) == reasons)
         #expect(yours.map(\.reason.label) == labels)
+        #expect(yours.allSatisfy { $0.problems.isEmpty }, "the reason says it")
         #expect(model.todo().review.allSatisfy { !ids.contains($0.id) })
     }
 
@@ -120,6 +122,37 @@ struct TodoListTests {
         let mine = model.pullRequests(in: .mine).map(\.id)
         let placed: [String] = (todo.yours + todo.waiting + todo.overAMonth + todo.overSixMonths).flatMap { item in [item.id] + item.stacked.map(\.id) }
         #expect(Set(placed) == Set(mine), "every PR of the viewer's is somewhere")
+    }
+
+    @Test func failingChecksAndConflictsShowBesideAnUnapprovedPullRequestsReasonWithoutMovingIt() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try todoModel(github)
+        await model.refresh()
+        let approvedFailing = try await ownPullRequest(9061, in: github, approved: true, checks: "FAILURE", mergeState: "BLOCKED")
+        let changes = try await ownPullRequest(9062, in: github, mergeState: "DIRTY", mergeable: "CONFLICTING")
+        try await github.review(changes, by: "rowan-ashby", "CHANGES_REQUESTED")
+        try await github.edit(changes) { $0.reviewDecision = "CHANGES_REQUESTED" }
+        let unaskedFailing = try await ownPullRequest(9063, in: github, asking: [], checks: "FAILURE", mergeState: "BLOCKED")
+        let unasked = try await ownPullRequest(9064, in: github, asking: [], mergeState: "BLOCKED")
+        let draftFailing = try await ownPullRequest(9065, in: github, checks: "FAILURE", mergeState: "BLOCKED")
+        try await github.edit(draftFailing) { $0.isDraft = true }
+        let waitingFailing = try await ownPullRequest(9066, in: github, checks: "FAILURE", mergeState: "BLOCKED")
+        let waiting = try await ownPullRequest(9067, in: github, mergeState: "BLOCKED")
+
+        await model.refresh()
+
+        let todo = model.todo()
+        let ids = [approvedFailing, changes, unaskedFailing, unasked, draftFailing, waitingFailing, waiting]
+        let yours = todo.yours.filter { ids.contains($0.id) }
+        #expect(yours.map(\.id) == [approvedFailing, changes, unasked, unaskedFailing, draftFailing], "each in its review state's step, newest first")
+        let reasons: [TodoReason] = [.approvedChecksFailing, .changesRequested, .requestReviewers, .requestReviewers, .draft]
+        #expect(yours.map(\.reason) == reasons)
+        let problems: [[TodoProblem]] = [[], [.conflicts], [], [.checksFailing], [.checksFailing]]
+        #expect(yours.map(\.problems) == problems)
+        let waitingRows = todo.waiting.filter { ids.contains($0.id) }
+        #expect(waitingRows.map(\.id) == [waiting, waitingFailing], "only reviewers can move it on, though its checks are the author's to fix")
+        #expect(waitingRows.map(\.reason) == [.waitingOnReview, .waitingOnReview])
+        #expect(waitingRows.map(\.problems) == [[], [.checksFailing]])
     }
 
     @Test func aStackOfTheViewersPullRequestsIsOneRowRankedByItsBottom() async throws {

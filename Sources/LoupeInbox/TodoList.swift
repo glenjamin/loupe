@@ -25,11 +25,14 @@ public struct TodoList: Sendable, Equatable {
     }
 }
 
-/// One row of the TODO view: a PR, why it's where it is, and for the viewer's own stacks, the
-/// rest of the stack above it, which the row stands for.
+/// One row of the TODO view: a PR, why it's where it is, what else is broken on it, and for the
+/// viewer's own stacks, the rest of the stack above it, which the row stands for.
 public struct TodoItem: Sendable, Equatable, Identifiable {
     public let pullRequest: PullRequestSummary
     public let reason: TodoReason
+    /// On the viewer's own PR, what's broken that the reason doesn't already say. It never moves
+    /// the PR, whose place is down to what reviewers make of it.
+    public let problems: [TodoProblem]
     /// The list the PR comes from, which says how its row is drawn.
     public let list: PullRequestList
     /// The open PR it's stacked on, listed or not.
@@ -56,8 +59,8 @@ public enum TodoReason: Sendable, Equatable {
     case approvedChecking
     /// Approved with its checks passing, but held by the base branch's other rules.
     case approvedBlocked
-    case checksFailing
-    case conflicts
+    case approvedChecksFailing
+    case approvedConflicts
     /// Changes requested, with nothing pushed since.
     case changesRequested
     case requestReviewers
@@ -78,8 +81,8 @@ public enum TodoReason: Sendable, Equatable {
         case .approvedBehind: "Approved · behind"
         case .approvedChecking: "Approved · checking"
         case .approvedBlocked: "Approved · blocked"
-        case .checksFailing: "Checks failing"
-        case .conflicts: "Conflicts"
+        case .approvedChecksFailing: "Approved · checks failing"
+        case .approvedConflicts: "Approved · conflicts"
         case .changesRequested: "Changes requested"
         case .requestReviewers: "Request reviewers"
         case .draft: "Draft"
@@ -88,19 +91,20 @@ public enum TodoReason: Sendable, Equatable {
         }
     }
 
-    /// The viewer's own PR's reason: what's left to do for it, or that it waits on others.
+    /// The viewer's own PR's reason: what's left to do for it, or that it waits on others. It
+    /// follows what reviewers make of the PR; conflicts and failing checks only say why an
+    /// approved one can't merge yet.
     init(yours pullRequest: PullRequestSummary) {
         let checks = pullRequest.checks
-        let failing = checks == .failure || checks == .error
         let pending = checks == .pending || checks == .expected
         let state = pullRequest.mergeStateStatus ?? .unknown
-        let conflicts = pullRequest.mergeable == .conflicting || state == .dirty
+        let problems = TodoProblem.all(of: pullRequest)
         let pushedSinceChangesRequested = pullRequest.changesRequestedCommitOid.map { $0 != pullRequest.headRefOid } ?? false
         if pullRequest.isDraft || state == .draft {
             self = .draft
         } else if pullRequest.reviewDecision == .approved {
-            self = if conflicts { .conflicts }
-            else if failing { .checksFailing }
+            self = if problems.contains(.conflicts) { .approvedConflicts }
+            else if problems.contains(.checksFailing) { .approvedChecksFailing }
             else if pending { .approvedChecksRunning }
             else if state == .behind { .approvedBehind }
             else if [.clean, .hasHooks, .unstable].contains(state) { .readyToMerge }
@@ -108,10 +112,6 @@ public enum TodoReason: Sendable, Equatable {
             else { .approvedChecking }
         } else if pullRequest.reviewDecision == .changesRequested, !pushedSinceChangesRequested {
             self = .changesRequested
-        } else if conflicts {
-            self = .conflicts
-        } else if failing {
-            self = .checksFailing
         } else if pullRequest.reviewDecision == .changesRequested {
             self = .pushedSinceChangesRequested
         } else if pullRequest.requestedReviewers?.isEmpty == true {
@@ -126,12 +126,35 @@ public enum TodoReason: Sendable, Equatable {
         switch self {
         case .readyToMerge: 1
         case .approvedChecksRunning, .approvedBehind, .approvedChecking, .approvedBlocked: 2
-        case .checksFailing, .conflicts: 3
+        case .approvedChecksFailing, .approvedConflicts: 3
         case .changesRequested: 4
         case .requestReviewers: 5
         case .draft: 6
         case .waitingOnReview, .pushedSinceChangesRequested, .reviewRequested, .reRequested, .updatedSinceReview: nil
         }
+    }
+}
+
+/// Something broken on one of the viewer's own PRs, theirs to fix whatever reviewers say.
+public enum TodoProblem: Sendable, Hashable {
+    case conflicts
+    case checksFailing
+
+    public var label: String {
+        switch self {
+        case .conflicts: "Conflicts"
+        case .checksFailing: "Checks failing"
+        }
+    }
+
+    /// What's broken on the PR, leaving out what its reason already says.
+    static func all(of pullRequest: PullRequestSummary, besides reason: TodoReason? = nil) -> [TodoProblem] {
+        let conflicts = pullRequest.mergeable == .conflicting || pullRequest.mergeStateStatus == .dirty
+        let failing = pullRequest.checks == .failure || pullRequest.checks == .error
+        var problems: [TodoProblem] = []
+        if conflicts, reason != .approvedConflicts { problems.append(.conflicts) }
+        if failing, reason != .approvedChecksFailing { problems.append(.checksFailing) }
+        return problems
     }
 }
 
@@ -157,16 +180,18 @@ extension PullRequestListModel {
             } else {
                 return nil
             }
-            return TodoItem(pullRequest: pullRequest, reason: reason, list: .toReview, parent: stacks.parent(of: pullRequest), stacked: [])
+            return TodoItem(pullRequest: pullRequest, reason: reason, problems: [], list: .toReview, parent: stacks.parent(of: pullRequest), stacked: [])
         }
         .sorted { Self.firstAsked($0.pullRequest) < Self.firstAsked($1.pullRequest) }
 
         var mine: [TodoItem] = []
         for listed in listing(in: .mine) {
             if listed.depth > 0, let bottom = mine.popLast() {
-                mine.append(TodoItem(pullRequest: bottom.pullRequest, reason: bottom.reason, list: .mine, parent: bottom.parent, stacked: bottom.stacked + [listed]))
+                mine.append(TodoItem(pullRequest: bottom.pullRequest, reason: bottom.reason, problems: bottom.problems, list: .mine, parent: bottom.parent, stacked: bottom.stacked + [listed]))
             } else {
-                mine.append(TodoItem(pullRequest: listed.pullRequest, reason: TodoReason(yours: listed.pullRequest), list: .mine, parent: listed.parent, stacked: []))
+                let reason = TodoReason(yours: listed.pullRequest)
+                let problems = TodoProblem.all(of: listed.pullRequest, besides: reason)
+                mine.append(TodoItem(pullRequest: listed.pullRequest, reason: reason, problems: problems, list: .mine, parent: listed.parent, stacked: []))
             }
         }
         let quiet = Dictionary(grouping: mine) { item in

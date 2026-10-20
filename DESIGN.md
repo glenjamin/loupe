@@ -913,6 +913,16 @@ Self-review doesn't move a PR between steps. The steps say what GitHub and revie
 
 Rows show part-way progress as a quiet grey "Self-reviewed 3 of 8" badge where the green "Self-reviewed" goes, worded as the sidebar's "3 of 8 reviewed" and growing into the finished badge; nothing shows before the first file is viewed. The rows are the lists' own, so Mine shows it too. The PR's header still shows only the finished badge, as the sidebar already counts the files there.
 
+### TODO mode places the viewer's PRs by their review state; failing checks and conflicts only show beside it
+
+Glen didn't want failing checks or conflicts to treat a PR as higher priority. They used to put any of the viewer's PRs, approved or not, in their own step ahead of "Changes requested", "Request reviewers" and drafts. This supersedes that part of "The lists have a TODO mode": conflicts or failing checks no longer count without approval.
+
+A PR's step now comes from what reviewers make of it alone: "Ready to merge"; approved but checks running, behind, blocked or checking; "Approved · conflicts" or "Approved · checks failing", after the other approved steps as it's still approved but can't merge until the author fixes it; "Changes requested" with nothing pushed since; "Request reviewers"; "Draft". Waiting on others holds "Waiting on review" and "Pushed since changes requested" as before. Within a step, the order is still most self-reviewed then most recently updated; failing checks and conflicts don't sort a PR up or down.
+
+On any of the viewer's own PRs whose reason doesn't already say so, "Conflicts" and "Checks failing" show as red badges beside the reason, so a "Request reviewers" PR or a draft can carry "Conflicts" and "Checks failing" badges after its reason. A row with the "Conflicts" problem badge doesn't also show the lists' own conflicts badge.
+
+An unapproved PR waiting on its reviewers now stays in Waiting on others when its checks fail, with the "Checks failing" badge. Glen's earlier rule moved such a PR into Yours, as failing checks are the author's to fix; but it went there only to rank above the review-state steps, which he no longer wants, and in Yours it would have needed a step of its own to sit in, since its review state is "Waiting on review". It still waits on reviewers, and the red badge in the folded section says there's something to fix meanwhile.
+
 ## Not yet decided
 
 Nothing is pending.

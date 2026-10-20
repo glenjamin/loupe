@@ -126,7 +126,7 @@ struct TodoListView: View {
             PullRequestRow(
                 pullRequest: pullRequest, showsAuthor: isReview, showsReviewRequired: !isReview, selfReview: model.selfReview(of: pullRequest),
                 verdict: model.verdict(on: pullRequest, in: row.list), stackedOn: row.parent, reviewMark: model.reviewMark(on: pullRequest, in: row.list),
-                reason: row.reason, stack: stack
+                reason: row.reason, problems: row.problems, stack: stack
             )
         }
         .buttonStyle(.plain)
@@ -137,9 +137,9 @@ struct TodoListView: View {
     /// Each item's row, then the rows of its stack above it if they're shown.
     private func rows(_ items: [TodoItem]) -> [TodoRow] {
         items.flatMap { item in
-            let bottom = TodoRow(pullRequest: item.pullRequest, list: item.list, reason: item.reason, parent: item.parent, depth: 0, stackAbove: item.stacked.isEmpty ? nil : item.stacked.count)
+            let bottom = TodoRow(pullRequest: item.pullRequest, list: item.list, reason: item.reason, problems: item.problems, parent: item.parent, depth: 0, stackAbove: item.stacked.isEmpty ? nil : item.stacked.count)
             guard expandedStacks.contains(item.id) else { return [bottom] }
-            return [bottom] + item.stacked.map { TodoRow(pullRequest: $0.pullRequest, list: item.list, reason: nil, parent: $0.parent, depth: $0.depth, stackAbove: nil) }
+            return [bottom] + item.stacked.map { TodoRow(pullRequest: $0.pullRequest, list: item.list, reason: nil, problems: [], parent: $0.parent, depth: $0.depth, stackAbove: nil) }
         }
     }
 
@@ -190,6 +190,7 @@ private struct TodoRow: Identifiable {
     let list: PullRequestList
     /// Nil on a stacked PR shown under its stack's row, which the stack's reason covers.
     let reason: TodoReason?
+    let problems: [TodoProblem]
     let parent: PullRequestSummary?
     let depth: Int
     /// How many of the viewer's PRs are stacked above this one, on a stack's row.
@@ -211,7 +212,7 @@ struct TodoReasonBadge: View {
     private var tint: Color {
         switch reason {
         case .readyToMerge, .approvedChecksRunning, .approvedBehind, .approvedChecking, .approvedBlocked: .diffSuccess
-        case .checksFailing, .conflicts, .changesRequested: .diffDanger
+        case .approvedChecksFailing, .approvedConflicts, .changesRequested: .diffDanger
         case .reviewRequested, .reRequested, .updatedSinceReview, .requestReviewers: .diffAttention
         case .draft: .primary
         case .waitingOnReview, .pushedSinceChangesRequested: .secondary
