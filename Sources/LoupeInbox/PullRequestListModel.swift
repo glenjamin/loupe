@@ -313,9 +313,11 @@ public final class PullRequestListModel {
         let login = try await viewerLogin()
         let requests = try await client.reviewRequests(for: ids + mine)
         var checked = try await store.updateRequestedReviewers(requests.mapValues(\.reviewers))
+        checked = try await store.updateChangesRequestedCommits(requests.mapValues { $0.latestChangesRequest?.commitOid })
         guard !ids.isEmpty else { return checked }
         let toReview = requests.filter { ids.contains($0.key) }
         checked = try await store.updateReviewRequestTimes(toReview.mapValues { $0.lastRequested(of: login) })
+        checked = try await store.updateFirstReviewRequestTimes(toReview.mapValues { $0.firstRequested(of: login) })
         checked = try await store.updateViewerReviews(toReview.mapValues { $0.latestVerdictReview(by: login) })
         checked = try await store.updateViewerLatestReviews(toReview.mapValues(\.viewerLatestReview))
         let leaving = ids.filter { requests[$0]?.belongsInToReview(of: login) != true }
@@ -339,11 +341,15 @@ public final class PullRequestListModel {
         if !requested.isEmpty {
             let times = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.lastRequested(of: login)) }) { $1 }
             snapshot = try await store.updateReviewRequestTimes(times)
+            let firstTimes = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.firstRequested(of: login)) }) { $1 }
+            snapshot = try await store.updateFirstReviewRequestTimes(firstTimes)
             let verdicts = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.latestVerdictReview(by: login)) }) { $1 }
             snapshot = try await store.updateViewerReviews(verdicts)
             let latest = Dictionary(requested.map { ($0.pullRequest.id, $0.reviewRequests.viewerLatestReview) }) { $1 }
             snapshot = try await store.updateViewerLatestReviews(latest)
         }
+        let changesRequested = Dictionary(lookups.map { ($0.pullRequest.id, $0.reviewRequests.latestChangesRequest?.commitOid) }) { $1 }
+        snapshot = try await store.updateChangesRequestedCommits(changesRequested)
         for lookup in lookups {
             let id = lookup.pullRequest.id
             let listed = PullRequestList.allCases.contains { list in snapshot[list].contains { $0.id == id } }

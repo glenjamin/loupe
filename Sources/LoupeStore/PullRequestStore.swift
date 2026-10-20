@@ -146,6 +146,30 @@ public struct PullRequestStore: Sendable {
         }
     }
 
+    /// Records when the viewer was first asked to review each PR in `requestedAt`, keyed by id,
+    /// nil where GitHub showed no such request. PRs no longer stored are left out.
+    @discardableResult
+    public func updateFirstReviewRequestTimes(_ requestedAt: [String: Date?]) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            for (id, date) in requestedAt {
+                try db.execute(sql: "UPDATE pullRequest SET firstReviewRequestedAt = ? WHERE id = ?", arguments: [date, id])
+            }
+            return try Self.snapshot(db)
+        }
+    }
+
+    /// Records the head each PR in `commits`, keyed by id, had when its newest standing request
+    /// for changes was made, nil where there's none. PRs no longer stored are left out.
+    @discardableResult
+    public func updateChangesRequestedCommits(_ commits: [String: String?]) async throws -> PullRequestSnapshot {
+        try await database.write { db in
+            for (id, oid) in commits {
+                try db.execute(sql: "UPDATE pullRequest SET changesRequestedCommitOid = ? WHERE id = ?", arguments: [oid, id])
+            }
+            return try Self.snapshot(db)
+        }
+    }
+
     /// Replaces who each PR in `reviewers`, keyed by id, waits on for a review. PRs no longer
     /// stored are left out.
     @discardableResult
@@ -603,6 +627,14 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "forcePushedSinceViewerReviewAt", .datetime)
             }
         }
+        // When the viewer was first asked to review, and the head the newest request for changes
+        // was made on, for the TODO view's order and sections: null until the next check.
+        migrator.registerMigration("TODO signals") { db in
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "firstReviewRequestedAt", .datetime)
+                t.add(column: "changesRequestedCommitOid", .text)
+            }
+        }
         return migrator
     }
 
@@ -698,6 +730,8 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let mergeable: String?
     let mergeStateStatus: String?
     let reviewRequestedAt: Date?
+    let firstReviewRequestedAt: Date?
+    let changesRequestedCommitOid: String?
     let requestedReviewers: [StoredReviewer]?
     let viewerReview: String?
     let viewerReviewedAt: Date?
@@ -737,6 +771,8 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         mergeable = pullRequest.mergeable?.rawValue ?? stored?.mergeable
         mergeStateStatus = pullRequest.mergeStateStatus?.rawValue ?? stored?.mergeStateStatus
         reviewRequestedAt = pullRequest.reviewRequestedAt ?? stored?.reviewRequestedAt
+        firstReviewRequestedAt = pullRequest.firstReviewRequestedAt ?? stored?.firstReviewRequestedAt
+        changesRequestedCommitOid = pullRequest.changesRequestedCommitOid ?? stored?.changesRequestedCommitOid
         requestedReviewers = pullRequest.requestedReviewers.map { $0.map(StoredReviewer.init) } ?? stored?.requestedReviewers
         viewerReview = pullRequest.viewerReview?.rawValue ?? stored?.viewerReview
         // When and on which head go with the verdict they describe.
@@ -781,6 +817,8 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             commentCount: commentCount,
             reviewThreadCount: reviewThreadCount,
             reviewRequestedAt: reviewRequestedAt,
+            firstReviewRequestedAt: firstReviewRequestedAt,
+            changesRequestedCommitOid: changesRequestedCommitOid,
             requestedReviewers: requestedReviewers?.map(\.reviewer),
             viewerReview: viewerReview.map(ReviewState.init(lenientRawValue:)),
             viewerReviewedAt: viewerReviewedAt,

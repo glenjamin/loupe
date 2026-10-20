@@ -235,6 +235,7 @@ private struct WindowChrome: View {
     let tabs: TabsModel
     let content: TabbedContentController
     @AppStorage("showsClosedPullRequests") private var showsClosed = false
+    @AppStorage(ListMode.key) private var mode = ListMode.lists
 
     var body: some View {
         let item = tabs.selected.flatMap(tabs.item(id:))
@@ -270,8 +271,16 @@ private struct WindowChrome: View {
                     .foregroundStyle(.secondary)
             }
         }
+        Picker("View", selection: $mode) {
+            Text("Lists").tag(ListMode.lists)
+            Text("TODO").tag(ListMode.todo)
+        }
+        .pickerStyle(.segmented)
+        .help("Show the two lists, or one list of what to do next")
         Toggle("Show closed and merged", systemImage: "archivebox", isOn: $showsClosed)
             .help("Show closed and merged")
+            // The TODO view is of open PRs only.
+            .disabled(mode == .todo)
         Button("Refresh", systemImage: "arrow.clockwise") { Task { await lists.refresh() } }
             .keyboardShortcut("r")
             .disabled(lists.isLoading)
@@ -290,9 +299,10 @@ private struct ControllerView: NSViewControllerRepresentable {
 private struct ListsContent: View {
     let lists: PullRequestListModel
     @AppStorage("showsClosedPullRequests") private var showsClosed = false
+    @AppStorage(ListMode.key) private var mode = ListMode.lists
 
     var body: some View {
-        PullRequestListView(model: lists, showsClosed: showsClosed)
+        PullRequestListView(model: lists, showsClosed: showsClosed, mode: mode)
     }
 }
 

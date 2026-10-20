@@ -169,14 +169,22 @@ public struct GitHubClient: Sendable {
         }
         """
 
-    /// Who the PR's review waits on, its latest requests for review, re-requests included, each
-    /// reviewer's latest approval or request for changes, and the viewer's latest review of any
-    /// kind with the commits and force-pushes that say what's happened since. `latestReviews`
+    /// Who the PR's review waits on, its earliest and latest requests for review, re-requests
+    /// included, each reviewer's latest approval or request for changes, and the viewer's latest
+    /// review of any kind with the commits and force-pushes that say what's happened since. `latestReviews`
     /// leaves out a reviewer's comment-only reviews, so the viewer's comes from
     /// `viewerLatestReview`.
     static let reviewRequestFields = """
         reviewRequests(first: 50) {
           nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
+        }
+        firstRequestEvents: timelineItems(first: 10, itemTypes: [REVIEW_REQUESTED_EVENT]) {
+          nodes {
+            ... on ReviewRequestedEvent {
+              createdAt
+              requestedReviewer { __typename ... on User { login } ... on Team { slug } }
+            }
+          }
         }
         requestEvents: timelineItems(last: 20, itemTypes: [REVIEW_REQUESTED_EVENT]) {
           nodes {

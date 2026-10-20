@@ -43,6 +43,13 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     /// When the viewer was last asked to review, as the to-review list's check found it. Nil
     /// until checked, or when GitHub's timeline had no request of the viewer to show.
     public let reviewRequestedAt: Date?
+    /// When the viewer was first asked to review, as far as the check could see back, so a PR
+    /// asked of them again keeps its place among those waiting longest. Nil until checked.
+    public let firstReviewRequestedAt: Date?
+    /// The head the PR's newest standing request for changes was made on, as the check of who
+    /// it waits on found it, so the author's push since can be told. Nil until checked, or
+    /// when no one has asked for changes.
+    public let changesRequestedCommitOid: String?
     /// Who the PR's review waits on, in GitHub's order. Nil until looked up by id, as asking the
     /// searches for it takes them past GitHub's time limit.
     public var requestedReviewers: [RequestedReviewer]?
@@ -90,6 +97,8 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         commentCount: Int? = nil,
         reviewThreadCount: Int? = nil,
         reviewRequestedAt: Date? = nil,
+        firstReviewRequestedAt: Date? = nil,
+        changesRequestedCommitOid: String? = nil,
         requestedReviewers: [RequestedReviewer]? = nil,
         viewerReview: ReviewState? = nil,
         viewerReviewedAt: Date? = nil,
@@ -123,6 +132,8 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.commentCount = commentCount
         self.reviewThreadCount = reviewThreadCount
         self.reviewRequestedAt = reviewRequestedAt
+        self.firstReviewRequestedAt = firstReviewRequestedAt
+        self.changesRequestedCommitOid = changesRequestedCommitOid
         self.requestedReviewers = requestedReviewers
         self.viewerReview = viewerReview
         self.viewerReviewedAt = viewerReviewedAt
@@ -184,8 +195,8 @@ public enum PullRequestState: String, Sendable, LenientEnum {
 public struct ReviewRequests: Sendable, Equatable {
     public let state: PullRequestState
     public let reviewers: [RequestedReviewer]
-    /// The latest requests from the PR's timeline, re-requests included, whether or not still
-    /// pending.
+    /// The earliest and latest requests from the PR's timeline, re-requests included, whether
+    /// or not still pending.
     public let events: [ReviewRequestEvent]
     /// Each reviewer's latest approval or request for changes, as dismissed if it was.
     public let verdicts: [ReviewVerdict]
@@ -221,6 +232,17 @@ public struct ReviewRequests: Sendable, Equatable {
     /// of any team counts, for the same reason as in `awaitReview(from:)`.
     public func lastRequested(of login: String) -> Date? {
         events.filter { $0.reviewer.mayBe(login) }.map(\.createdAt).max()
+    }
+
+    /// When `login` was first asked to review, as far as the earliest requests go back, counting
+    /// a request of any team as `lastRequested(of:)` does.
+    public func firstRequested(of login: String) -> Date? {
+        events.filter { $0.reviewer.mayBe(login) }.map(\.createdAt).min()
+    }
+
+    /// The newest standing request for changes, by anyone.
+    public var latestChangesRequest: ReviewVerdict? {
+        verdicts.filter { $0.state == .changesRequested }.max { ($0.submittedAt ?? .distantPast) < ($1.submittedAt ?? .distantPast) }
     }
 
     /// Whether the PR is open and still waiting on `login`. A request to any team counts, as

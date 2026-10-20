@@ -23,6 +23,10 @@ enum Entry {
             // A snapshot run's bundle has its own id and so its own defaults; it reads the real
             // app's settings beneath them, to look the same, without ever writing to them.
             UserDefaults.standard.addSuite(named: "com.glenmailer.Loupe")
+            // Shown in TODO mode for this run only, as the argument domain is never saved.
+            if ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_TODO"] == "1" {
+                UserDefaults.standard.setVolatileDomain([ListMode.key: ListMode.todo.rawValue], forName: UserDefaults.argumentDomain)
+            }
         }
         if let path = args.first {
             LaunchOptions.diffPath = path

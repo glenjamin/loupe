@@ -68,6 +68,7 @@ struct SearchPageResponse: Decodable {
         let comments: Count?
         let reviewThreads: Count?
         let reviewRequests: Connection<NodesResponse.ReviewRequest>?
+        let firstRequestEvents: Connection<NodesResponse.RequestEvent>?
         let requestEvents: Connection<NodesResponse.RequestEvent>?
         let latestOpinionatedReviews: Connection<NodesResponse.Verdict>?
         /// Null when the PR isn't in a GitHub stack.
@@ -113,7 +114,7 @@ public struct PullRequestLookup: Sendable, Equatable {
         reviewRequests = ReviewRequests(
             state: node.state,
             requests: node.reviewRequests?.nodes ?? [],
-            events: node.requestEvents?.nodes ?? [],
+            events: (node.firstRequestEvents?.nodes ?? []) + (node.requestEvents?.nodes ?? []),
             verdicts: node.latestOpinionatedReviews?.nodes ?? [],
             viewerLatestReview: node.viewerLatestReview,
             commits: node.recentCommits?.nodes ?? [],
@@ -125,7 +126,8 @@ public struct PullRequestLookup: Sendable, Equatable {
 extension ReviewRequests {
     init(_ node: NodesResponse.PullRequestNode) {
         self.init(
-            state: node.state, requests: node.reviewRequests.nodes, events: node.requestEvents.nodes, verdicts: node.latestOpinionatedReviews.nodes,
+            state: node.state, requests: node.reviewRequests.nodes, events: (node.firstRequestEvents?.nodes ?? []) + node.requestEvents.nodes,
+            verdicts: node.latestOpinionatedReviews.nodes,
             viewerLatestReview: node.viewerLatestReview, commits: node.recentCommits.nodes, forcePushes: node.forcePushes.nodes
         )
     }
@@ -142,7 +144,11 @@ extension ReviewRequests {
         self.init(
             state: state,
             reviewers: requests.map(\.reviewer),
-            events: events.map { ReviewRequestEvent(reviewer: $0.requestedReviewer?.reviewer ?? .other, createdAt: $0.createdAt) },
+            // The earliest and latest requests overlap on a PR with few.
+            events: events.reduce(into: []) { events, event in
+                let request = ReviewRequestEvent(reviewer: event.requestedReviewer?.reviewer ?? .other, createdAt: event.createdAt)
+                if !events.contains(request) { events.append(request) }
+            },
             verdicts: verdicts.compactMap { verdict in
                 verdict.author.map { ReviewVerdict(login: $0.login, state: verdict.state, submittedAt: verdict.submittedAt, commitOid: verdict.commit?.oid) }
             },
@@ -178,6 +184,8 @@ struct NodesResponse: Decodable {
         let id: String
         let state: PullRequestState
         let reviewRequests: SearchPageResponse.Connection<ReviewRequest>
+        /// Missing from responses captured before it was asked for.
+        let firstRequestEvents: SearchPageResponse.Connection<RequestEvent>?
         let requestEvents: SearchPageResponse.Connection<RequestEvent>
         let latestOpinionatedReviews: SearchPageResponse.Connection<Verdict>
         let viewerLatestReview: LatestReview?

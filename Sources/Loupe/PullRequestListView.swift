@@ -3,18 +3,27 @@ import LoupeInbox
 import LoupeModel
 import SwiftUI
 
-/// The start screen: the user's own open PRs beside the ones waiting on their review.
+/// The start screen: the user's own open PRs beside the ones waiting on their review, or the
+/// two as one list of what to do next.
 struct PullRequestListView: View {
     let model: PullRequestListModel
     let showsClosed: Bool
+    var mode: ListMode = .lists
 
     var body: some View {
         Group {
             if model.hasStoredLists {
-                HStack(spacing: 0) {
-                    PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, showsClosed: showsClosed, model: model)
-                    Divider()
-                    PullRequestColumn(title: "To review", list: .toReview, showsAuthor: true, showsClosed: showsClosed, model: model)
+                Group {
+                    switch mode {
+                    case .lists:
+                        HStack(spacing: 0) {
+                            PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, showsClosed: showsClosed, model: model)
+                            Divider()
+                            PullRequestColumn(title: "To review", list: .toReview, showsAuthor: true, showsClosed: showsClosed, model: model)
+                        }
+                    case .todo:
+                        TodoListView(model: model)
+                    }
                 }
                 .safeAreaInset(edge: .top, spacing: 0) {
                     if let error = model.error {
@@ -98,28 +107,12 @@ struct PullRequestColumn: View {
             } else {
                 List(listing, selection: $selection) { listed in
                     let pullRequest = listed.pullRequest
-                    let checkout = model.checkout(for: pullRequest.repository)
                     Button { model.open(pullRequest) } label: {
                         PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, isSelfReviewed: model.isSelfReviewed(pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent, reviewMark: model.reviewMark(on: pullRequest, in: list))
                             .padding(.leading, CGFloat(listed.depth) * Self.stackIndent)
                     }
                     .buttonStyle(.plain)
-                    .contextMenu {
-                        switch checkout {
-                        case let .found(directory):
-                            Button("Reveal Checkout in Finder") {
-                                NSWorkspace.shared.activateFileViewerSelecting([directory])
-                            }
-                        case .notFound:
-                            Button("Locate Checkout…") {
-                                locateCheckout(of: pullRequest.repository, startingAt: model.checkoutSearchRoots.first) { directory in
-                                    try await model.locateCheckout(for: pullRequest.repository, at: directory)
-                                }
-                            }
-                        case nil:
-                            EmptyView()
-                        }
-                    }
+                    .contextMenu { CheckoutMenu(repository: pullRequest.repository, model: model) }
                 }
                 .onKeyPress(.return) {
                     guard let pullRequest = pullRequests.first(where: { $0.id == selection }) else { return .ignored }
@@ -154,6 +147,29 @@ struct PullRequestColumn: View {
     }
 }
 
+/// A row's context menu: its repo's checkout revealed in Finder, or located if not found.
+struct CheckoutMenu: View {
+    let repository: String
+    let model: PullRequestListModel
+
+    var body: some View {
+        switch model.checkout(for: repository) {
+        case let .found(directory):
+            Button("Reveal Checkout in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([directory])
+            }
+        case .notFound:
+            Button("Locate Checkout…") {
+                locateCheckout(of: repository, startingAt: model.checkoutSearchRoots.first) { directory in
+                    try await model.locateCheckout(for: repository, at: directory)
+                }
+            }
+        case nil:
+            EmptyView()
+        }
+    }
+}
+
 struct PullRequestRow: View {
     let pullRequest: PullRequestSummary
     let showsAuthor: Bool
@@ -169,6 +185,8 @@ struct PullRequestRow: View {
     var stackedOn: PullRequestSummary? = nil
     /// Set in To review where the viewer has reviewed the PR.
     var reviewMark: ViewerReviewMark? = nil
+    /// Set in the TODO view, saying why the PR is where it is.
+    var reason: TodoReason? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -178,8 +196,16 @@ struct PullRequestRow: View {
                 Text(verbatim: "\(repositoryName(pullRequest)) #\(pullRequest.number)")
                     .font(.headline.monospacedDigit())
                     .layoutPriority(1)
-                StateBadge(pullRequest: pullRequest, showsOpen: false)
-                ConflictsBadge(pullRequest: pullRequest)
+                if let reason {
+                    TodoReasonBadge(reason: reason)
+                }
+                // The reason may already say it.
+                if reason != .draft {
+                    StateBadge(pullRequest: pullRequest, showsOpen: false)
+                }
+                if reason != .conflicts {
+                    ConflictsBadge(pullRequest: pullRequest)
+                }
                 SelfReviewedBadge(isSelfReviewed: isSelfReviewed)
                 if let stackedOn {
                     StackedOnLabel(parent: stackedOn)

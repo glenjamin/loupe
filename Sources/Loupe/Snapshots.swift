@@ -435,6 +435,11 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_SHOW_STALE"] == "1" {
                     print(try await saveSnapshotAfterShowingStale(in: windows, to: directory).path(percentEncoded: false))
                 }
+                // LOUPE_SNAPSHOT_TODO=1 shows the lists in TODO mode, prints its sections and
+                // snapshots it, then again with the first stack and Waiting unfolded by clicks.
+                if environment["LOUPE_SNAPSHOT_TODO"] == "1" {
+                    for url in try await saveSnapshotsOfTodo(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_CLICK_STACK=1 prints the lists' stacks and each PR's stack bar,
                 // then clicks the first other PR in each bar and snapshots what it showed.
                 if environment["LOUPE_SNAPSHOT_CLICK_STACK"] == "1" {
@@ -845,6 +850,69 @@ private func saveSnapshotAfterShowingStale(in windows: WindowManager, to directo
     let url = directory.appending(path: "stale-shown.png")
     try await saveSnapshot(of: window, to: url)
     return url
+}
+
+/// Shows the lists, in TODO mode for a run started with `LOUPE_SNAPSHOT_TODO=1`, prints each of
+/// its sections with every row's reason and writes `todo.png`, then clicks the first "+N stacked"
+/// through the window as the mouse would and writes `todo-stack.png`, then scrolls to the end,
+/// clicks the Waiting section's header and writes `todo-waiting.png`.
+@MainActor
+private func saveSnapshotsOfTodo(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { throw SnapshotError.noSuchTab("lists") }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    windows.select(nil)
+    let todo = windows.tabs.lists.todo()
+    for (title, items) in [("Review", todo.review), ("Yours", todo.yours), ("Waiting on others", todo.waiting)] {
+        print("\(title) (\(items.count))")
+        for item in items {
+            let stacked = item.stacked.isEmpty ? "" : " +\(item.stacked.count) stacked: \(item.stacked.map { "#\($0.pullRequest.number)" }.joined(separator: " "))"
+            print("  \(item.pullRequest.repository) #\(item.pullRequest.number) — \(item.reason.label)\(stacked)")
+        }
+    }
+    try? await Task.sleep(for: .milliseconds(300))
+    var urls = [directory.appending(path: "todo.png")]
+    try await saveSnapshot(of: window, to: urls[0])
+    for name in ["stack", "waiting"] {
+        window.layoutIfNeeded()
+        guard let root = window.contentView else { continue }
+        // The list draws only the rows in view, and Waiting comes last.
+        if name == "waiting" { await scrollListToEnd(in: window) }
+        guard let marker = descendants(of: root).first(where: { ($0 as? SnapshotClickMarker.Marker)?.name == name && !$0.isHiddenOrHasHiddenAncestor }) else {
+            print("no \(name) toggle to click")
+            continue
+        }
+        let point = marker.convert(NSPoint(x: marker.bounds.midX, y: marker.bounds.midY), to: nil)
+        // The mouse-up is queued first, so a tracking loop started by the mouse-down finds it.
+        let events = [NSEvent.EventType.leftMouseUp, .leftMouseDown].compactMap { type in
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+        }
+        guard events.count == 2 else { continue }
+        NSApp.postEvent(events[0], atStart: false)
+        window.sendEvent(events[1])
+        print("clicked the \(name) toggle at \(point)")
+        try? await Task.sleep(for: .milliseconds(300))
+        if name == "waiting" { await scrollListToEnd(in: window) }
+        let url = directory.appending(path: "todo-\(name).png")
+        try await saveSnapshot(of: window, to: url)
+        urls.append(url)
+    }
+    return urls
+}
+
+/// Scrolls the window's list to its end. Rows are measured as they come into view, so the end
+/// moves until it's reached.
+@MainActor
+private func scrollListToEnd(in window: NSWindow) async {
+    guard let root = window.contentView,
+          let scrollView = descendants(of: root).compactMap({ $0 as? NSScrollView }).first(where: { $0.documentView is NSTableView && !$0.isHiddenOrHasHiddenAncestor }),
+          let document = scrollView.documentView else { return }
+    for _ in 0..<10 {
+        window.layoutIfNeeded()
+        let end = max(0, document.bounds.height - scrollView.contentView.bounds.height)
+        guard scrollView.contentView.bounds.minY < end else { return }
+        document.scroll(NSPoint(x: 0, y: end))
+        try? await Task.sleep(for: .milliseconds(200))
+    }
 }
 
 /// Prints each list's stacked PRs with their depth and what they're on, then for each PR tab with

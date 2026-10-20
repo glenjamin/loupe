@@ -570,7 +570,8 @@ actor FakeGitHub: HTTPTransport {
         let nodes = ids.map { id in
             pullRequests.first { $0.id == id }.map { pullRequest in
                 NodesPayload.Node(
-                    id: id, state: pullRequest.state, reviewRequests: pullRequest.reviewRequestNodes, requestEvents: pullRequest.requestEventNodes,
+                    id: id, state: pullRequest.state, reviewRequests: pullRequest.reviewRequestNodes,
+                    firstRequestEvents: pullRequest.firstRequestEventNodes, requestEvents: pullRequest.requestEventNodes,
                     latestOpinionatedReviews: pullRequest.verdictNodes, viewerLatestReview: pullRequest.viewerLatestReviewNode,
                     recentCommits: pullRequest.recentCommitNodes, forcePushes: pullRequest.forcePushNodes
                 )
@@ -725,7 +726,7 @@ struct FakePullRequest: Codable, Sendable {
 
 /// The fields only a lookup of a PR by id or number asks for, beside a search node's.
 private enum ReviewRequestKeys: String, CodingKey {
-    case reviewRequests, requestEvents, latestOpinionatedReviews, viewerLatestReview, recentCommits, forcePushes
+    case reviewRequests, firstRequestEvents, requestEvents, latestOpinionatedReviews, viewerLatestReview, recentCommits, forcePushes
 }
 
 /// The stack fields every row has, which the fake works out from its PRs when it serves them.
@@ -793,6 +794,13 @@ private extension FakePullRequest {
         }
         return .init(nodes: latest.map { _, review in
             .init(state: review.state, author: .init(login: review.login), submittedAt: review.submittedAt?.formatted(.iso8601), commit: review.commit.map { .init(oid: $0) })
+        })
+    }
+
+    /// The first 10, oldest first, as GitHub returns them to the app's query.
+    var firstRequestEventNodes: NodesPayload.Connection<NodesPayload.Event> {
+        .init(nodes: requestEvents.sorted { $0.createdAt < $1.createdAt }.prefix(10).map { event in
+            .init(createdAt: event.createdAt.formatted(.iso8601), requestedReviewer: .init(event.reviewer))
         })
     }
 
@@ -1030,6 +1038,7 @@ private struct NodesPayload: Encodable {
         let id: String
         let state: String
         let reviewRequests: Connection<Request>
+        let firstRequestEvents: Connection<Event>
         let requestEvents: Connection<Event>
         let latestOpinionatedReviews: Connection<Verdict>
         let viewerLatestReview: LatestReview?
@@ -1142,6 +1151,7 @@ private struct LookupNode: Encodable {
         try encodeStackFields(of: pullRequest, parentId: parentId, to: encoder)
         var container = encoder.container(keyedBy: ReviewRequestKeys.self)
         try container.encode(pullRequest.reviewRequestNodes, forKey: .reviewRequests)
+        try container.encode(pullRequest.firstRequestEventNodes, forKey: .firstRequestEvents)
         try container.encode(pullRequest.requestEventNodes, forKey: .requestEvents)
         try container.encode(pullRequest.verdictNodes, forKey: .latestOpinionatedReviews)
         try container.encode(pullRequest.viewerLatestReviewNode, forKey: .viewerLatestReview)
