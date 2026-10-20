@@ -1727,8 +1727,9 @@ private func saveSnapshotsOfVerdicts(in windows: WindowManager, to directory: UR
 
 /// For each PR with CI's visual review in its conversation, prints it, opens the header flag's
 /// popover as resting on it would and writes `visual-badge-<title>.png`, then clicks the sidebar's
-/// Visual review row through the window as the mouse would, waits until the report has loaded or
-/// failed, prints which, and writes `visual-<title>.png`.
+/// Visual review row through the window as the mouse would, writes `visual-downloading-<title>.png`
+/// if its artifacts download, waits until the report has loaded or failed, prints which, and
+/// writes `visual-<title>.png`.
 @MainActor
 private func saveSnapshotsOfVisualReviews(in windows: WindowManager, to directory: URL) async throws -> [URL] {
     guard let window = windows.mainWindow else { return [] }
@@ -1778,16 +1779,38 @@ private func saveSnapshotsOfVisualReviews(in windows: WindowManager, to director
         window.sendEvent(events[1])
         try? await Task.sleep(for: .milliseconds(300))
         print("clicking Visual review at \(point) switched \(title) from \(before) to \(tab.section)")
+        // A first open downloads the job's artifacts, which takes minutes; its progress is
+        // snapshotted once files are arriving, then printed now and then until it's done.
+        let started = ContinuousClock.now
+        var downloadShot = false
+        var lastPrinted = started
+        while ContinuousClock.now < started + .seconds(600), let page = VisualReviewPage.existingPage(for: tab), page.isDownloading {
+            if case let .downloading(progress) = page.cover {
+                if !downloadShot, progress.done > 0 {
+                    downloadShot = true
+                    let url = directory.appending(path: "visual-downloading-\(sanitised(title)).png")
+                    try await saveSnapshot(of: window, to: url)
+                    written.append(url)
+                }
+                if ContinuousClock.now - lastPrinted > .seconds(10) {
+                    lastPrinted = .now
+                    print("\(title): downloading, \(progress.description) after \(ContinuousClock.now - started)")
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
         let loaded = ContinuousClock.now + .seconds(20)
         while ContinuousClock.now < loaded, VisualReviewPage.existingPage(for: tab).map({ $0.cover == .loading }) ?? true {
             try? await Task.sleep(for: .milliseconds(250))
         }
+        print("\(title): report settled after \(ContinuousClock.now - started)")
         // Lets the page draw a frame once loaded.
         try? await Task.sleep(for: .milliseconds(500))
         if let page = VisualReviewPage.existingPage(for: tab) {
             let state = switch page.cover {
             case nil: "loaded"
             case .loading: "still loading"
+            case let .downloading(progress): "still downloading, \(progress.description)"
             case let .failed(failure): "failed: \(failure.title)"
             }
             print("\(title): report \(state) at \(page.webView.url?.absoluteString ?? "nothing"), titled \(page.webView.title ?? "nothing")")

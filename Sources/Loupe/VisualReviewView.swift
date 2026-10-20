@@ -129,7 +129,8 @@ struct VisualReviewRow: View {
 }
 
 /// The report beside the sidebar: a bar saying what it is with ways out to the browser, over
-/// the report's own page, covered by a native wait until it has loaded or by why it couldn't.
+/// the report's own page, covered by a native wait while its artifacts download and it loads,
+/// or by why it couldn't.
 struct VisualReviewPane: View {
     let page: VisualReviewPage
     let review: VisualReview
@@ -175,6 +176,7 @@ struct VisualReviewPane: View {
             Button("Reload", systemImage: "arrow.clockwise") { page.load(review.reportURL) }
                 .labelStyle(.iconOnly)
                 .help("Load the report again")
+                .disabled(page.isDownloading)
             Button("Open in Browser", systemImage: "safari") { openInBrowser(review.reportURL) }
                 .labelStyle(.iconOnly)
                 .help("Open the report in the default browser")
@@ -188,8 +190,25 @@ struct VisualReviewPane: View {
     @ViewBuilder
     private func coverView(_ cover: VisualReviewPage.Cover) -> some View {
         switch cover {
+        case let .downloading(progress):
+            VStack(spacing: 8) {
+                if let total = progress.total, total > 0 {
+                    ProgressView(value: Double(min(progress.done, total)), total: Double(total))
+                        .frame(width: 240)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+                Text("Downloading the report…")
+                    .foregroundStyle(.secondary)
+                Text(verbatim: progress.description)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                Button("Cancel") { page.cancelDownload() }
+                    .padding(.top, 4)
+            }
+            .padding()
         case .loading:
-            LoadingLabel(title: "Loading the visual review report…", detail: review.reportURL.host() ?? review.reportURL.absoluteString)
+            LoadingLabel(title: "Loading the visual review report…")
         case let .failed(failure):
             ContentUnavailableView {
                 Label(failure.title, systemImage: "exclamationmark.triangle")
@@ -231,15 +250,17 @@ private struct VisualReviewWebView: NSViewRepresentable {
 /// A PR tab's web view of CI's visual review report, made the first time the report is shown
 /// and kept while the tab lives, so its place and chosen comparison survive switching away.
 /// Unlike the conversation's, the report is someone else's interactive page and needs its own
-/// scripts, so this view runs them. Its artifacts are fetched by Loupe with the user's CircleCI
-/// token under the `loupe-artifact:` scheme, so the page never sees the token, and the view
-/// stays on the report's artifact host, sending any other page to the browser. It keeps no
-/// cookies or storage between runs.
+/// scripts, so this view runs them. The report's job's artifacts are downloaded by the
+/// `circleci` CLI into Loupe's cache and served from there under the `loupe-artifact:` scheme,
+/// that job's files only; the view sends any other page to the browser and keeps no cookies or
+/// storage between runs.
 @MainActor
 @Observable
 final class VisualReviewPage: NSObject {
-    /// What covers the web view: a wait until the report has loaded, or why it couldn't.
+    /// What covers the web view: the download's progress, a wait until the report has loaded,
+    /// or why it couldn't.
     enum Cover: Equatable {
+        case downloading(CircleCIArtifacts.Progress)
         case loading
         case failed(Failure)
     }
@@ -255,9 +276,9 @@ final class VisualReviewPage: NSObject {
     /// The report last asked for, in the browser's terms, which a newer report's URL is
     /// compared with.
     @ObservationIgnored private var reportURL: URL?
+    @ObservationIgnored private var opening: Task<Void, Never>?
 
     private static let pages = NSMapTable<PullRequestTab, VisualReviewPage>.weakToStrongObjects()
-    /// One for every page, so the token is read once a run.
     private static let artifacts = CircleCIArtifacts.live()
 
     /// The tab's page, made if it hasn't one yet.
@@ -286,35 +307,58 @@ final class VisualReviewPage: NSObject {
         webView.uiDelegate = self
     }
 
+    var isDownloading: Bool {
+        if case .downloading = cover { true } else { false }
+    }
+
     /// Loads the report at `url` unless it's the one already asked for, as when CI's comment
     /// names a newer run's report.
     func show(_ url: URL) {
         if url != reportURL { load(url) }
     }
 
+    /// Loads the report from its job's downloaded artifacts, downloading them first if they
+    /// aren't kept from before.
     func load(_ url: URL) {
         reportURL = url
-        guard let proxied = CircleCIArtifacts.proxyURL(for: url) else {
-            return fail("Not a CircleCI artifact", "Loupe only opens reports kept as CircleCI artifacts; this one is at \(url.host() ?? url.absoluteString).")
-        }
+        opening?.cancel()
         cover = .loading
-        webView.load(URLRequest(url: proxied))
+        let artifacts = Self.artifacts
+        opening = Task { [weak self] in
+            do {
+                let page = try await artifacts.open(url) { [weak self] progress in
+                    Task { @MainActor in self?.downloaded(progress, of: url) }
+                }
+                guard let self, !Task.isCancelled, reportURL == url else { return }
+                cover = .loading
+                webView.load(URLRequest(url: page))
+            } catch let failure as CircleCIArtifacts.Failure {
+                guard let self, !Task.isCancelled, reportURL == url else { return }
+                fail(failure.title, LocalizedStringKey(failure.message))
+            } catch {
+                // Cancelled, by a newer load or the Cancel button, which says so itself.
+            }
+        }
     }
 
-    /// Why the report itself, rather than something it loads, couldn't be fetched.
-    fileprivate func artifactFailed(_ url: URL, _ outcome: CircleCIArtifacts.Outcome) {
-        guard let reportURL, url == CircleCIArtifacts.proxyURL(for: reportURL) else { return }
-        switch outcome {
-        case .needsToken:
-            fail("Loupe needs a CircleCI token", "The report is a private project's artifact. Make a personal API token in CircleCI's user settings and store it with `circleci setting set token`, or set `CIRCLE_TOKEN`, then try again.")
-        case let .refused(status):
-            fail("CircleCI refused the token", "CircleCI answered \(status) to the token from the circleci CLI's settings. Store a current one with `circleci setting set token`, then try again.")
-        case let .loaded(_, _, status) where status >= 400:
-            fail("Couldn't load the report", "CircleCI answered \(status) \(HTTPURLResponse.localizedString(forStatusCode: status)). The artifacts may have expired.")
-        case let .failed(message):
-            fail("Couldn't load the report", LocalizedStringKey(stringLiteral: message))
-        case .loaded:
-            break
+    /// Stops the download underway, leaving nothing of it behind.
+    func cancelDownload() {
+        opening?.cancel()
+        opening = nil
+        fail("Download cancelled", "The report's artifacts weren't downloaded.")
+    }
+
+    /// Whether the scheme handler should serve `url`: only the shown report's job's files are.
+    fileprivate func serves(_ url: URL) -> Bool {
+        guard let reportURL, let job = CircleCIArtifacts.job(of: url) else { return false }
+        return job == CircleCIArtifacts.job(of: reportURL)
+    }
+
+    private func downloaded(_ progress: CircleCIArtifacts.Progress, of url: URL) {
+        guard url == reportURL else { return }
+        switch cover {
+        case .loading, .downloading: cover = .downloading(progress)
+        case .failed, nil: break
         }
     }
 
@@ -322,10 +366,10 @@ final class VisualReviewPage: NSObject {
         cover = .failed(Failure(title: title, message: message))
     }
 
-    /// The report's artifact host, under either scheme.
-    private func isReportHost(_ url: URL) -> Bool {
-        guard let host = url.host()?.lowercased() else { return false }
-        return host == reportURL?.host()?.lowercased()
+    /// A link to the report's own job's artifacts, which is served from the download too.
+    private func proxied(_ url: URL) -> URL? {
+        guard serves(url) else { return nil }
+        return CircleCIArtifacts.proxyURL(for: url)
     }
 }
 
@@ -335,8 +379,7 @@ extension VisualReviewPage: WKNavigationDelegate, WKUIDelegate {
         let scheme = url.scheme?.lowercased()
         if scheme == CircleCIArtifacts.scheme || scheme == "about" || scheme == "data" || scheme == "blob" { return .allow }
         let isMainFrame = navigationAction.targetFrame?.isMainFrame != false
-        // A link to another of the report's own files is fetched with the token too.
-        if isMainFrame, isReportHost(url), let proxied = CircleCIArtifacts.proxyURL(for: url) {
+        if isMainFrame, let proxied = proxied(url) {
             webView.load(URLRequest(url: proxied))
             return .cancel
         }
@@ -362,7 +405,7 @@ extension VisualReviewPage: WKNavigationDelegate, WKUIDelegate {
         guard let url = navigationAction.request.url else { return nil }
         if url.scheme?.lowercased() == CircleCIArtifacts.scheme {
             webView.load(navigationAction.request)
-        } else if isReportHost(url), let proxied = CircleCIArtifacts.proxyURL(for: url) {
+        } else if let proxied = proxied(url) {
             webView.load(URLRequest(url: proxied))
         } else {
             followLink(url, inBrowserTab: true) { _ in }
@@ -371,7 +414,7 @@ extension VisualReviewPage: WKNavigationDelegate, WKUIDelegate {
     }
 
     /// Cancelled loads, as when a policy stopped one or a newer replaced it, aren't failures;
-    /// nor is one the artifact's own failure has already explained.
+    /// nor is one a failure has already explained.
     private func failed(with error: any Error) {
         let error = error as NSError
         let isCancelled = (error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled)
@@ -385,14 +428,15 @@ extension VisualReviewPage: WKNavigationDelegate, WKUIDelegate {
     private static let frameLoadInterruptedByPolicyChange = 102
 }
 
-/// Serves `loupe-artifact:` URLs to the report's web view, each fetched from CircleCI with the
-/// user's token: the report, then each file it loads relative to it.
+/// Serves `loupe-artifact:` URLs to the report's web view from its job's downloaded artifacts:
+/// the report, then each file it loads relative to it. Anything else, or a file the job hasn't,
+/// is answered 404, as a server would.
 @MainActor
 private final class ArtifactSchemeHandler: NSObject, WKURLSchemeHandler {
     let artifacts: CircleCIArtifacts
     weak var page: VisualReviewPage?
-    /// The fetches underway, by task, so a task WebKit has stopped is never answered.
-    private var fetches: [ObjectIdentifier: Task<Void, Never>] = [:]
+    /// The reads underway, by task, so a task WebKit has stopped is never answered.
+    private var reads: [ObjectIdentifier: Task<Void, Never>] = [:]
 
     init(artifacts: CircleCIArtifacts) {
         self.artifacts = artifacts
@@ -403,27 +447,22 @@ private final class ArtifactSchemeHandler: NSObject, WKURLSchemeHandler {
         guard let url = urlSchemeTask.request.url else {
             return urlSchemeTask.didFailWithError(URLError(.badURL))
         }
+        let isServed = page?.serves(url) == true
         let artifacts = artifacts
-        fetches[key] = Task { [weak self] in
-            let outcome = await artifacts.fetch(url)
-            guard let self, !Task.isCancelled, fetches.removeValue(forKey: key) != nil else { return }
-            page?.artifactFailed(url, outcome)
-            switch outcome {
-            case let .loaded(data, mimeType, status):
-                let headers = ["Content-Type": mimeType ?? "application/octet-stream", "Content-Length": "\(data.count)"]
-                urlSchemeTask.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers) ?? URLResponse(url: url, mimeType: mimeType, expectedContentLength: data.count, textEncodingName: nil))
-                urlSchemeTask.didReceive(data)
-                urlSchemeTask.didFinish()
-            case .needsToken, .refused:
-                urlSchemeTask.didFailWithError(URLError(.userAuthenticationRequired))
-            case let .failed(message):
-                urlSchemeTask.didFailWithError(URLError(.cannotLoadFromNetwork, userInfo: [NSLocalizedDescriptionKey: message]))
-            }
+        reads[key] = Task { [weak self] in
+            let file = isServed ? await Task.detached { artifacts.contents(of: url) }.value : nil
+            guard let self, !Task.isCancelled, reads.removeValue(forKey: key) != nil else { return }
+            let body = file?.data ?? Data("Not found".utf8)
+            let headers = ["Content-Type": file?.mimeType ?? "text/plain", "Content-Length": "\(body.count)"]
+            let status = file == nil ? 404 : 200
+            urlSchemeTask.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers) ?? URLResponse(url: url, mimeType: file?.mimeType, expectedContentLength: body.count, textEncodingName: nil))
+            urlSchemeTask.didReceive(body)
+            urlSchemeTask.didFinish()
         }
     }
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
-        fetches.removeValue(forKey: ObjectIdentifier(urlSchemeTask))?.cancel()
+        reads.removeValue(forKey: ObjectIdentifier(urlSchemeTask))?.cancel()
     }
 }
 
@@ -441,6 +480,14 @@ extension VisualReview {
     var summary: String? {
         if let counts { return "\(counts.changed) changed, \(counts.new) new, \(counts.removed) removed" }
         return changeCount.map { "\($0) \($0 == 1 ? "story" : "stories") listed" }
+    }
+}
+
+extension CircleCIArtifacts.Progress {
+    /// "312 of 558 files", or how many so far before the CLI has said how many there are.
+    var description: String {
+        guard let total else { return done == 0 ? "Starting the circleci CLI" : "\(done) files" }
+        return "\(done) of \(total) files"
     }
 }
 
