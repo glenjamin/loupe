@@ -10,9 +10,9 @@ query($id: ID!, $after: String) {
         pageInfo { hasNextPage endCursor }
         nodes {
           __typename
-          ... on IssueComment { id bodyHTML createdAt isMinimized viewerCanUpdate viewerCanDelete author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } } }
+          ... on IssueComment { id databaseId bodyHTML createdAt isMinimized viewerCanUpdate viewerCanDelete author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } } }
           ... on PullRequestReview {
-            id state bodyHTML createdAt submittedAt viewerCanUpdate author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } }
+            id databaseId state bodyHTML createdAt submittedAt viewerCanUpdate author { login avatarUrl } reactionGroups { content viewerHasReacted reactors { totalCount } }
             comments(first: 50) { nodes { id bodyHTML path line originalLine diffHunk outdated isMinimized replyTo { id } } }
           }
           ... on PullRequestCommit { id commit { oid messageHeadline committedDate author { name user { login avatarUrl } } } }

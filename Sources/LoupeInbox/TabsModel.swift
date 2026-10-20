@@ -103,17 +103,19 @@ public final class TabsModel {
         reveal(pullRequest.id)
     }
 
-    /// Opens the PR a link names, or focuses its tab. A stored PR opens at once. Any other gets
-    /// a tab from the link alone at once, while it's looked up on GitHub and stored like any
-    /// listed PR, then becomes the PR's tab in place; if it can't be found the tab says why.
-    /// Returns that lookup, for whoever wants to wait for it.
+    /// Opens the PR a link names, or focuses its tab, then lands on what in it the link points
+    /// at. A stored PR opens at once. Any other gets a tab from the link alone at once, while
+    /// it's looked up on GitHub and stored like any listed PR, then becomes the PR's tab in
+    /// place, landing on what the latest link to it pointed at; if it can't be found the tab
+    /// says why. Returns the lookup and landing, for whoever wants to wait for them.
     @discardableResult
     public func open(_ link: PullRequestLink) -> Task<Void, Never>? {
         if let known = tabs.map(\.pullRequest).first(where: link.names) ?? lists.pullRequest(repository: link.repository, number: link.number) {
             open(known)
-            return nil
+            return land(on: link.target, inTab: known.id)
         }
         if let pending = items.lazy.compactMap(\.pending).first(where: { $0.link.names(link) }) {
+            pending.target = link.target
             reveal(pending.id)
             return retry(pending)
         }
@@ -276,8 +278,10 @@ public final class TabsModel {
             guard item(id: pending.id) != nil else { return }
             try await store.addOpenTab(found)
             place(found, replacing: pending)
+            let landing = land(on: pending.target, inTab: found.id)
             // Only now, as what's stacked with a PR is kept while it's open in a tab or listed.
             await lists.lookUpStacks(around: [found])
+            await landing?.value
         } catch {
             log("Couldn't look up \(link.repository)#\(link.number): \(error.localizedDescription)")
             pending.error = error.localizedDescription
@@ -300,6 +304,12 @@ public final class TabsModel {
         } else {
             save()
         }
+    }
+
+    /// Lands on what a link pointed at in the PR's open tab, if it pointed at anything.
+    private func land(on target: PullRequestLink.Target?, inTab id: String) -> Task<Void, Never>? {
+        guard let target, let tab = tab(id: id) else { return nil }
+        return Task { await tab.land(on: target) }
     }
 
     private func makeTab(_ pullRequest: PullRequestSummary) -> PullRequestTab {

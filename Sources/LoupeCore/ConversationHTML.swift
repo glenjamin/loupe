@@ -58,7 +58,7 @@ public enum ConversationHTML {
             let edit = commentActions(item.id, canEdit: item.viewerCanUpdate && isSettled, canDelete: item.viewerCanDelete && isSettled)
             return card(
                 author: item.actor, action: "commented", date: item.date, now: now, isSending: item.isSending, isSaving: item.isSaving, edit: edit,
-                body: minimizable(bodyHTML, isMinimized: isMinimized), reactions: reactions
+                body: minimizable(bodyHTML, isMinimized: isMinimized), reactions: reactions, commentId: item.id
             )
         case let .review(state, bodyHTML, comments):
             // Replies are shown in their threads, under the review that started them.
@@ -72,7 +72,7 @@ public enum ConversationHTML {
             let edit = item.viewerCanUpdate && !bodyHTML.isEmpty && state != .pending && !item.isSending && !item.isSaving ? editLink(item.id) : ""
             return card(
                 author: item.actor, action: reviewAction(state), date: item.date, now: now, isSending: item.isSending, isSaving: item.isSaving, edit: edit,
-                badge: reviewBadge(state), body: body, kind: "review"
+                badge: reviewBadge(state), body: body, kind: "review", commentId: item.id
             )
         case .commit:
             return ""
@@ -95,12 +95,14 @@ public enum ConversationHTML {
         }
     }
 
+    /// A comment's or review's card; one with `commentId` is found by it when a link lands on it.
     private static func card(
         author: Participant?, action: String, date: Date, now: Date, isSending: Bool = false, isSaving: Bool = false, edit: String = "", badge: String = "",
-        body: String, kind: String = "comment", reactions: String = ""
+        body: String, kind: String = "comment", reactions: String = "", commentId: String? = nil
     ) -> String {
-        """
-        <article class="item \(kind)">\(avatar(author, size: 40))<div class="card">\
+        let id = commentId.map { #" data-comment-id="\#(escape($0))""# } ?? ""
+        return """
+        <article class="item \(kind)">\(avatar(author, size: 40))<div class="card"\(id)>\
         <header>\(edit)\(login(author)) \(escape(action))\(badge) \(isSending ? sending : isSaving ? saving : time(date, now: now))</header>\
         \(body.isEmpty ? "" : #"<div class="body">\#(body)</div>"#)\(reactions)</div></article>
 
@@ -132,7 +134,7 @@ public enum ConversationHTML {
             let isSettled = !reply.isSending && !reply.isSaving
             let edit = commentActions(reply.id, canEdit: reply.viewerCanUpdate && isSettled, canDelete: (reply.viewerCanDelete || reply.isPending) && isSettled)
             let when = reply.isSending ? sending : reply.isSaving ? saving : time(reply.createdAt, now: now)
-            return #"<div class="thread-comment">\#(avatar(reply.author, size: 24))<div><header>\#(edit)\#(login(reply.author)) \#(when)</header><div class="body">\#(minimizable(reply.bodyHTML, isMinimized: reply.isMinimized))</div>\#(reply.isPending || reply.isSending ? "" : reactions(reply.reactions, to: reply.id))</div></div>"#
+            return #"<div class="thread-comment" data-comment-id="\#(escape(reply.id))">\#(avatar(reply.author, size: 24))<div><header>\#(edit)\#(login(reply.author)) \#(when)</header><div class="body">\#(minimizable(reply.bodyHTML, isMinimized: reply.isMinimized))</div>\#(reply.isPending || reply.isSending ? "" : reactions(reply.reactions, to: reply.id))</div></div>"#
         }.joined()
         let classes = ["thread", isResolved ? "resolved" : nil, isOutdated ? "outdated" : nil].compactMap { $0 }.joined(separator: " ")
         // The app finds the thread by its id, to put a reply to it beside it.

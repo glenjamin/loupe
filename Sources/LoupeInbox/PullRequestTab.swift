@@ -100,6 +100,14 @@ public final class PullRequestTab: Identifiable {
     /// Opens a linked PR in its own tab; set by `TabsModel`.
     @ObservationIgnored var linkOpener: @MainActor (PullRequestLink) async -> Void = { _ in }
 
+    /// What in the conversation a link asked to land on, for its page to scroll to and mark
+    /// once it shows it.
+    public internal(set) var conversationLanding: ConversationLanding?
+    /// Counts the landings asked for, so one overtaken by another gives up.
+    @ObservationIgnored var landings = 0
+    /// Those waiting for the conversation's fetch underway to arrive or fail.
+    @ObservationIgnored var conversationWaiters: [CheckedContinuation<Void, Never>] = []
+
     /// The PR as it was when the tab was opened, for once it has left both lists.
     private let opened: PullRequestSummary
     let lists: PullRequestListModel
@@ -255,6 +263,11 @@ public final class PullRequestTab: Identifiable {
         }
         loading = task
         await task.value
+    }
+
+    /// Whether the diff and conversation have been asked for, by `load()`.
+    var hasStartedLoading: Bool {
+        seen != nil
     }
 
     /// Produces the diff again, of the PR as it's stored now, such as after a failure.
@@ -888,6 +901,12 @@ public final class PullRequestTab: Identifiable {
 
     /// Takes the conversation from GitHub and stores it, keeping what was shown if it fails.
     func refreshConversation() async {
+        // Last, once the fetch has settled either way.
+        defer {
+            let waiters = conversationWaiters
+            conversationWaiters = []
+            for waiter in waiters { waiter.resume() }
+        }
         isFetchingConversation = true
         defer { isFetchingConversation = false }
         let started = startFetch()

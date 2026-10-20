@@ -219,10 +219,12 @@ private struct TimelineItemRow: Codable, FetchableRecord, PersistableRecord {
     let viewerCanUpdate: Bool
     let viewerCanDelete: Bool
     let isSaving: Bool
+    let databaseId: Int?
 
     init(_ item: TimelineItem, pullRequestId: String, position: Int) {
         self.pullRequestId = pullRequestId
         id = item.id
+        databaseId = item.databaseId
         self.position = position
         isSending = item.isSending
         viewerCanUpdate = item.viewerCanUpdate
@@ -279,7 +281,7 @@ private struct TimelineItemRow: Codable, FetchableRecord, PersistableRecord {
         case "reviewRequested": event = .reviewRequested(reviewer: detail)
         default: return nil
         }
-        return TimelineItem(id: id, date: date, actor: participant(actorLogin, actorAvatarUrl), event: event, isSending: isSending, viewerCanUpdate: viewerCanUpdate, viewerCanDelete: viewerCanDelete, isSaving: isSaving)
+        return TimelineItem(id: id, date: date, actor: participant(actorLogin, actorAvatarUrl), event: event, isSending: isSending, viewerCanUpdate: viewerCanUpdate, viewerCanDelete: viewerCanDelete, isSaving: isSaving, databaseId: databaseId)
     }
 }
 

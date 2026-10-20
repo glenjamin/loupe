@@ -154,12 +154,16 @@ public struct TimelineItem: Sendable, Equatable, Identifiable {
     public var viewerCanDelete: Bool
     /// The viewer's edit of its body, shown before GitHub has answered for it.
     public var isSaving: Bool
+    /// A comment's or review's REST id, which github.com's links to it name; nil for other
+    /// events, and until GitHub has said.
+    public var databaseId: Int?
 
     public init(
         id: String, date: Date, actor: Participant?, event: TimelineEvent, reactions: [ReactionGroup] = [], isSending: Bool = false, viewerCanUpdate: Bool = false,
-        viewerCanDelete: Bool = false, isSaving: Bool = false
+        viewerCanDelete: Bool = false, isSaving: Bool = false, databaseId: Int? = nil
     ) {
         self.id = id
+        self.databaseId = databaseId
         self.date = date
         self.actor = actor
         self.event = event

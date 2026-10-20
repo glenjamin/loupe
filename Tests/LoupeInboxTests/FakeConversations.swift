@@ -202,6 +202,7 @@ actor FakeConversations {
         timelines[id, default: []].append([
             "__typename": "IssueComment",
             "id": commentId,
+            "databaseId": 800_000 + index,
             "bodyHTML": bodyHTML,
             "createdAt": Date.now.formatted(.iso8601),
             "isMinimized": false,
@@ -212,6 +213,12 @@ actor FakeConversations {
         ])
         if let markdown { self.markdown[commentId] = markdown }
         return commentId
+    }
+
+    /// The REST id of the PR's comment or review with node id `id`, which github.com's links
+    /// name.
+    func databaseId(of id: String, on pullRequestId: String) -> Int? {
+        timelines[pullRequestId]?.first { $0["id"] as? String == id }?["databaseId"] as? Int
     }
 
     /// Adds a force-push replacing head `before` with `after` to the end of the PR's timeline,

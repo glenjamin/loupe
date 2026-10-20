@@ -11,6 +11,9 @@ public final class PendingTab: Identifiable {
     /// Never a PR's id, which GitHub gives only once the PR is found.
     public let id: String
     public let link: PullRequestLink
+    /// What the latest link to the PR points at, landed on once the PR's tab takes this one's
+    /// place.
+    var target: PullRequestLink.Target?
     /// Why the PR couldn't be opened; nil while it's being looked up.
     public internal(set) var error: String?
     /// The lookup underway or last made, for a second link to the PR to wait on.
@@ -18,6 +21,7 @@ public final class PendingTab: Identifiable {
 
     init(link: PullRequestLink) {
         self.link = link
+        target = link.target
         id = "link:\(link.repository.lowercased())#\(link.number)"
     }
 

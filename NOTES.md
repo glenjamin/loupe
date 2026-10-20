@@ -145,7 +145,10 @@ To try it, with the bundle built and registered (each launches Loupe if it isn't
 open 'loupe://github.com/tamarinworks/porter/pull/1522'
 open 'loupe:///tamarinworks/porter/pull/1522'
 open -a Loupe https://github.com/tamarinworks/porter/pull/1522
+open 'loupe:///tamarinworks/porter/pull/1522#issuecomment-6139849638'
 ```
+
+A link to part of a PR lands there (see "Links to a comment, thread, file or commit land on it" in `DESIGN.md`). GitHub's anchors, checked 2026-10-20 against `url` fields from GraphQL and a public PR's files page: `#issuecomment-<id>` (a comment on the PR), `#pullrequestreview-<id>` (a review), `#discussion_r<id>` (a review thread's comment, `#r<id>` on the files), `#diff-<hex>` on the files (the SHA-256 of the file's path, then an optional line such as `R12`), and the pages `/files`, `/files/<oid>`, `/files/<oid>..<oid>` and `/commits/<oid>`; `/changes` is taken as `/files` too, for GitHub's newer files view, though no such link was seen, as the page fetched was the logged-out, classic one. The ids are REST database ids: GraphQL's `databaseId`, which answered ids past 2³¹ (5829229341) as plain numbers.
 
 A router such as Finicky can send Slack's and mail's PR links here, either by rewriting `https://github.com/*/pull/*` to the same URL with the scheme `loupe`, or by opening those URLs with the app `com.glenmailer.Loupe`. The PR opens in its tab at once: a stored PR as it's stored, any other as a tab made from the link alone, `repo #number` with a spinner, while it's looked up on GitHub, which becomes the PR's tab in place once found. A PR GitHub won't show, or a failed lookup, leaves that tab saying why, with Retry, Open on GitHub and Close. Any other https link Loupe is given goes to the browser. A `loupe:` URL that names no PR is logged and dropped. Links Loupe sends to the browser carry `via=loupe` when they're on github.com, so the router's PR rule should skip URLs with that parameter, or it sends Loupe's own "Open on GitHub" straight back.
 
@@ -160,6 +163,8 @@ With `LOUPE_SNAPSHOT_DIR` set, the app waits until the lists have refreshed and 
 `LOUPE_SNAPSHOT_HOLD_RELOAD=1` reloads each PR whose diff is ready, after the other hooks, and holds the reload as it diffs, printing where each is held, so the PNGs show the old diff and file list dimmed with the commit picker's spinner.
 
 `LOUPE_SNAPSHOT_OPEN_LINK=<url>` opens the URL once the lists have refreshed, as a link from another app would arrive, and holds every lookup of a PR by number unanswered, printing what the shown tab is, so for a PR the copy doesn't store the PNGs include its tab waiting on the lookup. `LOUPE_SNAPSHOT_OPEN_LINK_ANSWERED=1` lets the lookup through (a read-only query) and waits for it, so a link to a PR number GitHub hasn't got shows the tab saying why.
+
+`LOUPE_SNAPSHOT_DEEP_LINK=<url> <url>…` opens each URL in turn, after the other hooks, as a link from another app would arrive, lookups answered (read-only), waits for its tab to land on what the link points at (up to 15 seconds), prints the tab's section, changes shown, file, the diff's highlighted thread and what the conversation's page has marked, with each mark's top in the page, and writes `deep-link-<n>-<title>.png` while the mark shows, before the usual PNGs. A copy migrated from before comments stored their REST ids fetches the conversation again to find one. atrium #2865 was tried with `loupe:///tamarinworks/atrium/pull/2865#issuecomment-5829229341`, `#pullrequestreview-5552533813`, `/files#r4298372143` (a thread on line 73, shown in the diff) and `#discussion_r4298373286` (an outdated thread, shown in the conversation).
 
 `LOUPE_SNAPSHOT_HOLD_COMMIT=<n or oid prefix>` picks that commit on each PR, as `LOUPE_SNAPSHOT_COMMIT` does, but holds its diff, so the PNGs show the picker naming the commit beside its spinner and the changes shown before dimmed. A first load still going when the run stops waiting (20 seconds) is held at its diff too.
 

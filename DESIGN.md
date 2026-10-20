@@ -923,6 +923,21 @@ On any of the viewer's own PRs whose reason doesn't already say so, "Conflicts" 
 
 An unapproved PR waiting on its reviewers now stays in Waiting on others when its checks fail, with the "Checks failing" badge. Glen's earlier rule moved such a PR into Yours, as failing checks are the author's to fix; but it went there only to rank above the review-state steps, which he no longer wants, and in Yours it would have needed a step of its own to sit in, since its review state is "Waiting on review". It still waits on reviewers, and the red badge in the folded section says there's something to fix meanwhile.
 
+### Links to a comment, thread, file or commit land on it
+
+This revises "Links to PRs open them in the app" and "A link to a PR that isn't stored opens a tab at once, from the link alone", which opened a PR's tab whatever part of it a link pointed at. Most links reviewers send are to a comment ("see my reply here"), and opening the PR at its top left them to find it. Now a link lands on what it names, whether it's clicked in Loupe (the conversation, rendered markdown, a thread's comments) or comes from another app as `https://github.com/…` or `loupe://…`:
+
+- `#issuecomment-<id>` and `#pullrequestreview-<id>` show the conversation, scrolled so the comment or review is a third of the way down, as "Show in diff" places a thread, with what it's folded in opened.
+- `#discussion_r<id>`, and `#r<id>` on the files, show the thread comment as "Show in diff" does: the whole PR's diff, its file selected, the thread opened and scrolled to. A thread the diff has no line for (outdated, on the whole file, on a line the diff doesn't show, or on a file the PR no longer changes) is landed on in the conversation instead, at that comment in its thread. The diff would put most of these after the file's last row, but the conversation shows them with their review and hunk, where they read better than out of place at a file's end.
+- `/files`, `/files/<oid>`, `/commits/<oid>` and `/changes…` show the files: one commit's picked in the commit picker if the oid (or a prefix of it) is one of the PR's, otherwise the whole PR's; `#diff-<hash>` selects the file whose path's SHA-256 it is, hidden files included. A line in that anchor is not scrolled to.
+- Anything else opens the PR as before.
+
+What's landed on is outlined for a moment in GitHub's link blue, as the diff already outlines a thread shown from the conversation. The conversation's page still runs no script of its own: its comments, reviews and thread comments carry `data-comment-id`, and the app scrolls and adds a `landed` class from its own script world once the page showing that conversation has settled; the stylesheet animates the outline away.
+
+GitHub's links name REST database ids, so each issue comment and review in the timeline now asks for and stores its `databaseId`, as thread comments already did; a conversation stored before has none until it's fetched again. Ids are matched locally, with no lookup per link. When what a link names isn't in the stored conversation, the fetch underway is waited for, or one is made, then the link lands; if it still isn't there, the conversation is shown as it is. Only a thread comment's landing waits for the diff, and only once the thread is known to have a line, so a comment or review lands as soon as the conversation is there.
+
+A link to a PR that isn't stored lands once its tab becomes the PR's; a second link to it meanwhile says where to land instead. A link to an open PR lands in its tab. A landing gives up if another starts, or if the viewer moves to the other section while it waits, so a slow fetch never drags them back.
+
 ## Not yet decided
 
 Nothing is pending.

@@ -127,9 +127,9 @@ extension GitHubClient {
           pageInfo { hasNextPage endCursor }
           nodes {
             __typename
-            ... on IssueComment { id bodyHTML createdAt isMinimized viewerCanUpdate viewerCanDelete author { login avatarUrl } \(reactionGroupsField) }
+            ... on IssueComment { id databaseId bodyHTML createdAt isMinimized viewerCanUpdate viewerCanDelete author { login avatarUrl } \(reactionGroupsField) }
             ... on PullRequestReview {
-              id state bodyHTML createdAt submittedAt viewerCanUpdate author { login avatarUrl } \(reactionGroupsField)
+              id databaseId state bodyHTML createdAt submittedAt viewerCanUpdate author { login avatarUrl } \(reactionGroupsField)
               comments(first: 50) { nodes { id bodyHTML path line originalLine diffHunk outdated isMinimized replyTo { id } } }
             }
             ... on PullRequestCommit { id commit { oid messageHeadline committedDate author { name user { login avatarUrl } } } }
@@ -361,6 +361,7 @@ private struct Author: Decodable {
 private struct TimelineNode: Decodable {
     let __typename: String
     let id: String?
+    let databaseId: Int?
     let bodyHTML: String?
     let createdAt: Date?
     let submittedAt: Date?
@@ -421,7 +422,7 @@ private struct TimelineNode: Decodable {
             guard let createdAt else { return nil }
             return TimelineItem(
                 id: id, date: createdAt, actor: author?.participant, event: .comment(bodyHTML: bodyHTML ?? "", isMinimized: isMinimized ?? false),
-                reactions: reactionGroups.shown, viewerCanUpdate: viewerCanUpdate ?? false, viewerCanDelete: viewerCanDelete ?? false
+                reactions: reactionGroups.shown, viewerCanUpdate: viewerCanUpdate ?? false, viewerCanDelete: viewerCanDelete ?? false, databaseId: databaseId
             )
         case "PullRequestReview":
             // A pending review has no submission time yet.
@@ -431,7 +432,7 @@ private struct TimelineNode: Decodable {
             }
             return TimelineItem(
                 id: id, date: date, actor: author?.participant, event: .review(state: state ?? .unknown, bodyHTML: bodyHTML ?? "", comments: comments),
-                reactions: reactionGroups.shown, viewerCanUpdate: viewerCanUpdate ?? false
+                reactions: reactionGroups.shown, viewerCanUpdate: viewerCanUpdate ?? false, databaseId: databaseId
             )
         case "PullRequestCommit":
             guard let commit, let date = commit.committedDate else { return nil }

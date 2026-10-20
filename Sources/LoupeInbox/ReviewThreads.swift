@@ -364,7 +364,7 @@ extension PullRequestTab {
     }
 }
 
-private extension PullRequestTab {
+extension PullRequestTab {
     /// Why the whole PR's diff can't show the thread, or nil when it can: on a line, or after
     /// the file's last row for one with no line there, a hidden file's once it's diffed.
     func whyDiffCannotShow(_ thread: ReviewThread) -> String? {
@@ -421,7 +421,7 @@ private extension [ReviewThread] {
     }
 }
 
-private extension FileDiff {
+extension FileDiff {
     /// Whether a row of the diff has `line` on `side`: the new side for RIGHT, the old for LEFT.
     func has(_ line: Int, on side: ReviewThread.Side) -> Bool {
         hunks.contains { hunk in

@@ -635,6 +635,13 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "changesRequestedCommitOid", .text)
             }
         }
+        // Comments' and reviews' REST ids, which github.com's links to them name: null in a
+        // conversation stored before until it's next fetched.
+        migrator.registerMigration("Timeline database ids") { db in
+            try db.alter(table: "timelineItem") { t in
+                t.add(column: "databaseId", .integer)
+            }
+        }
         return migrator
     }
 

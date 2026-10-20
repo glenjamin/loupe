@@ -50,6 +50,12 @@ struct ConversationView: View {
                     ConversationReply(tab: tab, threadId: replyingInSheet)
                 }
             }
+            .task(id: LandingAttempt(landing: page.tab?.conversationLanding, settledPage: page.settledRequest, isShown: isShown)) {
+                // Once the page shows the conversation the landing was found in, drawn.
+                guard isShown, let tab = page.tab, let landing = tab.conversationLanding, let conversation, page.hasSettled(showing: conversation) else { return }
+                await page.land(on: landing.ids)
+                tab.didLand(landing)
+            }
             .task(id: isCommenting) {
                 guard isCommenting else { return page.closeComment() }
                 // Only a page still loading has no link to put it by; it's put away, keeping
@@ -142,6 +148,14 @@ struct ConversationView: View {
     }
 }
 
+/// When to try landing in the conversation: whenever there's a new landing, a page settles, or
+/// the page is shown.
+private struct LandingAttempt: Equatable {
+    let landing: ConversationLanding?
+    let settledPage: Int
+    let isShown: Bool
+}
+
 private struct ConversationWebView: NSViewRepresentable {
     let page: ConversationPage
     let conversation: Conversation?
@@ -170,6 +184,8 @@ final class ConversationPage: GitHubWebPage {
     /// Whether a conversation's page has finished loading, so the web view can be seen. Once it
     /// has, a page replacing it shows over it as WebKit draws it, keeping the reader's place.
     private(set) var hasLoadedConversation = false
+    /// The latest page asked for that has loaded, been put back where the reader was and drawn.
+    private(set) var settledRequest = 0
     @ObservationIgnored private var shown: Conversation?
     /// Where the reader had scrolled to on the page being replaced, to put them back there.
     @ObservationIgnored private var restoredOffset: Double?
@@ -258,9 +274,24 @@ final class ConversationPage: GitHubWebPage {
             // A newer page on its way uncovers itself once it's ready.
             guard request == requested, isLoaded else { return }
             hasLoadedConversation = true
+            settledRequest = request
             coverView?.removeFromSuperview()
             coverView = nil
         }
+    }
+
+    /// Whether the page shows `conversation`, settled, with no other page on its way.
+    func hasSettled(showing conversation: Conversation) -> Bool {
+        shown == conversation && settledRequest == requested
+    }
+
+    /// Scrolls the first of `ids` the page has, a comment, review or thread, to a third of the
+    /// way down, opening what it's folded in, and marks it for a moment, as the diff does a
+    /// thread shown there. Returns whether the page had any of them.
+    @discardableResult
+    func land(on ids: [String]) async -> Bool {
+        let found = try? await webView.callAsyncJavaScript(Self.landingScript, arguments: ["ids": ids], in: nil, contentWorld: .defaultClient)
+        return found as? Bool ?? false
     }
 
     /// Puts a picture of the page as it is over the web view, unless it's already covered or
@@ -417,6 +448,25 @@ final class ConversationPage: GitHubWebPage {
     }
 
     private static let baseURL = URL(string: "https://github.com/")!
+
+    /// Lands on the first of `ids` found, as `land(on:)` says; `landed` in the stylesheet marks
+    /// it, and is taken off once it has, so landing there again marks it again.
+    private static let landingScript = """
+        for (const id of ids) {
+          const quoted = CSS.escape(id);
+          const target = document.querySelector(`[data-comment-id="${quoted}"], details[data-thread-id="${quoted}"]`);
+          if (!target) continue;
+          for (let folded = target.closest('details'); folded; folded = folded.parentElement?.closest('details')) folded.open = true;
+          const top = target.getBoundingClientRect().top + window.scrollY;
+          window.scrollTo(0, Math.max(0, top - window.innerHeight / 3));
+          target.classList.remove('landed');
+          void target.offsetWidth;
+          target.classList.add('landed');
+          target.addEventListener('animationend', () => target.classList.remove('landed'), { once: true });
+          return true;
+        }
+        return false;
+        """
 
     /// Scrolls to `offset` unless it's negative, then waits for a frame to be drawn, or a moment
     /// where frames are held back, as in a window off screen.

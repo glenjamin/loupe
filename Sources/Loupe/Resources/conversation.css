@@ -164,6 +164,15 @@ time { color: var(--muted); }
 .thread-comment header { font-size: 13px; color: var(--muted); }
 .thread-comment header strong { color: var(--fg); }
 
+/* What a link landed on, outlined for a moment so the eye finds it, as the diff's threads are.
+   The app adds the class from its own script world. Drawn inside its edges, as a thread clips
+   what's drawn outside its comments. */
+.landed { animation: landed 2.6s ease-out; border-radius: 6px; outline: 2px solid transparent; outline-offset: -2px; }
+@keyframes landed {
+  0%, 70% { outline-color: var(--link); }
+  100% { outline-color: transparent; }
+}
+
 /* Reactions under a comment: a pill per reaction, the viewer's own tinted, then a quiet face
    that opens the eight to choose from. */
 .reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }

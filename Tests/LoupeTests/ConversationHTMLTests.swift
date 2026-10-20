@@ -54,6 +54,13 @@ struct ConversationHTMLTests {
         #expect(page.contains(#">Unresolve conversation</a>"#))
     }
 
+    @Test func commentsReviewsAndThreadCommentsCarryTheirIdsForALinkToLandOn() throws {
+        let page = try render(conversation)
+        let ids = page.matches(of: /data-comment-id="([^"]+)"/).map { String($0.1) }
+        #expect(ids == ["c1", "r1", "rc1", "rc3", "rc4", "rc2"], "in the page's order, each thread's comments inside its review")
+        #expect(page.contains(#"<div class="card" data-comment-id="c1">"#))
+    }
+
     @Test func aForcePushOffersToShowItsChangesWhenBothHeadsAreKnown() throws {
         let before = "4cbb2c6d16755ad1fff7442412b242ad6c7a8d33"
         let after = "fa910661c07e29e142c4b38f8ee93a422abfd51a"

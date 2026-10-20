@@ -534,6 +534,12 @@ enum SnapshotRun {
                     let back = environment["LOUPE_SNAPSHOT_PULL_BACK"].flatMap(Double.init) ?? 0
                     for url in try await saveSnapshotsOfPulls(CGFloat(travel), back: CGFloat(back), in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_DEEP_LINK=<url> <url>… opens each link as one from another app
+                // would, waits for it to land and snapshots what it landed on while it's marked.
+                if let wanted = environment["LOUPE_SNAPSHOT_DEEP_LINK"] {
+                    let urls = wanted.split(separator: " ").compactMap { URL(string: String($0)) }
+                    for url in try await saveSnapshotsOfDeepLinks(urls, in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 for url in try await saveSnapshotsOfAllTabs(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
             } catch {
                 FileHandle.standardError.write(Data("Couldn't write snapshots: \(error)\n".utf8))
@@ -1255,6 +1261,43 @@ private func saveSnapshotsOfShownThreads(replying: Bool, in windows: WindowManag
         written += [conversation, shown]
     }
     windows.select(selected)
+    return written
+}
+
+/// Opens each link as one from another app would, through the app's incoming links, waits for
+/// its PR's tab to land on what it points at (the conversation's page scrolled and marking it,
+/// or the diff's thread revealed), prints where it landed and writes
+/// `deep-link-<n>-<title>.png` while the mark shows.
+@MainActor
+private func saveSnapshotsOfDeepLinks(_ urls: [URL], in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow, let links = AppDelegate.incomingLinks else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let tabs = windows.tabs
+    var written: [URL] = []
+    for (index, url) in urls.enumerated() {
+        await links.open([url])
+        guard let tab = tabs.selected.flatMap(tabs.tab(id:)) else {
+            print("\(url.absoluteString): \(linkState(in: tabs))")
+            continue
+        }
+        let deadline = Date.now.addingTimeInterval(15)
+        await SnapshotRun.wait(until: deadline) { tab.conversationLanding == nil && tab.threadActivity.revealing == nil }
+        // Into the mark's moment, once the page or diff has scrolled.
+        try? await Task.sleep(for: .milliseconds(600))
+        var marked = "nothing marked in the page"
+        if tab.section == .conversation, let page = ConversationPage.existingPage(for: tab) {
+            let found = try? await page.webView.evaluateJavaScript(
+                "(() => { const landed = [...document.querySelectorAll('.landed')].map(it => (it.dataset.commentId ?? it.dataset.threadId) + ' at ' + Math.round(it.getBoundingClientRect().top) + 'px'); return landed.length ? landed.join(', ') + ' of ' + window.innerHeight : null })()",
+                in: nil, contentWorld: .defaultClient
+            )
+            if let found = found as? String { marked = "marked \(found)" }
+        }
+        let activity = tab.threadActivity
+        print("\(url.absoluteString): \(tab.title), section \(tab.section), changes \(tab.shownChoice), file \(tab.selectedFile ?? "none"), thread highlighted \(activity.highlighted ?? "none"), \(marked)")
+        let shown = directory.appending(path: "deep-link-\(index + 1)-\(sanitised(windows.title(of: tab.id))).png")
+        try await saveSnapshot(of: window, to: shown)
+        written.append(shown)
+    }
     return written
 }
 
