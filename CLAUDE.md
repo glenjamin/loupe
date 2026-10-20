@@ -29,6 +29,7 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 - Tests are swift-testing, behaviour-level, driven through the real seams with a fake GitHub transport serving the JSON under `probe/`. Don't unit-test private helpers; don't hit the network.
 - Helpers go at the bottom of files. Comments describe behaviour and why, never history.
 - Refine types rather than cast with `as`; avoid needless optionals.
+- Warnings are errors in every Swift target of ours (`strictSwift()` in `Package.swift`; give new targets it too). Fix them; don't suppress or disable them.
 - Commit directly to `main` and push to `origin` (github.com/glenjamin/loupe, private); no branches or PRs. Headline says what changed, body says why only if not obvious, lines ≤80 chars.
 - Markdown files: one line per paragraph and per list item, soft-wrapped, never hard-wrapped to a column.
 - Keep `DESIGN.md` current: when a decision is made or reversed, add an entry rather than editing an old one.

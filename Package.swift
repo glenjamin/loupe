@@ -18,7 +18,8 @@ let package = Package(
                 "CodeEditLanguages",
                 "TreeSitterProto",
             ],
-            resources: [.copy("Resources/linguist"), .copy("Resources/quote-selection.js"), .copy("Resources/quote-reply.js"), .copy("Resources/relative-times.js")]
+            resources: [.copy("Resources/linguist"), .copy("Resources/quote-selection.js"), .copy("Resources/quote-reply.js"), .copy("Resources/relative-times.js")],
+            swiftSettings: strictSwift()
         ),
         // Protocol Buffers, which CodeEditLanguages lacks, vendored by Scripts/update-tree-sitter-proto.sh.
         .target(
@@ -28,11 +29,11 @@ let package = Package(
             resources: [.copy("queries")],
             cSettings: [.headerSearchPath("src")]
         ),
-        .target(name: "LoupeModel"),
-        .target(name: "LoupeGitHub", dependencies: ["LoupeModel"]),
-        .target(name: "LoupeStore", dependencies: ["LoupeModel", .product(name: "GRDB", package: "GRDB.swift")]),
-        .target(name: "LoupeGit", dependencies: ["LoupeCore", "LoupeStore"]),
-        .target(name: "LoupeInbox", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit"]),
+        .target(name: "LoupeModel", swiftSettings: strictSwift()),
+        .target(name: "LoupeGitHub", dependencies: ["LoupeModel"], swiftSettings: strictSwift()),
+        .target(name: "LoupeStore", dependencies: ["LoupeModel", .product(name: "GRDB", package: "GRDB.swift")], swiftSettings: strictSwift()),
+        .target(name: "LoupeGit", dependencies: ["LoupeCore", "LoupeStore"], swiftSettings: strictSwift()),
+        .target(name: "LoupeInbox", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit"], swiftSettings: strictSwift()),
         .executableTarget(
             name: "Loupe",
             dependencies: ["LoupeCore", "LoupeModel", "LoupeStore", "LoupeGit", "LoupeGitHub", "LoupeInbox"],
@@ -40,9 +41,16 @@ let package = Package(
                 .copy("Resources/Loupe.icns"),
                 .copy("Resources/conversation.html"),
                 .copy("Resources/conversation.css"),
-            ]
+            ],
+            swiftSettings: strictSwift()
         ),
-        .testTarget(name: "LoupeTests", dependencies: ["LoupeCore", "LoupeModel"], exclude: ["Fixtures"]),
-        .testTarget(name: "LoupeInboxTests", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit", "LoupeInbox"]),
+        .testTarget(name: "LoupeTests", dependencies: ["LoupeCore", "LoupeModel"], exclude: ["Fixtures"], swiftSettings: strictSwift()),
+        .testTarget(name: "LoupeInboxTests", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit", "LoupeInbox"], swiftSettings: strictSwift()),
     ]
 )
+
+/// Every Swift target of ours gets these: warnings are errors, so they get fixed rather than pile up.
+/// Not for dependencies or the vendored C grammar, and the linker's warnings about CodeEditLanguages' grammars are untouched.
+func strictSwift() -> [SwiftSetting] {
+    [.unsafeFlags(["-warnings-as-errors"])]
+}
