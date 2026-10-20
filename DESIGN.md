@@ -889,6 +889,12 @@ With 110 PRs of Glen's, many years old, ranking by how near done put old PRs in 
 
 Each older section is ordered as Yours, nearest done first then most recently updated first, followed by the PRs that wait on others, most recently updated first, still with their "Waiting on review" badges, so nothing goes missing and there's no third fold per band. A stack is placed by its bottom PR's activity, as it's ranked by it, though a PR above may be newer. Over a month starts unfolded, as those are still worth a look; Over 6 months starts folded with its count showing, like Waiting; each fold is remembered for the session. Review is unchanged, as stale requests already stay out of it. On Glen's data, 20 recent PRs, 20 over a month and 70 over six months.
 
+### TODO mode's rows take half the window, centred, and a stack's control is on its title line
+
+Glen found TODO mode's one column too wide to read across, and its "+N stacked" odd. The rows, section headers and folds now take half the list's width, centred, never narrower than 420pt, so a small window's rows stay readable, nor wider than the window. The cap is the list's horizontal safe area, which SwiftUI gives the list's scroll view as side insets, so the scroll view still spans the window and scrolls from anywhere in it, and selection highlights only the capped row. The scroller sits at the right edge of the rows, not the window's, as AppKit insets it with the content. The lists' two columns are unchanged, as each is already half the window.
+
+"+N stacked" had its own column at the row's end, above the time, pushing that row's time in from the rest. It's now on the title line, after the badges and any "on #N", as the stack icon, "+N stacked" and a chevron that turns down while the stack is shown, in secondary caption text like "on #N", so every row's time lines up. The PRs stacked on it still show stepped in beneath. It's a button inside the row's button, and takes the click itself.
+
 ## Not yet decided
 
 Nothing is pending.

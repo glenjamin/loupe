@@ -27,6 +27,8 @@ struct TodoListView: View {
     @State private var showsOverSixMonths = false
     /// The stacks whose PRs above the bottom one are listed, by the bottom PR's id.
     @State private var expandedStacks: Set<String> = []
+    /// The list's width, which its rows take half of.
+    @State private var width: CGFloat = 0
 
     var body: some View {
         let todo = model.todo()
@@ -82,6 +84,9 @@ struct TodoListView: View {
                 model.open(pullRequest)
                 return .handled
             }
+            // The scroll view spans the window, so it scrolls from anywhere; only its rows narrow.
+            .safeAreaPadding(.horizontal, Self.sideMargin(in: width))
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         }
     }
 
@@ -112,26 +117,19 @@ struct TodoListView: View {
     private func row(_ row: TodoRow) -> some View {
         let pullRequest = row.pullRequest
         let isReview = row.list == .toReview
-        return HStack(alignment: .center, spacing: 8) {
-            Button { model.open(pullRequest) } label: {
-                PullRequestRow(
-                    pullRequest: pullRequest, showsAuthor: isReview, showsReviewRequired: !isReview, isSelfReviewed: model.isSelfReviewed(pullRequest),
-                    verdict: model.verdict(on: pullRequest, in: row.list), stackedOn: row.parent, reviewMark: model.reviewMark(on: pullRequest, in: row.list),
-                    reason: row.reason
-                )
-            }
-            .buttonStyle(.plain)
-            if let stack = row.stackAbove {
-                let expanded = expandedStacks.contains(row.id)
-                Button(expanded ? "Hide \(stack) stacked" : "+\(stack) stacked") {
-                    if expanded { expandedStacks.remove(row.id) } else { expandedStacks.insert(row.id) }
-                }
-                .buttonStyle(.borderless)
-                .font(.caption)
-                .background(SnapshotClickMarker(name: "stack"))
-                .help(expanded ? "Hide the PRs stacked on this one" : "Show the PRs stacked on this one")
+        let stack = row.stackAbove.map { count in
+            StackDisclosure(count: count, isExpanded: expandedStacks.contains(row.id)) {
+                if expandedStacks.contains(row.id) { expandedStacks.remove(row.id) } else { expandedStacks.insert(row.id) }
             }
         }
+        return Button { model.open(pullRequest) } label: {
+            PullRequestRow(
+                pullRequest: pullRequest, showsAuthor: isReview, showsReviewRequired: !isReview, isSelfReviewed: model.isSelfReviewed(pullRequest),
+                verdict: model.verdict(on: pullRequest, in: row.list), stackedOn: row.parent, reviewMark: model.reviewMark(on: pullRequest, in: row.list),
+                reason: row.reason, stack: stack
+            )
+        }
+        .buttonStyle(.plain)
         .padding(.leading, CGFloat(row.depth) * Self.stackIndent)
         .contextMenu { CheckoutMenu(repository: pullRequest.repository, model: model) }
     }
@@ -147,6 +145,43 @@ struct TodoListView: View {
 
     /// How far each PR in a stack is stepped in from the one below it, as in the lists.
     private static let stackIndent: CGFloat = 16
+
+    /// The rows take half the window, centred, as one column of full-width rows is hard to read
+    /// across; never narrower than a row needs, nor wider than the window.
+    private static func sideMargin(in width: CGFloat) -> CGFloat {
+        let content = min(width, max(minimumContentWidth, width / 2))
+        return (width - content) / 2
+    }
+
+    private static let minimumContentWidth: CGFloat = 420
+}
+
+/// The "+N stacked" control on a stack's row, showing or hiding the PRs stacked on it.
+struct StackDisclosure: View {
+    let count: Int
+    let isExpanded: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 3) {
+                Label {
+                    Text(verbatim: "+\(count) stacked")
+                } icon: {
+                    Image(systemName: "square.stack.3d.up")
+                }
+                Image(systemName: "chevron.right")
+                    .imageScale(.small)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .background(SnapshotClickMarker(name: "stack"))
+        .help(isExpanded ? "Hide the PRs stacked on this one" : "Show the PRs stacked on this one")
+    }
 }
 
 /// A row as the TODO view draws it.

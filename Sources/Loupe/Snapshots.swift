@@ -854,7 +854,8 @@ private func saveSnapshotAfterShowingStale(in windows: WindowManager, to directo
 }
 
 /// Shows the lists, in TODO mode for a run started with `LOUPE_SNAPSHOT_TODO=1`, prints each of
-/// its sections with every row's reason and writes `todo.png`, then clicks the first "+N stacked"
+/// its sections with every row's reason and writes `todo.png`, then presses ↓ twice and writes
+/// `todo-selected.png`, then clicks the first "+N stacked"
 /// through the window as the mouse would and writes `todo-stack.png`, then scrolls each of the
 /// "Waiting on others", "Over a month" and "Over 6 months" headers to the top and writes
 /// `todo-<name>.png`, clicking Waiting's and Over 6 months' first to unfold them.
@@ -876,8 +877,31 @@ private func saveSnapshotsOfTodo(in windows: WindowManager, to directory: URL) a
         }
     }
     try? await Task.sleep(for: .milliseconds(300))
+    // The list should scroll from anywhere in the window, with only its rows narrowed.
+    if let root = window.contentView,
+       let scrollView = descendants(of: root).compactMap({ $0 as? NSScrollView }).first(where: { $0.documentView is NSTableView && !$0.isHiddenOrHasHiddenAncestor }),
+       let table = scrollView.documentView as? NSTableView {
+        let rows = (0..<table.numberOfRows).map { table.rect(ofRow: $0) }.filter { !$0.isEmpty }
+        let content = rows.first.map { table.convert($0, to: nil) }
+        print("window width \(window.frame.width), list scroll view \(scrollView.convert(scrollView.bounds, to: nil)), insets \(scrollView.contentInsets), first row \(content.map { "\($0)" } ?? "none")")
+    }
     var urls = [directory.appending(path: "todo.png")]
     try await saveSnapshot(of: window, to: urls[0])
+    // ↓ twice in the list, as a keyboard user would, to show the selection.
+    if let root = window.contentView,
+       let table = descendants(of: root).compactMap({ $0 as? NSTableView }).first(where: { !$0.isHiddenOrHasHiddenAncestor }) {
+        window.makeFirstResponder(table)
+        for _ in 0..<2 {
+            if let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.numericPad, .function], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, characters: "\u{F701}", charactersIgnoringModifiers: "\u{F701}", isARepeat: false, keyCode: 125) {
+                window.sendEvent(down)
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        print("selected row after ↓↓: \(table.selectedRow)")
+        let url = directory.appending(path: "todo-selected.png")
+        try await saveSnapshot(of: window, to: url)
+        urls.append(url)
+    }
     for (name, clicks) in [("stack", true), ("waiting", true), ("over-a-month", false), ("over-6-months", true)] {
         // A stack's row is shown where it is; a section's header goes to the top, its rows below.
         guard let marker = await scrollList(toMarker: name, in: window, toTop: name != "stack") else {

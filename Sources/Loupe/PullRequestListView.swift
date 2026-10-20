@@ -187,6 +187,8 @@ struct PullRequestRow: View {
     var reviewMark: ViewerReviewMark? = nil
     /// Set in the TODO view, saying why the PR is where it is.
     var reason: TodoReason? = nil
+    /// Set in the TODO view on a stack's row, to show or hide the PRs stacked on it.
+    var stack: StackDisclosure? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -210,6 +212,7 @@ struct PullRequestRow: View {
                 if let stackedOn {
                     StackedOnLabel(parent: stackedOn)
                 }
+                stack
                 Text(owner)
                     .font(.caption)
                     .foregroundStyle(.secondary)
