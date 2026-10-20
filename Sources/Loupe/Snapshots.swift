@@ -67,8 +67,17 @@ enum SnapshotRun {
     private static let openedLink = directory == nil ? nil : ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_OPEN_LINK"].flatMap(URL.init(string:))
     private static let isHoldingLinkLookups = openedLink != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_OPEN_LINK_ANSWERED"] != "1"
     private static let gitHubHold = GitHubHold(holdsConversations: isHoldingConversations, holdsNumberLookups: isHoldingLinkLookups)
-    /// How the app talks to GitHub: directly, except in a run that holds some of it.
-    static let gitHubClient = isHoldingChecks || isHoldingConversations || isHoldingLinkLookups ? GitHubClient(transport: gitHubHold) : GitHubClient()
+    /// A run that merges each PR it can, with every write kept from GitHub.
+    private static let isRehearsingMerges = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_MERGING"] == "1"
+    /// How the app talks to GitHub: directly, except in a run that holds some of it or
+    /// rehearses merges.
+    static let gitHubClient = if isRehearsingMerges {
+        GitHubClient(transport: MergeRehearsal())
+    } else if isHoldingChecks || isHoldingConversations || isHoldingLinkLookups {
+        GitHubClient(transport: gitHubHold)
+    } else {
+        GitHubClient()
+    }
 
     static func start(windows: WindowManager) {
         guard let directory else { return }
@@ -465,6 +474,11 @@ enum SnapshotRun {
                 // own PRs once its candidates are fetched, and snapshots it.
                 if environment["LOUPE_SNAPSHOT_REVIEWERS"] == "1" {
                     for url in try await saveSnapshotsOfReviewerPickers(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
+                // LOUPE_SNAPSHOT_MERGING=1 merges each of the viewer's PRs that can be, through a
+                // transport that never lets a write reach GitHub, and snapshots it merging.
+                if isRehearsingMerges {
+                    for url in try await saveSnapshotsOfMerging(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
                 // LOUPE_SNAPSHOT_SHOW_CHECKS=1 opens the checks popover on the lists' first glyph
                 // and each PR's header, and snapshots it.
@@ -1157,6 +1171,37 @@ private func saveSnapshotsOfReviewerPickers(in windows: WindowManager, to direct
         try await saveSnapshot(of: window, to: url)
         button.isPresented.wrappedValue = false
         try? await Task.sleep(for: .milliseconds(300))
+        written.append(url)
+    }
+    windows.select(selected)
+    return written
+}
+
+/// On each PR tab whose merge slot shows something, prints what; where it can be merged, merges
+/// it as the confirmed button does and writes `merging-<title>.png` while GitHub is at it. The
+/// run's `MergeRehearsal` keeps every write from GitHub, so nothing is merged.
+@MainActor
+private func saveSnapshotsOfMerging(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs {
+        let title = windows.title(of: tab.id)
+        guard let readiness = tab.mergeReadiness else {
+            print("\(title): nothing to merge")
+            continue
+        }
+        let path = tab.pullRequest.stackId == nil ? "GraphQL, held" : "asynchronous merge, answered pending"
+        print("\(title): merge \(readiness)\(readiness == .ready ? " via \(path)" : "")")
+        guard readiness == .ready else { continue }
+        windows.select(tab.id)
+        Task { await tab.merge() }
+        await SnapshotRun.wait(until: .now.addingTimeInterval(10)) { tab.isMerging }
+        try? await Task.sleep(for: .milliseconds(500))
+        print("\(title): \(tab.isMerging ? "merging" : "not merging: \(tab.mergeError ?? "no error")")")
+        let url = directory.appending(path: "merging-\(sanitised(title)).png")
+        try await saveSnapshot(of: window, to: url)
         written.append(url)
     }
     windows.select(selected)
@@ -2004,6 +2049,26 @@ private final class GitHubHold: HTTPTransport {
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         if isHolding.withLock({ $0 }) || holdsConversations && isConversationFetch(request) || holdsNumberLookups && isNumberLookup(request) {
+            try await Task.sleep(for: .seconds(3600))
+        }
+        return try await URLSession.shared.send(request)
+    }
+}
+
+/// Sends reads to GitHub and never a write. An asynchronous merge is answered as GitHub's docs
+/// show, accepted and then still running whenever asked after; any other REST write or GraphQL
+/// mutation is held unanswered for good.
+private final class MergeRehearsal: HTTPTransport {
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let url = request.url ?? URL(filePath: "/")
+        let body = request.httpBody.map { String(decoding: $0, as: UTF8.self) } ?? ""
+        if url.path().contains("/merge-async") {
+            let pending = #"{"status":"pending","details":{"message":"Merge request is in progress.","uuid":"rehearsal","merge_method":"merge","merge_action":"direct_merge","expected_head_sha":""}}"#
+            let status = request.httpMethod == "PUT" ? 202 : 200
+            return (Data(pending.utf8), HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil) ?? HTTPURLResponse())
+        }
+        let isWrite = request.httpMethod != "GET" && url.path() != "/graphql" && url.path() != "/markdown"
+        if isWrite || body.contains("mutation") {
             try await Task.sleep(for: .seconds(3600))
         }
         return try await URLSession.shared.send(request)

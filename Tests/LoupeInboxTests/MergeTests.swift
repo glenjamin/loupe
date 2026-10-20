@@ -47,24 +47,137 @@ struct MergeTests {
         #expect(nextRun.mergeReadiness == merge.expected)
     }
 
-    @Test func aPullRequestOnAnUnmergedOneSaysToMergeThatFirstWithoutBlockingMerge() async throws {
+    @Test func aPullRequestAboveAnOpenOneInItsStackCantBeMergedUntilTheBottomIs() async throws {
         let app = try await MergeApp()
-        try await app.github.addCapturedStack()
-        let top = "PR_kwDOAYVX-88AAAABI5AxRA"
-        try await app.github.edit(top) { $0.reviewDecision = "APPROVED" }
-        try await app.github.setMergeState(of: top, "CLEAN")
-        await app.tabs.lists.refresh()
+        let (bottom, top) = try await app.mergeableStack()
         let tab = try await app.open(try #require(app.tabs.lists.pullRequest(id: top)))
 
+        // GitHub would merge it, but merging it would merge #277 below it too.
         #expect(tab.mergeFirst?.number == 277)
-        #expect(tab.mergeReadiness == .ready)
+        #expect(tab.mergeReadiness == .blocked(.stacked(on: 277, cascades: true)))
         await tab.merge()
-        #expect(await app.github.mergesReceived.map(\.pullRequestId) == [top])
-        #expect(tab.mergeError == nil)
+        #expect(await app.github.asyncMergesReceived.isEmpty)
+        #expect(await app.github.mergesReceived.isEmpty)
+        #expect(tab.pullRequest.state == .open)
 
         // The bottom of the stack has nothing to merge first.
-        let bottom = try await app.open(try #require(app.tabs.lists.pullRequest(id: "PR_kwDOAYVX-88AAAABI4ybXQ")))
-        #expect(bottom.mergeFirst == nil)
+        let bottomTab = try await app.open(try #require(app.tabs.lists.pullRequest(id: bottom)))
+        #expect(bottomTab.mergeFirst == nil)
+        #expect(bottomTab.mergeReadiness == .ready)
+
+        // Once it's merged, the PR above is the bottom and can be merged.
+        try await app.github.merge(bottom)
+        await app.tabs.lists.refresh()
+        #expect(tab.mergeFirst == nil)
+        #expect(tab.mergeReadiness == .ready)
+    }
+
+    @Test func aPullRequestOnAnotherByBranchAloneIsBlockedToo() async throws {
+        let app = try await MergeApp()
+        let below = try await app.github.openPullRequest(number: 940, by: FakeGitHub.viewer)
+        let above = try await app.github.openPullRequest(number: 941, by: FakeGitHub.viewer)
+        try await app.github.stack(above.id, on: below.id, linked: false)
+        try await app.github.edit(above.id) { $0.reviewDecision = "APPROVED" }
+        try await app.github.setMergeState(of: above.id, "CLEAN")
+        await app.tabs.lists.refresh()
+        let tab = try await app.open(try #require(app.tabs.lists.pullRequest(id: above.id)))
+
+        #expect(tab.mergeReadiness == .blocked(.stacked(on: 940, cascades: false)))
+        await tab.merge()
+        #expect(await app.github.mergesReceived.isEmpty)
+    }
+
+    @Test func theBottomOfAStackMergesInTheBackgroundWithTheHeadLookedUpAndShowsMergedOnceDone() async throws {
+        let app = try await MergeApp()
+        let (bottom, top) = try await app.mergeableStack()
+        let tab = try await app.open(try #require(app.tabs.lists.pullRequest(id: bottom)))
+        let head = try await app.github.head(of: bottom)
+        await app.github.setAsyncMergeRuns(2)
+
+        let merging = Task { await tab.merge() }
+        try await app.delay.untilWaiting()
+        #expect(tab.isMerging, "the merge slot says it's merging while GitHub works")
+        #expect(tab.pullRequest.state == .open)
+        #expect(await app.github.asyncMergesReceived == [AsyncMergeInput(sha: head, merge_method: "merge", merge_action: "direct_merge")])
+        #expect(await app.github.mergesReceived.isEmpty, "GitHub refuses a stacked PR through GraphQL")
+        try await app.letTimePass(until: merging)
+
+        let polls = await app.github.asyncMergePolls
+        #expect(polls.count == 3, "asked after until it's done")
+        #expect(Set(polls).count == 1)
+        #expect(app.delay.sleeps.count { $0 == .seconds(1) } == 3, "a second before each ask")
+        #expect(tab.pullRequest.state == .merged)
+        #expect(tab.mergeReadiness == nil)
+        #expect(!tab.isMerging)
+        #expect(tab.mergeError == nil)
+        #expect(app.tabs.lists.pullRequests(in: .mine, includingClosed: true).first { $0.id == bottom }?.state == .merged)
+        // The PR above is now the bottom of its stack, so can be merged next.
+        let above = try #require(app.tabs.lists.pullRequest(id: top))
+        #expect(above.state == .open)
+        #expect(app.tabs.lists.stacks.bottom(under: above) == nil)
+    }
+
+    @Test func aBackgroundMergeGitHubCantDoShowsItsMessageAndLeavesThePullRequestOpen() async throws {
+        let app = try await MergeApp()
+        let (bottom, _) = try await app.mergeableStack()
+        let tab = try await app.open(try #require(app.tabs.lists.pullRequest(id: bottom)))
+
+        // A conflict found as GitHub merges, after the lists last looked.
+        try await app.github.setMergeState(of: bottom, "DIRTY", mergeable: "CONFLICTING")
+        let merging = Task { await tab.merge() }
+        try await app.letTimePass(until: merging)
+
+        #expect(tab.mergeError == "Couldn't merge: Merge conflict: the pull request could not be merged.")
+        #expect(tab.pullRequest.state == .open)
+        #expect(!tab.isMerging)
+    }
+
+    @Test func aBackgroundMergeOfAHeadPushedToSinceItWasSeenIsCancelled() async throws {
+        let app = try await MergeApp()
+        let (bottom, _) = try await app.mergeableStack()
+        let tab = try await app.open(try #require(app.tabs.lists.pullRequest(id: bottom)))
+        let seen = try await app.github.head(of: bottom)
+
+        try await app.github.edit(bottom) { $0.headRefOid = String(repeating: "f", count: 40) }
+        let merging = Task { await tab.merge() }
+        try await app.letTimePass(until: merging)
+
+        #expect(await app.github.asyncMergesReceived.map(\.sha) == [seen])
+        #expect(try #require(tab.mergeError).contains("cancelled"))
+        #expect(tab.pullRequest.state == .open)
+    }
+
+    @Test func aStackedMergeIsRefusedWhenGitHubShowsAnOpenPullRequestBelowItThatWasntKnown() async throws {
+        let app = try await MergeApp()
+        let (bottom, top) = try await app.mergeableStack()
+        // Last seen closed, so the PR above looked like the bottom of the stack.
+        try await app.github.edit(bottom) { $0.state = "CLOSED"; $0.closedAt = Date.now.formatted(.iso8601) }
+        await app.tabs.lists.refresh()
+        let tab = try await app.open(try #require(app.tabs.lists.pullRequest(id: top)))
+        #expect(tab.mergeReadiness == .ready)
+
+        try await app.github.edit(bottom) { $0.state = "OPEN"; $0.closedAt = nil }
+        await tab.merge()
+
+        #expect(await app.github.asyncMergesReceived.isEmpty, "nothing merged that wasn't seen")
+        #expect(try #require(tab.mergeError).contains("Merge #277 first"))
+        #expect(tab.mergeReadiness == .blocked(.stacked(on: 277, cascades: true)))
+        #expect(tab.pullRequest.state == .open)
+    }
+
+    @Test func aBackgroundMergeStillRunningWhenLoupeStopsAskingSaysSo() async throws {
+        let app = try await MergeApp()
+        let (bottom, _) = try await app.mergeableStack()
+        let tab = try await app.open(try #require(app.tabs.lists.pullRequest(id: bottom)))
+        await app.github.setAsyncMergeRuns(.max)
+        let lookups = await app.github.pullRequestLookups.count
+
+        let merging = Task { await tab.merge() }
+        try await app.letTimePass(until: merging)
+
+        #expect(try #require(tab.mergeError).contains("hasn't finished merging"))
+        #expect(!tab.isMerging)
+        #expect(await app.github.pullRequestLookups.dropFirst(lookups).contains([bottom]), "looked up, as it may have landed")
     }
 
     @Test func anApprovalNoticedOnGitHubMakesItMergeableWithoutWaitingForTheLists() async throws {
@@ -101,6 +214,7 @@ struct MergeTests {
         #expect(await app.github.mergesReceived == [
             MergeInput(pullRequestId: pullRequest.id, mergeMethod: "MERGE", expectedHeadOid: try await app.github.head(of: pullRequest.id)),
         ])
+        #expect(await app.github.asyncMergesReceived.isEmpty, "only a stacked PR merges in the background")
         #expect(await app.github.pullRequestLookups.dropFirst(lookups) == [[pullRequest.id]], "looked up again at once")
         #expect(tab.pullRequest.state == .merged)
         #expect(tab.mergeReadiness == nil, "nothing left to merge")
@@ -249,10 +363,35 @@ private struct MergeApp {
     }
 
     var github: FakeGitHub { conversation.github }
+    var delay: ManualDelay { conversation.delay }
 
     /// The viewer's own approved PR into master that the tests merge.
     func mergeable() throws -> PullRequestSummary {
         try #require(tabs.lists.pullRequests(in: .mine).first { $0.repository == "tamarinworks/gazette" && $0.number == 272 })
+    }
+
+    /// The ids of the viewer's captured GitHub stack, gazette #277 with #278 on it, both
+    /// approved and mergeable on GitHub, as the lists have seen them.
+    func mergeableStack() async throws -> (bottom: String, top: String) {
+        try await github.addCapturedStack()
+        let (bottom, top) = ("PR_kwDOAYVX-88AAAABI4ybXQ", "PR_kwDOAYVX-88AAAABI5AxRA")
+        for id in [bottom, top] {
+            try await github.edit(id) { $0.reviewDecision = "APPROVED" }
+            try await github.setMergeState(of: id, "CLEAN")
+        }
+        await tabs.lists.refresh()
+        return (bottom, top)
+    }
+
+    /// Lets each wait pass as soon as it starts, such as between asks after a background merge,
+    /// until `task` is done.
+    func letTimePass(until task: Task<Void, Never>) async throws {
+        let finished = Finished()
+        Task { await task.value; finished.value = true }
+        while !finished.value {
+            try await until { finished.value || delay.isWaiting }
+            delay.elapse()
+        }
     }
 
     /// Opens the PR's tab and lets it learn who the viewer is.
@@ -285,6 +424,13 @@ private struct MergeTransport: HTTPTransport {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let body = request.httpBody.map { String(decoding: $0, as: UTF8.self) } ?? ""
         let changesThePullRequest = body.contains("mergePullRequest(") || body.contains("markPullRequestReadyForReview(")
+            || request.url?.path().contains("/merge-async") == true
         return changesThePullRequest ? try await github.send(request) : try await details.send(request)
     }
+}
+
+/// Whether a task has finished, for a test to check while it waits.
+@MainActor
+private final class Finished {
+    var value = false
 }

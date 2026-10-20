@@ -404,16 +404,24 @@ extension GitHubClient {
     /// POSTs `content` as JSON to a REST endpoint and returns the response's body, throwing
     /// GitHub's message for anything but success. `accept` picks the media type answered with.
     func post(path: String, _ content: some Encodable, accept: String = "application/vnd.github+json") async throws -> Data {
+        try await rest("POST", path: path, json: JSONEncoder().encode(content), accept: accept)
+    }
+
+    /// Sends a REST request with `json` as its body, if any, and returns the response's body,
+    /// throwing GitHub's message for anything but success or `alsoAccepting`'s statuses.
+    func rest(_ method: String, path: String, json: Data? = nil, accept: String = "application/vnd.github+json", alsoAccepting: Set<Int> = []) async throws -> Data {
         var request = URLRequest(url: URL(string: "https://api.github.com" + path)!)
-        request.httpMethod = "POST"
+        request.httpMethod = method
         request.setValue("bearer \(try await token())", forHTTPHeaderField: "Authorization")
         request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(content)
+        if let json {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = json
+        }
 
         let (body, response) = try await transport.send(request)
-        guard (200..<300).contains(response.statusCode) else {
+        guard (200..<300).contains(response.statusCode) || alsoAccepting.contains(response.statusCode) else {
             let message = (try? JSONDecoder().decode(ErrorBody.self, from: body))?.message
             throw GitHubError.http(status: response.statusCode, message: message)
         }

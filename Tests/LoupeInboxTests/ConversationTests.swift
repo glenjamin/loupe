@@ -196,6 +196,9 @@ final class ManualDelay {
         for sleeper in ended { sleeper.resume() }
     }
 
+    /// Whether something is waiting on the delay.
+    var isWaiting: Bool { !sleepers.isEmpty }
+
     /// Waits for something to wait on the delay.
     func untilWaiting() async throws {
         try await until { !self.sleepers.isEmpty }

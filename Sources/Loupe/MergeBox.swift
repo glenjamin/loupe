@@ -27,9 +27,17 @@ struct MergeBox: View {
                 }
             }
             .fixedSize()
-            reason
-            if let parent = tab.mergeFirst {
-                MergeFirstLabel(parent: parent)
+            if tab.isMerging, readiness != .draft {
+                Text("Merging…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            } else {
+                reason
+            }
+            // Any other PR stacked below gives the reason itself.
+            if readiness == .draft, let bottom = tab.mergeFirst {
+                MergeFirstLabel(parent: bottom)
             }
         }
         .alert(Text(verbatim: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName)?"), isPresented: $confirming) {
@@ -77,6 +85,10 @@ struct MergeBox: View {
     private func help(_ pullRequest: PullRequestSummary) -> String {
         switch readiness {
         case .ready: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName) with a merge commit"
+        case let .blocked(.stacked(number, cascades: true)):
+            "Merging this would merge #\(number) and any others below it in the stack too, so a stack is merged from the bottom, one PR at a time. Merge #\(number) first."
+        case let .blocked(.stacked(number, cascades: false)):
+            "This is based on \(pullRequest.baseRefName), a branch of the stack below it, so merging it would merge it into that branch. Merge #\(number) first."
         case let .blocked(blocker): "Can't merge: \(blocker.description)"
         case .checking, .draft: "GitHub is still working out whether this can be merged"
         }
@@ -149,17 +161,21 @@ struct ViewerVerdictLabel: View {
 }
 
 /// GitHub's refusal of a merge or of leaving draft, under the button, wrapping within the
-/// merge section.
+/// merge section to its full length, with any link in it clickable.
 struct MergeErrorLabel: View {
     let error: String
 
     var body: some View {
-        Label(error, systemImage: "exclamationmark.triangle")
-            .font(.caption)
-            .foregroundStyle(.diffDanger)
-            .lineLimit(3)
-            .multilineTextAlignment(.center)
-            .textSelection(.enabled)
+        Label {
+            Text(linked(error))
+        } icon: {
+            Image(systemName: "exclamationmark.triangle")
+        }
+        .font(.caption)
+        .foregroundStyle(.diffDanger)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+        .textSelection(.enabled)
     }
 }
 
@@ -204,4 +220,17 @@ extension ViewerVerdict.Since: CustomStringConvertible {
         case .changed: "changed since"
         }
     }
+}
+
+/// `text` with each web address in it made a link, as GitHub's messages name its docs.
+private func linked(_ text: String) -> AttributedString {
+    var attributed = AttributedString(text)
+    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return attributed }
+    for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+        guard let url = match.url, let range = Range(match.range, in: text),
+              let lower = AttributedString.Index(range.lowerBound, within: attributed),
+              let upper = AttributedString.Index(range.upperBound, within: attributed) else { continue }
+        attributed[lower..<upper].link = url
+    }
+    return attributed
 }

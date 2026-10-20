@@ -46,10 +46,14 @@ public enum MergeBlocker: Sendable, Equatable {
     /// Blocked by the base branch's rules for some other reason, such as checks still running.
     case branchProtection
     case behind(base: String)
+    /// Stacked on open PR `number`, the bottom of its stack, which merges first. `cascades` when
+    /// GitHub's own stack links them, as merging there would merge every PR below it too.
+    case stacked(on: Int, cascades: Bool)
 
     /// A few words to show beside the merge button.
     public var description: String {
         switch self {
+        case let .stacked(number, _): "Merge #\(number) first"
         case let .conflicts(base): "Conflicts with \(base)"
         case .changesRequested: "Changes requested"
         case .notApproved: "Not approved"

@@ -55,6 +55,14 @@ actor FakeGitHub: HTTPTransport {
     private(set) var mergesReceived: [MergeInput] = []
     /// The PR id of every `markPullRequestReadyForReview` received, in order.
     private(set) var readyForReviewReceived: [String] = []
+    /// Every asynchronous merge asked for through REST, in order.
+    private(set) var asyncMergesReceived: [AsyncMergeInput] = []
+    /// The uuid of every ask after a background merge, in order.
+    private(set) var asyncMergePolls: [String] = []
+    /// How many times a background merge is still running when asked after, before it's done.
+    private var asyncMergeRuns = 1
+    /// The background merges asked for, by uuid.
+    private var backgroundMerges: [String: BackgroundMerge] = [:]
     /// The status notifications are refused with, as for a token without access to them.
     private var notificationsRefusal: Int?
     /// The status of each notifications poll, in order.
@@ -313,6 +321,12 @@ actor FakeGitHub: HTTPTransport {
         }
     }
 
+    /// Has each background merge asked for from now say it's still running `times` times when
+    /// asked after, before it's done.
+    func setAsyncMergeRuns(_ times: Int) {
+        asyncMergeRuns = times
+    }
+
     /// Adds the viewer's two stacked PRs captured in `probe/stack.json`, gazette #277 and #278
     /// above it, linked in a GitHub stack, as just updated so the lists' next refresh finds them.
     func addCapturedStack() throws {
@@ -357,6 +371,7 @@ actor FakeGitHub: HTTPTransport {
         requestCount += 1
         let url = try #require(request.url)
         if url.path() == "/notifications" { return try notifications(request, url) }
+        if url.path().contains("/merge-async") { return try asyncMerge(request, url) }
         #expect(url.absoluteString == "https://api.github.com/graphql")
         #expect(request.httpMethod == "POST")
 
@@ -533,6 +548,9 @@ actor FakeGitHub: HTTPTransport {
         guard let pullRequest = pullRequests.first(where: { $0.id == input.pullRequestId }) else {
             return try refusal("NOT_FOUND", "Could not resolve to a node with the global id of '\(input.pullRequestId)'")
         }
+        if pullRequest.stackId != nil {
+            return try refusal("UNPROCESSABLE", "This pull request is part of a stack and must be merged using the asynchronous merge REST API.")
+        }
         if let expected = input.expectedHeadOid, expected != pullRequest.headRefOid {
             return try refusal("UNPROCESSABLE", "Head branch was modified. Review and try the merge again.")
         }
@@ -558,6 +576,79 @@ actor FakeGitHub: HTTPTransport {
             $0.mergeStateStatus = "UNKNOWN"
         }
         return try JSONSerialization.data(withJSONObject: ["data": ["markPullRequestReadyForReview": ["pullRequest": ["id": id, "isDraft": false]]]])
+    }
+
+    /// GitHub's asynchronous merge, answering in the shapes its docs give (`probe/merge-async-*`).
+    /// Asked to merge, it answers pending with a uuid, or with the merge already under way for
+    /// the PR. Asked after one, it's still running `asyncMergeRuns` times; then, as the docs
+    /// say, it merges every open PR below in the PR's stack with it, unless the head has moved
+    /// from the one expected or the merge box wouldn't allow it.
+    private func asyncMerge(_ request: URLRequest, _ url: URL) throws -> (Data, HTTPURLResponse) {
+        guard request.value(forHTTPHeaderField: "Authorization") == "bearer \(Self.validToken)" else {
+            return (Data(#"{"message":"Bad credentials"}"#.utf8), httpResponse(url, status: 401))
+        }
+        // repos/<owner>/<name>/pulls/<number>/merge-async[/<uuid>]
+        let parts = url.path().split(separator: "/").map(String.init)
+        guard parts.count >= 6, parts[0] == "repos", parts[3] == "pulls", parts[5] == "merge-async", let number = Int(parts[4]),
+              let pullRequest = pullRequests.first(where: { $0.repository.nameWithOwner == "\(parts[1])/\(parts[2])" && $0.number == number }) else {
+            return (Data(#"{"message":"Not Found"}"#.utf8), httpResponse(url, status: 404))
+        }
+        if parts.count == 7 {
+            #expect(request.httpMethod == "GET")
+            asyncMergePolls.append(parts[6])
+            guard let merge = backgroundMerges[parts[6]], merge.pullRequestId == pullRequest.id else {
+                return (Data(#"{"message":"Not Found"}"#.utf8), httpResponse(url, status: 404))
+            }
+            return (try runBackgroundMerge(uuid: parts[6], merge), httpResponse(url, status: 200))
+        }
+        #expect(request.httpMethod == "PUT")
+        let input = try JSONDecoder().decode(AsyncMergeInput.self, from: try #require(request.httpBody))
+        asyncMergesReceived.append(input)
+        if let (uuid, running) = backgroundMerges.first(where: { $0.value.pullRequestId == pullRequest.id && $0.value.result == nil }) {
+            return (try asyncMergeFixture("pending", uuid: uuid, running.input), httpResponse(url, status: 409))
+        }
+        let uuid = UUID().uuidString.lowercased()
+        backgroundMerges[uuid] = BackgroundMerge(pullRequestId: pullRequest.id, input: input, runsLeft: asyncMergeRuns)
+        return (try asyncMergeFixture("accepted", uuid: uuid, input), httpResponse(url, status: 202))
+    }
+
+    private func runBackgroundMerge(uuid: String, _ merge: BackgroundMerge) throws -> Data {
+        if let result = merge.result { return result }
+        if merge.runsLeft > 0 {
+            backgroundMerges[uuid]?.runsLeft -= 1
+            return try asyncMergeFixture("pending", uuid: uuid, merge.input)
+        }
+        let pullRequest = try #require(pullRequests.first { $0.id == merge.pullRequestId })
+        let result: Data
+        if merge.input.sha.map({ $0 != pullRequest.headRefOid }) ?? false {
+            result = try asyncMergeFixture("failed", message: "The head branch was pushed to, so the merge was cancelled.")
+        } else if pullRequest.state != "OPEN" || !["CLEAN", "HAS_HOOKS", "UNSTABLE"].contains(pullRequest.mergeStateStatus) {
+            result = try asyncMergeFixture("failed")
+        } else {
+            let below = pullRequests.filter { $0.stackId != nil && $0.stackId == pullRequest.stackId && $0.state == "OPEN" && ($0.stackPosition ?? .max) < (pullRequest.stackPosition ?? 0) }
+            for member in below.sorted(by: { ($0.stackPosition ?? 0) < ($1.stackPosition ?? 0) }) + [pullRequest] {
+                try self.merge(member.id)
+            }
+            result = try asyncMergeFixture("merged")
+        }
+        backgroundMerges[uuid]?.result = result
+        return result
+    }
+
+    /// The docs' example response of that name, with this merge's details put in.
+    private func asyncMergeFixture(_ name: String, uuid: String? = nil, _ input: AsyncMergeInput? = nil, message: String? = nil) throws -> Data {
+        let data = try Data(contentsOf: projectRoot.appending(path: "probe/merge-async-\(name).json"))
+        var response = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var details = try #require(response["details"] as? [String: Any])
+        if let uuid { details["uuid"] = uuid }
+        if let input {
+            details["merge_method"] = input.merge_method ?? "merge"
+            details["merge_action"] = input.merge_action ?? "default"
+            details["expected_head_sha"] = input.sha
+        }
+        if let message { details["message"] = message }
+        response["details"] = details
+        return try JSONSerialization.data(withJSONObject: response)
     }
 
     private func viewer(_ query: String) throws -> Envelope<[String: [String: String]]> {
@@ -1003,6 +1094,21 @@ struct MergeInput: Codable, Equatable {
     let pullRequestId: String
     let mergeMethod: String?
     let expectedHeadOid: String?
+}
+
+/// The body of a REST asynchronous merge, in GitHub's names.
+struct AsyncMergeInput: Codable, Equatable {
+    let sha: String?
+    let merge_method: String?
+    let merge_action: String?
+}
+
+/// A merge GitHub runs in the background, and its answer once done.
+private struct BackgroundMerge {
+    let pullRequestId: String
+    let input: AsyncMergeInput
+    var runsLeft: Int
+    var result: Data?
 }
 
 private struct Envelope<Payload: Encodable>: Encodable {

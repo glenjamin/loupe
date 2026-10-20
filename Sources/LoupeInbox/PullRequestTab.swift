@@ -730,10 +730,12 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// Whether the PR can be merged from here, offered only on the viewer's own PRs: nil on
-    /// anyone else's, and once it's merged or closed.
+    /// anyone else's, and once it's merged or closed. Only the bottom open PR of a stack can be
+    /// merged, as merging one above it on GitHub would merge those below it too, unseen.
     public var mergeReadiness: MergeReadiness? {
-        guard isViewersOwn else { return nil }
-        return MergeReadiness(pullRequest)
+        guard isViewersOwn, let readiness = MergeReadiness(pullRequest) else { return nil }
+        guard readiness != .draft, let bottom = mergeFirst else { return readiness }
+        return .blocked(.stacked(on: bottom.number, cascades: pullRequest.stackId != nil))
     }
 
     /// The PR's stack as seen from it, for its header; nil when it isn't stacked.
@@ -741,11 +743,10 @@ public final class PullRequestTab: Identifiable {
         lists.stacks.line(through: pullRequest)
     }
 
-    /// The open PR this one is stacked on, to merge before it, said beside the viewer's own PR's
-    /// Merge button. Only a hint: GitHub decides whether it can be merged, as ever.
+    /// The open PR at the bottom of the stack below the viewer's own PR, to merge before it.
     public var mergeFirst: PullRequestSummary? {
-        guard mergeReadiness != nil else { return nil }
-        return lists.stacks.parent(of: pullRequest)
+        guard isViewersOwn, pullRequest.state == .open else { return nil }
+        return lists.stacks.bottom(under: pullRequest)
     }
 
     /// Merges the PR with a merge commit, provided its head is still the one last looked up,
@@ -757,7 +758,14 @@ public final class PullRequestTab: Identifiable {
         defer { isMerging = false }
         mergeError = nil
         do {
-            try await client.mergePullRequest(id: id, expectedHeadOid: head)
+            if pullRequest.stackId != nil {
+                try await mergeInStack(pullRequest, head: head)
+            } else {
+                try await client.mergePullRequest(id: id, expectedHeadOid: head)
+            }
+        } catch let error as StackMergeError where error == .stillMerging {
+            // It may yet land, so it's looked up all the same.
+            mergeError = error.localizedDescription
         } catch {
             mergeError = "Couldn't merge: \(error.localizedDescription)"
             return
@@ -789,6 +797,31 @@ public final class PullRequestTab: Identifiable {
             log("Couldn't look up \(title) after marking it ready for review: \(error.localizedDescription)")
         }
     }
+
+    /// GitHub merges a PR in one of its stacks only in the background, and merges every open PR
+    /// below it with it. So the stack is looked up afresh first, and the merge refused if a PR
+    /// below has opened since it was last seen; then GitHub is asked until it's done.
+    private func mergeInStack(_ pullRequest: PullRequestSummary, head: String) async throws {
+        try await lists.lookUpStack(of: id)
+        if let bottom = lists.stacks.bottom(under: self.pullRequest) {
+            throw StackMergeError.openBelow(bottom.number)
+        }
+        let (repository, number) = (pullRequest.repository, pullRequest.number)
+        var result = try await client.requestAsyncMerge(repository: repository, number: number, expectedHeadOid: head)
+        var asked = 0
+        while case let .pending(uuid) = result {
+            guard asked < Self.mergePolls else { throw StackMergeError.stillMerging }
+            asked += 1
+            try await sleep(Self.mergePollInterval)
+            result = try await client.asyncMergeResult(repository: repository, number: number, uuid: uuid)
+        }
+        if case let .failed(message) = result { throw StackMergeError.failed(message) }
+    }
+
+    /// How often GitHub is asked whether a background merge is done, and how many times before
+    /// giving up waiting.
+    static let mergePollInterval = Duration.seconds(1)
+    static let mergePolls = 120
 
     /// The signed-in user's login, once known.
     public var viewer: String? { viewerLogin }
@@ -1205,6 +1238,24 @@ private extension PullRequestSummary {
         }
         return updatedAt == earlier.updatedAt && state == earlier.state && reviewDecision == earlier.reviewDecision
             && same(\.commitCount) && same(\.commentCount) && same(\.reviewThreadCount)
+    }
+}
+
+/// Why a merge of a PR in a GitHub stack didn't finish.
+private enum StackMergeError: Error, Equatable, LocalizedError {
+    /// A PR below it is open on GitHub, which the merge would take with it.
+    case openBelow(Int)
+    /// GitHub's own reason.
+    case failed(String)
+    /// GitHub was still at it when Loupe stopped asking.
+    case stillMerging
+
+    var errorDescription: String? {
+        switch self {
+        case let .openBelow(number): "#\(number) below it in the stack is open, and would be merged with it. Merge #\(number) first."
+        case let .failed(message): message
+        case .stillMerging: "GitHub hasn't finished merging this yet. It will show as merged once it has."
+        }
     }
 }
 

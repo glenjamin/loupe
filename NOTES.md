@@ -163,6 +163,8 @@ With `LOUPE_SNAPSHOT_DIR` set, the app waits until the lists have refreshed and 
 
 `LOUPE_SNAPSHOT_HOLD_COMMIT=<n or oid prefix>` picks that commit on each PR, as `LOUPE_SNAPSHOT_COMMIT` does, but holds its diff, so the PNGs show the picker naming the commit beside its spinner and the changes shown before dimmed. A first load still going when the run stops waiting (20 seconds) is held at its diff too.
 
+`LOUPE_SNAPSHOT_MERGING=1` talks to GitHub through a transport that never sends a write: an asynchronous merge (`/merge-async`) is answered in-process as GitHub's docs show, accepted and then still running however often it's asked after, and any other REST write or GraphQL mutation, `mergePullRequest` included, is held unanswered for good. After the other hooks it prints each PR tab's merge slot (nothing to merge, blocked and why, or ready and which way it would merge), merges each ready one as the confirmed button does, and writes `merging-<title>.png` of it merging, before the usual PNGs. Nothing is merged. Point the copy's `openTab` and `selectedTab` at the viewer's own approved, mergeable PRs to see it.
+
 ```sh
 Scripts/snapshot.sh /tmp/loupe-snaps   # builds the bundle, runs it as below
 

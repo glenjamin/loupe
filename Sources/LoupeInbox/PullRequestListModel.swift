@@ -197,6 +197,14 @@ public final class PullRequestListModel {
         }
     }
 
+    /// Looks up the PR with `id` and its stack on GitHub directly and stores them, for when what
+    /// may be done to it depends on what's below it now. Failure is left to the caller.
+    func lookUpStack(of id: String) async throws {
+        try await checking([id]) {
+            snapshot = try await store.storeStackNeighbours(try await client.stackNeighbours(of: [id]))
+        }
+    }
+
     /// Looks up the checks, merge state and review decision of the listed PRs with `ids` on
     /// GitHub directly, for when something done from here changes whether they can merge.
     public func checkStatuses(of ids: [String]) async throws {

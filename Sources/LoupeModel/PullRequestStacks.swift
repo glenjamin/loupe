@@ -42,6 +42,12 @@ public struct PullRequestStacks: Sendable {
         children[pullRequest.id] ?? []
     }
 
+    /// The open PR at the bottom of the stack below this one, which merges before it; nil when
+    /// it isn't stacked on another.
+    public func bottom(under pullRequest: PullRequestSummary) -> PullRequestSummary? {
+        ancestors(of: pullRequest).last
+    }
+
     /// Whether the PR is stacked on another or has one stacked on it.
     public func isStacked(_ pullRequest: PullRequestSummary) -> Bool {
         parents[pullRequest.id] != nil || children[pullRequest.id] != nil
