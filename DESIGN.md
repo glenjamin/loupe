@@ -1058,6 +1058,10 @@ At Glen's request, the "Hide whitespace" checkbox from "Hide whitespace is a che
 
 At Glen's request the hide-whitespace toggle keeps a faint fill while off, so it always reads as a button, and its on state stays on the accent colour in an inactive window too, since a grey fill there was hard to tell from the off one. The "Reviewed" checkbox shows its label first and its box after it, at the header's right edge; clicking the label still toggles it, and it reads to VoiceOver as an ordinary checkbox.
 
+### The ¶ toggle goes grey in an inactive window, as a checkbox does
+
+Reversing part of the previous entry: on an inactive window the toggle's on state drops the accent like the "Reviewed" checkbox beside it. To stay distinct from the faint off fill it inverts instead, a near-full-strength primary fill with the glyph in the text background colour, so it is dark in light mode and light in dark mode.
+
 ## Not yet decided
 
 Nothing is pending.

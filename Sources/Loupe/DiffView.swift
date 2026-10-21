@@ -753,7 +753,8 @@ private struct BlockHeightKey: PreferenceKey {
 }
 
 /// An icon toggle like a toolbar's: a secondary glyph on a faint fill while off, darker under the
-/// pointer, and on the accent while on, even in an inactive window, where grey would read as off.
+/// pointer, and on the accent while on. In an inactive window on loses the accent as a checkbox
+/// does, inverting to a strong fill instead so it can't be taken for off.
 private struct HeaderIconToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         HeaderIconToggle(configuration: configuration)
@@ -762,17 +763,19 @@ private struct HeaderIconToggleStyle: ToggleStyle {
 
 private struct HeaderIconToggle: View {
     let configuration: ToggleStyleConfiguration
+    @Environment(\.controlActiveState) private var activeState
     @State private var isHovered = false
 
     var body: some View {
         Button { configuration.isOn.toggle() } label: { configuration.label }
-            .buttonStyle(HeaderIconButtonStyle(isOn: configuration.isOn, isHovered: isHovered))
+            .buttonStyle(HeaderIconButtonStyle(isOn: configuration.isOn, isActive: activeState != .inactive, isHovered: isHovered))
             .onHover { isHovered = $0 }
     }
 }
 
 private struct HeaderIconButtonStyle: ButtonStyle {
     let isOn: Bool
+    let isActive: Bool
     let isHovered: Bool
 
     func makeBody(configuration: Configuration) -> some View {
@@ -787,12 +790,13 @@ private struct HeaderIconButtonStyle: ButtonStyle {
 
     private var glyph: AnyShapeStyle {
         guard isOn else { return isHovered ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary) }
-        return AnyShapeStyle(.white)
+        return isActive ? AnyShapeStyle(.white) : AnyShapeStyle(Color(nsColor: .textBackgroundColor))
     }
 
     private func fill(isPressed: Bool) -> AnyShapeStyle {
         guard isOn else { return isPressed ? AnyShapeStyle(.secondary) : isHovered ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.quaternary) }
-        return AnyShapeStyle(Color.accentColor.opacity(isPressed ? 0.75 : 1))
+        let fill = isActive ? Color.accentColor : Color.primary.opacity(0.85)
+        return AnyShapeStyle(fill.opacity(isPressed ? 0.75 : 1))
     }
 }
 
