@@ -241,6 +241,7 @@ struct ReviewSidebar: View {
 /// description.
 struct ConversationRow: View {
     @Bindable var tab: PullRequestTab
+    @State private var isHovered = false
 
     var body: some View {
         let isShown = tab.shownSection == .conversation
@@ -267,7 +268,8 @@ struct ConversationRow: View {
         .foregroundStyle(isShown ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(isShown ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 5))
+        .background(sidebarRowStyle(isShown: isShown, isHovered: isHovered), in: RoundedRectangle(cornerRadius: 5))
+        .onHover { isHovered = $0 }
         .padding(8)
     }
 }
@@ -1381,4 +1383,10 @@ private extension DiffStep {
         case .diffing: "Diffing…"
         }
     }
+}
+
+/// A sidebar row's fill: the accent while its section is shown, otherwise the commit picker's
+/// hover tint while the pointer is over it.
+func sidebarRowStyle(isShown: Bool, isHovered: Bool) -> AnyShapeStyle {
+    isShown ? AnyShapeStyle(Color.accentColor) : isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear)
 }

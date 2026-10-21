@@ -98,6 +98,7 @@ struct VisualReviewPopover: HoverPopoverContent {
 struct VisualReviewRow: View {
     @Bindable var tab: PullRequestTab
     let review: VisualReview
+    @State private var isHovered = false
 
     static let symbol = "photo.on.rectangle.angled"
 
@@ -122,7 +123,8 @@ struct VisualReviewRow: View {
         .foregroundStyle(isShown ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(isShown ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 5))
+        .background(sidebarRowStyle(isShown: isShown, isHovered: isHovered), in: RoundedRectangle(cornerRadius: 5))
+        .onHover { isHovered = $0 }
         // Sits right under the Conversation row, whose own padding spaces them.
         .padding([.horizontal, .bottom], 8)
     }
