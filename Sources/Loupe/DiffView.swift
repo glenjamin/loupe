@@ -120,11 +120,12 @@ private struct FileHeader: View {
                     .help("Hide the revealed lines")
             }
             if let whitespace {
-                Button(whitespace.hides ? "Show Whitespace" : "Hide Whitespace", systemImage: "space", action: whitespace.toggle)
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(whitespace.hides ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                    .help(whitespace.hides ? "Show changes to whitespace again, in this PR's diffs (⌃⌘H)" : "Hide changes to whitespace in this PR's diffs, as github.com's Hide whitespace does (⌃⌘H)")
+                // A checkbox in github.com's words, as on/off is unmistakable and it matches Reviewed.
+                Toggle("Hide whitespace", isOn: Binding(get: { whitespace.hides }, set: { hides in
+                    if hides != whitespace.hides { whitespace.toggle() }
+                }))
+                    .toggleStyle(.checkbox)
+                    .help("Leave changes to whitespace out of every file's diff in this PR, as github.com's Hide whitespace does; line counts still include them (⌃⌘H)")
             }
             if let markdown {
                 Picker("Show", selection: Binding(get: { markdown.isRendered }, set: { markdown.setRendered($0) })) {
@@ -172,6 +173,8 @@ private struct FileHeader: View {
         .padding(.horizontal, 10)
         .frame(height: 32)
         .background(.bar)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("file-header")
     }
 
     private var path: Text {

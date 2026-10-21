@@ -221,7 +221,7 @@ final class SnapshotScript {
             case .producing: return false
             case .ready, .failed, .noCheckout: break
             }
-            guard tab.isConversationSettled else { return false }
+            guard !tab.isReplacingShownChanges, tab.isConversationSettled else { return false }
             guard tab.shownSection == .conversation, tab.conversation != nil else { return true }
             return ConversationPage.existingPage(for: tab)?.isLoaded == true
         }
@@ -385,6 +385,9 @@ final class SnapshotScript {
     /// else the main window's.
     private func press(_ chord: Chord) {
         guard let window = keyboardWindow() else { return }
+        // An active app's menus are brought up to date before a key equivalent is matched; a
+        // never-activated one's aren't, so items enabled since launch would refuse their keys.
+        NSApp.mainMenu.map(refresh)
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             guard let event = NSEvent.keyEvent(
                 with: type, location: .zero, modifierFlags: chord.modifiers, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
@@ -1196,4 +1199,12 @@ private final class OneShot: Sendable {
             pending = nil
         }
     }
+}
+
+/// Brings `menu` and its submenus up to date, as AppKit does before it matches a key equivalent.
+@MainActor
+private func refresh(_ menu: NSMenu) {
+    menu.delegate?.menuNeedsUpdate?(menu)
+    menu.update()
+    for item in menu.items { item.submenu.map(refresh) }
 }
