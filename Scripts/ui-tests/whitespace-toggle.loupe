@@ -1,22 +1,31 @@
-# The file header's Hide whitespace checkbox flips the PR's setting when clicked, and View ▸ Hide
-# Whitespace's ⌃⌘H flips it too, the checkbox following.
+# The file header's Hide whitespace toggle flips the PR's setting when clicked, and View ▸ Hide
+# Whitespace's ⌃⌘H flips it too, the toggle following. It's tinted under the pointer, and the
+# snaps are taken with the pointer off it so that tint doesn't count as on or off.
 wait settled
 open tamarinworks/atrium#2928
 wait settled
 click image #doc
 wait until checkbox "Hide whitespace" in #file-header
 expect checkbox "Hide whitespace" has value "0"
+unhover
 snap whitespace-shown #file-header
+
+hover checkbox "Hide whitespace" in #file-header
+snap whitespace-hovered #file-header
+expect-different whitespace-shown whitespace-hovered
 
 click checkbox "Hide whitespace" in #file-header
 expect checkbox "Hide whitespace" has value "1"
+unhover
 snap whitespace-hidden #file-header
 expect-different whitespace-shown whitespace-hidden
+expect-different whitespace-hovered whitespace-hidden
 # The diff takes no clicks until the one without whitespace has replaced it.
 wait settled
 
 click checkbox "Hide whitespace" in #file-header
 expect checkbox "Hide whitespace" has value "0"
+unhover
 snap whitespace-shown-again #file-header
 expect-same whitespace-shown whitespace-shown-again
 

@@ -219,7 +219,7 @@ sqlite3 ~/Library/Application\ Support/Loupe/loupe.sqlite ".backup $TMPDIR/loupe
 LOUPE_DATABASE=$TMPDIR/loupe-db/loupe.sqlite LOUPE_SNAPSHOT_SCRIPT=$TMPDIR/check.loupe Scripts/snapshot.sh $TMPDIR/snaps
 ```
 
-Either way a run starts once the lists have refreshed, prints `ok <line>: <step> — <what it found>` for each step and `passed N steps`, and exits 0. At the first failure it prints `FAIL <line>`, what was expected and found, and the part of the accessibility tree it looked in, writes `failure.png`, and exits 1 (2 if the script doesn't parse). The suite's scripts are working examples: the reviewer picker's keys (`reviewer-picker.loupe`), the Conversation row's hover (`conversation-hover.loupe`), ⌘F on the lists (`list-search.loupe`), the tab strip (`tab-strip.loupe`) and the file header's Hide whitespace checkbox, clicked and by ⌃⌘H (`whitespace-toggle.loupe`).
+Either way a run starts once the lists have refreshed, prints `ok <line>: <step> — <what it found>` for each step and `passed N steps`, and exits 0. At the first failure it prints `FAIL <line>`, what was expected and found, and the part of the accessibility tree it looked in, writes `failure.png`, and exits 1 (2 if the script doesn't parse). The suite's scripts are working examples: the reviewer picker's keys (`reviewer-picker.loupe`), the Conversation row's hover (`conversation-hover.loupe`), ⌘F on the lists (`list-search.loupe`), the tab strip (`tab-strip.loupe`) and the file header's Hide whitespace toggle, hovered, clicked and by ⌃⌘H (`whitespace-toggle.loupe`).
 
 One step a line; `#` starts a comment (`#name` mid-line is an identifier). Things are found in the accessibility tree, as VoiceOver sees it, across the window and any popover. Start with `dump` to find handles.
 

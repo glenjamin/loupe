@@ -120,11 +120,10 @@ private struct FileHeader: View {
                     .help("Hide the revealed lines")
             }
             if let whitespace {
-                // A checkbox in github.com's words, as on/off is unmistakable and it matches Reviewed.
-                Toggle("Hide whitespace", isOn: Binding(get: { whitespace.hides }, set: { hides in
+                Toggle("Hide whitespace", systemImage: "paragraphsign", isOn: Binding(get: { whitespace.hides }, set: { hides in
                     if hides != whitespace.hides { whitespace.toggle() }
                 }))
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(HeaderIconToggleStyle())
                     .help("Leave changes to whitespace out of every file's diff in this PR, as github.com's Hide whitespace does; line counts still include them (⌃⌘H)")
             }
             if let markdown {
@@ -750,5 +749,52 @@ private struct BlockHeightKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
+    }
+}
+
+/// An icon toggle like a toolbar's: a plain secondary glyph while off, tinted under the pointer,
+/// and filled while on, in grey in an inactive window as a selected row is, so on still stands out.
+private struct HeaderIconToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HeaderIconToggle(configuration: configuration)
+    }
+}
+
+private struct HeaderIconToggle: View {
+    let configuration: ToggleStyleConfiguration
+    @Environment(\.controlActiveState) private var activeState
+    @State private var isHovered = false
+
+    var body: some View {
+        Button { configuration.isOn.toggle() } label: { configuration.label }
+            .buttonStyle(HeaderIconButtonStyle(isOn: configuration.isOn, isActive: activeState != .inactive, isHovered: isHovered))
+            .onHover { isHovered = $0 }
+    }
+}
+
+private struct HeaderIconButtonStyle: ButtonStyle {
+    let isOn: Bool
+    let isActive: Bool
+    let isHovered: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .labelStyle(.iconOnly)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(glyph)
+            .frame(width: 22, height: 16)
+            .background(fill(isPressed: configuration.isPressed), in: RoundedRectangle(cornerRadius: 4))
+            .contentShape(Rectangle())
+    }
+
+    private var glyph: AnyShapeStyle {
+        guard isOn else { return isHovered ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary) }
+        return AnyShapeStyle(.white)
+    }
+
+    private func fill(isPressed: Bool) -> AnyShapeStyle {
+        guard isOn else { return isPressed ? AnyShapeStyle(.tertiary) : isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear) }
+        let fill = isActive ? Color.accentColor : Color(nsColor: .systemGray)
+        return AnyShapeStyle(fill.opacity(isPressed ? 0.75 : 1))
     }
 }
