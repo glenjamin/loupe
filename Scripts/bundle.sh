@@ -23,12 +23,13 @@ case ${2:-} in
   *) echo "usage: Scripts/bundle.sh [debug|release] [snapshot]" >&2; exit 2 ;;
 esac
 cd "$(dirname "$0")/.."
-# CodeEditLanguages ships prebuilt grammars whose debug info points at the
-# maintainer's machine; the linker warns about each one. Nothing else is hidden.
-log=$(mktemp)
-if ! swift build --scratch-path "$scratch" -c "$config" >"$log" 2>&1; then cat "$log"; rm -f "$log"; exit 1; fi
-grep -v "unable to open object file: No such file or directory" "$log" || true
-rm -f "$log"
+echo "Building $name ($config)…" >&2
+# Streamed as it goes, as a first build takes minutes. CodeEditLanguages ships
+# prebuilt grammars whose debug info points at the maintainer's machine; the
+# linker warns about each one. Nothing else is hidden.
+status=$({ { code=0; swift build --scratch-path "$scratch" -c "$config" 2>&1 || code=$?; echo "$code" >&3; } |
+  grep --line-buffered -v "unable to open object file: No such file or directory" >&2; } 3>&1)
+[ "$status" -eq 0 ] || exit 1
 bin=$(swift build --scratch-path "$scratch" -c "$config" --show-bin-path)
 
 rm -rf "$app"
