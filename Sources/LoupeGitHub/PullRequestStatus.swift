@@ -25,8 +25,10 @@ extension GitHubClient {
         return statuses
     }
 
-    /// Under GitHub's maximum, as contexts and mergeability make each PR costly to look up.
-    static let statusBatchSize = 50
+    /// Well under GitHub's maximum, as each check context and the mergeability make a PR
+    /// costly to look up: a batch of recently active PRs much bigger than this runs past
+    /// GitHub's time limit, which answers with a 502 or "Resource limits exceeded".
+    public static let statusBatchSize = 10
 
     static let statusQuery = """
         query($ids: [ID!]!) {

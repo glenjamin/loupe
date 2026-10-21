@@ -18,7 +18,8 @@ public final class PullRequestListModel {
     public var onOpen: @MainActor (PullRequestSummary) -> Void
 
     private var snapshot: PullRequestSnapshot
-    /// Open PRs in neither list, as last checked directly.
+    /// Open PRs in neither list, as last checked directly, for until their stored rows are read
+    /// back. The stored row comes first, as only it gets their checks and mergeability.
     private var unlisted: [String: PullRequestSummary] = [:]
     private var checkouts: [String: CheckoutStatus] = [:]
     /// How many lookups by id of each PR are on their way to GitHub; they can overlap.
@@ -161,7 +162,7 @@ public final class PullRequestListModel {
         for list in PullRequestList.allCases {
             if let found = snapshot[list].first(where: { $0.id == id }) { return found }
         }
-        return unlisted[id] ?? snapshot.unlisted.first { $0.id == id }
+        return snapshot.unlisted.first { $0.id == id } ?? unlisted[id]
     }
 
     /// The stored PR numbered `number` in `repository`, whatever its state, if it's in either
@@ -173,7 +174,7 @@ public final class PullRequestListModel {
         for list in PullRequestList.allCases {
             if let found = snapshot[list].first(where: matches) { return found }
         }
-        return unlisted.values.first(where: matches) ?? snapshot.unlisted.first(where: matches)
+        return snapshot.unlisted.first(where: matches) ?? unlisted.values.first(where: matches)
     }
 
     /// Whether GitHub is being asked for anything that updates the stored PR with `id`: a
@@ -270,7 +271,7 @@ public final class PullRequestListModel {
         checkoutResolver.searchRoots
     }
 
-    /// Brings each list up to date with GitHub, then looks up the listed PRs' statuses and finds
+    /// Brings each list up to date with GitHub, then looks up the open PRs' statuses and finds
     /// their repos' checkouts. A list never loaded before is fetched in full; after that only PRs
     /// changed since its last refresh are fetched. A list that fails to load keeps its stored rows.
     public func refresh() async {
@@ -431,22 +432,39 @@ public final class PullRequestListModel {
     }
 
     /// Each open PR's checks and mergeability, looked up by id as asking the searches for them
-    /// takes a full page to GitHub's time limit. Every open PR is asked about, as a check
-    /// finishing doesn't change a PR's update time, so the searches for changes never report it.
-    /// A failure leaves the statuses last looked up, and doesn't count as the lists failing to
+    /// takes a full page to GitHub's time limit. Every open PR stored is asked about, those only
+    /// open in tabs included, as a check finishing doesn't change a PR's update time, so the
+    /// searches for changes never report it. Batches small enough for GitHub to answer in time
+    /// are asked a few at once, and each is stored as it lands, so one GitHub gives up on leaves
+    /// only its PRs' statuses as last looked up; that doesn't count as the lists failing to
     /// refresh.
     private func refreshStatuses() async {
         var ids: [String] = []
-        for list in PullRequestList.allCases {
-            for pullRequest in snapshot[list] where pullRequest.state == .open && !ids.contains(pullRequest.id) {
-                ids.append(pullRequest.id)
-            }
+        for pullRequest in PullRequestList.allCases.flatMap({ snapshot[$0] }) + snapshot.unlisted
+        where pullRequest.state == .open && !ids.contains(pullRequest.id) {
+            ids.append(pullRequest.id)
         }
-        guard !ids.isEmpty else { return }
-        do {
-            snapshot = try await store.updateStatuses(try await client.statuses(ofPullRequests: ids))
-        } catch {
-            FileHandle.standardError.write(Data("Couldn't look up PR statuses: \(error)\n".utf8))
+        var batches = stride(from: 0, to: ids.count, by: GitHubClient.statusBatchSize).map { start in
+            Array(ids[start..<min(start + GitHubClient.statusBatchSize, ids.count)])
+        }[...]
+        let client = client
+        await withTaskGroup(of: Result<[String: PullRequestStatus], any Error>.self) { group in
+            var asking = 0
+            while true {
+                while asking < Self.statusLookupsAtOnce, let batch = batches.popFirst() {
+                    asking += 1
+                    group.addTask {
+                        do { return .success(try await client.statuses(ofPullRequests: batch)) } catch { return .failure(error) }
+                    }
+                }
+                guard let result = await group.next() else { return }
+                asking -= 1
+                do {
+                    snapshot = try await store.updateStatuses(try result.get())
+                } catch {
+                    FileHandle.standardError.write(Data("Couldn't look up PR statuses: \(error)\n".utf8))
+                }
+            }
         }
     }
 
@@ -483,6 +501,10 @@ public final class PullRequestListModel {
     /// How far before the last refresh to ask for changes from, allowing for clock skew and
     /// GitHub's search index lagging behind its updates.
     static let refreshOverlap = Duration.seconds(120)
+
+    /// How many lookups of statuses are on their way to GitHub at once: enough that a refresh
+    /// doesn't wait seconds on each in turn, few enough to stay clear of its secondary limits.
+    static let statusLookupsAtOnce = 4
 
     /// How many PRs deep a stack is followed down its branches in one refresh; a GitHub stack is
     /// found whole at once.

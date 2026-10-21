@@ -1000,6 +1000,12 @@ Comments stay on, as on github.com. Lines in a whitespace-ignored diff are still
 
 Inline code in a comment drawn natively, as in a thread on the diff, is set as github.com and the conversation's stylesheet set it: monospaced at 85% of the text's size, on Primer's muted grey (light and dark) in a rounded pill padded from the text around it. The padding is made with kerning, not added characters, so a selection's text still matches the block's, which quoting relies on. SwiftUI only exposes a line's runs to a `TextRenderer` (macOS 15), and selectable text is drawn by AppKit, which skips the renderer, so the pills are drawn by the same text laid out a second time behind it, unselectable and drawing nothing but the pills. On macOS 14 the code gets a flat background instead.
 
+### Checks and merge state are looked up 10 PRs at a time, 4 lookups at once, each stored as it lands
+
+This revises the batches of 50 in "Checks show as a bare glyph, and hovering lists each check". With 160 open PRs listed, the batch of the 50 most recently active ones failed every time: a 502 after about 11s, or `RESOURCE_LIMITS_EXCEEDED` on each check run's `detailsUrl`. A batch failing failed the whole lookup, so no PR's checks or merge state were stored, and a refresh only moved a PR's rollup when its update time changed. Checks finishing don't change that, so checks looked stuck. The cost goes with how many checks a batch carries, not with the number of requests: the same 160 PRs took 1–4s per batch of 10 and up to 7.7s per batch of 25, about 35s and 32s in all. So a batch is 10 PRs, and 4 are asked at once to keep a refresh's length where it was: a whole refresh of those 160 took about 23s, against 25s before with the lookup failing and 48s asking one batch at a time. Each batch is stored as it lands, so one GitHub gives up on leaves only its PRs as last looked up.
+
+The lookup covers every open PR stored, not only the listed ones, so a PR open only in a tab, such as one reached by a link, has its header, checks popover and merge box follow a refresh too. A PR looked up directly in neither list was held in memory as that lookup found it, which carries no contexts or merge state, and was shown ahead of its stored row, so status lookups never reached its tab. The stored row now comes first, and the copy in memory only stands in until the stored row is read back.
+
 ## Not yet decided
 
 Nothing is pending.

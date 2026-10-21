@@ -9,7 +9,8 @@ import Testing
 /// searches by author, review request, the viewer's reviews, state and update time, looks up
 /// nodes by id and PRs by repo and number with who their review is asked of and each
 /// reviewer's latest verdict, serves each PR's checks and mergeability
-/// as captured in `probe/pr-status.json`,
+/// as captured in `probe/pr-status.json`, answering a 502 as GitHub does when a lookup of
+/// statuses asks for more checks than it works out within its time limit,
 /// and bumps a PR's update time when it changes, though not when its checks do. Like its REST notifications, a
 /// change to a PR notifies the viewer, who participates in every PR here, and a poll with
 /// `If-Modified-Since` no older than the newest notification gets a 304. Tests can change PRs,
@@ -43,8 +44,14 @@ actor FakeGitHub: HTTPTransport {
     private(set) var pullRequestLookups: [[String]] = []
     /// The ids of every lookup of PRs' stack neighbours, in order.
     private(set) var stackLookups: [[String]] = []
-    /// The ids of every lookup of PRs' statuses, in order.
+    /// The ids of every lookup of PRs' statuses, in order, answered or not.
     private(set) var statusLookups: [[String]] = []
+    /// How many check contexts GitHub works out in one status lookup before its time limit;
+    /// fifty recently active PRs of a few checks each run past it.
+    static let statusLookupBudget = 200
+    /// PRs whose status alone takes GitHub past its time limit, as when it's slow to work out
+    /// their mergeability.
+    private var slowStatuses: Set<String> = []
     /// Every lookup of a PR by repo and number, as `owner/name#number`, in order.
     private(set) var numberLookups: [String] = []
     /// When each PR's notification was last updated, by PR id.
@@ -273,6 +280,11 @@ actor FakeGitHub: HTTPTransport {
         pullRequests[index].mergeable = mergeable
     }
 
+    /// Makes GitHub run out of time on any status lookup that includes the PR with `id`.
+    func slowDownStatus(of id: String) {
+        slowStatuses.insert(id)
+    }
+
     /// The PR's head as GitHub has it now.
     func head(of id: String) throws -> String {
         try #require(pullRequests.first { $0.id == id }).headRefOid
@@ -395,6 +407,11 @@ actor FakeGitHub: HTTPTransport {
         }
         if body.query.contains("markPullRequestReadyForReview(") {
             return (try markReadyForReview(try #require(body.variables.input).pullRequestId), httpResponse(url, status: 200))
+        }
+        if let ids = body.variables.ids, body.query.contains("contexts"), !isStackLookup, statusLookupCost(ids) > Self.statusLookupBudget {
+            statusLookups.append(ids)
+            // GitHub's gateway gives up on a query that runs past its time limit.
+            return (Data("<html><head><title>502 Bad Gateway</title></head></html>".utf8), httpResponse(url, status: 502))
         }
         let response: any Encodable = if let owner = body.variables.owner, let name = body.variables.name, let number = body.variables.number {
             pullRequest(in: "\(owner)/\(name)", number: number)
@@ -532,6 +549,14 @@ actor FakeGitHub: HTTPTransport {
                 )
             }
         }))
+    }
+
+    /// How much of GitHub's time limit looking up the statuses of the PRs with `ids` takes.
+    private func statusLookupCost(_ ids: [String]) -> Int {
+        ids.reduce(0) { cost, id in
+            if slowStatuses.contains(id) { return cost + Self.statusLookupBudget + 1 }
+            return cost + (pullRequests.first { $0.id == id }?.checkContexts.count ?? 0)
+        }
     }
 
     /// Merges the PR as GitHub does, refusing as it does when the head has moved from the one

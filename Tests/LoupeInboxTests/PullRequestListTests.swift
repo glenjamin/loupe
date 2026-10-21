@@ -145,6 +145,51 @@ struct PullRequestListTests {
             """)
     }
 
+    @Test func checksFinishingAnywhereInFullListsAreFoundOnTheNextRefresh() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let newest = try #require(model.pullRequests(in: .mine).first)
+        let oldest = try #require(model.pullRequests(in: .toReview).last)
+
+        for pullRequest in [newest, oldest] {
+            try await github.setChecks(of: pullRequest.id, state: "FAILURE", [.status("ci/circleci: test", "FAILURE")])
+            try await github.setMergeState(of: pullRequest.id, "UNSTABLE")
+        }
+        await model.refresh()
+
+        for before in [newest, oldest] {
+            let after = try #require(model.pullRequest(id: before.id))
+            #expect(after.updatedAt == before.updatedAt)
+            #expect(after.checks == .failure)
+            #expect(after.checkContexts.failedCheckNames == ["test"])
+            #expect(after.mergeStateStatus == .unstable)
+        }
+    }
+
+    @Test func aPullRequestWhoseStatusGitHubRunsOutOfTimeOnLeavesTheOthersChecksToFollow() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let slow = try #require(model.pullRequests(in: .mine).first)
+        let other = try #require(model.pullRequests(in: .toReview).last)
+
+        await github.slowDownStatus(of: slow.id)
+        for pullRequest in [slow, other] {
+            try await github.setChecks(of: pullRequest.id, state: "FAILURE", [.status("ci/circleci: test", "FAILURE")])
+            try await github.setMergeState(of: pullRequest.id, "UNSTABLE")
+        }
+        await model.refresh()
+
+        #expect(model.error == nil, "the lists themselves refreshed")
+        let followed = try #require(model.pullRequest(id: other.id))
+        #expect(followed.checkContexts.failedCheckNames == ["test"])
+        #expect(followed.mergeStateStatus == .unstable)
+        let kept = try #require(model.pullRequest(id: slow.id))
+        #expect(kept.checkContexts == slow.checkContexts)
+        #expect(kept.mergeStateStatus == slow.mergeStateStatus)
+    }
+
     @Test func codecovsProjectCheckFailingAloneLeavesTheChecksPassed() async throws {
         let shown = try await checksShown(state: "FAILURE", [
             .status("ci/circleci: build", "SUCCESS"),

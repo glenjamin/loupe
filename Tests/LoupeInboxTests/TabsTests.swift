@@ -72,6 +72,22 @@ struct TabsTests {
         #expect(nextRun.tabs[1].pullRequest.title == "Read gauge cache status from gazette")
     }
 
+    @Test func checksFinishingOnAPullRequestOpenOnlyInItsTabAreFoundOnTheNextRefresh() async throws {
+        let app = try await App()
+        let created = try await app.github.openPullRequest(number: 9001, by: "rowan-ashby")
+        await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number))?.value
+        let tab = try #require(app.tabs.tab(id: created.id))
+        #expect(app.tabs.lists.pullRequests(in: .toReview).allSatisfy { $0.id != created.id }, "in neither list")
+
+        try await app.github.setChecks(of: created.id, state: "FAILURE", [.status("ci/circleci: test", "FAILURE")])
+        try await app.github.setMergeState(of: created.id, "UNSTABLE")
+        await app.tabs.lists.refresh()
+
+        #expect(tab.pullRequest.checks == .failure)
+        #expect(tab.pullRequest.checkContexts.failedCheckNames == ["test"])
+        #expect(tab.pullRequest.mergeStateStatus == .unstable)
+    }
+
     @Test func aLinkToTheViewersNewPullRequestPutsItInMineAtOnce() async throws {
         let app = try await App()
         let created = try await app.github.openPullRequest(number: 2001, by: FakeGitHub.viewer)
