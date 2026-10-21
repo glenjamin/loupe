@@ -1006,6 +1006,14 @@ This revises the batches of 50 in "Checks show as a bare glyph, and hovering lis
 
 The lookup covers every open PR stored, not only the listed ones, so a PR open only in a tab, such as one reached by a link, has its header, checks popover and merge box follow a refresh too. A PR looked up directly in neither list was held in memory as that lookup found it, which carries no contexts or merge state, and was shown ahead of its stored row, so status lookups never reached its tab. The stored row now comes first, and the copy in memory only stands in until the stored row is read back.
 
+### A repo with no checkout says so in the sidebar, and can be cloned from there
+
+The lack of a checkout was only said in the files pane, behind the Conversation tab that PRs open on, and the sidebar left the commit picker's place blank. So a PR in a repo with no checkout read as one with no commits, with nothing anywhere saying why. The sidebar now says "No local checkout" in the commit picker's place, so it shows beside the conversation, and offers the ways to get one there and in the files pane.
+
+The prominent one is Clone, with "Locate Checkout…" kept beside it for a checkout somewhere else. This is a new exception to Loupe only ever reading checkouts (see "Diffs come from local checkouts only"): it makes a new directory, but never touches an existing one. A clone goes under the search root named after the repo's owner, so tamarinworks' repos go to `~/Development/tamarinworks/<name>`, and everyone else's under the last root, `~/Development/GitHub`, where Glen's checkouts of other people's repos already are. That keeps the roots meaning what they mean now, and a clone is found by the same search afterwards. It clones `https://github.com/<owner>/<name>`, the form Glen's own checkouts have as `origin`, so it authenticates as they do.
+
+git runs with `--progress` on the git runner's own threads, and its last line shows under a spinner, with Cancel, which kills git. It clones into a hidden sibling directory and renames that into place only once complete, so a failure or a cancel leaves nothing, and a directory already of that name is left alone and reported rather than cloned over. On success the checkout is stored as one located by hand would be, and the diff is produced from it at once. A failure shows git's own `fatal:` lines. The clone state belongs to the repo, not the tab, so two tabs on one repo share one clone. The list's row menu keeps only "Locate Checkout…": a clone started there would have nowhere to show its progress.
+
 ## Not yet decided
 
 Nothing is pending.

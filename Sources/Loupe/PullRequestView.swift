@@ -25,7 +25,7 @@ struct PullRequestView: View {
                 Divider()
             }
             HSplitView {
-                ReviewSidebar(tab: tab)
+                ReviewSidebar(tab: tab, checkoutSearchRoots: checkoutSearchRoots)
                     .frame(minWidth: 200, idealWidth: 300, maxWidth: 500)
                 // Each stays once made, so switching keeps each one's place.
                 ZStack {
@@ -73,13 +73,9 @@ struct PullRequestView: View {
             ContentUnavailableView {
                 Label("No local checkout of \(pullRequest.repository)", systemImage: "folder.badge.questionmark")
             } description: {
-                Text("Diffs come from a local checkout. None was found named \(repositoryName(pullRequest)) under \(checkoutSearchRoots.map { $0.path(percentEncoded: false) }.formatted()).")
+                Text(noCheckoutDescription(pullRequest))
             } actions: {
-                Button("Locate Checkout…") {
-                    locateCheckout(of: pullRequest.repository, startingAt: checkoutSearchRoots.first) { directory in
-                        try await tab.locateCheckout(at: directory)
-                    }
-                }
+                NoCheckoutActions(tab: tab, checkoutSearchRoots: checkoutSearchRoots)
             }
         case let .ready(diff):
             FileDetail(tab: tab)
@@ -96,12 +92,98 @@ struct PullRequestView: View {
             }
         }
     }
+
+    private func noCheckoutDescription(_ pullRequest: PullRequestSummary) -> String {
+        let searched = "Diffs come from a local checkout. None was found named \(repositoryName(pullRequest)) under \(checkoutSearchRoots.map { tildePath($0) }.formatted())."
+        guard let destination = tab.cloneDestination else { return searched }
+        return "\(searched) Clone it into \(tildePath(destination)), or locate one elsewhere."
+    }
+}
+
+/// Where a repo with no checkout says so in the sidebar, in the commit picker's place, so it
+/// shows beside the conversation too, with the ways to get one.
+struct NoCheckoutRow: View {
+    let tab: PullRequestTab
+    let checkoutSearchRoots: [URL]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("No local checkout", systemImage: "folder.badge.questionmark")
+                .foregroundStyle(.secondary)
+                .help("Diffs and commits come from a local checkout of \(tab.pullRequest.repository), and none was found")
+            NoCheckoutActions(tab: tab, checkoutSearchRoots: checkoutSearchRoots, isCompact: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+    }
+}
+
+/// The ways to get a checkout of a repo that has none: cloning it, the prominent choice where
+/// there's somewhere to clone it, or locating one by hand. A clone underway shows git's progress
+/// and can be cancelled; one that failed says why.
+struct NoCheckoutActions: View {
+    let tab: PullRequestTab
+    let checkoutSearchRoots: [URL]
+    var isCompact = false
+
+    var body: some View {
+        let alignment: HorizontalAlignment = isCompact ? .leading : .center
+        VStack(alignment: alignment, spacing: 6) {
+            switch tab.checkoutClone {
+            case let .cloning(progress)?:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(verbatim: "Cloning \(repositoryName(tab.pullRequest))…")
+                        .foregroundStyle(.secondary)
+                }
+                if let progress {
+                    Text(verbatim: progress)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Button("Cancel") { tab.cancelClone() }
+                    .controlSize(isCompact ? .small : .regular)
+            case let .failed(message)?:
+                Text(verbatim: message)
+                    .font(isCompact ? .caption : .body)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(isCompact ? .leading : .center)
+                    .textSelection(.enabled)
+                buttons
+            case nil:
+                buttons
+            }
+        }
+    }
+
+    private var buttons: some View {
+        HStack(spacing: 8) {
+            if let destination = tab.cloneDestination {
+                Button(isCompact ? "Clone" : "Clone Repository") {
+                    Task { await tab.cloneCheckout() }
+                }
+                .buttonStyle(.borderedProminent)
+                .help("Clone \(tab.pullRequest.repository) into \(tildePath(destination))")
+            }
+            Button(isCompact ? "Locate…" : "Locate Checkout…") {
+                locateCheckout(of: tab.pullRequest.repository, startingAt: checkoutSearchRoots.first) { directory in
+                    try await tab.locateCheckout(at: directory)
+                }
+            }
+            .help("Choose an existing checkout of \(tab.pullRequest.repository)")
+        }
+        .controlSize(isCompact ? .small : .regular)
+    }
 }
 
 /// The PR's navigation: its conversation at the top, then once the diff is ready the commit
 /// picker and the files of the shown changes.
 struct ReviewSidebar: View {
     @Bindable var tab: PullRequestTab
+    let checkoutSearchRoots: [URL]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -129,7 +211,10 @@ struct ReviewSidebar: View {
                 .padding(.vertical, 5)
                 .animation(.default, value: step)
                 Spacer(minLength: 0)
-            case .noCheckout, .failed:
+            case .noCheckout:
+                NoCheckoutRow(tab: tab, checkoutSearchRoots: checkoutSearchRoots)
+                Spacer(minLength: 0)
+            case .failed:
                 Spacer(minLength: 0)
             }
         }
@@ -320,8 +405,7 @@ struct OpenInEditorButton: View {
             return "Available once the diff has found the local checkout"
         }
         if tab.editorLaunch.isSwitching { return "Checking out \(pullRequest.headRefName)…" }
-        let path = (checkout.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
-        return "Check out \(pullRequest.headRefName) in \(path) and open it in \(editor.name)"
+        return "Check out \(pullRequest.headRefName) in \(tildePath(checkout)) and open it in \(editor.name)"
     }
 }
 
@@ -1060,6 +1144,11 @@ func locateCheckout(of repository: String, startingAt directory: URL?, locate: @
 /// The repo's name without its owner.
 func repositoryName(_ pullRequest: PullRequestSummary) -> String {
     pullRequest.repository.split(separator: "/").last.map(String.init) ?? pullRequest.repository
+}
+
+/// A directory's path with the home directory as `~`.
+func tildePath(_ directory: URL) -> String {
+    (directory.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
 }
 
 /// Which file is shown of which changes, for work done once per file shown.

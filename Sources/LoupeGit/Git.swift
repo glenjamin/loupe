@@ -62,6 +62,24 @@ enum Git {
         }
     }
 
+    /// Runs git for long work such as a clone, handing each piece of what it writes to stderr,
+    /// where it reports progress, to `progress` as it comes. Cancelling the task kills git and
+    /// throws `CancellationError` once it has exited.
+    static func runReportingProgress(_ arguments: [String], in directory: URL, timeout: Duration, progress: @escaping @Sendable (String) -> Void) async throws {
+        let watchdog = Watchdog()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                onOwnThread {
+                    continuation.resume(with: Result {
+                        try runBlocking(arguments, in: directory, input: nil, timeout: timeout, watchdog: watchdog, onError: { progress(String(decoding: $0, as: UTF8.self)) }) { _ = $0.readDataToEndOfFile() }
+                    })
+                }
+            }
+        } onCancel: {
+            watchdog.fire(.cancelled)
+        }
+    }
+
     /// Whether git exits successfully, for commands that answer a yes/no question.
     static func succeeds(_ arguments: [String], in directory: URL) async -> Bool {
         (try? await run(arguments, in: directory)) != nil
@@ -92,7 +110,8 @@ enum Git {
     }
 
     /// Runs git, handing its stdout to `read` as it comes, and returns what that makes of it.
-    private static func runBlocking<Output>(_ arguments: [String], in directory: URL, input: Data?, environment extra: [String: String] = [:], timeout: Duration, succeedingOn statuses: Set<Int32> = [0], read: (FileHandle) throws -> Output) throws -> Output {
+    /// Stops early when `watchdog` fires, and hands stderr to `onError` as it comes if given.
+    private static func runBlocking<Output>(_ arguments: [String], in directory: URL, input: Data?, environment extra: [String: String] = [:], timeout: Duration, succeedingOn statuses: Set<Int32> = [0], watchdog: Watchdog = Watchdog(), onError: (@Sendable (Data) -> Void)? = nil, read: (FileHandle) throws -> Output) throws -> Output {
         let process = Process()
         process.executableURL = executable
         process.arguments = ["-C", directory.path(percentEncoded: false)] + arguments
@@ -116,10 +135,10 @@ enum Git {
             }
         }
 
-        let watchdog = Watchdog(process)
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) { watchdog.fire() }
+        watchdog.watch(process)
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) { watchdog.fire(.timedOut) }
         // Both pipes are drained at once, so git never blocks writing to a full one.
-        let errorOutput = Drain(stderr.fileHandleForReading)
+        let errorOutput = Drain(stderr.fileHandleForReading, onChunk: onError)
         let output = Result { try read(stdout.fileHandleForReading) }
         if case .failure(let error) = output {
             // Git would otherwise block on a pipe nobody reads.
@@ -132,8 +151,10 @@ enum Git {
         watchdog.disarm()
 
         let message = String(decoding: errorOutput.wait(), as: UTF8.self)
-        if watchdog.fired {
-            throw GitError(arguments: arguments, status: nil, message: "timed out after \(timeout). \(message)")
+        switch watchdog.reason {
+        case .timedOut?: throw GitError(arguments: arguments, status: nil, message: "timed out after \(timeout). \(message)")
+        case .cancelled?: throw CancellationError()
+        case nil: break
         }
         guard statuses.contains(process.terminationStatus) else {
             throw GitError(arguments: arguments, status: process.terminationStatus, message: message)
@@ -155,24 +176,36 @@ public struct GitError: Error, LocalizedError {
     }
 }
 
-/// Kills a process that runs past its deadline, remembering that it did.
+/// Kills a process that runs past its deadline or whose task is cancelled, remembering why.
+/// It can fire before the process starts, which is then killed as soon as it's watched.
 private final class Watchdog: @unchecked Sendable {
-    private let lock = NSLock()
-    private let process: Process
-    private var armed = true
-    private var didFire = false
-
-    init(_ process: Process) {
-        self.process = process
+    enum Reason {
+        case timedOut
+        case cancelled
     }
 
-    var fired: Bool { lock.withLock { didFire } }
+    private let lock = NSLock()
+    private var process: Process?
+    private var armed = true
+    private var fired: Reason?
 
-    func fire() {
+    var reason: Reason? { lock.withLock { fired } }
+
+    func watch(_ process: Process) {
         lock.withLock {
-            guard armed, process.isRunning else { return }
-            didFire = true
-            process.terminate()
+            self.process = process
+            if fired != nil, process.isRunning { process.terminate() }
+        }
+    }
+
+    func fire(_ reason: Reason) {
+        lock.withLock {
+            guard armed, fired == nil else { return }
+            if let process {
+                guard process.isRunning else { return }
+                process.terminate()
+            }
+            fired = reason
         }
     }
 
@@ -236,15 +269,23 @@ private struct BatchReader {
     private var wanted: Int { heads.count < lines.count ? lines[heads.count] : 0 }
 }
 
-/// Reads a pipe to its end on another thread.
+/// Reads a pipe to its end on another thread, handing each piece to `onChunk` as it comes if
+/// given.
 private final class Drain: @unchecked Sendable {
     private let group = DispatchGroup()
     private var data = Data()
 
-    init(_ handle: FileHandle) {
+    init(_ handle: FileHandle, onChunk: (@Sendable (Data) -> Void)? = nil) {
         group.enter()
         onOwnThread {
-            self.data = handle.readDataToEndOfFile()
+            if let onChunk {
+                while case let chunk = handle.availableData, !chunk.isEmpty {
+                    self.data.append(chunk)
+                    onChunk(chunk)
+                }
+            } else {
+                self.data = handle.readDataToEndOfFile()
+            }
             self.group.leave()
         }
     }

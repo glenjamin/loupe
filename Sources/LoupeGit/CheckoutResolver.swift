@@ -2,7 +2,7 @@ import Foundation
 import LoupeStore
 
 /// Finds where GitHub repos are checked out on this machine, remembering what it finds in the
-/// store. Only ever reads from the checkouts.
+/// store. Only ever reads from the checkouts, though it can clone a repo that has none.
 public struct CheckoutResolver: Sendable {
     /// `~/Development/tamarinworks` then `~/Development/GitHub`.
     public static var defaultSearchRoots: [URL] {
@@ -16,10 +16,54 @@ public struct CheckoutResolver: Sendable {
     /// Directories searched, in order, for a checkout named after a repo that has none stored.
     public let searchRoots: [URL]
     private let store: PullRequestStore
+    /// Config a clone is made with, as `git clone --config` sets it in the new checkout; tests
+    /// rewrite github.com to a local repo with it.
+    private let cloneConfig: [String: String]
 
-    public init(store: PullRequestStore, searchRoots: [URL] = defaultSearchRoots) {
+    public init(store: PullRequestStore, searchRoots: [URL] = defaultSearchRoots, cloneConfig: [String: String] = [:]) {
         self.store = store
         self.searchRoots = searchRoots
+        self.cloneConfig = cloneConfig
+    }
+
+    /// Where a clone of `repository` goes: under the search root named after its owner, as
+    /// `~/Development/tamarinworks` is for tamarinworks' repos, else under the last one, which
+    /// holds everyone else's. Nil with no search roots.
+    public func cloneDestination(for repository: String) -> URL? {
+        let parts = repository.split(separator: "/")
+        guard let name = parts.last, let fallback = searchRoots.last else { return nil }
+        let owner = parts.count > 1 ? String(parts[0]) : ""
+        let root = searchRoots.first { $0.lastPathComponent.caseInsensitiveCompare(owner) == .orderedSame } ?? fallback
+        return root.appending(path: String(name), directoryHint: .isDirectory)
+    }
+
+    /// Clones `repository` from github.com over https, as the user's own checkouts are, to its
+    /// `cloneDestination` and stores it as the repo's checkout. git's progress goes to `progress`
+    /// as it comes. The clone is made in a hidden sibling directory and only renamed into place
+    /// once complete, so a failure or cancellation leaves nothing behind, and an existing
+    /// directory of that name is never touched.
+    public func clone(_ repository: String, progress: @escaping @Sendable (String) -> Void) async throws -> URL {
+        guard let destination = cloneDestination(for: repository) else { throw CheckoutError.nowhereToClone(repository) }
+        let root = destination.deletingLastPathComponent()
+        let fileManager = FileManager.default
+        guard !fileManager.fileExists(atPath: destination.path(percentEncoded: false)) else { throw CheckoutError.alreadyExists(destination) }
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        let partial = root.appending(path: ".\(destination.lastPathComponent).loupe-clone-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        do {
+            let config = cloneConfig.sorted { $0.key < $1.key }.flatMap { ["--config", "\($0.key)=\($0.value)"] }
+            try await Git.runReportingProgress(["clone", "--progress"] + config + ["https://github.com/\(repository)", partial.path(percentEncoded: false)], in: root, timeout: .seconds(3600), progress: progress)
+            try Task.checkCancellation()
+            // Fails rather than replacing a directory made meanwhile.
+            do {
+                try fileManager.moveItem(at: partial, to: destination)
+            } catch {
+                throw fileManager.fileExists(atPath: destination.path(percentEncoded: false)) ? CheckoutError.alreadyExists(destination) : error
+            }
+        } catch {
+            try? fileManager.removeItem(at: partial)
+            throw error
+        }
+        return try await locate(repository, at: destination)
     }
 
     /// The checkout of each of `repositories` (`owner/name`) that can be found; the rest are left
@@ -88,9 +132,17 @@ public enum CheckoutError: Error, LocalizedError, Equatable {
     case notAGitRepository(URL)
     /// The directory's remotes' URLs, none of which is the expected repo.
     case noMatchingRemote(URL, expected: String, remotes: [String])
+    /// A clone's destination is taken, by anything.
+    case alreadyExists(URL)
+    /// There are no search roots to clone under.
+    case nowhereToClone(String)
 
     public var errorDescription: String? {
         switch self {
+        case let .alreadyExists(directory):
+            "\(directory.path(percentEncoded: false)) already exists, so it was left alone. Locate it if it's a checkout."
+        case let .nowhereToClone(repository):
+            "There's nowhere set to clone \(repository) into."
         case let .notAGitRepository(directory):
             "\(directory.path(percentEncoded: false)) isn't a git repository."
         case let .noMatchingRemote(directory, expected, []):

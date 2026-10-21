@@ -22,6 +22,11 @@ public final class PullRequestListModel {
     /// back. The stored row comes first, as only it gets their checks and mergeability.
     private var unlisted: [String: PullRequestSummary] = [:]
     private var checkouts: [String: CheckoutStatus] = [:]
+    /// Each repo being cloned, or whose last clone failed, by `owner/name`.
+    private var clones: [String: CheckoutClone] = [:]
+    @ObservationIgnored private var cloneTasks: [String: Task<URL, any Error>] = [:]
+    /// Awaited as a clone starts, before git runs; a snapshot run holds one there to draw it.
+    @ObservationIgnored public var beforeClone: @MainActor (String) async -> Void = { _ in }
     /// How many lookups by id of each PR are on their way to GitHub; they can overlap.
     private var lookingUp: [String: Int] = [:]
     /// How far the viewer's review of each PR whose diff has been produced has got, as stored.
@@ -45,12 +50,13 @@ public final class PullRequestListModel {
         staleAfter: Duration = .seconds(300),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         checkoutSearchRoots: [URL] = CheckoutResolver.defaultSearchRoots,
+        cloneConfig: [String: String] = [:],
         now: @escaping @MainActor () -> Date = { .now },
         onOpen: @escaping @MainActor (PullRequestSummary) -> Void
     ) {
         self.client = client
         self.store = store
-        checkoutResolver = CheckoutResolver(store: store, searchRoots: checkoutSearchRoots)
+        checkoutResolver = CheckoutResolver(store: store, searchRoots: checkoutSearchRoots, cloneConfig: cloneConfig)
         self.refreshInterval = refreshInterval
         self.staleAfter = staleAfter
         self.sleep = sleep
@@ -295,6 +301,66 @@ public final class PullRequestListModel {
     /// repo on GitHub; otherwise throws, saying why.
     public func locateCheckout(for repository: String, at directory: URL) async throws {
         checkouts[repository] = .found(try await checkoutResolver.locate(repository, at: directory))
+    }
+
+    /// Where cloning `repository` would put it, if anywhere.
+    public func cloneDestination(for repository: String) -> URL? {
+        checkoutResolver.cloneDestination(for: repository)
+    }
+
+    /// Nil unless `repository` is being cloned or its last clone failed.
+    public func clone(of repository: String) -> CheckoutClone? {
+        clones[repository]
+    }
+
+    /// Clones `repository` and records it as its checkout, saying how it's going meanwhile.
+    /// Returns the checkout, or nil if the clone failed, saying why, or was cancelled. Asking
+    /// while one is underway waits for that one.
+    @discardableResult
+    public func cloneCheckout(for repository: String) async -> URL? {
+        let task: Task<URL, any Error>
+        if let underway = cloneTasks[repository] {
+            task = underway
+        } else {
+            clones[repository] = .cloning(progress: nil)
+            let resolver = checkoutResolver
+            task = Task { [beforeClone] in
+                await beforeClone(repository)
+                try Task.checkCancellation()
+                return try await resolver.clone(repository) { output in
+                    Task { @MainActor [weak self] in self?.cloneProgressed(repository, output) }
+                }
+            }
+            cloneTasks[repository] = task
+        }
+        do {
+            let directory = try await task.value
+            finishClone(of: repository, as: nil)
+            checkouts[repository] = .found(directory)
+            return directory
+        } catch is CancellationError {
+            finishClone(of: repository, as: nil)
+        } catch {
+            finishClone(of: repository, as: .failed(cloneFailure(error)))
+        }
+        return nil
+    }
+
+    /// Stops the clone of `repository`, removing what it had made.
+    public func cancelClone(of repository: String) {
+        cloneTasks[repository]?.cancel()
+    }
+
+    /// Keeps the last line git has written, which a carriage return rewrites in place as a
+    /// count goes up.
+    private func cloneProgressed(_ repository: String, _ output: String) {
+        guard case .cloning? = clones[repository], let line = output.split(whereSeparator: \.isNewline).last else { return }
+        clones[repository] = .cloning(progress: String(line))
+    }
+
+    private func finishClone(of repository: String, as state: CheckoutClone?) {
+        cloneTasks[repository] = nil
+        clones[repository] = state
     }
 
     private func refreshLists() async {
@@ -555,6 +621,22 @@ public final class PullRequestListModel {
 public enum CheckoutStatus: Sendable, Equatable {
     case found(URL)
     case notFound
+}
+
+/// A clone of a repo that has no checkout.
+public enum CheckoutClone: Sendable, Equatable {
+    /// Underway, with the last line git has written about it, if any yet.
+    case cloning(progress: String?)
+    /// Why it failed, in git's words where git said.
+    case failed(String)
+}
+
+/// What git said went wrong, without its progress lines, or the error's own description when
+/// git didn't run or said nothing of the kind.
+private func cloneFailure(_ error: any Error) -> String {
+    guard let error = error as? GitError else { return error.localizedDescription }
+    let complaints = error.message.split(whereSeparator: \.isNewline).filter { $0.hasPrefix("fatal:") || $0.hasPrefix("error:") }
+    return complaints.isEmpty ? error.localizedDescription : complaints.joined(separator: "\n")
 }
 
 private extension Duration {

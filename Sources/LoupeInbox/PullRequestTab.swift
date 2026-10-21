@@ -341,6 +341,27 @@ public final class PullRequestTab: Identifiable {
         await retry()
     }
 
+    /// Where cloning the repo would put it, if anywhere.
+    public var cloneDestination: URL? {
+        lists.cloneDestination(for: pullRequest.repository)
+    }
+
+    /// Nil unless the repo is being cloned or its last clone failed.
+    public var checkoutClone: CheckoutClone? {
+        lists.clone(of: pullRequest.repository)
+    }
+
+    /// Clones the repo, which has no checkout, then produces the diff from the clone.
+    public func cloneCheckout() async {
+        guard await lists.cloneCheckout(for: pullRequest.repository) != nil else { return }
+        await retry()
+    }
+
+    /// Stops cloning the repo, leaving nothing of the clone behind.
+    public func cancelClone() {
+        lists.cancelClone(of: pullRequest.repository)
+    }
+
     /// Not viewed unless GitHub or the viewer has said so.
     public func viewedState(of path: String) -> FileViewedState {
         viewedStates[path] ?? .unviewed

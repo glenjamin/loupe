@@ -395,6 +395,18 @@ enum SnapshotRun {
                 await wait(until: .now.addingTimeInterval(20)) { reloading.allSatisfy { $0.reloading == .diffing } }
                 for tab in reloading { print("\(tab.title): reloading, \(tab.reloading.map { "held at \($0)" } ?? "not held")") }
             }
+            // LOUPE_SNAPSHOT_CLONING=1 clicks Clone on each PR with no checkout and holds the
+            // clone before git runs, for good, so nothing is cloned and its wait is drawn.
+            if environment["LOUPE_SNAPSHOT_CLONING"] == "1" {
+                tabs.lists.beforeClone = { _ in await withUnsafeContinuation { (_: UnsafeContinuation<Void, Never>) in } }
+                let cloning = tabs.tabs.filter { tab in
+                    guard case .noCheckout = tab.phase else { return false }
+                    Task { await tab.cloneCheckout() }
+                    return true
+                }
+                await wait(until: .now.addingTimeInterval(5)) { cloning.allSatisfy { $0.checkoutClone != nil } }
+                for tab in cloning { print("\(tab.title): \(tab.checkoutClone.map { "\($0), held" } ?? "not cloning")") }
+            }
             // LOUPE_SNAPSHOT_HOLD_CHECK=1 checks each PR on GitHub, as showing it does, and holds
             // every request from then on unanswered, so each header shows its spinner.
             if isHoldingChecks {
