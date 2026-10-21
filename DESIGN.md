@@ -1038,6 +1038,8 @@ A suite run is hermetic (`LOUPE_FIXTURES`). GitHub is the tests' own fake, servi
 
 Live runs stay for ad hoc checks against real data, which the fixtures can't cover.
 
+The suite is kept quick enough to run after every UI change. After each input a script waits for the main thread to go idle rather than a fixed quarter second, as the scripts had nothing slower to wait for that `wait until` didn't already cover. Each script's copy of the bundle is kept between runs, as macOS checks every new executable on its first launch, most of a second each and one at a time, and the fixture checkouts are kept until what builds them changes. Each script still launches the app afresh: launching takes about 0.7s of a script's two or three, and resetting the database, tabs, settings and web views between scripts in one launch would make a script's result depend on those before it.
+
 ## Not yet decided
 
 Nothing is pending.

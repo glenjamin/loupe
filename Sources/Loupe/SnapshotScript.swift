@@ -3,6 +3,7 @@ import LoupeFakeGitHub
 import LoupeGit
 import LoupeInbox
 import LoupeModel
+import os
 
 /// `LOUPE_SNAPSHOT_SCRIPT=<file>` drives a snapshot run from a script, one step a line: it opens
 /// PRs, clicks, hovers, presses keys and types through the app's own event handling, finds what to
@@ -44,6 +45,8 @@ final class SnapshotScript {
     /// Runs the script and quits: with status 0 when every step passed, 1 at the first that
     /// didn't, and 2 when the script can't be read.
     static func run(_ file: URL, windows: WindowManager, directory: URL) async -> Never {
+        // Each step's line as it happens, even into a pipe, so a slow step can be seen.
+        setvbuf(stdout, nil, _IOLBF, 0)
         // A script stuck behind something modal still ends, and says so.
         DispatchQueue.global().asyncAfter(deadline: .now() + 600) {
             print("FAIL the script ran for over 10 minutes")
@@ -100,7 +103,7 @@ final class SnapshotScript {
                 if Date.now >= deadline {
                     throw StepFailure(expected: "\(query) \(predicate) within \(timeout)", found: found.note, scope: query)
                 }
-                try? await Task.sleep(for: .milliseconds(100))
+                try? await Task.sleep(for: .milliseconds(25))
             }
         case let .click(query, kind):
             let node = try find(query)
@@ -224,15 +227,19 @@ final class SnapshotScript {
         }
         while !isSettled() {
             guard Date.now < deadline else { throw StepFailure(expected: "the app to settle within \(timeout)", found: "still loading") }
-            try? await Task.sleep(for: .milliseconds(100))
+            try? await Task.sleep(for: .milliseconds(25))
         }
         await settleInput()
         return nil
     }
 
-    /// A moment for an input's effects to be laid out and drawn, as the screen would ask.
+    /// Lets an input's effects land, then lays them out and draws them, as the screen would ask:
+    /// until the main thread has handled the input and what it set off there, with nothing left
+    /// to do. Work off the main thread, such as a fetch, needs `wait until`.
     private func settleInput() async {
-        try? await Task.sleep(for: .milliseconds(250))
+        let deadline = ContinuousClock.now + .milliseconds(250)
+        // Twice, so what the first pass queued, such as SwiftUI's updates, has run too.
+        for _ in 1...2 { await mainRunLoopIdle(until: deadline) }
         for window in shownWindows() {
             window.layoutIfNeeded()
             window.displayIfNeeded()
@@ -1154,3 +1161,39 @@ private let shiftedKeys: [Character: (Character, UInt16)] = {
     ]
     return Dictionary(uniqueKeysWithValues: pairs.compactMap { shifted, base in keyCodes[base].map { (shifted, (base, $0)) } })
 }()
+
+/// Returns once the main run loop has handled everything queued for it, and Core Animation has
+/// committed what that changed, and it's about to sleep; or at `deadline`, should it never be.
+@MainActor
+private func mainRunLoopIdle(until deadline: ContinuousClock.Instant) async {
+    guard ContinuousClock.now < deadline else { return }
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        let resume = OneShot(continuation)
+        // Ordered last, after Core Animation's commit at the same point.
+        let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, false, CFIndex.max) { _, _ in
+            resume.fire()
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+        Task { @MainActor in
+            try? await Task.sleep(until: deadline)
+            CFRunLoopObserverInvalidate(observer)
+            resume.fire()
+        }
+    }
+}
+
+/// Resumes a continuation the first time it's fired, from whichever of its callers comes first.
+private final class OneShot: Sendable {
+    private let continuation = OSAllocatedUnfairLock<CheckedContinuation<Void, Never>?>(initialState: nil)
+
+    init(_ continuation: CheckedContinuation<Void, Never>) {
+        self.continuation.withLock { $0 = continuation }
+    }
+
+    func fire() {
+        continuation.withLock { pending in
+            pending?.resume()
+            pending = nil
+        }
+    }
+}

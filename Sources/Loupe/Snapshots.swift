@@ -616,7 +616,7 @@ enum SnapshotRun {
 
     fileprivate static func wait(until deadline: Date, for isDone: () -> Bool) async {
         while Date.now < deadline, !isDone() {
-            try? await Task.sleep(for: .milliseconds(250))
+            try? await Task.sleep(for: .milliseconds(25))
         }
     }
 

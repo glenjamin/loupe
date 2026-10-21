@@ -1,7 +1,8 @@
 #!/bin/sh
 # Builds Loupe.app under .build, so the Dock and ⌘-Tab show its icon.
-# Rebuilds the bundle from scratch each run. Debug by default, which is
-# incremental and quick; pass "release" for an optimised build. A second
+# Makes the bundle afresh each run, and replaces it only if it changed. Debug
+# by default, which is incremental and quick; pass "release" for an optimised
+# build. A second
 # argument of "snapshot" builds LoupeSnapshot.app instead, for snapshot runs:
 # its own name and bundle id and no URL types, so Launch Services, AppleScript
 # and "open -a Loupe" never mistake it for the real app, and building it never
@@ -32,15 +33,18 @@ status=$({ { code=0; swift build --scratch-path "$scratch" -c "$config" 2>&1 || 
 [ "$status" -eq 0 ] || exit 1
 bin=$(swift build --scratch-path "$scratch" -c "$config" --show-bin-path)
 
-rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$bin/Loupe" "$app/Contents/MacOS/Loupe"
-cp Sources/Loupe/Resources/Loupe.icns "$app/Contents/Resources/Loupe.icns"
+# Made beside it first, and kept only if it differs, so an unchanged bundle stays the same
+# files: macOS checks a new executable on its first launch, which takes most of a second.
+new="$(dirname "$app")/.bundling/$(basename "$app")"
+rm -rf "$new"
+mkdir -p "$new/Contents/MacOS" "$new/Contents/Resources"
+cp "$bin/Loupe" "$new/Contents/MacOS/Loupe"
+cp Sources/Loupe/Resources/Loupe.icns "$new/Contents/Resources/Loupe.icns"
 # Reads the token the circleci CLI is signed in with, to fetch CI's reports.
-cp Scripts/circleci-token "$app/Contents/Resources/circleci-token"
+cp Scripts/circleci-token "$new/Contents/Resources/circleci-token"
 # Kept where Xcode puts them; the bundle root would break code signing.
 for bundle in "$bin"/*.bundle; do
-  cp -R "$bundle" "$app/Contents/Resources/"
+  cp -R "$bundle" "$new/Contents/Resources/"
 done
 
 {
@@ -81,7 +85,13 @@ PLIST
 PLIST
   fi
   printf '</dict>\n</plist>\n'
-} > "$app/Contents/Info.plist"
+} > "$new/Contents/Info.plist"
 
-codesign --force --deep --sign - "$app"
+codesign --force --deep --sign - "$new"
+if [ -d "$app" ] && diff -rq "$new" "$app" >/dev/null 2>&1; then
+  rm -rf "$new"
+else
+  rm -rf "$app"
+  mv "$new" "$app"
+fi
 echo "$app"
