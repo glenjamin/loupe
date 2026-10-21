@@ -1,8 +1,8 @@
-# The Reviewers picker on the viewer's newest PR: ↓ and ↑ move its highlight with the focus kept
-# in the search field, Esc closes it, and Return asks the highlighted person, which a snapshot run
-# refuses before it reaches GitHub.
+# The Reviewers picker on one of the viewer's own PRs: ↓ and ↑ move its highlight with the focus
+# kept in the search field, Esc closes it, and Return asks the highlighted person, which a
+# snapshot run refuses before it reaches GitHub.
 wait settled
-open mine 1
+open tamarinworks/gazette#272
 wait settled
 
 click button "Reviewers"

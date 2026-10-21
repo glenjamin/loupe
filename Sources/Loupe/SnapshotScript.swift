@@ -1,4 +1,5 @@
 import AppKit
+import LoupeFakeGitHub
 import LoupeGit
 import LoupeInbox
 import LoupeModel
@@ -68,6 +69,13 @@ final class SnapshotScript {
                 await script.report(StepFailure(expected: line.text, found: "\(error)"), at: line)
                 exit(1)
             }
+        }
+        // Against the fixtures, a request no fake could answer fails the run, though the app
+        // carried on, so nothing quietly depends on GitHub.
+        let unanswered = FakeGitHubMismatch.recorded
+        guard unanswered.isEmpty else {
+            print("FAIL the fake GitHub couldn't answer every request:\n\(unanswered.joined(separator: "\n"))")
+            exit(1)
         }
         print("passed \(lines.count) steps")
         exit(0)

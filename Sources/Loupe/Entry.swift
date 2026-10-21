@@ -12,8 +12,13 @@ enum Entry {
             Bench.run(diffPath: args[1], fileFilter: args.count > 2 ? args[2] : nil)
             return
         }
+        if args.first == "--fixture-checkouts", args.count == 2 {
+            let directory = URL(filePath: args[1], directoryHint: .isDirectory)
+            Task { exit(await FixtureRun.buildCheckouts(in: directory)) }
+            RunLoop.main.run()
+        }
         if args.first?.hasPrefix("-") == true || args.count > 1 {
-            FileHandle.standardError.write(Data("usage: Loupe [diff-file] | --bench <diff-file> [path-substring]\n".utf8))
+            FileHandle.standardError.write(Data("usage: Loupe [diff-file] | --bench <diff-file> [path-substring] | --fixture-checkouts <dir>\n".utf8))
             exit(2)
         }
         // Native tooltips, SwiftUI's `.help` included, show sooner than macOS's default; registered
@@ -21,8 +26,9 @@ enum Entry {
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 400])
         if SnapshotRun.directory != nil {
             // A snapshot run's bundle has its own id and so its own defaults; it reads the real
-            // app's settings beneath them, to look the same, without ever writing to them.
-            UserDefaults.standard.addSuite(named: "com.glenmailer.Loupe")
+            // app's settings beneath them, to look the same, without ever writing to them. A run
+            // against the fixtures doesn't, so it starts the same whatever they are.
+            if FixtureRun.directory == nil { UserDefaults.standard.addSuite(named: "com.glenmailer.Loupe") }
             // Shown in TODO mode for this run only, as the argument domain is never saved.
             if ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_TODO"] == "1" {
                 UserDefaults.standard.setVolatileDomain([ListMode.key: ListMode.todo.rawValue], forName: UserDefaults.argumentDomain)

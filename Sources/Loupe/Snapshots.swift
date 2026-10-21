@@ -1,5 +1,6 @@
 import AppKit
 import LoupeCore
+import LoupeFakeGitHub
 import LoupeGit
 import LoupeGitHub
 import LoupeInbox
@@ -71,19 +72,21 @@ enum SnapshotRun {
     private static let isRehearsingMerges = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_MERGING"] == "1"
     /// Every request a snapshot run makes of GitHub goes through this, which sends only reads,
     /// so nothing a run clicks can change anything there.
-    static let readOnlyGitHub = ReadOnlyTransport()
+    /// That's the fixtures' GitHub in a run with `LOUPE_FIXTURES` set.
+    static let readOnlyGitHub = if let fixtures = FixtureRun.gitHub { ReadOnlyTransport(wrapping: fixtures) } else { ReadOnlyTransport() }
+    private static let gitHubToken: GitHubClient.TokenProvider = FixtureRun.gitHub == nil ? GitHubCLI.authToken : { @Sendable in FixtureGitHub.token }
     /// How the app talks to GitHub: directly, except in a snapshot run, which only reads, and
     /// may hold some of it or rehearse merges.
     static let gitHubClient = if directory == nil {
         GitHubClient()
     } else if isRehearsingMerges {
-        GitHubClient(transport: MergeRehearsal())
+        GitHubClient(token: gitHubToken, transport: MergeRehearsal())
     } else if isHoldingChecks || isHoldingConversations || isHoldingLinkLookups {
-        GitHubClient(transport: gitHubHold)
+        GitHubClient(token: gitHubToken, transport: gitHubHold)
     } else {
-        GitHubClient(transport: readOnlyGitHub)
+        GitHubClient(token: gitHubToken, transport: readOnlyGitHub)
     }
-    static let gitHubNotifications = directory == nil ? GitHubNotifications() : GitHubNotifications(transport: readOnlyGitHub)
+    static let gitHubNotifications = directory == nil ? GitHubNotifications() : GitHubNotifications(token: gitHubToken, transport: readOnlyGitHub)
     /// What a snapshot run kept from opening outside the app: links for the browser, and
     /// checkouts for an editor.
     private(set) static var blockedLaunches: [String] = []
@@ -115,6 +118,7 @@ enum SnapshotRun {
         let hold = StepHold(step: environment["LOUPE_SNAPSHOT_HOLD_PHASE"].flatMap(DiffStep.init(named:)))
         for tab in tabs.tabs { tab.beforeStep = { await hold.wait(at: $0) } }
         Task {
+            await FixtureRun.prepare()
             let lists = tabs.lists
             await wait(until: deadline) { !lists.isLoading && (lists.error != nil || (lists.lastRefreshed ?? .distantPast) >= started) }
             // LOUPE_SNAPSHOT_SCRIPT=<file> drives the run from a script instead of the hooks below.

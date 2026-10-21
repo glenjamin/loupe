@@ -34,12 +34,12 @@ let package = Package(
         .target(name: "LoupeStore", dependencies: ["LoupeModel", .product(name: "GRDB", package: "GRDB.swift")], swiftSettings: strictSwift()),
         .target(name: "LoupeGit", dependencies: ["LoupeCore", "LoupeStore"], swiftSettings: strictSwift()),
         .target(name: "LoupeInbox", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit"], swiftSettings: strictSwift()),
-        // The fake GitHub serving probe/'s anonymised captures, and the git repos behind them, for
-        // the tests.
+        // The fake GitHub serving probe/'s anonymised captures, and the git repos behind them: the
+        // tests' GitHub, and a snapshot run's with LOUPE_FIXTURES set.
         .target(name: "LoupeFakeGitHub", dependencies: ["LoupeModel", "LoupeGitHub"], swiftSettings: strictSwift()),
         .executableTarget(
             name: "Loupe",
-            dependencies: ["LoupeCore", "LoupeModel", "LoupeStore", "LoupeGit", "LoupeGitHub", "LoupeInbox"],
+            dependencies: ["LoupeCore", "LoupeModel", "LoupeStore", "LoupeGit", "LoupeGitHub", "LoupeInbox", "LoupeFakeGitHub"],
             resources: [
                 .copy("Resources/Loupe.icns"),
                 .copy("Resources/conversation.html"),

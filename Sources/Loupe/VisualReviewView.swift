@@ -281,7 +281,7 @@ final class VisualReviewPage: NSObject {
     @ObservationIgnored private var opening: Task<Void, Never>?
 
     private static let pages = NSMapTable<PullRequestTab, VisualReviewPage>.weakToStrongObjects()
-    private static let artifacts = CircleCIArtifacts.live()
+    private static let artifacts = CircleCIArtifacts.live(environment: FixtureRun.circleCIEnvironment)
 
     /// The tab's page, made if it hasn't one yet.
     static func page(for tab: PullRequestTab) -> VisualReviewPage {
@@ -301,6 +301,7 @@ final class VisualReviewPage: NSObject {
         configuration.websiteDataStore = .nonPersistent()
         let handler = ArtifactSchemeHandler(artifacts: artifacts)
         configuration.setURLSchemeHandler(handler, forURLScheme: CircleCIArtifacts.scheme)
+        if let offline = FixtureRun.offline { configuration.userContentController.add(offline) }
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.isHidden = true
         super.init()

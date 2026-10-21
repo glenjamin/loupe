@@ -9,11 +9,12 @@ expect button in list 1 count >1
 press cmd+f
 expect search is focused
 
-# The viewer (glenjamin) is the author of every PR in Mine, so their login keeps them all.
-type "glenjamin"
-expect search has value "glenjamin"
+# Six of the viewer's PRs mention gazette, and none of those awaiting their review do.
+type "gazette"
+expect search has value "gazette"
 expect text ~"No pull requests match" missing
-expect button in list 1 count >1
+expect button in list 1 count 6
+expect text "No matches" exists
 snap search-mine
 
 press esc

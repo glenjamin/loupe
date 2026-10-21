@@ -1,7 +1,7 @@
 # The tab strip takes clicks, as LOUPE_SNAPSHOT_CLICK_TAB shows for one item, and ⌃Tab steps
 # along it through the window's key monitor.
 wait settled
-open mine 1
+open tamarinworks/gazette#272
 wait settled
 expect window has no title "Pull Requests"
 

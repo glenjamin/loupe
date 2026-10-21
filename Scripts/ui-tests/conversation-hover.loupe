@@ -1,6 +1,6 @@
 # The sidebar's Conversation row tints while the pointer is over it, and clears once it leaves.
 wait settled
-open mine 1
+open tamarinworks/atrium#2928
 wait settled
 
 # Show a file first: while the conversation is shown its row is filled whatever the pointer does.

@@ -1030,6 +1030,14 @@ It runs inside the app rather than as XCUITest. XCUITest needs Xcode, which this
 
 Snapshot runs talk to the real GitHub and the user's checkouts, and a script can click anything, Merge and Submit included. Before this, only the merge rehearsal kept writes from GitHub. So every snapshot run now sends GitHub only queries, `GET`s, `HEAD`s and `POST /markdown`, and refuses every mutation and REST write before it leaves the process. git is kept to reading the checkouts, fetching into `refs/loupe/` and writing Loupe's own objects and indexes; no clone, branch switch or the like. Opening links in the browser and checkouts in an editor are refused too, as they'd show on the user's screen. Each refusal is printed and recorded, so a script can assert that clicking a button tried to make the change it should. The refusal reaches the UI as GitHub's or git's own error would. Popovers, which AppKit moves onto a real screen, are made transparent as they appear in every snapshot run.
 
+### The UI scripts are a suite of their own, against the tests' fake GitHub
+
+The scripts from "UI checks are scripts driving the real app in-process" ran against live GitHub and a copy of Glen's database, so `open mine 1` and a hard-coded login made them change as his PRs did, and nothing ran them. They're now a UI suite, `Scripts/ui-tests/`, run by `Scripts/ui-tests.sh` alongside `swift test` rather than inside it: each script launches the real app, which takes seconds, needs the window server and runs with the sandbox off, none of which suits the unit tests, and a script failing should say which UI behaviour broke without hiding a model test's failure.
+
+A suite run is hermetic (`LOUPE_FIXTURES`). GitHub is the tests' own fake, serving the anonymised captures under `probe/`, so the suite and the tests agree on what GitHub does and neither drifts with real data. The fakes moved from the test target into a library, `LoupeFakeGitHub`, which the app links but only uses with that switch set; a copy for the app would drift from the tests'. Their swift-testing checks became thrown, recorded mismatches, since the app can't link Testing, and a request no fake can answer fails the script, so nothing quietly falls back to the network. The PRs a script diffs have real git repos made by the tests' `FakeRepository`, with fixed dates so the oids repeat. Each script gets an empty database, its own checkouts and a bundle id of its own, so no settings, rows or refs leak between scripts or from the real app, and scripts can run in parallel. The lists judge age by a fixed time, as the tests do, so which PRs count as quiet or stale holds as the real date moves on; the times the rows print still follow the clock, as nothing asserts them. The write guards stay on, so a script can still assert that a click tried to write.
+
+Live runs stay for ad hoc checks against real data, which the fixtures can't cover.
+
 ## Not yet decided
 
 Nothing is pending.

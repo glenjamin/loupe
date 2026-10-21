@@ -29,6 +29,7 @@ class GitHubWebPage: NSObject {
     override init() {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        if let offline = FixtureRun.offline { configuration.userContentController.add(offline) }
         webView = Self.makeWebView(configuration: configuration)
         // GitHub's light theme whatever the system appearance: WebKit takes the page's
         // `prefers-color-scheme` from the view's appearance, and GitHub's HTML has dark variants.

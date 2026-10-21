@@ -250,14 +250,18 @@ extension FileDiff.Change {
     let store = openStore()
     let client = SnapshotRun.gitHubClient
     // The tabs take over opening PRs.
-    let lists = PullRequestListModel(client: client, store: store) { _ in }
+    let lists = if let checkouts = FixtureRun.checkouts {
+        PullRequestListModel(client: client, store: store, checkoutSearchRoots: [checkouts], now: { FixtureRun.now }) { _ in }
+    } else {
+        PullRequestListModel(client: client, store: store) { _ in }
+    }
     return TabsModel(lists: lists, store: store, client: client, notifications: SnapshotRun.gitHubNotifications)
 }
 
 /// The on-disk store, or a throwaway one if it can't be opened, so the PR list still works.
-/// `LOUPE_DATABASE` points it elsewhere, such as for a snapshot run.
-private func openStore() -> PullRequestStore {
-    let url = ProcessInfo.processInfo.environment["LOUPE_DATABASE"].map { URL(filePath: $0) } ?? PullRequestStore.defaultURL
+/// `LOUPE_DATABASE` points it elsewhere, such as for a snapshot run, as does `LOUPE_FIXTURES`.
+@MainActor private func openStore() -> PullRequestStore {
+    let url = FixtureRun.database ?? ProcessInfo.processInfo.environment["LOUPE_DATABASE"].map { URL(filePath: $0) } ?? PullRequestStore.defaultURL
     do {
         return try PullRequestStore(url: url)
     } catch {

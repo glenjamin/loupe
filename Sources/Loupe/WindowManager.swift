@@ -419,7 +419,8 @@ private func hostingController(_ view: some View) -> NSViewController {
 @MainActor
 private func keepOffScreenForSnapshot(_ window: NSWindow) {
     guard SnapshotRun.directory != nil, let screen = NSScreen.main else { return }
-    let size = screen.visibleFrame.size
+    // Against the fixtures, the same size on any screen, so scripts see the same layout.
+    let size = FixtureRun.directory == nil ? screen.visibleFrame.size : NSSize(width: 1440, height: 900)
     let screens = NSScreen.screens.reduce(NSRect.null) { $0.union($1.frame) }
     let frame = NSRect(origin: NSPoint(x: screens.minX - size.width - 10_000, y: screens.minY - size.height - 10_000), size: size)
     if window.frame != frame { window.setFrame(frame, display: false) }

@@ -3,6 +3,7 @@
 # each window into the given directory once loaded, and prints their paths.
 # Set LOUPE_DATABASE to run against a throwaway copy of the database, and
 # LOUPE_SNAPSHOT_SCRIPT to drive the run from a script; it exits non-zero when one fails.
+# LOUPE_FIXTURES runs against the fake GitHub instead; Scripts/ui-tests.sh sets it up.
 set -eu
 
 if [ $# -ne 1 ]; then
