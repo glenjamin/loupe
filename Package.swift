@@ -34,6 +34,9 @@ let package = Package(
         .target(name: "LoupeStore", dependencies: ["LoupeModel", .product(name: "GRDB", package: "GRDB.swift")], swiftSettings: strictSwift()),
         .target(name: "LoupeGit", dependencies: ["LoupeCore", "LoupeStore"], swiftSettings: strictSwift()),
         .target(name: "LoupeInbox", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit"], swiftSettings: strictSwift()),
+        // The fake GitHub serving probe/'s anonymised captures, and the git repos behind them, for
+        // the tests.
+        .target(name: "LoupeFakeGitHub", dependencies: ["LoupeModel", "LoupeGitHub"], swiftSettings: strictSwift()),
         .executableTarget(
             name: "Loupe",
             dependencies: ["LoupeCore", "LoupeModel", "LoupeStore", "LoupeGit", "LoupeGitHub", "LoupeInbox"],
@@ -45,7 +48,7 @@ let package = Package(
             swiftSettings: strictSwift()
         ),
         .testTarget(name: "LoupeTests", dependencies: ["LoupeCore", "LoupeModel"], exclude: ["Fixtures"], swiftSettings: strictSwift()),
-        .testTarget(name: "LoupeInboxTests", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit", "LoupeInbox"], swiftSettings: strictSwift()),
+        .testTarget(name: "LoupeInboxTests", dependencies: ["LoupeCore", "LoupeModel", "LoupeGitHub", "LoupeStore", "LoupeGit", "LoupeInbox", "LoupeFakeGitHub"], swiftSettings: strictSwift()),
     ]
 )
 

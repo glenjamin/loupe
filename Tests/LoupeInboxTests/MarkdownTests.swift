@@ -1,3 +1,4 @@
+@testable import LoupeFakeGitHub
 import Foundation
 import LoupeCore
 import LoupeGitHub

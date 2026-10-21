@@ -1,7 +1,6 @@
 import Foundation
 import LoupeGitHub
 import LoupeModel
-import Testing
 
 /// An in-memory api.github.com holding the viewer's PRs, the PRs awaiting their review, and a
 /// merged PR in neither list from `probe/pr-by-number.json`. Like GitHub's GraphQL API it
@@ -135,7 +134,7 @@ actor FakeGitHub: HTTPTransport {
 
     /// Changes the PR with `id`, which GitHub records as an update.
     func edit(_ id: String, _ change: @Sendable (inout FakePullRequest) throws -> Void) throws {
-        let index = try #require(pullRequests.firstIndex { $0.id == id })
+        let index = try require(pullRequests.firstIndex { $0.id == id })
         let previous = updatedAt(pullRequests[index])
         try change(&pullRequests[index])
         // A head set directly is a commit pushed on top, unless the PR already had it.
@@ -179,7 +178,7 @@ actor FakeGitHub: HTTPTransport {
         for reviewer in reviewers {
             try requestReview(of: pullRequest.id, from: reviewer)
         }
-        return try #require(pullRequests.first { $0.id == pullRequest.id })
+        return try require(pullRequests.first { $0.id == pullRequest.id })
     }
 
     /// Asks `reviewer` to review the PR with `id` at `date`, or now, as a request or re-request,
@@ -207,9 +206,9 @@ actor FakeGitHub: HTTPTransport {
     @discardableResult
     func push(to id: String, commits count: Int = 1) throws -> String {
         let pushedAt = Date.now + timePassed
-        let start = try #require(pullRequests.first { $0.id == id }).history.count
+        let start = try require(pullRequests.first { $0.id == id }).history.count
         let pushed = (start..<start + count).map { fakeOid("\(id) commit \($0)") }
-        let head = try #require(pushed.last)
+        let head = try require(pushed.last)
         try edit(id) { pullRequest in
             pullRequest.history += pushed.map { .init(oid: $0, committedDate: pushedAt) }
             pullRequest.headRefOid = head
@@ -233,7 +232,7 @@ actor FakeGitHub: HTTPTransport {
     /// Dismisses `login`'s latest approval or request for changes on the PR with `id`.
     func dismissReview(of id: String, by login: String = viewer) throws {
         try edit(id) { pullRequest in
-            let index = try #require(pullRequest.reviews.lastIndex { $0.login == login && ["APPROVED", "CHANGES_REQUESTED"].contains($0.state) })
+            let index = try require(pullRequest.reviews.lastIndex { $0.login == login && ["APPROVED", "CHANGES_REQUESTED"].contains($0.state) })
             pullRequest.reviews[index].state = "DISMISSED"
         }
     }
@@ -246,9 +245,22 @@ actor FakeGitHub: HTTPTransport {
     /// Makes `events` the whole history of review requests on the PR with `id`, as though made
     /// long ago and so not an update now.
     func setRequestEvents(of id: String, _ events: [FakePullRequest.RequestEvent]) throws {
-        let index = try #require(pullRequests.firstIndex { $0.id == id })
+        let index = try require(pullRequests.firstIndex { $0.id == id })
         pullRequests[index].requestEvents = events
     }
+
+    /// Makes `commits`, oldest first, the PR's whole branch onto `base`, as though always so and so
+    /// not an update now: for the PRs a fixture checkout holds.
+    func setBranch(of id: String, base: String, commits: [FakePullRequest.HistoryCommit]) throws {
+        let index = try require(pullRequests.firstIndex { $0.id == id })
+        pullRequests[index].baseRefOid = base
+        pullRequests[index].headRefOid = try require(commits.last).oid
+        pullRequests[index].history = commits
+        pullRequests[index].commitCount.totalCount = commits.count
+    }
+
+    /// Every PR GitHub has, open or not, listed or not.
+    var everyPullRequest: [FakePullRequest] { pullRequests }
 
     /// Gives each PR in the probe's review-request lookup the request history captured there.
     func replayRequestEvents(fromProbe name: String) throws {
@@ -256,8 +268,8 @@ actor FakeGitHub: HTTPTransport {
         for node in probe.data.nodes {
             try setRequestEvents(of: node.id, try node.requestEvents.nodes.map { event in
                 let reviewer: FakePullRequest.Reviewer = switch event.requestedReviewer.__typename {
-                case "Team": .team(try #require(event.requestedReviewer.slug))
-                default: .user(try #require(event.requestedReviewer.login))
+                case "Team": .team(try require(event.requestedReviewer.slug))
+                default: .user(try require(event.requestedReviewer.login))
                 }
                 return .init(reviewer: reviewer, createdAt: try Date(event.createdAt, strategy: .iso8601))
             })
@@ -267,7 +279,7 @@ actor FakeGitHub: HTTPTransport {
     /// Changes the checks on the head commit of the PR with `id`, which GitHub doesn't record as
     /// an update to the PR.
     func setChecks(of id: String, state: String, _ contexts: [FakeCheckContext]) throws {
-        let index = try #require(pullRequests.firstIndex { $0.id == id })
+        let index = try require(pullRequests.firstIndex { $0.id == id })
         pullRequests[index].commits.nodes[0].commit.statusCheckRollup = .init(state: state)
         pullRequests[index].checkContexts = contexts
     }
@@ -275,7 +287,7 @@ actor FakeGitHub: HTTPTransport {
     /// Sets whether the PR with `id` merges cleanly and can be merged now, which GitHub works
     /// out in the background and doesn't record as an update to the PR.
     func setMergeState(of id: String, _ state: String, mergeable: String = "MERGEABLE") throws {
-        let index = try #require(pullRequests.firstIndex { $0.id == id })
+        let index = try require(pullRequests.firstIndex { $0.id == id })
         pullRequests[index].mergeStateStatus = state
         pullRequests[index].mergeable = mergeable
     }
@@ -287,7 +299,7 @@ actor FakeGitHub: HTTPTransport {
 
     /// The PR's head as GitHub has it now.
     func head(of id: String) throws -> String {
-        try #require(pullRequests.first { $0.id == id }).headRefOid
+        try require(pullRequests.first { $0.id == id }).headRefOid
     }
 
     func setPollInterval(_ seconds: Int?) {
@@ -307,7 +319,7 @@ actor FakeGitHub: HTTPTransport {
             pullRequest.mergedAt = now
             pullRequest.closedAt = now
         }
-        let merged = try #require(pullRequests.first { $0.id == id })
+        let merged = try require(pullRequests.first { $0.id == id })
         guard let stackId = merged.stackId else { return }
         for above in pullRequests where above.stackId == stackId && above.state == "OPEN" && above.baseRefName == merged.headRefName {
             try edit(above.id) { $0.baseRefName = merged.baseRefName }
@@ -318,7 +330,7 @@ actor FakeGitHub: HTTPTransport {
     /// and with `linked` GitHub links them in a stack too, as "Create stack" does, putting it
     /// on top of the parent's stack or starting one.
     func stack(_ id: String, on parent: String, linked: Bool = true) throws {
-        let below = try #require(pullRequests.first { $0.id == parent })
+        let below = try require(pullRequests.first { $0.id == parent })
         let stackId = below.stackId ?? "PRS_fake_\(below.number)"
         if linked, below.stackId == nil {
             try edit(parent) { $0.stackId = stackId; $0.stackPosition = 1 }
@@ -381,11 +393,11 @@ actor FakeGitHub: HTTPTransport {
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         requestCount += 1
-        let url = try #require(request.url)
+        let url = try require(request.url)
         if url.path() == "/notifications" { return try notifications(request, url) }
         if url.path().contains("/merge-async") { return try asyncMerge(request, url) }
-        #expect(url.absoluteString == "https://api.github.com/graphql")
-        #expect(request.httpMethod == "POST")
+        try expect(url.absoluteString == "https://api.github.com/graphql")
+        try expect(request.httpMethod == "POST")
 
         guard request.value(forHTTPHeaderField: "Authorization") == "bearer \(Self.validToken)" else {
             let body = #"{"message":"Bad credentials","documentation_url":"https://docs.github.com/graphql","status":"401"}"#
@@ -397,16 +409,16 @@ actor FakeGitHub: HTTPTransport {
         case nil: break
         }
 
-        let body = try JSONDecoder().decode(GraphQLRequest.self, from: try #require(request.httpBody))
+        let body = try JSONDecoder().decode(GraphQLRequest.self, from: try require(request.httpBody))
         if body.variables.query != nil { await pass(.search) }
         let isStackLookup = body.query.contains("stack { entries")
         if body.variables.ids != nil, !body.query.contains("contexts"), !isStackLookup, body.query.contains("fragment PullRequestRow") { await pass(.lookup) }
         if body.variables.number != nil { await pass(.numberLookup) }
         if body.query.contains("mergePullRequest(") {
-            return (try mergePullRequest(try #require(body.variables.input)), httpResponse(url, status: 200))
+            return (try mergePullRequest(try require(body.variables.input)), httpResponse(url, status: 200))
         }
         if body.query.contains("markPullRequestReadyForReview(") {
-            return (try markReadyForReview(try #require(body.variables.input).pullRequestId), httpResponse(url, status: 200))
+            return (try markReadyForReview(try require(body.variables.input).pullRequestId), httpResponse(url, status: 200))
         }
         if let ids = body.variables.ids, body.query.contains("contexts"), !isStackLookup, statusLookupCost(ids) > Self.statusLookupBudget {
             statusLookups.append(ids)
@@ -438,17 +450,17 @@ actor FakeGitHub: HTTPTransport {
     }
 
     private func search(_ variables: GraphQLRequest.Variables) throws -> Envelope<SearchPayload> {
-        let query = try #require(variables.query)
+        let query = try require(variables.query)
         searches.append(query)
-        let search = try #require(SearchQuery(query), "Unexpected search: \(query)")
+        let search = try require(SearchQuery(query), "Unexpected search: \(query)")
         let results = pullRequests.filter { pullRequest in
             matches(pullRequest, search.who)
                 && (!search.openOnly || pullRequest.state == "OPEN")
                 && (!search.othersOnly || pullRequest.author?.login != Self.viewer)
                 && search.updatedSince.map { updatedAt(pullRequest) >= $0 } ?? true
         }
-        let start = try variables.after.map { try #require(Int($0)) } ?? 0
-        let first = try #require(variables.first)
+        let start = try variables.after.map { try require(Int($0)) } ?? 0
+        let first = try require(variables.first)
         let end = min(start + min(first, maxPageSize), results.count)
         return Envelope(data: SearchPayload(search: .init(
             pageInfo: .init(hasNextPage: end < results.count, endCursor: end > start ? String(end) : nil),
@@ -463,8 +475,8 @@ actor FakeGitHub: HTTPTransport {
     }
 
     private func notificationsResponse(_ request: URLRequest, _ url: URL) throws -> (Data, HTTPURLResponse) {
-        #expect(url.absoluteString == "https://api.github.com/notifications?participating=true")
-        #expect(request.httpMethod == "GET", "only reads, so nothing is marked as read")
+        try expect(url.absoluteString == "https://api.github.com/notifications?participating=true")
+        try expect(request.httpMethod == "GET", "only reads, so nothing is marked as read")
         var headers = pollInterval.map { ["X-Poll-Interval": String($0)] } ?? [:]
         guard request.value(forHTTPHeaderField: "Authorization") == "bearer \(Self.validToken)" else {
             return (Data(#"{"message":"Bad credentials"}"#.utf8), httpResponse(url, status: 401, headers: headers))
@@ -480,7 +492,7 @@ actor FakeGitHub: HTTPTransport {
             return (Data(), httpResponse(url, status: 304, headers: headers))
         }
         let probe = try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/notifications.json")))
-        let template = try #require((probe as? [[String: Any]])?.first)
+        let template = try require((probe as? [[String: Any]])?.first)
         // Newest first, a page of 50.
         let threads = notified.sorted { $0.value > $1.value }.prefix(50).compactMap { id, date in
             pullRequests.first { $0.id == id }.map { notification(from: template, about: $0, at: date) }
@@ -489,7 +501,7 @@ actor FakeGitHub: HTTPTransport {
     }
 
     private func pullRequestRows(_ ids: [String]) throws -> Envelope<[String: [LookupNode?]]> {
-        #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
+        try expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
         pullRequestLookups.append(ids)
         return Envelope(data: ["nodes": ids.map { id in pullRequests.first { $0.id == id }.map(lookupNode) }])
     }
@@ -497,7 +509,7 @@ actor FakeGitHub: HTTPTransport {
     /// Each PR's row, with every member of its stack, merged ones included, and the open PR whose
     /// head is its base branch, as rows.
     private func stackNeighbours(_ ids: [String]) throws -> Envelope<[String: [StackNode?]]> {
-        #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
+        try expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
         stackLookups.append(ids)
         return Envelope(data: ["nodes": ids.map { id in
             pullRequests.first { $0.id == id }.map { pullRequest in
@@ -538,7 +550,7 @@ actor FakeGitHub: HTTPTransport {
     }
 
     private func statuses(_ ids: [String]) throws -> Envelope<StatusPayload> {
-        #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
+        try expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
         statusLookups.append(ids)
         return Envelope(data: StatusPayload(nodes: ids.map { id in
             pullRequests.first { $0.id == id }.map { pullRequest in
@@ -619,15 +631,15 @@ actor FakeGitHub: HTTPTransport {
             return (Data(#"{"message":"Not Found"}"#.utf8), httpResponse(url, status: 404))
         }
         if parts.count == 7 {
-            #expect(request.httpMethod == "GET")
+            try expect(request.httpMethod == "GET")
             asyncMergePolls.append(parts[6])
             guard let merge = backgroundMerges[parts[6]], merge.pullRequestId == pullRequest.id else {
                 return (Data(#"{"message":"Not Found"}"#.utf8), httpResponse(url, status: 404))
             }
             return (try runBackgroundMerge(uuid: parts[6], merge), httpResponse(url, status: 200))
         }
-        #expect(request.httpMethod == "PUT")
-        let input = try JSONDecoder().decode(AsyncMergeInput.self, from: try #require(request.httpBody))
+        try expect(request.httpMethod == "PUT")
+        let input = try JSONDecoder().decode(AsyncMergeInput.self, from: try require(request.httpBody))
         asyncMergesReceived.append(input)
         if let (uuid, running) = backgroundMerges.first(where: { $0.value.pullRequestId == pullRequest.id && $0.value.result == nil }) {
             return (try asyncMergeFixture("pending", uuid: uuid, running.input), httpResponse(url, status: 409))
@@ -643,7 +655,7 @@ actor FakeGitHub: HTTPTransport {
             backgroundMerges[uuid]?.runsLeft -= 1
             return try asyncMergeFixture("pending", uuid: uuid, merge.input)
         }
-        let pullRequest = try #require(pullRequests.first { $0.id == merge.pullRequestId })
+        let pullRequest = try require(pullRequests.first { $0.id == merge.pullRequestId })
         let result: Data
         if merge.input.sha.map({ $0 != pullRequest.headRefOid }) ?? false {
             result = try asyncMergeFixture("failed", message: "The head branch was pushed to, so the merge was cancelled.")
@@ -663,8 +675,8 @@ actor FakeGitHub: HTTPTransport {
     /// The docs' example response of that name, with this merge's details put in.
     private func asyncMergeFixture(_ name: String, uuid: String? = nil, _ input: AsyncMergeInput? = nil, message: String? = nil) throws -> Data {
         let data = try Data(contentsOf: projectRoot.appending(path: "probe/merge-async-\(name).json"))
-        var response = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        var details = try #require(response["details"] as? [String: Any])
+        var response = try require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var details = try require(response["details"] as? [String: Any])
         if let uuid { details["uuid"] = uuid }
         if let input {
             details["merge_method"] = input.merge_method ?? "merge"
@@ -677,12 +689,12 @@ actor FakeGitHub: HTTPTransport {
     }
 
     private func viewer(_ query: String) throws -> Envelope<[String: [String: String]]> {
-        #expect(query.contains("viewer { login }"))
+        try expect(query.contains("viewer { login }"))
         return Envelope(data: ["viewer": ["login": Self.viewer]])
     }
 
     private func reviewRequests(_ ids: [String]) throws -> Envelope<NodesPayload> {
-        #expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
+        try expect(ids.count <= 100, "GitHub's nodes lookup takes at most 100 ids")
         let nodes = ids.map { id in
             pullRequests.first { $0.id == id }.map { pullRequest in
                 NodesPayload.Node(

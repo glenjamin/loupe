@@ -1,3 +1,4 @@
+@testable import LoupeFakeGitHub
 import CoreGraphics
 import Foundation
 import ImageIO

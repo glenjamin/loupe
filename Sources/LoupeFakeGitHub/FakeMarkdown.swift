@@ -1,5 +1,4 @@
 import Foundation
-import Testing
 
 /// GitHub's REST markdown renderer. Like `POST /markdown` it takes JSON with the text, a mode
 /// and the repo references resolve against, refuses a bad token, and answers with bare HTML: a
@@ -19,13 +18,13 @@ actor FakeMarkdown {
     func recover() { failing = false }
 
     func send(_ request: URLRequest) throws -> (Data, HTTPURLResponse) {
-        let url = try #require(request.url)
-        #expect(url.absoluteString == "https://api.github.com/markdown")
-        #expect(request.httpMethod == "POST")
+        let url = try require(request.url)
+        try expect(url.absoluteString == "https://api.github.com/markdown")
+        try expect(request.httpMethod == "POST")
         guard request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)" else {
             return (Data(#"{"message":"Bad credentials"}"#.utf8), fakeResponse(url, status: 401))
         }
-        let body = try JSONDecoder().decode(Request.self, from: try #require(request.httpBody))
+        let body = try JSONDecoder().decode(Request.self, from: try require(request.httpBody))
         requests.append(body)
         if failing { return (Data(#"{"message":"Server Error"}"#.utf8), fakeResponse(url, status: 500)) }
         return (Data(render(body.text).utf8), fakeResponse(url, status: 200))

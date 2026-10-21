@@ -1,3 +1,4 @@
+@testable import LoupeFakeGitHub
 import CryptoKit
 import Foundation
 import LoupeInbox

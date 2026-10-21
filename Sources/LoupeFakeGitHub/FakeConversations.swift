@@ -1,6 +1,5 @@
 import Foundation
 import LoupeGitHub
-import Testing
 
 /// GitHub's conversations of PRs, each starting as the one captured in `probe/conversation.json`.
 /// Like GitHub's GraphQL API it pages a PR's timeline with cursors at no more than the page size
@@ -207,10 +206,10 @@ actor FakeConversations {
     func add(_ id: String, number: Int? = nil, author: String? = nil) throws {
         if let number { numbers[number] = id }
         let probe = try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/conversation.json")))
-        var node = try #require(((probe as? [String: Any])?["data"] as? [String: Any])?["node"] as? [String: Any])
+        var node = try require(((probe as? [String: Any])?["data"] as? [String: Any])?["node"] as? [String: Any])
         if let author { node["author"] = ["login": author, "avatarUrl": "https://avatars.githubusercontent.com/u/151272?v=4"] }
-        let timeline = try #require(node["timelineItems"] as? [String: Any])
-        timelines[id] = try #require(timeline["nodes"] as? [[String: Any]])
+        let timeline = try require(node["timelineItems"] as? [String: Any])
+        timelines[id] = try require(timeline["nodes"] as? [[String: Any]])
         node["timelineItems"] = nil
         nodes[id] = node
         try loadPeople()
@@ -250,8 +249,8 @@ actor FakeConversations {
     /// Rewrites a comment in place, as a bot does that keeps one comment current; GitHub renders
     /// it as `bodyHTML` and marks it updated `at`.
     func edit(comment commentId: String, on id: String, to markdown: String, bodyHTML: String, at date: Date = .now) throws {
-        var timeline = try #require(timelines[id])
-        let index = try #require(timeline.firstIndex { $0["id"] as? String == commentId })
+        var timeline = try require(timelines[id])
+        let index = try require(timeline.firstIndex { $0["id"] as? String == commentId })
         timeline[index]["body"] = markdown
         timeline[index]["bodyHTML"] = bodyHTML
         timeline[index]["updatedAt"] = date.formatted(.iso8601)
@@ -287,7 +286,7 @@ actor FakeConversations {
     /// Reacts with `content` to the description, comment, review or thread comment with
     /// `subjectId`, as `login` does on github.com.
     func react(_ content: String, to subjectId: String, by login: String = "octocat") throws {
-        try #require(changeReactions(of: subjectId) { setReaction(content, added: true, by: login, in: &$0) } != nil, "Nothing to react to with id \(subjectId)")
+        try require(changeReactions(of: subjectId) { setReaction(content, added: true, by: login, in: &$0) } != nil, "Nothing to react to with id \(subjectId)")
     }
 
     /// The reactions to whatever has `subjectId`, as GitHub has them now.
@@ -318,7 +317,7 @@ actor FakeConversations {
         on id: String, path: String, line: Int?, side: String = "RIGHT", startLine: Int? = nil, startSide: String? = nil, commit: String? = nil,
         outdated: Bool = false, resolved: Bool = false, pending: Bool = false, body: String, by login: String = "octocat"
     ) throws -> String {
-        var node = try #require(nodes[id])
+        var node = try require(nodes[id])
         var threads = ((node["reviewThreads"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
         let threadId = "PRRT_fake_\(threadCount)"
         threadCount += 1
@@ -360,7 +359,7 @@ actor FakeConversations {
     /// `viewerLatestReview`, made against the PR's head `commit`.
     func review(_ state: String, by login: String, on id: String, commit: String? = nil) throws {
         let user = try self.user(login)
-        var node = try #require(nodes[id])
+        var node = try require(nodes[id])
         var reviews = ((node["latestReviews"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
         reviews.removeAll { ($0["author"] as? [String: Any])?["login"] as? String == login }
         reviews.append(["state": state, "submittedAt": Date.now.formatted(.iso8601), "author": user])
@@ -385,7 +384,7 @@ actor FakeConversations {
 
     /// Replaces the PR's description, as its author does on github.com.
     func editBody(_ body: String, on id: String) throws {
-        var node = try #require(nodes[id])
+        var node = try require(nodes[id])
         setBody(body, on: &node)
         nodes[id] = node
     }
@@ -430,13 +429,13 @@ actor FakeConversations {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let url = try #require(request.url)
-        #expect(url.absoluteString == "https://api.github.com/graphql")
-        #expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
-        let data = try #require(request.httpBody)
-        let body = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        let query = try #require(body["query"] as? String)
-        let variables = try #require(body["variables"] as? [String: Any])
+        let url = try require(request.url)
+        try expect(url.absoluteString == "https://api.github.com/graphql")
+        try expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
+        let data = try require(request.httpBody)
+        let body = try require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let query = try require(body["query"] as? String)
+        let variables = try require(body["variables"] as? [String: Any])
         if query.contains("assignableUsers(") || query.contains("teams(") { candidatePagesAskedFor += 1 }
         if failing { return (Data(), fakeResponse(url, status: 502)) }
         if query.contains("requestReviews(") { return try requestReviews(variables, url) }
@@ -483,7 +482,7 @@ actor FakeConversations {
             return try edit(mutation, variables, url)
         }
         if query.contains("suggestedReviewers") { return try suggestedReviewers(variables, url) }
-        let id = try #require(variables["id"] as? String)
+        let id = try require(variables["id"] as? String)
         guard var node = nodes[id], let timeline = timelines[id] else {
             return (try JSONSerialization.data(withJSONObject: ["data": ["node": NSNull()]]), fakeResponse(url, status: 200))
         }
@@ -500,12 +499,12 @@ actor FakeConversations {
             return (data, fakeResponse(url, status: 200))
         }
         if !query.contains("timelineItems") {
-            #expect(query.contains("PullRequest { body }"), "the only query of a PR without its timeline is for its description")
+            try expect(query.contains("PullRequest { body }"), "the only query of a PR without its timeline is for its description")
             return (try JSONSerialization.data(withJSONObject: ["data": ["node": ["body": node["body"] ?? ""]]]), fakeResponse(url, status: 200))
         }
-        let first = try #require(query.firstMatch(of: /timelineItems\(first: (\d+)/).flatMap { Int($0.1) })
-        #expect(first <= 100, "GitHub's maximum page size")
-        let start = try (variables["after"] as? String).map { try #require(Int($0)) } ?? 0
+        let first = try require(query.firstMatch(of: /timelineItems\(first: (\d+)/).flatMap { Int($0.1) })
+        try expect(first <= 100, "GitHub's maximum page size")
+        let start = try (variables["after"] as? String).map { try require(Int($0)) } ?? 0
         let end = min(start + first, timeline.count)
         pagesServed += 1
         let page: [String: Any] = [
@@ -523,8 +522,8 @@ actor FakeConversations {
     }
 
     private func requestReviews(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
-        let input = try #require(variables["input"] as? [String: Any])
-        let id = try #require(input["pullRequestId"] as? String)
+        let input = try require(variables["input"] as? [String: Any])
+        let id = try require(input["pullRequestId"] as? String)
         let userIds = input["userIds"] as? [String] ?? []
         let teamIds = input["teamIds"] as? [String] ?? []
         reviewRequestsReceived.append(ReviewRequestInput(pullRequestId: id, userIds: userIds, teamIds: teamIds, union: input["union"] as? Bool ?? false))
@@ -548,10 +547,10 @@ actor FakeConversations {
     /// and teams by slug. Like GitHub it takes those named off the PR's review requests, passing
     /// over anyone not asked, leaves their reviews alone, and answers with the PR.
     private func removeReviewRequests(_ request: URLRequest, repository: String, number: Int, _ url: URL) throws -> (Data, HTTPURLResponse) {
-        #expect(request.httpMethod == "DELETE")
-        #expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
-        let body = try #require(request.httpBody)
-        let content = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        try expect(request.httpMethod == "DELETE")
+        try expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
+        let body = try require(request.httpBody)
+        let content = try require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
         let logins = content["reviewers"] as? [String] ?? []
         let slugs = content["team_reviewers"] as? [String] ?? []
         reviewRequestRemovalsReceived.append(ReviewRequestRemoval(repository: repository, number: number, reviewers: logins, teamReviewers: slugs))
@@ -575,26 +574,26 @@ actor FakeConversations {
     /// supported, and answers 201 with the new comment in `probe/review-comment-rest.json`'s
     /// shape, its `body_html` included as the `full` media type asks.
     func sendREST(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let url = try #require(request.url)
+        let url = try require(request.url)
         if let match = url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/requested_reviewers/) {
             await pass(.removeReviewRequest)
-            return try removeReviewRequests(request, repository: String(match.1), number: try #require(Int(match.2)), url)
+            return try removeReviewRequests(request, repository: String(match.1), number: try require(Int(match.2)), url)
         }
-        #expect(request.httpMethod == "POST")
-        #expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
-        #expect(request.value(forHTTPHeaderField: "Accept") == "application/vnd.github.full+json", "so the comment comes back rendered")
-        let data = try #require(request.httpBody)
-        let content = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        try expect(request.httpMethod == "POST")
+        try expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
+        try expect(request.value(forHTTPHeaderField: "Accept") == "application/vnd.github.full+json", "so the comment comes back rendered")
+        let data = try require(request.httpBody)
+        let content = try require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         if failing { return (Data(), fakeResponse(url, status: 502)) }
         if let match = url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/comments/) {
             await pass(.comment)
-            return try newComment(content, repository: String(match.1), number: try #require(Int(match.2)), url)
+            return try newComment(content, repository: String(match.1), number: try require(Int(match.2)), url)
         }
         await pass(.reply)
-        let match = try #require(url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/comments\/(\d+)\/replies/), "Unexpected REST request: \(url.path())")
-        let commentId = try #require(Int(match.3))
-        let body = try #require(content["body"] as? String)
-        repliesReceived.append(ReplyInput(repository: String(match.1), number: try #require(Int(match.2)), commentId: commentId, body: body))
+        let match = try require(url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/comments\/(\d+)\/replies/), "Unexpected REST request: \(url.path())")
+        let commentId = try require(Int(match.3))
+        let body = try require(content["body"] as? String)
+        repliesReceived.append(ReplyInput(repository: String(match.1), number: try require(Int(match.2)), commentId: commentId, body: body))
         if threadChangesRefused {
             return (Data(#"{"message":"Resource not accessible by personal access token","status":"403"}"#.utf8), fakeResponse(url, status: 403))
         }
@@ -618,8 +617,8 @@ actor FakeConversations {
     /// diff to tell whether GitHub could carry it onto the head's lines.
     private func newComment(_ content: [String: Any], repository: String, number: Int, _ url: URL) throws -> (Data, HTTPURLResponse) {
         let input = CommentInput(
-            repository: repository, number: number, body: try #require(content["body"] as? String), commitId: try #require(content["commit_id"] as? String),
-            path: try #require(content["path"] as? String), line: try #require(content["line"] as? Int), side: try #require(content["side"] as? String),
+            repository: repository, number: number, body: try require(content["body"] as? String), commitId: try require(content["commit_id"] as? String),
+            path: try require(content["path"] as? String), line: try require(content["line"] as? Int), side: try require(content["side"] as? String),
             startLine: content["start_line"] as? Int, startSide: content["start_side"] as? String
         )
         commentsReceived.append(input)
@@ -633,7 +632,7 @@ actor FakeConversations {
             on: id, path: input.path, line: input.line, side: input.side, startLine: input.startLine, startSide: input.startSide, commit: input.commitId,
             outdated: heads[id].map { $0 != input.commitId } ?? false, body: input.body, by: FakeGitHub.viewer
         )
-        let comment = try #require(threads(of: id).last.flatMap { (($0["comments"] as? [String: Any])?["nodes"] as? [[String: Any]])?.first })
+        let comment = try require(threads(of: id).last.flatMap { (($0["comments"] as? [String: Any])?["nodes"] as? [[String: Any]])?.first })
         var rest = try restComment(comment, body: input.body)
         rest["path"] = input.path
         rest["line"] = input.line
@@ -652,9 +651,9 @@ actor FakeConversations {
     /// A comment on the PR itself, added to the end of its timeline by the viewer and answered
     /// in `probe/add-comment.json`'s shape with it.
     private func addConversationComment(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
-        let input = try #require(variables["input"] as? [String: Any])
-        let id = try #require(input["subjectId"] as? String)
-        let body = try #require(input["body"] as? String)
+        let input = try require(variables["input"] as? [String: Any])
+        let id = try require(input["subjectId"] as? String)
+        let body = try require(input["body"] as? String)
         conversationCommentsReceived.append(ConversationCommentInput(subjectId: id, body: body))
         if conversationCommentsRefused {
             let refusal: [String: Any] = [
@@ -665,17 +664,17 @@ actor FakeConversations {
         }
         guard timelines[id] != nil else { return try refusal(unresolved: id, mutation: "addComment", url) }
         comment("<p dir=\"auto\">\(escaped(body))</p>", on: id, by: FakeGitHub.viewer, markdown: body)
-        var node = try #require(timelines[id]?.last)
+        var node = try require(timelines[id]?.last)
         node["__typename"] = nil
-        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/add-comment.json"))) as? [String: Any])
-        var payload = try #require((probe["data"] as? [String: Any])?["addComment"] as? [String: Any])
+        let probe = try require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/add-comment.json"))) as? [String: Any])
+        var payload = try require((probe["data"] as? [String: Any])?["addComment"] as? [String: Any])
         payload["commentEdge"] = ["node": node]
         return (try JSONSerialization.data(withJSONObject: ["data": ["addComment": payload]]), fakeResponse(url, status: 200))
     }
 
     private func setResolved(_ unresolve: Bool, _ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
         let mutation = unresolve ? "unresolveReviewThread" : "resolveReviewThread"
-        let threadId = try #require(variables["threadId"] as? String)
+        let threadId = try require(variables["threadId"] as? String)
         resolutionsReceived.append(ResolutionInput(threadId: threadId, resolved: !unresolve))
         if threadChangesRefused {
             let refusal: [String: Any] = [
@@ -688,7 +687,7 @@ actor FakeConversations {
             return try refusal(unresolved: threadId, mutation: mutation, url)
         }
         var list = threads(of: id)
-        let index = try #require(list.firstIndex { $0["id"] as? String == threadId })
+        let index = try require(list.firstIndex { $0["id"] as? String == threadId })
         list[index]["isResolved"] = !unresolve
         list[index]["viewerCanResolve"] = unresolve
         list[index]["viewerCanUnresolve"] = !unresolve
@@ -716,7 +715,7 @@ actor FakeConversations {
     func replyInPendingReview(to threadId: String, on id: String, body: String) throws {
         if pendingReviews[id] == nil { pendingReviews[id] = PendingReviewState(id: newReviewId(), body: "") }
         var list = threads(of: id)
-        let index = try #require(list.firstIndex { $0["id"] as? String == threadId })
+        let index = try require(list.firstIndex { $0["id"] as? String == threadId })
         list[index]["comments"] = ["nodes": comments(of: list[index]) + [threadComment(body, by: FakeGitHub.viewer, pending: true)]]
         setThreads(list, of: id)
     }
@@ -758,8 +757,8 @@ actor FakeConversations {
     }
 
     private func addReview(_ variables: [String: Any], _ url: URL) async throws -> (Data, HTTPURLResponse) {
-        let input = try #require(variables["input"] as? [String: Any])
-        let id = try #require(input["pullRequestId"] as? String)
+        let input = try require(variables["input"] as? [String: Any])
+        let id = try require(input["pullRequestId"] as? String)
         let threads = try (input["threads"] as? [[String: Any]] ?? []).map(threadInput)
         let event = input["event"] as? String
         let body = input["body"] as? String
@@ -795,8 +794,8 @@ actor FakeConversations {
     }
 
     private func addReviewThread(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
-        let input = try #require(variables["input"] as? [String: Any])
-        let reviewId = try #require(input["pullRequestReviewId"] as? String)
+        let input = try require(variables["input"] as? [String: Any])
+        let reviewId = try require(input["pullRequestReviewId"] as? String)
         let thread = try threadInput(input)
         reviewMutationsReceived.append(.addThread(reviewId: reviewId, thread))
         if let refusal = try refusalOfReviewChanges("addPullRequestReviewThread", url) { return refusal }
@@ -806,9 +805,9 @@ actor FakeConversations {
             commit: pendingReviews[id]?.commit, pending: true, body: thread.body, by: FakeGitHub.viewer
         )
         let comments = threads(of: id).filter { $0["id"] as? String == threadId }.flatMap { self.comments(of: $0) }
-        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/add-review-thread.json"))) as? [String: Any])
-        var payload = try #require((probe["data"] as? [String: Any])?["addPullRequestReviewThread"] as? [String: Any])
-        var posted = try #require(payload["thread"] as? [String: Any])
+        let probe = try require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/add-review-thread.json"))) as? [String: Any])
+        var payload = try require((probe["data"] as? [String: Any])?["addPullRequestReviewThread"] as? [String: Any])
+        var posted = try require(payload["thread"] as? [String: Any])
         posted["id"] = threadId
         posted["comments"] = ["nodes": comments]
         payload["thread"] = posted
@@ -816,9 +815,9 @@ actor FakeConversations {
     }
 
     private func submitReview(_ variables: [String: Any], _ url: URL) async throws -> (Data, HTTPURLResponse) {
-        let input = try #require(variables["input"] as? [String: Any])
-        let reviewId = try #require(input["pullRequestReviewId"] as? String)
-        let event = try #require(input["event"] as? String)
+        let input = try require(variables["input"] as? [String: Any])
+        let reviewId = try require(input["pullRequestReviewId"] as? String)
+        let event = try require(input["event"] as? String)
         let body = input["body"] as? String
         reviewMutationsReceived.append(.submit(reviewId: reviewId, event: event, body: body))
         if let refusal = try refusalOfReviewChanges("submitPullRequestReview", url) { return refusal }
@@ -843,8 +842,8 @@ actor FakeConversations {
     }
 
     private func deleteReview(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
-        let input = try #require(variables["input"] as? [String: Any])
-        let reviewId = try #require(input["pullRequestReviewId"] as? String)
+        let input = try require(variables["input"] as? [String: Any])
+        let reviewId = try require(input["pullRequestReviewId"] as? String)
         reviewMutationsReceived.append(.delete(reviewId: reviewId))
         if let refusal = try refusalOfReviewChanges("deletePullRequestReview", url) { return refusal }
         guard let id = pullRequest(withPendingReview: reviewId) else { return try refusal(unresolved: reviewId, mutation: "deletePullRequestReview", url) }
@@ -856,8 +855,8 @@ actor FakeConversations {
     /// with no comments stays, as GitHub keeps it. Answers in `probe/delete-review-comment.json`'s
     /// shape.
     private func deleteReviewComment(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
-        let input = try #require(variables["input"] as? [String: Any])
-        let commentId = try #require(input["id"] as? String)
+        let input = try require(variables["input"] as? [String: Any])
+        let commentId = try require(input["id"] as? String)
         reviewMutationsReceived.append(.deleteComment(id: commentId))
         if let refusal = try refusalOfReviewChanges("deletePullRequestReviewComment", url) { return refusal }
         guard let id = nodes.keys.first(where: { threads(of: $0).contains { comments(of: $0).contains { $0["id"] as? String == commentId } } }) else {
@@ -874,9 +873,9 @@ actor FakeConversations {
             thread["comments"] = ["nodes": comments]
             return thread
         }, of: id)
-        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/delete-review-comment.json"))) as? [String: Any])
-        var payload = try #require((probe["data"] as? [String: Any])?["deletePullRequestReviewComment"] as? [String: Any])
-        var review = try #require(payload["pullRequestReview"] as? [String: Any])
+        let probe = try require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/delete-review-comment.json"))) as? [String: Any])
+        var payload = try require((probe["data"] as? [String: Any])?["deletePullRequestReviewComment"] as? [String: Any])
+        var review = try require(payload["pullRequestReview"] as? [String: Any])
         if let pending = pendingReviews[id] { review["id"] = pending.id }
         payload["pullRequestReview"] = review
         return (try JSONSerialization.data(withJSONObject: ["data": ["deletePullRequestReviewComment": payload]]), fakeResponse(url, status: 200))
@@ -915,8 +914,8 @@ actor FakeConversations {
     /// A review by the viewer in `probe/submit-review.json`'s shape, as the `PostedReview`
     /// fragment asks for it.
     private func postedReview(_ id: String, state: String, body: String, comments: [[String: Any]]) throws -> [String: Any] {
-        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/submit-review.json"))) as? [String: Any])
-        var review = try #require(((probe["data"] as? [String: Any])?["submitPullRequestReview"] as? [String: Any])?["pullRequestReview"] as? [String: Any])
+        let probe = try require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/submit-review.json"))) as? [String: Any])
+        var review = try require(((probe["data"] as? [String: Any])?["submitPullRequestReview"] as? [String: Any])?["pullRequestReview"] as? [String: Any])
         review["id"] = id
         review["state"] = state
         review["bodyHTML"] = body.isEmpty ? "" : "<p dir=\"auto\">\(escaped(body))</p>"
@@ -929,7 +928,7 @@ actor FakeConversations {
     /// The thread comment in REST's shape, as `probe/review-comment-rest.json` has it, with
     /// its markdown as written.
     private func restComment(_ comment: [String: Any], body: String) throws -> [String: Any] {
-        var rest = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/review-comment-rest.json"))) as? [String: Any])
+        var rest = try require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/review-comment-rest.json"))) as? [String: Any])
         let author = comment["author"] as? [String: Any]
         rest["id"] = comment["databaseId"]
         rest["node_id"] = comment["id"]
@@ -951,8 +950,8 @@ actor FakeConversations {
 
     private func threadInput(_ input: [String: Any]) throws -> ThreadInput {
         ThreadInput(
-            path: try #require(input["path"] as? String), line: try #require(input["line"] as? Int),
-            side: try #require(input["side"] as? String), body: try #require(input["body"] as? String),
+            path: try require(input["path"] as? String), line: try require(input["line"] as? Int),
+            side: try require(input["side"] as? String), body: try require(input["body"] as? String),
             startLine: input["startLine"] as? Int, startSide: input["startSide"] as? String
         )
     }
@@ -1006,8 +1005,8 @@ actor FakeConversations {
     }
 
     private func updatePullRequest(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
-        let input = try #require(variables["input"] as? [String: Any])
-        let id = try #require(input["pullRequestId"] as? String)
+        let input = try require(variables["input"] as? [String: Any])
+        let id = try require(input["pullRequestId"] as? String)
         let body = input["body"] as? String
         updatesReceived.append(UpdateInput(pullRequestId: id, body: body))
         guard var node = nodes[id] else { return try refusal(unresolved: id, mutation: "updatePullRequest", url) }
@@ -1027,8 +1026,8 @@ actor FakeConversations {
     /// otherwise have none, as GitHub has for code nobody else has touched lately.
     func suggestReviewers(on id: String) throws {
         let probe = try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/suggested-reviewers.json")))
-        let node = try #require(((probe as? [String: Any])?["data"] as? [String: Any])?["node"] as? [String: Any])
-        suggestions[id] = try #require(node["suggestedReviewers"] as? [[String: Any]])
+        let node = try require(((probe as? [String: Any])?["data"] as? [String: Any])?["node"] as? [String: Any])
+        suggestions[id] = try require(node["suggestedReviewers"] as? [[String: Any]])
     }
 
     /// Everyone suggested on any PR, shaped as the conversation's `Reviewer` fragment returns
@@ -1043,7 +1042,7 @@ actor FakeConversations {
     private func suggestedReviewers(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
         suggestionFetches += 1
         if suggestionsFailing { return (Data(), fakeResponse(url, status: 502)) }
-        let id = try #require(variables["id"] as? String)
+        let id = try require(variables["id"] as? String)
         guard nodes[id] != nil else {
             return (try JSONSerialization.data(withJSONObject: ["data": ["node": NSNull()]]), fakeResponse(url, status: 200))
         }
@@ -1071,9 +1070,9 @@ actor FakeConversations {
 
     /// A connection's page of `nodes`: from the `after` cursor, at most `first` of them.
     private func page(of nodes: [[String: Any]], _ variables: [String: Any]) throws -> [String: Any] {
-        let first = try #require(variables["first"] as? Int)
-        #expect(first <= 100, "GitHub's maximum page size")
-        let start = try (variables["after"] as? String).map { try #require(Int($0)) } ?? 0
+        let first = try require(variables["first"] as? Int)
+        try expect(first <= 100, "GitHub's maximum page size")
+        let start = try (variables["after"] as? String).map { try require(Int($0)) } ?? 0
         let end = min(start + min(first, candidatePageSize), nodes.count)
         return [
             "pageInfo": ["hasNextPage": end < nodes.count, "endCursor": end > start ? String(end) as Any : NSNull()],
@@ -1083,7 +1082,7 @@ actor FakeConversations {
 
     /// GitHub keeps one request per reviewer, so asking again leaves the one there.
     private func addRequest(_ reviewer: [String: Any], on id: String) throws {
-        var node = try #require(nodes[id])
+        var node = try require(nodes[id])
         var requests = ((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
         let reviewerId = reviewer["id"] as? String
         if !requests.contains(where: { ($0["requestedReviewer"] as? [String: Any])?["id"] as? String == reviewerId }) {
@@ -1104,16 +1103,16 @@ actor FakeConversations {
 
     /// The user with `login`, shaped as the conversation query's `Reviewer` fragment returns them.
     private func user(_ login: String) throws -> [String: Any] {
-        try #require(users.first { $0["login"] as? String == login })
+        try require(users.first { $0["login"] as? String == login })
     }
 
     private func loadPeople() throws {
         guard users.isEmpty else { return }
         let probe = try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/reviewer-candidates.json")))
-        let repository = try #require(((probe as? [String: Any])?["data"] as? [String: Any])?["repository"] as? [String: Any])
-        let assignable = try #require((repository["assignableUsers"] as? [String: Any])?["nodes"] as? [[String: Any]])
+        let repository = try require(((probe as? [String: Any])?["data"] as? [String: Any])?["repository"] as? [String: Any])
+        let assignable = try require((repository["assignableUsers"] as? [String: Any])?["nodes"] as? [[String: Any]])
         users = assignable.map { $0.merging(["__typename": "User"]) { $1 } }
-        teams = try #require(((repository["owner"] as? [String: Any])?["teams"] as? [String: Any])?["nodes"] as? [[String: Any]])
+        teams = try require(((repository["owner"] as? [String: Any])?["teams"] as? [String: Any])?["nodes"] as? [[String: Any]])
     }
 
     /// A new thread comment in the review threads query's shape, with GitHub's rendering of
@@ -1173,7 +1172,7 @@ actor FakeConversations {
     /// The markdown of a comment or review asked for by id, in `probe/edit-comment-body.json`'s
     /// shape; an id GitHub doesn't know has no node.
     private func commentBody(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
-        let id = try #require(variables["id"] as? String)
+        let id = try require(variables["id"] as? String)
         let node: Any = markdown(of: id).map { ["body": $0] } ?? NSNull()
         return (try JSONSerialization.data(withJSONObject: ["data": ["node": node]]), fakeResponse(url, status: 200))
     }
@@ -1182,9 +1181,9 @@ actor FakeConversations {
     /// it shows, answered in the shape of the mutation's probe. Someone else's, or the wrong
     /// mutation for what the id names, is refused, as GitHub refuses them.
     private func edit(_ mutation: EditMutation, _ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
-        let input = try #require(variables["input"] as? [String: Any])
-        let id = try #require(input[mutation.idField] as? String)
-        let body = try #require(input["body"] as? String)
+        let input = try require(variables["input"] as? [String: Any])
+        let id = try require(input[mutation.idField] as? String)
+        let body = try require(input["body"] as? String)
         editsReceived.append(EditInput(mutation: mutation.rawValue, id: id, body: body))
         if commentEditsRefused { return try forbidden(mutation.rawValue, "Resource not accessible by personal access token", url) }
         let pendingReview = pendingReviews.first { $0.value.id == id }?.key
@@ -1200,9 +1199,9 @@ actor FakeConversations {
         for (pullRequest, timeline) in timelines {
             timelines[pullRequest] = timeline.map { $0["id"] as? String == id && $0["body"] != nil ? $0.merging(["body": body]) { $1 } : $0 }
         }
-        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: mutation.probe))) as? [String: Any])
-        var payload = try #require((probe["data"] as? [String: Any])?[mutation.rawValue] as? [String: Any])
-        var edited = try #require(payload[mutation.payloadField] as? [String: Any])
+        let probe = try require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: mutation.probe))) as? [String: Any])
+        var payload = try require((probe["data"] as? [String: Any])?[mutation.rawValue] as? [String: Any])
+        var edited = try require(payload[mutation.payloadField] as? [String: Any])
         edited["id"] = id
         edited["bodyHTML"] = bodyHTML
         payload[mutation.payloadField] = edited
@@ -1253,8 +1252,8 @@ actor FakeConversations {
     /// Deletes the viewer's comment on a PR, answered in `probe/delete-issue-comment.json`'s
     /// shape; someone else's is refused, as GitHub refuses it.
     private func deleteIssueComment(_ variables: [String: Any], _ url: URL) throws -> (Data, HTTPURLResponse) {
-        let input = try #require(variables["input"] as? [String: Any])
-        let id = try #require(input["id"] as? String)
+        let input = try require(variables["input"] as? [String: Any])
+        let id = try require(input["id"] as? String)
         conversationCommentDeletions.append(id)
         if commentEditsRefused { return try forbidden("deleteIssueComment", "Resource not accessible by personal access token", url) }
         guard let node = node(withId: id), node["__typename"] as? String == "IssueComment" else { return try refusal(unresolved: id, mutation: "deleteIssueComment", url) }
@@ -1291,8 +1290,8 @@ actor FakeConversations {
     /// changes nothing. Answers in `probe/add-reaction.json`'s shape with the subject's groups.
     private func setReaction(added: Bool, _ variables: [String: Any], _ url: URL) async throws -> (Data, HTTPURLResponse) {
         let mutation = added ? "addReaction" : "removeReaction"
-        let subjectId = try #require(variables["subjectId"] as? String)
-        let content = try #require(variables["content"] as? String)
+        let subjectId = try require(variables["subjectId"] as? String)
+        let content = try require(variables["content"] as? String)
         reactionsReceived.append(ReactionInput(subjectId: subjectId, content: content, added: added))
         if heldReactions != nil { await withCheckedContinuation { heldReactions?.append($0) } }
         if reactionsRefused {
@@ -1305,8 +1304,8 @@ actor FakeConversations {
         guard let groups = changeReactions(of: subjectId, { setReaction(content, added: added, by: FakeGitHub.viewer, in: &$0) }) else {
             return try refusal(unresolved: subjectId, mutation: mutation, url)
         }
-        let probe = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/add-reaction.json"))) as? [String: Any])
-        var payload = try #require((probe["data"] as? [String: Any])?["addReaction"] as? [String: Any])
+        let probe = try require(try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/add-reaction.json"))) as? [String: Any])
+        var payload = try require((probe["data"] as? [String: Any])?["addReaction"] as? [String: Any])
         payload["subject"] = ["reactionGroups": groups]
         return (try JSONSerialization.data(withJSONObject: ["data": [mutation: payload]]), fakeResponse(url, status: 200))
     }
@@ -1401,11 +1400,11 @@ struct FakePullRequestDetails: HTTPTransport {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         if request.url?.path() == "/markdown" { return try await markdown.send(request) }
         if request.url?.path().hasPrefix("/repos/") == true { return try await conversations.sendREST(request) }
-        let data = try #require(request.httpBody)
-        let body = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        let query = try #require(body["query"] as? String)
+        let data = try require(request.httpBody)
+        let body = try require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let query = try require(body["query"] as? String)
         if query.contains("viewer { login }") {
-            let url = try #require(request.url)
+            let url = try require(request.url)
             return (try JSONSerialization.data(withJSONObject: ["data": ["viewer": ["login": FakeGitHub.viewer]]]), fakeResponse(url, status: 200))
         }
         let isConversation = [
