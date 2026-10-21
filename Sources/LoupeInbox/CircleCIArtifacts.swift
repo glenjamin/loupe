@@ -460,11 +460,13 @@ private final class RedirectsReturned: NSObject, URLSessionTaskDelegate {
 }
 
 /// One run of the CLI: started by `finish`, which waits for it to exit; cancelling the waiting
-/// task stops it. Its output is drained as it comes, so a chatty run never blocks on a full pipe.
+/// task stops it. Its output is drained as it comes, so a chatty run never blocks on a full pipe,
+/// and to its end before `finish` returns, so what the CLI said on failing is never missed.
 private final class CLIRun: @unchecked Sendable {
     private let process = Process()
     private let outputPipe = Pipe()
     private let errorsPipe = Pipe()
+    private let drained = DispatchGroup()
     private let lock = NSLock()
     private var output = Data()
     private var errors = Data()
@@ -477,8 +479,6 @@ private final class CLIRun: @unchecked Sendable {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = outputPipe
         process.standardError = errorsPipe
-        outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in self?.append(handle.availableData, toErrors: false) }
-        errorsPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in self?.append(handle.availableData, toErrors: true) }
     }
 
     /// Runs the CLI to its end and gives its exit status.
@@ -492,8 +492,10 @@ private final class CLIRun: @unchecked Sendable {
                 do {
                     try process.run()
                 } catch {
-                    continuation.resume(throwing: CircleCIArtifacts.Failure.cliMissing)
+                    return continuation.resume(throwing: CircleCIArtifacts.Failure.cliMissing)
                 }
+                drain(toErrors: false)
+                drain(toErrors: true)
             }
         } onCancel: {
             lock.withLock {
@@ -501,10 +503,7 @@ private final class CLIRun: @unchecked Sendable {
                 if process.isRunning { process.terminate() }
             }
         }
-        for (pipe, isErrors) in [(outputPipe, false), (errorsPipe, true)] {
-            pipe.fileHandleForReading.readabilityHandler = nil
-            append(pipe.fileHandleForReading.readDataToEndOfFile(), toErrors: isErrors)
-        }
+        await withCheckedContinuation { continuation in drained.notify(queue: .global()) { continuation.resume() } }
         if lock.withLock({ isCancelled }) { throw CancellationError() }
         return process.terminationStatus
     }
@@ -524,6 +523,21 @@ private final class CLIRun: @unchecked Sendable {
         guard let line else { return nil }
         let message = line.hasPrefix("error:") ? line.dropFirst("error:".count).trimmingCharacters(in: .whitespaces) : line
         return message.isEmpty ? nil : message
+    }
+
+    /// Reads one of the CLI's pipes to its end on a thread of its own, as `Git` does, rather than
+    /// GCD's capped pool, which a busy app could leave the read waiting on.
+    private func drain(toErrors: Bool) {
+        let handle = (toErrors ? errorsPipe : outputPipe).fileHandleForReading
+        drained.enter()
+        let thread = Thread { [self] in
+            while case let chunk = handle.availableData, !chunk.isEmpty {
+                append(chunk, toErrors: toErrors)
+            }
+            drained.leave()
+        }
+        thread.qualityOfService = .userInitiated
+        thread.start()
     }
 
     private func append(_ data: Data, toErrors: Bool) {
