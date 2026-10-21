@@ -29,11 +29,22 @@ struct DiffView: View {
     var onComment: (DiffAnchor, DiffAnchor?) -> Void = { _, _ in }
     /// The rows the comment being written is on.
     var commented: Set<DiffAnchor> = []
+    /// Whether whitespace changes are hidden, offered in a PR's file header.
+    var whitespace: WhitespaceToggle?
 
     var body: some View {
         VStack(spacing: 0) {
-            FileHeader(file: file, isUnseparated: isUnseparated, review: review, markdown: markdown, packageLock: packageLock, image: image, onCollapse: onCollapse)
+            FileHeader(file: file, isUnseparated: isUnseparated, review: review, markdown: markdown, packageLock: packageLock, image: image, onCollapse: onCollapse, whitespace: whitespace)
             Divider()
+            if file.isWhitespaceOnly {
+                // As github.com says of a file whose changes hiding whitespace leaves none of.
+                Text("Whitespace-only changes")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                Divider()
+            }
             if let failure = packageLock?.failure {
                 Label("Couldn't compare the packages, so the diff shows: \(failure)", systemImage: "exclamationmark.triangle")
                     .font(.system(size: 12))
@@ -79,6 +90,7 @@ private struct FileHeader: View {
     let packageLock: PackageLockPreview?
     let image: ImagePreview?
     let onCollapse: (() -> Void)?
+    let whitespace: WhitespaceToggle?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -106,6 +118,13 @@ private struct FileHeader: View {
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
                     .help("Hide the revealed lines")
+            }
+            if let whitespace {
+                Button(whitespace.hides ? "Show Whitespace" : "Hide Whitespace", systemImage: "space", action: whitespace.toggle)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(whitespace.hides ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .help(whitespace.hides ? "Show changes to whitespace again, in this PR's diffs (⌃⌘H)" : "Hide changes to whitespace in this PR's diffs, as github.com's Hide whitespace does (⌃⌘H)")
             }
             if let markdown {
                 Picker("Show", selection: Binding(get: { markdown.isRendered }, set: { markdown.setRendered($0) })) {
@@ -173,6 +192,12 @@ private struct FileHeader: View {
     }
 }
 
+/// Whether a PR's diffs hide changes to whitespace, and how to turn it the other way.
+struct WhitespaceToggle {
+    let hides: Bool
+    let toggle: () -> Void
+}
+
 /// A PR file's viewed state, and what the footer at the end of its diff does.
 struct FileReview {
     let isViewed: Bool
@@ -238,7 +263,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         scroll.verticalScrollElasticity = review == nil ? .allowed : .none
         coordinator.textView.wrapsLines = wrapLines
         // The same file shown anew, as when more of it is revealed, keeps the reader's place.
-        let shown = ShownDiff(path: file.path, headers: file.hunks.map(\.header), expandable: expandable, blocks: blocks.map(\.id))
+        let shown = ShownDiff(path: file.path, headers: file.hunks.map(\.header), expandable: expandable, blocks: blocks.map(\.id), ignoresWhitespace: file.ignoresWhitespace)
         if coordinator.shown != shown {
             let isSameFile = coordinator.shown?.path == file.path
             coordinator.shown = shown
@@ -685,6 +710,8 @@ private struct ShownDiff: Equatable {
     let expandable: ExpandableContext?
     /// The ids of the blocks laid between rows, which say where each goes.
     let blocks: [String]
+    /// Ignoring whitespace can turn changed lines into unchanged ones under the same headers.
+    let ignoresWhitespace: Bool
 }
 
 /// A view to lay between a diff's rows, such as the review threads on a line. Its id names it

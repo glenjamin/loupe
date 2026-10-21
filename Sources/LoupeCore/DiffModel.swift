@@ -23,18 +23,48 @@ public struct FileDiff: Sendable, Identifiable {
     public var change: Change
     public var isBinary: Bool
     public var hunks: [Hunk]
+    /// Set when the file was diffed ignoring changes to whitespace: the lines it adds and
+    /// deletes counting them, which its counts keep reporting, as github.com's do.
+    public var countsWithWhitespace: LineTotals?
 
     public var id: String { path }
 
-    public init(path: String, change: Change, isBinary: Bool, hunks: [Hunk]) {
+    public init(path: String, change: Change, isBinary: Bool, hunks: [Hunk], countsWithWhitespace: LineTotals? = nil) {
         self.path = path
         self.change = change
         self.isBinary = isBinary
         self.hunks = hunks
+        self.countsWithWhitespace = countsWithWhitespace
     }
 
-    public var additions: Int { hunks.reduce(0) { $0 + $1.lines.count(where: \.isAddition) } }
-    public var deletions: Int { hunks.reduce(0) { $0 + $1.lines.count(where: \.isDeletion) } }
+    public var additions: Int { countsWithWhitespace?.additions ?? hunks.reduce(0) { $0 + $1.lines.count(where: \.isAddition) } }
+    public var deletions: Int { countsWithWhitespace?.deletions ?? hunks.reduce(0) { $0 + $1.lines.count(where: \.isDeletion) } }
+
+    /// Whether the file was diffed ignoring changes to whitespace.
+    public var ignoresWhitespace: Bool { countsWithWhitespace != nil }
+
+    /// Whether ignoring whitespace left none of the file's changed lines to show.
+    public var isWhitespaceOnly: Bool {
+        ignoresWhitespace && hunks.isEmpty && additions + deletions > 0
+    }
+
+    /// This file as diffed ignoring whitespace, from `ignoring`, its diff of that kind, or nil
+    /// when git found nothing but whitespace changed in it. Keeps this diff's path, change and
+    /// counts, so the file list reads the same either way.
+    public func ignoringWhitespace(as ignoring: FileDiff?) -> FileDiff {
+        FileDiff(path: path, change: change, isBinary: isBinary, hunks: ignoring?.hunks ?? [], countsWithWhitespace: LineTotals(additions: additions, deletions: deletions))
+    }
+}
+
+/// How many lines a file's changes add and delete.
+public struct LineTotals: Sendable, Equatable {
+    public var additions: Int
+    public var deletions: Int
+
+    public init(additions: Int, deletions: Int) {
+        self.additions = additions
+        self.deletions = deletions
+    }
 }
 
 /// A changed file known only by its path and what happened to it, as listed before (or

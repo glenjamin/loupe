@@ -105,14 +105,16 @@ public struct PullRequestDiffer: Sendable {
     }
 
     /// The changes between two commits: the diff of the paths to review, and the hidden paths
-    /// listed but not diffed, as a vendored tree can be enormous.
-    public func diff(_ range: DiffRange, in checkout: URL) async throws -> RangeDiff {
+    /// listed but not diffed, as a vendored tree can be enormous. `ignoringWhitespace` diffs
+    /// as github.com's "Hide whitespace" does, leaving out files only whitespace changed in;
+    /// the hidden paths and their counts are the same either way.
+    public func diff(_ range: DiffRange, ignoringWhitespace: Bool = false, in checkout: URL) async throws -> RangeDiff {
         let changed = try await changedFiles(in: range, checkout: checkout)
         let hiding = try await hiddenPaths(changedIn: [range: changed.map(\.path)], checkout: checkout)[range] ?? []
         var hidden = changed.filter { hiding.contains($0.path) }
         let covering = coveringPaths(hiding: hidden.map(\.path), keeping: changed.map(\.path))
         let excludes = covering.map { ":(exclude,top,literal)\($0)" }
-        async let text = git(["diff", "--no-color", "--no-ext-diff", "-M", range.base, range.head, "--", "."] + excludes, in: checkout)
+        async let text = git(["diff", "--no-color", "--no-ext-diff", "-M"] + Self.whitespace(ignoringWhitespace) + [range.base, range.head, "--", "."] + excludes, in: checkout)
         let counts = try await lineCounts(in: range, under: covering + hidden.compactMap(\.renamedFrom), checkout: checkout)
         for index in hidden.indices {
             guard let count = counts[hidden[index].path] else { continue }
@@ -150,9 +152,15 @@ public struct PullRequestDiffer: Sendable {
 
     /// One file's diff over `range`, such as a hidden file's once it's asked for. A rename's
     /// old path is included so git still sees the rename.
-    public func diff(of file: ChangedFile, in range: DiffRange, checkout: URL) async throws -> String {
+    public func diff(of file: ChangedFile, in range: DiffRange, ignoringWhitespace: Bool = false, checkout: URL) async throws -> String {
         let paths = [file.renamedFrom, file.path].compactMap { $0 }.map { ":(top,literal)\($0)" }
-        return try await git(["diff", "--no-color", "--no-ext-diff", "-M", range.base, range.head, "--"] + paths, in: checkout)
+        return try await git(["diff", "--no-color", "--no-ext-diff", "-M"] + Self.whitespace(ignoringWhitespace) + [range.base, range.head, "--"] + paths, in: checkout)
+    }
+
+    /// `-w`, as github.com's "Hide whitespace" (`?w=1`) ignores all of it, indentation and
+    /// spaces between words alike.
+    private static func whitespace(_ ignoring: Bool) -> [String] {
+        ignoring ? ["--ignore-all-space"] : []
     }
 
     /// The file at `path`, from the repo's root, as it is in commit `oid`.

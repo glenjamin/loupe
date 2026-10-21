@@ -415,7 +415,7 @@ struct FileDetail: View {
             } else if let file = changes.hidden.first(where: { $0.id == tab.selectedFile }) {
                 hiddenFile(file)
                     // Diffed only once shown, as a vendored file can be enormous.
-                    .task(id: ShownFile(choice: tab.shownChoice, path: file.path)) { await tab.diffHiddenFile(file.path) }
+                    .task(id: ShownFile(choice: tab.shownChoice, path: file.path, ignoresWhitespace: tab.shownIgnoresWhitespace)) { await tab.diffHiddenFile(file.path) }
                     .task(id: ShownFile(choice: tab.shownChoice, path: file.path)) { await tab.comparePackageLock(file.path) }
             } else {
                 Text(changes.files.isEmpty && changes.hidden.isEmpty ? "No changes to review" : "No file selected")
@@ -454,7 +454,8 @@ struct FileDetail: View {
             onCollapse: tab.hasRevealedContext(of: file) ? { tab.collapseContext(of: file) } : nil,
             blocks: tab.threads(on: shown).map { threadBlocks(for: $0, onFileAt: file.path, in: tab) } ?? [],
             commentable: tab.commentableAnchors(of: shown), onComment: { anchor, start in tab.startComment(at: anchor, from: start) },
-            commented: tab.commentedAnchors(of: shown)
+            commented: tab.commentedAnchors(of: shown),
+            whitespace: WhitespaceToggle(hides: tab.hidesWhitespace) { Task { await tab.setHidesWhitespace(!tab.hidesWhitespace) } }
         )
         // Read when shown, so the lines after the last hunk can be offered as well.
         .task(id: ShownFile(choice: tab.shownChoice, path: file.path)) { await tab.readContext(of: file) }
@@ -1065,6 +1066,7 @@ func repositoryName(_ pullRequest: PullRequestSummary) -> String {
 private struct ShownFile: Equatable {
     let choice: ChangesChoice
     let path: String
+    var ignoresWhitespace = false
 }
 
 /// `3 files  +42 −7`, as github.com counts them, with no thousands separators: the lines coloured

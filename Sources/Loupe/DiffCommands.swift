@@ -13,6 +13,12 @@ struct DiffCommands: Commands {
         CommandGroup(after: .toolbar) {
             Toggle("Wrap Lines", isOn: $wrapLines)
                 .keyboardShortcut("l", modifiers: [.command, .option])
+            // The shown PR's alone: whether it helps depends on the PR.
+            Toggle("Hide Whitespace", isOn: Binding(get: { windows.shownTab?.hidesWhitespace ?? false }, set: { hides in
+                if let tab = windows.shownTab { Task { await tab.setHidesWhitespace(hides) } }
+            }))
+                .keyboardShortcut("h", modifiers: [.command, .control])
+                .disabled(windows.shownTab == nil)
             Divider()
             // ⌃ rather than ⌘, which picks the PR tab by number.
             Button("Conversation") { windows.shownTab?.section = .conversation }

@@ -157,7 +157,7 @@ public struct RenderedDiff {
             for (old, new) in modifiedPairs(hunk.lines) {
                 let oldRow = rows[lineRows[old]]
                 let newRow = rows[lineRows[new]]
-                guard let changed = changedWords(displayText(hunk.lines[old]), displayText(hunk.lines[new])) else { continue }
+                guard let changed = changedWords(displayText(hunk.lines[old]), displayText(hunk.lines[new]), ignoringWhitespace: file.ignoresWhitespace) else { continue }
                 emphasis += changed.old.map { NSRange(location: oldRow.start + oldRow.gutter + $0.location, length: $0.length) }
                 emphasis += changed.new.map { NSRange(location: newRow.start + newRow.gutter + $0.location, length: $0.length) }
             }
@@ -413,7 +413,8 @@ private func modifiedPairs(_ lines: [DiffLine]) -> [(old: Int, new: Int)] {
 
 /// The UTF-16 ranges of the words that differ between two versions of a line, or nil when the
 /// lines are too long to compare cheaply or share too little for word changes to mean much.
-private func changedWords(_ old: String, _ new: String) -> (old: [NSRange], new: [NSRange])? {
+/// `ignoringWhitespace`, a change that only splits or joins words with whitespace isn't one.
+private func changedWords(_ old: String, _ new: String, ignoringWhitespace: Bool) -> (old: [NSRange], new: [NSRange])? {
     let oldUnits = Array(old.utf16)
     let newUnits = Array(new.utf16)
     guard oldUnits != newUnits, oldUnits.count <= 1000, newUnits.count <= 1000 else { return nil }
@@ -421,14 +422,20 @@ private func changedWords(_ old: String, _ new: String) -> (old: [NSRange], new:
     let newTokens = tokens(in: newUnits)
     guard oldTokens.count <= 300, newTokens.count <= 300 else { return nil }
 
-    let difference = newTokens.map { newUnits[$0] }.difference(from: oldTokens.map { oldUnits[$0] })
+    // Ignoring whitespace, runs of it aren't compared at all, so they can't skew the pairing.
+    let oldCompared = oldTokens.indices.filter { !ignoringWhitespace || !isSpace(oldUnits[oldTokens[$0].lowerBound]) }
+    let newCompared = newTokens.indices.filter { !ignoringWhitespace || !isSpace(newUnits[newTokens[$0].lowerBound]) }
+    let difference = newCompared.map { newUnits[newTokens[$0]] }.difference(from: oldCompared.map { oldUnits[oldTokens[$0]] })
     var oldChanged = [Bool](repeating: false, count: oldTokens.count)
     var newChanged = [Bool](repeating: false, count: newTokens.count)
     for change in difference {
         switch change {
-        case .remove(let offset, _, _): oldChanged[offset] = true
-        case .insert(let offset, _, _): newChanged[offset] = true
+        case .remove(let offset, _, _): oldChanged[oldCompared[offset]] = true
+        case .insert(let offset, _, _): newChanged[newCompared[offset]] = true
         }
+    }
+    if ignoringWhitespace {
+        unmarkWhitespaceChanges(old: (oldTokens, oldUnits, oldCompared), new: (newTokens, newUnits, newCompared), &oldChanged, &newChanged)
     }
 
     // Similarity counts words and punctuation, not whitespace, which most lines share plenty of.
@@ -464,6 +471,32 @@ private func changedRanges(_ tokens: [Range<Int>], _ changed: [Bool], _ units: [
         index = end + 1
     }
     return ranges
+}
+
+/// Unmarks each replacement that only moves whitespace, such as `foo bar` for `foobar`. A
+/// replacement is a run of changed tokens on each side between the same unchanged ones, which
+/// the difference of the `compared` tokens keeps in order.
+private func unmarkWhitespaceChanges(old: (tokens: [Range<Int>], units: [UInt16], compared: [Int]), new: (tokens: [Range<Int>], units: [UInt16], compared: [Int]), _ oldChanged: inout [Bool], _ newChanged: inout [Bool]) {
+    func text(_ side: (tokens: [Range<Int>], units: [UInt16], compared: [Int]), _ run: ArraySlice<Int>) -> [UInt16] {
+        run.flatMap { side.units[side.tokens[$0]] }
+    }
+    var oldIndex = 0
+    var newIndex = 0
+    while oldIndex < old.compared.count || newIndex < new.compared.count {
+        let oldStart = oldIndex
+        while oldIndex < old.compared.count, oldChanged[old.compared[oldIndex]] { oldIndex += 1 }
+        let newStart = newIndex
+        while newIndex < new.compared.count, newChanged[new.compared[newIndex]] { newIndex += 1 }
+        let oldRun = old.compared[oldStart..<oldIndex]
+        let newRun = new.compared[newStart..<newIndex]
+        if text(old, oldRun) == text(new, newRun) {
+            for index in oldRun { oldChanged[index] = false }
+            for index in newRun { newChanged[index] = false }
+        }
+        // Past the unchanged token the two sides share.
+        oldIndex += 1
+        newIndex += 1
+    }
 }
 
 /// Splits a line into words, runs of whitespace, and single punctuation characters.

@@ -23,7 +23,7 @@ public final class ContextExpansions {
 
     /// The file's diff with what's been revealed in it over `range`.
     func shown(_ file: FileDiff, in range: DiffRange) -> FileDiff {
-        expanded[ExpandedFile(range: range, path: file.path)] ?? file
+        expanded[ExpandedFile(file, in: range)] ?? file
     }
 
     /// What can be revealed in the file, with its text read at `oid`; nil when nothing can.
@@ -59,18 +59,18 @@ public final class ContextExpansions {
     /// need be. `file` is its diff as produced; the expansion counts hunks as shown.
     func expand(_ file: FileDiff, _ expansion: ContextExpansion, in range: DiffRange, checkout: URL) async {
         guard file.canExpandContext, let lines = await lines(of: file.path, at: range.head, in: checkout) else { return }
-        let key = ExpandedFile(range: range, path: file.path)
+        let key = ExpandedFile(file, in: range)
         expanded[key] = (expanded[key] ?? file).expanding(expansion, newFile: lines)
     }
 
     /// Whether anything has been revealed in the file over `range`.
     func hasRevealed(_ file: FileDiff, in range: DiffRange) -> Bool {
-        expanded[ExpandedFile(range: range, path: file.path)] != nil
+        expanded[ExpandedFile(file, in: range)] != nil
     }
 
     /// Hides what's been revealed in the file over `range`, showing its diff as produced.
     func collapse(_ file: FileDiff, in range: DiffRange) {
-        expanded[ExpandedFile(range: range, path: file.path)] = nil
+        expanded[ExpandedFile(file, in: range)] = nil
     }
 
     /// Forgets what's been revealed, as the diff it was revealed in is produced again.
@@ -124,7 +124,15 @@ private struct FileVersion: Hashable {
     let oid: String
 }
 
+/// A file's diff over a range, kept apart with whitespace ignored, as its hunks differ.
 private struct ExpandedFile: Hashable {
     let range: DiffRange
     let path: String
+    let ignoresWhitespace: Bool
+
+    init(_ file: FileDiff, in range: DiffRange) {
+        self.range = range
+        path = file.path
+        ignoresWhitespace = file.ignoresWhitespace
+    }
 }

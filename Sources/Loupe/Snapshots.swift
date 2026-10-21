@@ -533,6 +533,12 @@ enum SnapshotRun {
                 if environment["LOUPE_SNAPSHOT_IMAGE"] == "1" {
                     for url in try await saveSnapshotsOfImages(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_WHITESPACE=1 snapshots each PR's shown file with whitespace
+                // changes shown, then hides them as the header's button does and snapshots it
+                // again; the usual PNGs keep them hidden.
+                if environment["LOUPE_SNAPSHOT_WHITESPACE"] == "1" {
+                    for url in try await saveSnapshotsOfWhitespace(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 // LOUPE_SNAPSHOT_REACTIONS=1 scrolls each conversation to its first reaction and
                 // opens the picker beside it, and snapshots it. Nothing is clicked or sent.
                 if environment["LOUPE_SNAPSHOT_REACTIONS"] == "1" {
@@ -1920,6 +1926,38 @@ private func printPull(of scroll: OverscrollScrollView, when: String) {
     let clip = scroll.contentView
     let progress = String(format: "%.2f", pull.progress)
     print("  \(when): travel \(pull.travel) revealed \(pull.revealed) progress \(progress) armed \(pull.isArmed) dragging \(pull.isDragging) | clip y \(clip.bounds.minY) maxY \(clip.bounds.maxY) document maxY \(clip.documentRect.maxY) inset \(clip.contentInsets.bottom)")
+}
+
+/// Shows each PR's files and writes `whitespace-shown-<title>.png` and
+/// `whitespace-hidden-<title>.png` of its shown file, printing each file's counts and hunks
+/// each way. Whitespace stays hidden after.
+@MainActor
+private func saveSnapshotsOfWhitespace(in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow else { return [] }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = windows.tabs.selected
+    var written: [URL] = []
+    for tab in windows.tabs.tabs {
+        guard case .ready = tab.phase else { continue }
+        tab.section = .files
+        windows.select(tab.id)
+        let title = sanitised(windows.title(of: tab.id))
+        for hides in [false, true] {
+            await tab.setHidesWhitespace(hides)
+            print("\(tab.title) \(hides ? "hiding" : "showing") whitespace:")
+            if case let .ready(changes)? = tab.shownChanges {
+                for file in changes.files {
+                    print("  \(file.path) +\(file.additions) −\(file.deletions), \(file.hunks.count) hunks\(file.isWhitespaceOnly ? ", whitespace-only changes" : "")")
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+            let url = directory.appending(path: "whitespace-\(hides ? "hidden" : "shown")-\(title).png")
+            try await saveSnapshot(of: window, to: url)
+            written.append(url)
+        }
+    }
+    windows.select(selected)
+    return written
 }
 
 /// Shows each PR's shown image file once both its versions are read, an SVG rendered, and

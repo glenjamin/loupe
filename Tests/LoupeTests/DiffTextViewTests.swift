@@ -187,6 +187,31 @@ struct DiffTextViewTests {
         #expect(emphasised("MatchSQL:", after: "MatchSQL:"))
         #expect(!emphasised(" query", after: "MatchSQL:"))
     }
+
+    @Test func wordsOnlySplitOrJoinedByWhitespaceArentEmphasisedWhileWhitespaceIsHidden() throws {
+        var file = try #require(Diff(parsing: """
+        diff --git a/sum.go b/sum.go
+        --- a/sum.go
+        +++ b/sum.go
+        @@ -1,1 +1,1 @@
+        -return foobar(x) + 1
+        +return foo bar(x) + 2
+
+        """).files.first)
+        func emphasised(_ needle: String, after start: String) -> Bool {
+            let rendered = RenderedDiff(file: file)
+            let text = rendered.text.string as NSString
+            let from = text.range(of: start).location
+            let found = text.range(of: needle, range: NSRange(location: from, length: text.length - from))
+            return rendered.text.attribute(.diffEmphasis, at: found.location, effectiveRange: nil) != nil
+        }
+        #expect(emphasised("foobar", after: "-\t"), "shown with whitespace, splitting a word is a change")
+
+        file.countsWithWhitespace = LineTotals(additions: 1, deletions: 1)
+        #expect(!emphasised("foobar", after: "-\t"))
+        #expect(!emphasised("foo bar", after: "+\t"))
+        #expect(emphasised("1", after: "-\t") && emphasised("2", after: "+\t"), "the real change still stands out")
+    }
 }
 
 private func goMod() throws -> FileDiff {
