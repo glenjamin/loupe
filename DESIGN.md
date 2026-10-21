@@ -1040,6 +1040,12 @@ Live runs stay for ad hoc checks against real data, which the fixtures can't cov
 
 The suite is kept quick enough to run after every UI change. After each input a script waits for the main thread to go idle rather than a fixed quarter second, as the scripts had nothing slower to wait for that `wait until` didn't already cover. Each script's copy of the bundle is kept between runs, as macOS checks every new executable on its first launch, most of a second each and one at a time, and the fixture checkouts are kept until what builds them changes. Each script still launches the app afresh: launching takes about 0.7s of a script's two or three, and resetting the database, tabs, settings and web views between scripts in one launch would make a script's result depend on those before it.
 
+### The viewer's own PRs are hidden from Mine after a month without activity
+
+Glen asked for Mine to hide old PRs as To review does. His Mine listed 113 open PRs, most of them abandoned for months or years, so the ones he was working on were a screen or more down. In Lists mode, his own open PR with no activity for over `staleAge` (a month) is now left out of Mine, behind the same caption, "N older than a month hidden", which lists them last, newest first, and "Hide N older than a month" puts them away again. Activity on the PR brings it back. ⌘F finds them, as it finds To review's. On his data, Mine lists 23 and hides 90.
+
+Activity is the PR's `updatedAt`, the same clock To review uses for a PR the viewer gave a verdict on and TODO uses for its quiet sections, so the three agree on which PRs are quiet. Unlike To review's verdicts, there's no condition on review state: a stale PR of the viewer's is clutter whether approved, failing or never reviewed. Exempting PRs with failing checks or a recent request for review was considered and left out: a failing PR nobody has touched in a month is as abandoned as any, and a request for review is itself activity. It's the same rule in the same code (`isStale`, `staleCount`, `includingStale:`), now answering for both lists rather than To review alone. TODO mode is unchanged: it already files the viewer's quiet PRs under "Over a month" and "Over 6 months", so it asks for the stale ones too rather than hiding them twice. A hidden PR of the viewer's has no "requested …" label, as its own time already says when it last saw activity.
+
 ## Not yet decided
 
 Nothing is pending.

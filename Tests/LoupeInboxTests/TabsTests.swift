@@ -61,7 +61,7 @@ struct TabsTests {
         #expect(opened.pullRequest.state == .merged)
         #expect(app.tabs.tabs.map(\.id) == [from.id, opened.id])
 
-        #expect(!app.tabs.lists.pullRequests(in: .mine, includingClosed: true).contains { $0.id == opened.id }, "the viewer's, but merged")
+        #expect(!app.tabs.lists.pullRequests(in: .mine, includingClosed: true, includingStale: true).contains { $0.id == opened.id }, "the viewer's, but merged")
 
         await tab.open(link)
         #expect(await app.github.numberLookups.count == 1, "known now, so not looked up again")
@@ -96,7 +96,7 @@ struct TabsTests {
 
         await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number))?.value
 
-        #expect(app.tabs.lists.pullRequests(in: .mine).contains { $0.id == created.id })
+        #expect(app.tabs.lists.pullRequests(in: .mine, includingStale: true).contains { $0.id == created.id })
         #expect(!app.tabs.lists.pullRequests(in: .toReview).contains { $0.id == created.id })
         #expect(await app.github.searches == searches, "without waiting for the lists' refresh")
     }
@@ -110,7 +110,7 @@ struct TabsTests {
 
         let listed = try #require(app.toReview.first { $0.id == created.id })
         #expect(listed.reviewRequestedAt == wholeSeconds(requested))
-        #expect(!app.tabs.lists.pullRequests(in: .mine).contains { $0.id == created.id })
+        #expect(!app.tabs.lists.pullRequests(in: .mine, includingStale: true).contains { $0.id == created.id })
     }
 
     @Test func aLinkToANewPullRequestAskingATeamsReviewPutsItInToReviewAndARefreshKeepsIt() async throws {
@@ -1170,7 +1170,7 @@ private struct App {
     }
 
     var mine: [PullRequestSummary] {
-        tabs.lists.pullRequests(in: .mine)
+        tabs.lists.pullRequests(in: .mine, includingStale: true)
     }
 
     /// Waits for GitHub to have answered `count` status lookups in all, as the shown PR is

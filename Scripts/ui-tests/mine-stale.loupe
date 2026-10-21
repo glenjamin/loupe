@@ -1,0 +1,19 @@
+# The viewer's own PRs quiet for over a month wait behind Mine's caption, which lists them after
+# the rest when clicked and puts them away again when clicked once more.
+wait settled
+open lists
+expect text "Mine (19)" exists
+expect button "31 older than a month hidden" exists
+snap mine-hidden
+
+click button "31 older than a month hidden"
+expect text "Mine (50)" exists
+expect button "Hide 31 older than a month" exists
+# The quietest come last.
+scroll list 1 down 20000
+wait until button ~"lily #895," in list 1 exists
+snap mine-shown
+
+click button "Hide 31 older than a month"
+expect text "Mine (19)" exists
+expect button "31 older than a month hidden" exists

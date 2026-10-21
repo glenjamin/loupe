@@ -48,7 +48,7 @@ struct StackTests {
         let line = try #require(app.tabs.tab(id: mine.id)?.stackLine)
         #expect(line.levels.map { $0.map(\.number) } == [[900], [901], [902]])
         // Neither of the two below is in a list, so the row says what it's on.
-        let listed = try #require(app.tabs.lists.listing(in: .mine).first { $0.id == mine.id })
+        let listed = try #require(app.tabs.lists.listing(in: .mine, includingStale: true).first { $0.id == mine.id })
         #expect(listed.parent?.number == 901)
         #expect(listed.depth == 0)
     }
@@ -74,7 +74,7 @@ struct StackTests {
         #expect(fromLeft.levels.map { $0.map(\.number) } == [[910], [911], [913]])
 
         // Listed as a tree: each branch of the fork after the PR it's on, the deeper one further in.
-        let group = app.tabs.lists.listing(in: .mine).filter { (910...913).contains($0.pullRequest.number) }
+        let group = app.tabs.lists.listing(in: .mine, includingStale: true).filter { (910...913).contains($0.pullRequest.number) }
         #expect(group.map(\.pullRequest.number) == [910, 911, 913, 912])
         #expect(group.map(\.depth) == [0, 1, 2, 1])
     }
@@ -83,7 +83,7 @@ struct StackTests {
         let app = try await ConversationApp()
         try await app.github.addCapturedStack()
         await app.tabs.lists.refresh()
-        let mine = app.tabs.lists.listing(in: .mine)
+        let mine = app.tabs.lists.listing(in: .mine, includingStale: true)
         let numbers = mine.map { "\($0.pullRequest.repository.split(separator: "/")[1]) #\($0.pullRequest.number)" }
 
         // The newest of the stack, #278, leads the list, but the bottom comes first.
@@ -135,7 +135,7 @@ struct StackTests {
         #expect(tab.pullRequest.baseRefName == "master")
         #expect(tab.stackLine == nil)
         #expect(tab.mergeFirst == nil)
-        #expect(app.tabs.lists.listing(in: .mine).first { $0.id == top.id }?.parent == nil)
+        #expect(app.tabs.lists.listing(in: .mine, includingStale: true).first { $0.id == top.id }?.parent == nil)
     }
 
     @Test func aMergedParentInNeitherListDropsOutAndIsLetGoWhenItsBranchStays() async throws {

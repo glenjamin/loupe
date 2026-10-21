@@ -111,7 +111,7 @@ struct MergeTests {
         #expect(tab.mergeReadiness == nil)
         #expect(!tab.isMerging)
         #expect(tab.mergeError == nil)
-        #expect(app.tabs.lists.pullRequests(in: .mine, includingClosed: true).first { $0.id == bottom }?.state == .merged)
+        #expect(app.tabs.lists.pullRequests(in: .mine, includingClosed: true, includingStale: true).first { $0.id == bottom }?.state == .merged)
         // The PR above is now the bottom of its stack, so can be merged next.
         let above = try #require(app.tabs.lists.pullRequest(id: top))
         #expect(above.state == .open)
@@ -221,8 +221,8 @@ struct MergeTests {
         #expect(tab.mergeReadiness == nil, "nothing left to merge")
         #expect(!tab.isMerging)
         #expect(tab.mergeError == nil)
-        #expect(!app.tabs.lists.pullRequests(in: .mine).contains { $0.id == pullRequest.id })
-        #expect(app.tabs.lists.pullRequests(in: .mine, includingClosed: true).first { $0.id == pullRequest.id }?.state == .merged)
+        #expect(!app.tabs.lists.pullRequests(in: .mine, includingStale: true).contains { $0.id == pullRequest.id })
+        #expect(app.tabs.lists.pullRequests(in: .mine, includingClosed: true, includingStale: true).first { $0.id == pullRequest.id }?.state == .merged)
     }
 
     @Test func aMergeGitHubRefusesSaysWhyAndLeavesThePullRequestOpen() async throws {
@@ -368,7 +368,7 @@ private struct MergeApp {
 
     /// The viewer's own approved PR into master that the tests merge.
     func mergeable() throws -> PullRequestSummary {
-        try #require(tabs.lists.pullRequests(in: .mine).first { $0.repository == "tamarinworks/gazette" && $0.number == 272 })
+        try #require(tabs.lists.pullRequests(in: .mine, includingStale: true).first { $0.repository == "tamarinworks/gazette" && $0.number == 272 })
     }
 
     /// The ids of the viewer's captured GitHub stack, gazette #277 with #278 on it, both

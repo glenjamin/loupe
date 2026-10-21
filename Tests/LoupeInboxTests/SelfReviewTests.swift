@@ -115,7 +115,7 @@ private struct SelfReviewApp {
 
     /// The viewer's own PRs.
     var mine: [PullRequestSummary] {
-        lists.pullRequests(in: .mine)
+        lists.pullRequests(in: .mine, includingStale: true)
     }
 
     func open(_ pullRequest: PullRequestSummary) async throws -> PullRequestTab {

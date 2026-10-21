@@ -163,7 +163,7 @@ struct ConversationApp {
 
     /// The viewer's own PRs.
     var mine: [PullRequestSummary] {
-        tabs.lists.pullRequests(in: .mine)
+        tabs.lists.pullRequests(in: .mine, includingStale: true)
     }
 
     /// Fresh models over the same store, as on the next launch.

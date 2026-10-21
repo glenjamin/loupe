@@ -317,7 +317,7 @@ struct ReviewSubmissionTests {
 
     @Test func onlyAnOpenPullRequestTakesAReviewAndOnlySomeoneElsesAVerdict() async throws {
         let app = try await ThreadsApp()
-        let (mine, toReview) = (try #require(app.tabs.lists.pullRequests(in: .mine).first), try #require(app.tabs.lists.pullRequests(in: .toReview).first))
+        let (mine, toReview) = (try #require(app.tabs.lists.pullRequests(in: .mine, includingStale: true).first), try #require(app.tabs.lists.pullRequests(in: .toReview).first))
         try await app.conversations.add(mine.id, author: FakeGitHub.viewer)
         try await app.conversations.add(toReview.id)
         let (own, theirs) = (try await app.open(mine), try await app.open(toReview))

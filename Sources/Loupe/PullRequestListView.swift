@@ -155,9 +155,10 @@ struct PullRequestColumn: View {
     private static let stackIndent: CGFloat = 16
 
     /// When the viewer was asked to review a PR listed only because the hidden ones are shown,
-    /// so its row can say how long it has waited. A verdict's row has its own time instead.
+    /// so its row can say how long it has waited. A verdict's row, or one in Mine, has its own
+    /// time instead.
     private func staleRequestedAt(of pullRequest: PullRequestSummary) -> Date? {
-        guard model.isStale(pullRequest, in: list), model.verdict(on: pullRequest, in: list) == nil else { return nil }
+        guard list == .toReview, model.isStale(pullRequest, in: list), model.verdict(on: pullRequest, in: list) == nil else { return nil }
         return pullRequest.reviewRequestedAt ?? pullRequest.updatedAt
     }
 }

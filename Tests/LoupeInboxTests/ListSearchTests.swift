@@ -77,6 +77,22 @@ struct ListSearchTests {
         #expect(model.todo().review.isEmpty, "TODO leaves stale requests out, searching or not")
     }
 
+    @Test func aSearchFindsTheViewersOwnPullRequestsHiddenAsStale() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let clock = SearchClock(at: .now)
+        let model = try searchModel(github, now: { clock.now })
+        let quiet = try await ownPullRequest(9201, in: github, titled: "Retire the quiet exporter")
+        await model.refresh()
+        clock.now += 40 * day
+        #expect(!model.pullRequests(in: .mine).contains { $0.id == quiet })
+        #expect(model.staleCount(in: .mine) > 0)
+
+        model.searchText = "quiet exporter"
+
+        #expect(model.pullRequests(in: .mine).map(\.id) == [quiet], "listed, though stale")
+        #expect(model.staleCount(in: .mine) == 0, "nothing is left hidden")
+    }
+
     @Test func aSearchFindsTheViewersQuietPullRequestsInTheirSections() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let clock = SearchClock(at: .now)
@@ -124,7 +140,7 @@ struct ListSearchTests {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try searchModel(github)
         await model.refresh()
-        #expect(!model.pullRequests(in: .mine).isEmpty && !model.pullRequests(in: .toReview).isEmpty)
+        #expect(!model.pullRequests(in: .mine, includingStale: true).isEmpty && !model.pullRequests(in: .toReview).isEmpty)
 
         model.searchText = "no-pull-request-says-this"
 

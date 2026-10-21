@@ -15,7 +15,7 @@ struct PullRequestListTests {
         await model.refresh()
 
         #expect(model.error == nil)
-        #expect(model.pullRequests(in: .mine).count == 50)
+        #expect(model.pullRequests(in: .mine, includingStale: true).count == 50)
         #expect(model.pullRequests(in: .toReview).count == 13)
         // A stack is listed together, where its newest member goes.
         for list in PullRequestList.allCases {
@@ -45,7 +45,7 @@ struct PullRequestListTests {
 
         await model.refresh()
 
-        let mine = model.pullRequests(in: .mine)
+        let mine = model.pullRequests(in: .mine, includingStale: true)
         let draft = try #require(mine.first { $0.repository == "tamarinworks/gazette" && $0.number == 273 })
         #expect(draft.isDraft)
         #expect(draft.reviewDecision == nil)
@@ -63,7 +63,7 @@ struct PullRequestListTests {
 
         #expect(model.error == nil)
         let expected = await github.pullRequests(in: .mine).map(\.id)
-        #expect(Set(model.pullRequests(in: .mine).map(\.id)) == Set(expected))
+        #expect(Set(model.pullRequests(in: .mine, includingStale: true).map(\.id)) == Set(expected))
         #expect(expected.count == 50)
         #expect(model.pullRequests(in: .toReview).count == 13)
         // Three pages of mine, one of requests for the viewer's review and one of their reviews.
@@ -76,7 +76,7 @@ struct PullRequestListTests {
 
         await model.refresh()
 
-        let mine = model.pullRequests(in: .mine)
+        let mine = model.pullRequests(in: .mine, includingStale: true)
         // GitHub's rollup says failure, but only through Codecov's tolerated failures.
         let covered = try #require(mine.first { $0.repository == "tamarinworks/gatehouse" && $0.number == 172 })
         #expect(covered.checks == .success)
@@ -105,7 +105,7 @@ struct PullRequestListTests {
 
         await model.refresh()
 
-        let mine = model.pullRequests(in: .mine)
+        let mine = model.pullRequests(in: .mine, includingStale: true)
         let conflicting = try #require(mine.first { $0.repository == "tamarinworks/bedrock" && $0.number == 2335 })
         #expect(conflicting.mergeable == .conflicting)
         let clean = try #require(mine.first { $0.repository == "tamarinworks/gatehouse" && $0.number == 172 })
@@ -150,7 +150,7 @@ struct PullRequestListTests {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
         await model.refresh()
-        let newest = try #require(model.pullRequests(in: .mine).first)
+        let newest = try #require(model.pullRequests(in: .mine, includingStale: true).first)
         let oldest = try #require(model.pullRequests(in: .toReview).last)
 
         for pullRequest in [newest, oldest] {
@@ -172,7 +172,7 @@ struct PullRequestListTests {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
         await model.refresh()
-        let slow = try #require(model.pullRequests(in: .mine).first)
+        let slow = try #require(model.pullRequests(in: .mine, includingStale: true).first)
         let other = try #require(model.pullRequests(in: .toReview).last)
 
         await github.slowDownStatus(of: slow.id)
@@ -274,7 +274,7 @@ struct PullRequestListTests {
         let secondRun = try listModel(github, store: PullRequestStore(url: url))
 
         #expect(secondRun.hasStoredLists)
-        #expect(secondRun.pullRequests(in: .mine) == firstRun.pullRequests(in: .mine))
+        #expect(secondRun.pullRequests(in: .mine, includingStale: true) == firstRun.pullRequests(in: .mine, includingStale: true))
         #expect(secondRun.pullRequests(in: .toReview) == firstRun.pullRequests(in: .toReview))
         #expect(secondRun.pullRequests(in: .toReview).first?.checkContexts.isEmpty == false)
         let lastRefreshed = try #require(secondRun.lastRefreshed)
@@ -306,15 +306,15 @@ struct PullRequestListTests {
         let store = try PullRequestStore.inMemory()
         let model = try listModel(github, store: store)
         await model.refresh()
-        let merged = try #require(model.pullRequests(in: .mine).last)
+        let merged = try #require(model.pullRequests(in: .mine, includingStale: true).last)
 
         try await github.merge(merged.id)
         await model.refresh()
 
         #expect(model.error == nil)
-        #expect(model.pullRequests(in: .mine).count == 49)
-        #expect(!model.pullRequests(in: .mine).contains { $0.id == merged.id })
-        let shown = try #require(model.pullRequests(in: .mine, includingClosed: true).first)
+        #expect(model.pullRequests(in: .mine, includingStale: true).count == 49)
+        #expect(!model.pullRequests(in: .mine, includingStale: true).contains { $0.id == merged.id })
+        let shown = try #require(model.pullRequests(in: .mine, includingClosed: true, includingStale: true).first)
         #expect(shown.id == merged.id)
         #expect(shown.state == .merged)
         #expect(shown.mergedAt != nil)
@@ -325,13 +325,13 @@ struct PullRequestListTests {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
         await model.refresh()
-        let mine = model.pullRequests(in: .mine)
+        let mine = model.pullRequests(in: .mine, includingStale: true)
         let toReview = model.pullRequests(in: .toReview)
 
         await model.refresh()
 
         #expect(model.error == nil)
-        #expect(model.pullRequests(in: .mine) == mine)
+        #expect(model.pullRequests(in: .mine, includingStale: true) == mine)
         #expect(model.pullRequests(in: .toReview) == toReview)
         #expect(mine.count == 50)
         #expect(toReview.count == 13)
@@ -341,15 +341,15 @@ struct PullRequestListTests {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
         await model.refresh()
-        let retitled = try #require(model.pullRequests(in: .mine).last)
+        let retitled = try #require(model.pullRequests(in: .mine, includingStale: true).last)
 
         try await github.edit(retitled.id) { $0.title = "Retitled" }
         await model.refresh()
 
-        let updated = try #require(model.pullRequests(in: .mine).first)
+        let updated = try #require(model.pullRequests(in: .mine, includingStale: true).first)
         #expect(updated.id == retitled.id)
         #expect(updated.title == "Retitled")
-        #expect(model.pullRequests(in: .mine).count == 50)
+        #expect(model.pullRequests(in: .mine, includingStale: true).count == 50)
     }
 
     @Test func aReviewedPullRequestLeavesToReviewButATeamRequestKeepsOneThere() async throws {
@@ -429,7 +429,7 @@ struct PullRequestListTests {
 
         let later = try await github.openPullRequest(number: 9003, by: "rowan-ashby")
         try await github.review(later.id, "CHANGES_REQUESTED")
-        let mine = try #require(model.pullRequests(in: .mine).first)
+        let mine = try #require(model.pullRequests(in: .mine, includingStale: true).first)
         try await github.review(mine.id, "COMMENTED")
         await model.refresh()
 
@@ -555,6 +555,35 @@ struct PullRequestListTests {
         #expect(model.staleCount(in: .toReview) == 0)
     }
 
+    @Test func aMonthWithoutActivityHidesTheViewersOwnPullRequestsUntilThereIsSome() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        // When the probe was captured.
+        let clock = StoppedClock(at: try Date("2026-10-14T12:00:00Z", strategy: .iso8601))
+        let model = try listModel(github, now: { clock.now })
+        await model.refresh()
+
+        let shown = model.pullRequests(in: .mine)
+        let all = model.pullRequests(in: .mine, includingStale: true)
+        let hidden = all.filter { pullRequest in !shown.contains { $0.id == pullRequest.id } }
+        #expect(shown.count == 19 && hidden.count == 31)
+        #expect(model.staleCount(in: .mine) == 31)
+        #expect(shown.allSatisfy { clock.now.timeIntervalSince($0.updatedAt) <= days(30) })
+        #expect(hidden.allSatisfy { clock.now.timeIntervalSince($0.updatedAt) > days(30) })
+        #expect(hidden.contains { $0.reviewDecision != .approved }, "whatever their reviews say")
+        #expect(all.map(\.id) == (shown + hidden).map(\.id), "asked for, after the recent ones")
+        #expect(hidden.map(\.updatedAt) == hidden.map(\.updatedAt).sorted(by: >), "newest first")
+        let todo = model.todo()
+        let placed = (todo.overAMonth + todo.overSixMonths).flatMap { item in [item.id] + item.stacked.map(\.id) }
+        #expect(hidden.allSatisfy { placed.contains($0.id) }, "TODO files them by how long they've been quiet")
+
+        let revived = try #require(hidden.last)
+        try await github.edit(revived.id) { $0.title += " (rebased)" }
+        await model.refresh()
+
+        #expect(model.pullRequests(in: .mine).first?.id == revived.id, "back, newest first")
+        #expect(model.staleCount(in: .mine) == 30)
+    }
+
     @Test func aPullRequestTheViewerApprovedJoinsToReviewWhenLookedUp() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
@@ -577,7 +606,7 @@ struct PullRequestListTests {
         let toReview = model.pullRequests(in: .toReview)
         #expect(!toReview.isEmpty)
         #expect(toReview.allSatisfy { model.reviewMark(on: $0, in: .toReview) == nil })
-        #expect(model.pullRequests(in: .mine).allSatisfy { model.reviewMark(on: $0, in: .mine) == nil })
+        #expect(model.pullRequests(in: .mine, includingStale: true).allSatisfy { model.reviewMark(on: $0, in: .mine) == nil })
     }
 
     @Test func anApprovalSaysSoUntilCommitsArePushedOnTopOfIt() async throws {
@@ -705,7 +734,7 @@ struct PullRequestListTests {
         let store = try PullRequestStore.inMemory()
         let model = try listModel(github, store: store)
         await model.refresh()
-        let mine = try #require(model.pullRequests(in: .mine).first)
+        let mine = try #require(model.pullRequests(in: .mine, includingStale: true).first)
         let toReview = try #require(model.pullRequests(in: .toReview).first)
         #expect(mine.requestedReviewers == [])
         #expect(toReview.requestedReviewers == [.user(login: FakeGitHub.viewer)])
@@ -739,8 +768,6 @@ struct PullRequestListTests {
         #expect(model.pullRequests(in: .toReview).contains { $0.id == recent.id })
         #expect(model.pullRequests(in: .toReview).count == 12)
         #expect(model.staleCount(in: .toReview) == 1)
-        #expect(model.pullRequests(in: .mine).count == 50, "the viewer's own PRs aren't requests")
-        #expect(model.staleCount(in: .mine) == 0)
     }
 
     @Test func askingForHiddenRequestsListsThemAfterTheRecentOnes() async throws {
@@ -759,7 +786,6 @@ struct PullRequestListTests {
         #expect(shown.map(\.id) == model.pullRequests(in: .toReview).map(\.id) + [older.id, oldest.id], "newest first, after the recent ones")
         #expect(model.staleCount(in: .toReview) == 2)
         #expect(model.pullRequests(in: .toReview).count == 11)
-        #expect(model.pullRequests(in: .mine, includingStale: true) == model.pullRequests(in: .mine))
     }
 
     @Test func theViewersLatestRequestCountsNotSomeoneElses() async throws {
@@ -866,7 +892,7 @@ struct PullRequestListTests {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
         await model.refresh()
-        let mine = model.pullRequests(in: .mine)
+        let mine = model.pullRequests(in: .mine, includingStale: true)
         let toReview = model.pullRequests(in: .toReview)
         let lastRefreshed = model.lastRefreshed
 
@@ -874,7 +900,7 @@ struct PullRequestListTests {
         await model.refresh()
 
         #expect(model.error == "GitHub returned HTTP 502")
-        #expect(model.pullRequests(in: .mine) == mine)
+        #expect(model.pullRequests(in: .mine, includingStale: true) == mine)
         #expect(model.pullRequests(in: .toReview) == toReview)
         #expect(model.lastRefreshed == lastRefreshed)
 
@@ -935,7 +961,7 @@ struct PullRequestListTests {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
         await model.refresh()
-        let listed = try #require(model.pullRequests(in: .mine).first)
+        let listed = try #require(model.pullRequests(in: .mine, includingStale: true).first)
         #expect(!model.isChecking(listed.id))
 
         await github.hold(.search)

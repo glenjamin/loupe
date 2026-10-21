@@ -187,7 +187,8 @@ extension PullRequestListModel {
         .sorted { Self.firstAsked($0.pullRequest) < Self.firstAsked($1.pullRequest) }
 
         var mine: [TodoItem] = []
-        for listed in listing(in: .mine) {
+        // Quiet PRs have sections of their own here rather than being hidden.
+        for listed in listing(in: .mine, includingStale: true) {
             if listed.depth > 0, let bottom = mine.popLast() {
                 mine.append(TodoItem(pullRequest: bottom.pullRequest, reason: bottom.reason, problems: bottom.problems, list: .mine, parent: bottom.parent, stacked: bottom.stacked + [listed]))
             } else {

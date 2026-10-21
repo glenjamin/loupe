@@ -84,5 +84,5 @@ private struct GuardedApp {
         await lists.refresh()
     }
 
-    var mine: [PullRequestSummary] { tabs.lists.pullRequests(in: .mine) }
+    var mine: [PullRequestSummary] { tabs.lists.pullRequests(in: .mine, includingStale: true) }
 }

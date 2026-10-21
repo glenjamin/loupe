@@ -107,11 +107,11 @@ public final class PullRequestListModel {
     /// Newest first, those waiting on the viewer's review before those they've approved or asked
     /// changes of, so what needs them leads. Closed and merged PRs stay stored, but are left out
     /// unless asked for. So are stale ones, too old to be worth listing; a fresh request, or
-    /// activity on a PR the viewer gave a verdict on, brings one back. Asked for, those come
-    /// last, newest first, so the rest keep their place. The PRs of one stack are listed
-    /// together, from the bottom up, where the first of them would be. While searching, only
-    /// those that match are listed, stale ones included, so a search finds whatever the list
-    /// holds; a stack's matches are grouped among themselves.
+    /// activity on the viewer's own PR or one they gave a verdict on, brings one back. Asked
+    /// for, those come last, newest first, so the rest keep their place. The PRs of one stack
+    /// are listed together, from the bottom up, where the first of them would be. While
+    /// searching, only those that match are listed, stale ones included, so a search finds
+    /// whatever the list holds; a stack's matches are grouped among themselves.
     public func pullRequests(in list: PullRequestList, includingClosed: Bool = false, includingStale: Bool = false) -> [PullRequestSummary] {
         listing(in: list, includingClosed: includingClosed, includingStale: includingStale).map(\.pullRequest)
     }
@@ -586,9 +586,9 @@ public final class PullRequestListModel {
     static let stackLookupRounds = 5
 
     /// How long a request for the viewer's review stays listed unanswered, or a PR they gave a
-    /// verdict on stays listed without activity, before it's hidden as stale; the list's caption
-    /// shows the hidden ones again in a click, so it can be tight. Also how long the viewer's own
-    /// PR goes without activity before TODO mode moves it out of Yours and Waiting.
+    /// verdict on or their own PR stays listed without activity, before it's hidden as stale; the
+    /// list's caption shows the hidden ones again in a click, so it can be tight. Also how long
+    /// the viewer's own PR goes without activity before TODO mode moves it out of Yours and Waiting.
     static let staleAge: TimeInterval = 30 * 24 * 60 * 60
 
     /// How long the viewer's own PR goes without activity before TODO mode files it with the
@@ -615,13 +615,13 @@ public final class PullRequestListModel {
         return [isMine ? .mine : nil, lookup.reviewRequests.belongsInToReview(of: login) ? .toReview : nil].compactMap(\.self)
     }
 
-    /// Whether `pullRequest` has sat in To review longer than `staleAge`: since the viewer was
-    /// asked to review it or, once they've given a verdict and it waits on its author or a merge,
-    /// since its last activity. GitHub records a request or review as an update, so the PR's
-    /// update time also stands in when no request of the viewer is known.
+    /// Whether `pullRequest` has sat in `list` longer than `staleAge`: in To review, since the
+    /// viewer was asked to review it or, once they've given a verdict and it waits on its author
+    /// or a merge, since its last activity; in Mine, since its last activity, whatever its
+    /// reviews say. GitHub records a request or review as an update, so the PR's update time also
+    /// stands in when no request of the viewer is known.
     public func isStale(_ pullRequest: PullRequestSummary, in list: PullRequestList) -> Bool {
-        guard list == .toReview else { return false }
-        let requestedAt = verdict(on: pullRequest, in: list) == nil ? pullRequest.reviewRequestedAt : nil
+        let requestedAt = list == .toReview && verdict(on: pullRequest, in: list) == nil ? pullRequest.reviewRequestedAt : nil
         return now().timeIntervalSince(requestedAt ?? pullRequest.updatedAt) > Self.staleAge
     }
 }

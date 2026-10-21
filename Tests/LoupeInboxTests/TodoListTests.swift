@@ -120,7 +120,7 @@ struct TodoListTests {
         let reasons: [TodoReason] = [.waitingOnReview, .pushedSinceChangesRequested]
         #expect(waiting.map(\.reason) == reasons)
         #expect(!todo.yours.contains { [answered, awaitingReview].contains($0.id) })
-        let mine = model.pullRequests(in: .mine).map(\.id)
+        let mine = model.pullRequests(in: .mine, includingStale: true).map(\.id)
         let placed: [String] = (todo.yours + todo.waiting + todo.overAMonth + todo.overSixMonths).flatMap { item in [item.id] + item.stacked.map(\.id) }
         #expect(Set(placed) == Set(mine), "every PR of the viewer's is somewhere")
     }
