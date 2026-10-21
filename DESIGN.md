@@ -1054,6 +1054,10 @@ The quiet `space` button from "Whitespace changes can be hidden per PR" didn't w
 
 At Glen's request, the "Hide whitespace" checkbox from "Hide whitespace is a checkbox in the file header, beside Reviewed" is replaced by a compact toggle button with a pilcrow (`paragraphsign`), the editors' "show invisibles" mark, in the same place just left of Reviewed. ↵ (`return`) was compared too; Glen chose ¶. The button is styled by hand rather than with the system's toggle styles, which that entry found hard to read when on in an inactive window. Off, it's a plain secondary glyph; under the pointer it takes the `.quaternary` tint the app's other hoverable rows do; on, it's filled with the accent colour and the glyph is white, like a pressed toolbar toggle. In an inactive window the fill turns solid grey rather than fading, so on still reads as on and doesn't look like hover. It is 16pt tall, centred on the row with Reviewed's box. It's still a toggle to accessibility, labelled "Hide whitespace" with an on or off value, and the tooltip, ⌃⌘H and View ▸ Hide Whitespace are unchanged. The words are lost from the header, so the glyph and tooltip have to say what it does.
 
+### The ¶ toggle keeps a faint fill while off, and "Reviewed" puts its box after its label
+
+At Glen's request the hide-whitespace toggle keeps a faint fill while off, so it always reads as a button, and its on state stays on the accent colour in an inactive window too, since a grey fill there was hard to tell from the off one. The "Reviewed" checkbox shows its label first and its box after it, at the header's right edge; clicking the label still toggles it, and it reads to VoiceOver as an ordinary checkbox.
+
 ## Not yet decided
 
 Nothing is pending.

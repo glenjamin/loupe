@@ -164,7 +164,7 @@ private struct FileHeader: View {
                 Toggle("Reviewed", isOn: Binding(get: { review.isViewed }, set: { viewed in
                     if viewed { review.markViewedAndAdvance() } else { review.toggleViewed() }
                 }))
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(LabelFirstCheckboxStyle())
                     .help("Mark this file reviewed on GitHub and show the next unreviewed file (⇧V toggles it without moving on)")
             }
         }
@@ -752,8 +752,8 @@ private struct BlockHeightKey: PreferenceKey {
     }
 }
 
-/// An icon toggle like a toolbar's: a plain secondary glyph while off, tinted under the pointer,
-/// and filled while on, in grey in an inactive window as a selected row is, so on still stands out.
+/// An icon toggle like a toolbar's: a secondary glyph on a faint fill while off, darker under the
+/// pointer, and on the accent while on, even in an inactive window, where grey would read as off.
 private struct HeaderIconToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         HeaderIconToggle(configuration: configuration)
@@ -762,19 +762,17 @@ private struct HeaderIconToggleStyle: ToggleStyle {
 
 private struct HeaderIconToggle: View {
     let configuration: ToggleStyleConfiguration
-    @Environment(\.controlActiveState) private var activeState
     @State private var isHovered = false
 
     var body: some View {
         Button { configuration.isOn.toggle() } label: { configuration.label }
-            .buttonStyle(HeaderIconButtonStyle(isOn: configuration.isOn, isActive: activeState != .inactive, isHovered: isHovered))
+            .buttonStyle(HeaderIconButtonStyle(isOn: configuration.isOn, isHovered: isHovered))
             .onHover { isHovered = $0 }
     }
 }
 
 private struct HeaderIconButtonStyle: ButtonStyle {
     let isOn: Bool
-    let isActive: Bool
     let isHovered: Bool
 
     func makeBody(configuration: Configuration) -> some View {
@@ -793,8 +791,25 @@ private struct HeaderIconButtonStyle: ButtonStyle {
     }
 
     private func fill(isPressed: Bool) -> AnyShapeStyle {
-        guard isOn else { return isPressed ? AnyShapeStyle(.tertiary) : isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear) }
-        let fill = isActive ? Color.accentColor : Color(nsColor: .systemGray)
-        return AnyShapeStyle(fill.opacity(isPressed ? 0.75 : 1))
+        guard isOn else { return isPressed ? AnyShapeStyle(.secondary) : isHovered ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.quaternary) }
+        return AnyShapeStyle(Color.accentColor.opacity(isPressed ? 0.75 : 1))
+    }
+}
+
+/// A checkbox with its label before the box, which clicking also toggles.
+private struct LabelFirstCheckboxStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 5) {
+            configuration.label
+                .contentShape(Rectangle())
+                .onTapGesture { configuration.isOn.toggle() }
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+        }
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.checkbox)
+        }
     }
 }
