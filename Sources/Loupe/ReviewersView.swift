@@ -114,14 +114,16 @@ private struct ReviewerRow: View {
     }
 }
 
-/// Filters the people and teams who could review as the viewer types, and asks the one chosen,
-/// saying here if GitHub refuses.
+/// Filters the people and teams who could review as the viewer types, those already asked first
+/// and ticked, as on github.com. Choosing someone asks them, or withdraws the request of someone
+/// ticked, saying here if GitHub refuses.
 private struct RequestReviewPopover: View {
     let tab: PullRequestTab
     @State private var text = ""
     @State private var fetchError: String?
 
     var body: some View {
+        let requested = tab.requestedReviewers(matching: text)
         let candidates = tab.reviewerCandidates(matching: text)
         VStack(alignment: .leading, spacing: 8) {
             TextField("Search people and teams", text: $text)
@@ -133,14 +135,25 @@ private struct RequestReviewPopover: View {
                     .lineLimit(3)
                     .textSelection(.enabled)
             }
-            if let candidates, !candidates.isEmpty {
-                List(candidates) { reviewer in
-                    Button {
-                        Task { await tab.requestReview(from: reviewer) }
-                    } label: {
-                        CandidateRow(reviewer: reviewer, isSuggested: tab.isSuggestedReviewer(reviewer))
+            if !requested.isEmpty || candidates?.isEmpty == false {
+                List {
+                    ForEach(requested) { reviewer in
+                        Button {
+                            Task { await tab.removeReviewRequest(from: reviewer) }
+                        } label: {
+                            CandidateRow(reviewer: reviewer, isRequested: true, isSuggested: tab.isSuggestedReviewer(reviewer))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Remove \(reviewer.displayName) from the reviewers")
                     }
-                    .buttonStyle(.plain)
+                    ForEach(candidates ?? []) { reviewer in
+                        Button {
+                            Task { await tab.requestReview(from: reviewer) }
+                        } label: {
+                            CandidateRow(reviewer: reviewer, isRequested: false, isSuggested: tab.isSuggestedReviewer(reviewer))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .listStyle(.plain)
             } else {
@@ -163,13 +176,21 @@ private struct RequestReviewPopover: View {
     }
 }
 
-/// A reviewer to pick, with a quiet caption on those GitHub suggests, which come first.
+/// A reviewer to pick, ticked if already asked, with a quiet caption on those GitHub suggests,
+/// which come first.
 private struct CandidateRow: View {
     let reviewer: Reviewer
+    let isRequested: Bool
     let isSuggested: Bool
 
     var body: some View {
         HStack(spacing: 6) {
+            // Every row keeps the tick's place, so the names line up.
+            Image(systemName: "checkmark")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tint)
+                .opacity(isRequested ? 1 : 0)
+                .frame(width: 12)
             Image(systemName: reviewer.kind == .team ? "person.2" : "person")
                 .foregroundStyle(.secondary)
                 .frame(width: 18)

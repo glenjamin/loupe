@@ -124,6 +124,91 @@ struct ReviewersTests {
         #expect(tab.reviewRequestError == nil)
     }
 
+    @Test func thoseAskedAreTickedAndChoosingThemAgainWithdrawsTheRequest() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = app.mine[0]
+        try await app.conversations.add(pullRequest.id, number: pullRequest.number)
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        await tab.load()
+        let kit = try #require(try await candidates(of: tab, matching: "vance").first)
+        await tab.requestReview(from: kit)
+        let devs = try #require(try await candidates(of: tab, matching: "devs").first)
+        await tab.requestReview(from: devs)
+
+        // pat-barrow was asked on github.com.
+        #expect(tab.requestedReviewers(matching: "").map(\.displayName) == ["pat-barrow", "kit-vance", "Devs"])
+        #expect(tab.requestedReviewers(matching: "BARROW").map(\.login) == ["pat-barrow"], "filtered as typed")
+        let pat = try #require(tab.requestedReviewers(matching: "barrow").first)
+
+        await app.conversations.hold(.removeReviewRequest)
+        let removing = Task { await tab.removeReviewRequest(from: pat) }
+        await app.conversations.arrival(of: .removeReviewRequest)
+        #expect(tab.reviewers?.map(\.reviewer.login) == ["kit-vance", "tamarinworks/devs"], "taken off before GitHub answers")
+        #expect(tab.requestedReviewers(matching: "barrow").isEmpty)
+        await app.conversations.release(.removeReviewRequest)
+        await removing.value
+
+        await tab.removeReviewRequest(from: devs)
+
+        #expect(await app.conversations.reviewRequestRemovalsReceived == [
+            .init(repository: pullRequest.repository, number: pullRequest.number, reviewers: ["pat-barrow"], teamReviewers: []),
+            .init(repository: pullRequest.repository, number: pullRequest.number, reviewers: [], teamReviewers: ["devs"]),
+        ])
+        #expect(await app.conversations.reviewRequestsReceived.count == 2, "never by replacing the whole set")
+        #expect(tab.reviewers?.map(\.reviewer.login) == ["kit-vance"])
+        #expect(tab.reviewRequestError == nil)
+        #expect(try app.store.conversation(of: pullRequest.id)?.reviewRequests.map(\.login) == ["kit-vance"])
+        #expect(try await candidates(of: tab, matching: "barrow").map(\.login) == ["pat-barrow"], "offered to ask again")
+
+        // The PR's row stops naming them straight away, and keeps it so.
+        #expect(app.tabs.lists.pullRequest(id: pullRequest.id)?.requestedReviewers == [.user(login: "kit-vance")])
+        #expect(try app.relaunch().lists.pullRequest(id: pullRequest.id)?.requestedReviewers == [.user(login: "kit-vance")])
+    }
+
+    @Test func withdrawingTheRequestOfSomeoneWhoHasReviewedLeavesTheirReview() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = app.mine[0]
+        try await app.conversations.add(pullRequest.id, number: pullRequest.number)
+        try await app.conversations.review("APPROVED", by: "tam-fairweather", on: pullRequest.id)
+        try await app.conversations.request("tam-fairweather", on: pullRequest.id)
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        await tab.load()
+        let tam = try #require(tab.requestedReviewers(matching: "fairweather").first)
+        #expect(tab.reviewers?.first { $0.id == tam.id }?.state == .requested)
+
+        await tab.removeReviewRequest(from: tam)
+
+        #expect(tab.requestedReviewers(matching: "fairweather").isEmpty)
+        let shown = try #require(tab.reviewers?.first { $0.id == tam.id })
+        #expect(shown.state == .approved, "their approval stands, as on github.com")
+        #expect(shown.canReRequest)
+    }
+
+    @Test func aRefusedWithdrawalPutsTheReviewerBackAndSaysWhy() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = app.mine[0]
+        try await app.conversations.add(pullRequest.id, number: pullRequest.number)
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        await tab.load()
+        let kit = try #require(try await candidates(of: tab, matching: "vance").first)
+        await tab.requestReview(from: kit)
+        let before = tab.reviewers
+        await app.conversations.refuseReviewRequestRemovals()
+
+        let pat = try #require(tab.requestedReviewers(matching: "barrow").first)
+        await tab.removeReviewRequest(from: pat)
+
+        #expect(tab.reviewers == before, "back where they were")
+        let error = try #require(tab.reviewRequestError)
+        #expect(error.contains("pat-barrow"))
+        #expect(error.contains("Resource not accessible"))
+        #expect(try app.store.conversation(of: pullRequest.id)?.reviewRequests.map(\.login) == ["pat-barrow", "kit-vance"])
+        #expect(app.tabs.lists.pullRequest(id: pullRequest.id)?.requestedReviewers == [.user(login: "kit-vance")], "nor taken off its row")
+    }
+
     @Test func teamsTheTokenCantSeeAreLeftOutQuietly() async throws {
         let app = try await ConversationApp()
         let pullRequest = app.mine[0]

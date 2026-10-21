@@ -33,6 +33,17 @@ extension GitHubClient {
         let _: RequestReviewsResponse = try await query(Self.requestReviewsMutation, variables: RequestReviewsVariables(input: input))
     }
 
+    /// Withdraws the requests for `reviewers` to review PR `number` in `repository` (`owner/name`),
+    /// leaving everyone else asked and any review they've already submitted. REST, as GraphQL can
+    /// only replace the whole set of requests, which would drop anyone asked meanwhile.
+    public func removeReviewRequests(from reviewers: [Reviewer], repository: String, number: Int) async throws {
+        let removal = RemoveReviewRequests(
+            reviewers: reviewers.filter { $0.kind != .team }.map(\.login),
+            team_reviewers: reviewers.filter { $0.kind == .team }.map { String($0.login.split(separator: "/").last ?? "") }
+        )
+        _ = try await rest("DELETE", path: "/repos/\(repository)/pulls/\(number)/requested_reviewers", json: JSONEncoder().encode(removal))
+    }
+
     /// A refusal to read teams comes as a GraphQL error and means none can be offered; any other
     /// failure fails the whole fetch, so it's tried again rather than taken as no teams.
     private func teams(owner: String, name: String) async throws -> [Reviewer] {
@@ -157,3 +168,9 @@ private struct RequestReviewsInput: Encodable, Sendable {
 }
 
 private struct RequestReviewsResponse: Decodable {}
+
+/// Users and bots by login, teams by slug alone.
+private struct RemoveReviewRequests: Encodable {
+    let reviewers: [String]
+    let team_reviewers: [String]
+}

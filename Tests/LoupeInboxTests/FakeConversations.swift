@@ -8,7 +8,8 @@ import Testing
 /// doesn't know. Its repos' people and teams are those in `probe/reviewer-candidates.json`, which
 /// it pages with cursors as GitHub does; asking them to review adds them to a PR's review
 /// requests, and asking anyone it doesn't know is refused, as GitHub refuses an id it can't
-/// resolve. A PR's description can be asked for alone and replaced with `updatePullRequest`,
+/// resolve. Requests are withdrawn over REST, for a PR added with its number, which leaves any
+/// review the reviewer submitted and passes over anyone not asked, or refused. A PR's description can be asked for alone and replaced with `updatePullRequest`,
 /// which renders it afresh. A PR's review threads can be asked for alone, replied to over
 /// REST, which adds the viewer's comment, and resolved or unresolved. The viewer can hold one
 /// pending review per PR, as in `probe/pending-review.json`: started with or without threads,
@@ -71,6 +72,7 @@ actor FakeConversations {
     /// they were asked for.
     enum Gate: Hashable {
         case comment, reply, resolve, addToReview, submit, discard, deleteComment, conversationComment, edit, deleteConversationComment
+        case removeReviewRequest
         case conversation, threads
     }
 
@@ -100,6 +102,9 @@ actor FakeConversations {
     private(set) var pagesServed = 0
     /// The input of every `requestReviews` received, in order.
     private(set) var reviewRequestsReceived: [ReviewRequestInput] = []
+    /// Every withdrawal of review requests received, in order.
+    private(set) var reviewRequestRemovalsReceived: [ReviewRequestRemoval] = []
+    private var reviewRequestRemovalsRefused = false
     /// The input of every `updatePullRequest` received, in order.
     private(set) var updatesReceived: [UpdateInput] = []
     /// How many pages of people or teams have been asked for, served or not.
@@ -182,6 +187,13 @@ actor FakeConversations {
         let userIds: [String]
         let teamIds: [String]
         let union: Bool
+    }
+
+    struct ReviewRequestRemoval: Equatable {
+        let repository: String
+        let number: Int
+        let reviewers: [String]
+        let teamReviewers: [String]
     }
 
     struct UpdateInput: Equatable {
@@ -368,6 +380,9 @@ actor FakeConversations {
 
     func hideTeams() { teamsHidden = true }
 
+    /// Refuses to withdraw review requests, as for a PR the token can't write to.
+    func refuseReviewRequestRemovals() { reviewRequestRemovalsRefused = true }
+
     /// Replaces the PR's description, as its author does on github.com.
     func editBody(_ body: String, on id: String) throws {
         var node = try #require(nodes[id])
@@ -529,6 +544,31 @@ actor FakeConversations {
         return (try JSONSerialization.data(withJSONObject: ["data": ["requestReviews": ["clientMutationId": NSNull()]]]), fakeResponse(url, status: 200))
     }
 
+    /// `DELETE /repos/{owner}/{repo}/pulls/{number}/requested_reviewers`, naming users by login
+    /// and teams by slug. Like GitHub it takes those named off the PR's review requests, passing
+    /// over anyone not asked, leaves their reviews alone, and answers with the PR.
+    private func removeReviewRequests(_ request: URLRequest, repository: String, number: Int, _ url: URL) throws -> (Data, HTTPURLResponse) {
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
+        let body = try #require(request.httpBody)
+        let content = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let logins = content["reviewers"] as? [String] ?? []
+        let slugs = content["team_reviewers"] as? [String] ?? []
+        reviewRequestRemovalsReceived.append(ReviewRequestRemoval(repository: repository, number: number, reviewers: logins, teamReviewers: slugs))
+        if failing { return (Data(), fakeResponse(url, status: 502)) }
+        if reviewRequestRemovalsRefused {
+            return (Data(#"{"message":"Resource not accessible by personal access token","status":"403"}"#.utf8), fakeResponse(url, status: 403))
+        }
+        guard let id = numbers[number], var node = nodes[id] else {
+            return (Data(#"{"message":"Not Found","status":"404"}"#.utf8), fakeResponse(url, status: 404))
+        }
+        let requests = ((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
+        node["reviewRequests"] = ["nodes": requests.filter { !isNamed($0["requestedReviewer"] as? [String: Any] ?? [:], logins: logins, slugs: slugs) }]
+        nodes[id] = node
+        let answer: [String: Any] = ["number": number, "requested_reviewers": [], "requested_teams": []]
+        return (try JSONSerialization.data(withJSONObject: answer), fakeResponse(url, status: 200))
+    }
+
     /// A REST request: a reply to a review thread, at
     /// `/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies`. Like GitHub, it
     /// takes only the REST id of a thread's first comment, as replies to replies aren't
@@ -536,6 +576,10 @@ actor FakeConversations {
     /// shape, its `body_html` included as the `full` media type asks.
     func sendREST(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let url = try #require(request.url)
+        if let match = url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/requested_reviewers/) {
+            await pass(.removeReviewRequest)
+            return try removeReviewRequests(request, repository: String(match.1), number: try #require(Int(match.2)), url)
+        }
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
         #expect(request.value(forHTTPHeaderField: "Accept") == "application/vnd.github.full+json", "so the comment comes back rendered")
@@ -1047,6 +1091,15 @@ actor FakeConversations {
         }
         node["reviewRequests"] = ["nodes": requests]
         nodes[id] = node
+    }
+
+    /// Whether a requested reviewer is a user among `logins` or a team among `slugs`.
+    private func isNamed(_ reviewer: [String: Any], logins: [String], slugs: [String]) -> Bool {
+        if reviewer["__typename"] as? String == "Team" {
+            let slug = (reviewer["combinedSlug"] as? String)?.split(separator: "/").last.map(String.init)
+            return slug.map(slugs.contains) ?? false
+        }
+        return logins.contains { $0 == reviewer["login"] as? String }
     }
 
     /// The user with `login`, shaped as the conversation query's `Reviewer` fragment returns them.

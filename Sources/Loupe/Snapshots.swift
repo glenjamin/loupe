@@ -1187,6 +1187,7 @@ private func saveSnapshotsOfReviewerPickers(in windows: WindowManager, to direct
             print("\(windows.title(of: tab.id)) couldn't fetch reviewers: \(error)")
         }
         let offered = tab.reviewerCandidates(matching: "") ?? []
+        print("\(windows.title(of: tab.id)) ticks \(tab.requestedReviewers(matching: "").map(\.login))")
         print("\(windows.title(of: tab.id)) offers \(offered.map { tab.isSuggestedReviewer($0) ? "\($0.login) (suggested)" : $0.login })")
         try? await Task.sleep(for: .milliseconds(300))
         window.layoutIfNeeded()

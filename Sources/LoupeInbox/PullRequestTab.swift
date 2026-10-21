@@ -56,7 +56,7 @@ public final class PullRequestTab: Identifiable {
     }
     /// Whether the list of commits to pick from is open, kept while switching between tabs.
     public var isPickingCommit = false
-    /// Why GitHub refused the last request for a review, until another is made.
+    /// Why GitHub refused the last request for a review, or its withdrawal, until another is made.
     public private(set) var reviewRequestError: String?
     /// Whether a merge, or taking the PR out of draft, is on its way to GitHub.
     public private(set) var isMerging = false
@@ -713,6 +713,14 @@ public final class PullRequestTab: Identifiable {
         }
     }
 
+    /// Those asked to review and not yet answered, in GitHub's order, whose login or name
+    /// contains `text`: shown ticked above the candidates, to withdraw by choosing again.
+    public func requestedReviewers(matching text: String) -> [Reviewer] {
+        (conversation?.reviewRequests ?? []).filter {
+            text.isEmpty || $0.login.localizedCaseInsensitiveContains(text) || $0.name?.localizedCaseInsensitiveContains(text) == true
+        }
+    }
+
     /// Whether GitHub suggests `reviewer` for this PR.
     public func isSuggestedReviewer(_ reviewer: Reviewer) -> Bool {
         suggestedReviewers?.contains { $0.id == reviewer.id } == true
@@ -738,6 +746,32 @@ public final class PullRequestTab: Identifiable {
             try await lists.reviewRequested(of: RequestedReviewer(reviewer), on: id)
         } catch {
             log("Couldn't store the request of \(reviewer.login) on \(title): \(error)")
+        }
+        await refreshConversation()
+    }
+
+    /// Withdraws the request for `reviewer` to review, as unticking them on github.com does: any
+    /// review they've submitted stays, and they show with it. They're taken off at once and put
+    /// back if GitHub refuses; once it agrees the conversation is fetched again and the PR's row
+    /// stops naming them.
+    public func removeReviewRequest(from reviewer: Reviewer) async {
+        guard let index = conversation?.reviewRequests.firstIndex(where: { $0.id == reviewer.id }) else { return }
+        conversation?.reviewRequests.remove(at: index)
+        reviewRequestError = nil
+        do {
+            try await client.removeReviewRequests(from: [reviewer], repository: pullRequest.repository, number: pullRequest.number)
+        } catch {
+            if var requests = conversation?.reviewRequests, !requests.contains(where: { $0.id == reviewer.id }) {
+                requests.insert(reviewer, at: min(index, requests.count))
+                conversation?.reviewRequests = requests
+            }
+            reviewRequestError = "Couldn't remove \(reviewer.displayName) from the reviewers: \(error.localizedDescription)"
+            return
+        }
+        do {
+            try await lists.reviewRequestRemoved(of: RequestedReviewer(reviewer), on: id)
+        } catch {
+            log("Couldn't store the removal of \(reviewer.login) from \(title): \(error)")
         }
         await refreshConversation()
     }

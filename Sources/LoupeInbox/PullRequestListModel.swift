@@ -234,6 +234,18 @@ public final class PullRequestListModel {
         }
     }
 
+    /// Takes `reviewer` off the PR's requested reviewers once GitHub has agreed, so its row and
+    /// TODO step follow before the next refresh.
+    func reviewRequestRemoved(of reviewer: RequestedReviewer, on id: String) async throws {
+        guard var pullRequest = pullRequest(id: id), let requested = pullRequest.requestedReviewers, requested.contains(reviewer) else { return }
+        let remaining = requested.filter { $0 != reviewer }
+        snapshot = try await store.updateRequestedReviewers([id: remaining])
+        if unlisted[id] != nil {
+            pullRequest.requestedReviewers = remaining
+            unlisted[id] = pullRequest
+        }
+    }
+
     /// Records the viewer's review of the PR with `id`, once GitHub has accepted it from here, so
     /// its row says so before the next refresh. An approval or request for changes answers their
     /// request for review, as on GitHub.

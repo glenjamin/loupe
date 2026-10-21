@@ -980,6 +980,12 @@ This revises "The report's artifacts are downloaded by the `circleci` CLI, and L
 
 Each file fetched is written into the same per-job directory the CLI downloads into, under the same 30-day pruning, as the job's artifacts never change, so reopening a report is instant and fetches nothing. The report itself is fetched before the page loads, so a refusal shows the pane's "isn't signed in" failure with `circleci auth login`, and its absence says the report isn't among the job's artifacts. When the script prints no token (signed out, no keychain item), the CLI downloads the whole job as before, with its progress bar; that is the only sign of which way the report came, as a wait otherwise shows "Loading the visual review report…". A download replaces any files fetched earlier for the job. Signed out with only some of a job's files fetched before, the files not fetched answer 404 until signed in again or the job is pruned.
 
+### Those asked to review are ticked in the picker, and choosing them again withdraws the request
+
+This extends "Reviewers show in the header on the viewer's own PRs, and more can be asked there". As on github.com, the Reviewers picker lists everyone asked and not yet answered first, in GitHub's order and ticked, then the candidates as before, all filtered as typed. Choosing a ticked reviewer withdraws their request: they're taken off at once, put back where they were with GitHub's reason shown if it refuses, and once it agrees the conversation is fetched again and the PR's row stops naming them, so its TODO step follows.
+
+GraphQL can't withdraw one request: its only way is `requestReviews` without `union`, which replaces the whole set and would drop anyone asked meanwhile, from github.com or another tab. So it's REST, `DELETE /repos/{owner}/{repo}/pulls/{number}/requested_reviewers`, naming people (and bots) by login and teams by their slug alone. Withdrawing touches only the request. Someone asked again after reviewing goes back to showing their earlier review, an approval included, as unticking them does on github.com. Someone who has reviewed and isn't asked shows unticked there, so they're offered unticked here, and choosing them asks them again. Dismissing a review is a separate act and isn't offered.
+
 ## Not yet decided
 
 Nothing is pending.
