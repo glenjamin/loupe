@@ -996,6 +996,10 @@ Line counts don't follow it, as github.com's don't: the file list, each file's h
 
 Comments stay on, as on github.com. Lines in a whitespace-ignored diff are still numbered as in the file, and git shows an unchanged line as the head has it, so threads land under the same rows (a thread on a reindented line, either side, now sits under it as an unchanged line), and a comment posts the head's or base's own line number. A hunk ignoring whitespace lies within one hunk of the real diff, as every change it shows is in that diff too, so a range of lines picked in it is one GitHub takes. Word-level emphasis already skipped changes to runs of whitespace; with whitespace hidden, a word split or joined only by whitespace (`foo bar` for `foobar`) isn't emphasised either.
 
+### Inline code in native comment bodies sits on GitHub's rounded pill
+
+Inline code in a comment drawn natively, as in a thread on the diff, is set as github.com and the conversation's stylesheet set it: monospaced at 85% of the text's size, on Primer's muted grey (light and dark) in a rounded pill padded from the text around it. The padding is made with kerning, not added characters, so a selection's text still matches the block's, which quoting relies on. SwiftUI only exposes a line's runs to a `TextRenderer` (macOS 15), and selectable text is drawn by AppKit, which skips the renderer, so the pills are drawn by the same text laid out a second time behind it, unselectable and drawing nothing but the pills. On macOS 14 the code gets a flat background instead.
+
 ## Not yet decided
 
 Nothing is pending.

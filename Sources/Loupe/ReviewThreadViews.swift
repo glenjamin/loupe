@@ -762,7 +762,7 @@ struct CommentBody: View {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 switch block {
                 case let .text(text, indent):
-                    Text(text)
+                    InlineCodeText(text: text)
                         .padding(.leading, CGFloat(indent) * 16)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)

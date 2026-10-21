@@ -82,6 +82,13 @@ enum SnapshotRun {
     static func start(windows: WindowManager) {
         guard let directory else { return }
         let environment = ProcessInfo.processInfo.environment
+        // LOUPE_SNAPSHOT_APPEARANCE=<dark|light> draws the app in that appearance, whatever the
+        // system's.
+        switch environment["LOUPE_SNAPSHOT_APPEARANCE"] {
+        case "dark"?: NSApp.appearance = NSAppearance(named: .darkAqua)
+        case "light"?: NSApp.appearance = NSAppearance(named: .aqua)
+        default: break
+        }
         let tabs = windows.tabs
         let deadline = Date.now.addingTimeInterval(20)
         let started = Date.now
