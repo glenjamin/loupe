@@ -121,13 +121,33 @@ private struct RequestReviewPopover: View {
     let tab: PullRequestTab
     @State private var text = ""
     @State private var fetchError: String?
+    /// The row ↓ and ↑ have moved to, which Return picks; the focus stays in the search field.
+    @State private var highlighted: Int?
 
     var body: some View {
         let requested = tab.requestedReviewers(matching: text)
         let candidates = tab.reviewerCandidates(matching: text)
+        let choices = requested.map { Choice(reviewer: $0, isRequested: true) }
+            + (candidates ?? []).map { Choice(reviewer: $0, isRequested: false) }
         VStack(alignment: .leading, spacing: 8) {
             TextField("Search people and teams", text: $text)
                 .textFieldStyle(.roundedBorder)
+                .onChange(of: text) { highlighted = nil }
+                .onKeyPress(.downArrow) {
+                    guard !choices.isEmpty else { return .ignored }
+                    highlighted = min((highlighted ?? -1) + 1, choices.count - 1)
+                    return .handled
+                }
+                .onKeyPress(.upArrow) {
+                    guard let index = highlighted else { return .ignored }
+                    highlighted = index > 0 ? index - 1 : nil
+                    return .handled
+                }
+                .onKeyPress(.return) {
+                    guard let index = highlighted, choices.indices.contains(index) else { return .ignored }
+                    choose(choices[index])
+                    return .handled
+                }
             if let error = tab.reviewRequestError ?? fetchError {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -135,27 +155,26 @@ private struct RequestReviewPopover: View {
                     .lineLimit(3)
                     .textSelection(.enabled)
             }
-            if !requested.isEmpty || candidates?.isEmpty == false {
-                List {
-                    ForEach(requested) { reviewer in
-                        Button {
-                            Task { await tab.removeReviewRequest(from: reviewer) }
-                        } label: {
-                            CandidateRow(reviewer: reviewer, isRequested: true, isSuggested: tab.isSuggestedReviewer(reviewer))
+            if !choices.isEmpty {
+                ScrollViewReader { scroller in
+                    List {
+                        ForEach(Array(choices.enumerated()), id: \.element.id) { index, choice in
+                            Button { choose(choice) } label: {
+                                CandidateRow(reviewer: choice.reviewer, isRequested: choice.isRequested, isSuggested: tab.isSuggestedReviewer(choice.reviewer))
+                            }
+                            .buttonStyle(.plain)
+                            .help(choice.isRequested ? "Remove \(choice.reviewer.displayName) from the reviewers" : "")
+                            .listRowBackground(
+                                index == highlighted ? RoundedRectangle(cornerRadius: 5).fill(.quaternary) : nil
+                            )
+                            .id(choice.id)
                         }
-                        .buttonStyle(.plain)
-                        .help("Remove \(reviewer.displayName) from the reviewers")
                     }
-                    ForEach(candidates ?? []) { reviewer in
-                        Button {
-                            Task { await tab.requestReview(from: reviewer) }
-                        } label: {
-                            CandidateRow(reviewer: reviewer, isRequested: false, isSuggested: tab.isSuggestedReviewer(reviewer))
-                        }
-                        .buttonStyle(.plain)
+                    .listStyle(.plain)
+                    .onChange(of: highlighted) {
+                        if let index = highlighted, choices.indices.contains(index) { scroller.scrollTo(choices[index].id) }
                     }
                 }
-                .listStyle(.plain)
             } else {
                 Text(candidates == nil && fetchError == nil ? "Searching…" : "No one found")
                     .foregroundStyle(.secondary)
@@ -173,6 +192,24 @@ private struct RequestReviewPopover: View {
                 fetchError = "Couldn't find reviewers: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// Asks a reviewer, or withdraws the request of one already asked.
+    private func choose(_ choice: Choice) {
+        Task {
+            if choice.isRequested {
+                await tab.removeReviewRequest(from: choice.reviewer)
+            } else {
+                await tab.requestReview(from: choice.reviewer)
+            }
+        }
+    }
+
+    /// A row of the list: someone already asked, ticked, or someone who could be.
+    private struct Choice: Identifiable {
+        let reviewer: Reviewer
+        let isRequested: Bool
+        var id: String { "\(isRequested ? "asked" : "candidate"):\(reviewer.id)" }
     }
 }
 
