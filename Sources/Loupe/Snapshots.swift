@@ -576,6 +576,12 @@ enum SnapshotRun {
                     let urls = wanted.split(separator: " ").compactMap { URL(string: String($0)) }
                     for url in try await saveSnapshotsOfDeepLinks(urls, in: windows, to: directory) { print(url.path(percentEncoded: false)) }
                 }
+                // LOUPE_SNAPSHOT_SEARCH=<query> presses ⌘F on the lists and types the query,
+                // snapshots the matches, steps into them with ↓, clears and hides the search with
+                // Esc, then searches again for the usual PNGs; and presses ⌘F in each PR's tab.
+                if let query = environment["LOUPE_SNAPSHOT_SEARCH"] {
+                    for url in try await saveSnapshotsOfSearch(query, in: windows, to: directory) { print(url.path(percentEncoded: false)) }
+                }
                 for url in try await saveSnapshotsOfAllTabs(in: windows, to: directory) { print(url.path(percentEncoded: false)) }
             } catch {
                 FileHandle.standardError.write(Data("Couldn't write snapshots: \(error)\n".utf8))
@@ -1026,6 +1032,138 @@ private func scrollList(toMarker name: String, in window: NSWindow, toTop: Bool)
         document.scroll(NSPoint(x: 0, y: min(end, visible.minY + visible.height * 0.8)))
     }
     return nil
+}
+
+/// Shows the lists, presses ⌘F through the menu bar and types `query` a key at a time, prints
+/// the matching rows of the mode shown and writes `search.png`; presses ↓ and writes
+/// `search-selected.png`; presses ⌘F and Esc, then Esc again, printing the search and the focus
+/// after each, and writes `search-hidden.png`; then searches again, so the usual PNGs show it.
+/// In each PR's tab it presses ⌘F with the conversation, then the diff, focused, printing whether
+/// the diff's find bar showed, and writes `search-find-<title>.png`.
+@MainActor
+private func saveSnapshotsOfSearch(_ query: String, in windows: WindowManager, to directory: URL) async throws -> [URL] {
+    guard let window = windows.mainWindow, let root = window.contentView else { throw SnapshotError.noSuchTab("lists") }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let lists = windows.tabs.lists
+    let search = windows.listSearch
+    func press(_ characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) {
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode
+        ) else { return }
+        // As AppKit delivers a key: the window's views, then the menus, then the focus.
+        if modifiers.contains(.command), window.performKeyEquivalent(with: event) || NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return }
+        window.sendEvent(event)
+    }
+    func settle() async {
+        try? await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+    }
+    func focus() -> String {
+        guard let responder = window.firstResponder else { return "nothing" }
+        if let editor = responder as? NSTextView, editor.isFieldEditor, let field = editor.delegate as? NSSearchField {
+            return "the search field (\(type(of: field)))"
+        }
+        if let table = responder as? NSTableView { return "a list, row \(table.selectedRow) selected" }
+        return "\(type(of: responder))"
+    }
+    func report(_ when: String) {
+        print("\(when): field \(search.isShown ? "shown" : "hidden"), search \"\(lists.searchText)\", focus in \(focus())")
+    }
+    // The field takes the focus once the toolbar is drawn with it, and nothing draws this
+    // off-screen window unasked, as the screen would a shown one.
+    func fieldFocused() async {
+        await SnapshotRun.wait(until: .now.addingTimeInterval(5)) {
+            window.displayIfNeeded()
+            return focus().hasPrefix("the search field")
+        }
+        await settle()
+    }
+    func typeText(_ text: String) async {
+        for character in text {
+            press(String(character), keyCode: character == " " ? 49 : 0)
+        }
+        await settle()
+    }
+
+    windows.select(nil)
+    await settle()
+    report("before")
+    press("f", keyCode: 3, modifiers: .command)
+    await fieldFocused()
+    report("after ⌘F")
+    await typeText(query)
+    report("typed \"\(query)\"")
+    if UserDefaults.standard.string(forKey: ListMode.key) == ListMode.todo.rawValue {
+        let todo = lists.todo()
+        for (title, items) in [("Review", todo.review), ("Yours", todo.yours), ("Waiting on others", todo.waiting), ("Over a month", todo.overAMonth), ("Over 6 months", todo.overSixMonths)] where !items.isEmpty {
+            print("\(title) (\(items.count))")
+            for item in items {
+                let stacked = item.stacked.map { " +#\($0.pullRequest.number)" }.joined()
+                print("  \(item.pullRequest.repository) #\(item.pullRequest.number) \(item.pullRequest.title) — \(item.reason.label)\(stacked)")
+            }
+        }
+    } else {
+        for list in PullRequestList.allCases {
+            let listing = lists.listing(in: list)
+            print("\(list) (\(listing.count))")
+            for listed in listing {
+                let on = listed.parent.map { " on #\($0.number)" } ?? ""
+                print("  \(String(repeating: "  ", count: listed.depth))\(listed.pullRequest.repository) #\(listed.pullRequest.number) \(listed.pullRequest.title)\(on)")
+            }
+        }
+    }
+    var urls = [directory.appending(path: "search.png")]
+    try await saveSnapshot(of: window, to: urls[0])
+    press("\u{F701}", keyCode: 125, modifiers: [.numericPad, .function])
+    await settle()
+    report("after ↓")
+    urls.append(directory.appending(path: "search-selected.png"))
+    try await saveSnapshot(of: window, to: urls[urls.count - 1])
+    press("f", keyCode: 3, modifiers: .command)
+    await settle()
+    report("after ⌘F again")
+    press("\u{1B}", keyCode: 53)
+    await settle()
+    report("after Esc")
+    press("\u{1B}", keyCode: 53)
+    await settle()
+    report("after a second Esc")
+    urls.append(directory.appending(path: "search-hidden.png"))
+    try await saveSnapshot(of: window, to: urls[urls.count - 1])
+
+    for tab in windows.tabs.tabs {
+        windows.select(tab.id)
+        // The diff last, as the web view can keep the focus from the lists shown next.
+        for section in [ReviewSection.conversation, .files] {
+            tab.section = section
+            try? await Task.sleep(for: .seconds(1))
+            window.layoutIfNeeded()
+            let shown = descendants(of: root).filter { !$0.isHiddenOrHasHiddenAncestor }
+            guard let target = section == .files ? shown.first(where: { $0 is DiffTextView }) : shown.first(where: { $0 is WKWebView }) else {
+                print("\(tab.title) \(section): nothing to focus")
+                continue
+            }
+            window.makeFirstResponder(target)
+            press("f", keyCode: 3, modifiers: .command)
+            await settle()
+            let findBar = target.enclosingScrollView?.isFindBarVisible == true ? "find bar shown" : "no find bar"
+            print("\(tab.title) \(section): ⌘F with \(type(of: target)) focused: \(findBar), lists' field \(search.isShown ? "shown" : "hidden")")
+            if section == .files {
+                let url = directory.appending(path: "search-find-\(sanitised(tab.title)).png")
+                try await saveSnapshot(of: window, to: url)
+                urls.append(url)
+            }
+        }
+    }
+
+    windows.select(nil)
+    await settle()
+    press("f", keyCode: 3, modifiers: .command)
+    await fieldFocused()
+    await typeText(query)
+    report("searching again for the usual PNGs")
+    return urls
 }
 
 /// Prints each list's stacked PRs with their depth and what they're on, then for each PR tab with

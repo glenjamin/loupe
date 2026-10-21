@@ -15,6 +15,8 @@ struct PullRequestListView: View {
             if model.hasStoredLists {
                 Group {
                     switch mode {
+                    case .lists where model.isSearching && PullRequestList.allCases.allSatisfy({ model.pullRequests(in: $0, includingClosed: showsClosed).isEmpty }):
+                        NoSearchMatches(text: model.searchText)
                     case .lists:
                         HStack(spacing: 0) {
                             PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, showsClosed: showsClosed, model: model)
@@ -45,6 +47,19 @@ struct PullRequestListView: View {
                 ProgressView("Loading pull requests…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+    }
+}
+
+/// In place of the lists when nothing in them matches the search.
+struct NoSearchMatches: View {
+    let text: String
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("No pull requests match “\(text.trimmingCharacters(in: .whitespaces))”", systemImage: "magnifyingglass")
+        } description: {
+            Text("Search matches titles, repos, numbers, authors, branches and requested reviewers. Press Esc to clear it.")
         }
     }
 }
@@ -101,7 +116,7 @@ struct PullRequestColumn: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             if pullRequests.isEmpty {
-                Text("Nothing here")
+                Text(model.isSearching ? "No matches" : "Nothing here")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

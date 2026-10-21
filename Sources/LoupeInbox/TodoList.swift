@@ -167,9 +167,11 @@ extension PullRequestListModel {
     /// self-reviewed then most recently updated first within each step, or in Waiting when only
     /// others can move them on; quieter ones go in a section by how long they've been quiet,
     /// Yours' order then Waiting's. A stack of their PRs is one row, for its lowest listed PR,
-    /// ranked and placed by that PR.
+    /// ranked and placed by that PR. While searching, only what matches is placed, a stack's
+    /// matches grouped among themselves, so a match above one that doesn't is its own row.
     public func todo() -> TodoList {
-        let review = pullRequests(in: .toReview).compactMap { pullRequest -> TodoItem? in
+        // A search lists stale requests too, which stay out of Review.
+        let review = pullRequests(in: .toReview).filter { !isStale($0, in: .toReview) }.compactMap { pullRequest -> TodoItem? in
             let mark = reviewMark(on: pullRequest, in: .toReview)
             let reason: TodoReason
             if verdict(on: pullRequest, in: .toReview) == nil {

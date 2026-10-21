@@ -13,11 +13,14 @@ final class WindowManager {
     private static let frameName = "Lists"
 
     let tabs: TabsModel
+    /// The lists' search, for as long as the window is open.
+    let listSearch: ListSearch
     private let content = TabbedContentController()
     private var window: LoupeWindow?
 
     init(tabs: TabsModel) {
         self.tabs = tabs
+        listSearch = ListSearch(lists: tabs.lists)
         tabs.show = { [weak self] _ in
             guard let self else { return }
             render()
@@ -65,6 +68,18 @@ final class WindowManager {
     /// Shows the lists.
     func showLists() {
         select(nil)
+    }
+
+    /// ⌘F: on the lists, their search; in a PR's tab, whatever has the focus finds in itself,
+    /// as the diff and markdown boxes do with their find bars. The focus is the key window's,
+    /// such as a comment's popover, or else this window's, which needn't be key.
+    func find() {
+        guard tabs.selected != nil else { return listSearch.find() }
+        let action = #selector(NSResponder.performTextFinderAction(_:))
+        let sender = ShowFindInterface()
+        if !NSApp.sendAction(action, to: nil, from: sender) {
+            _ = window?.firstResponder?.tryToPerform(action, with: sender)
+        }
     }
 
     /// Shows the PR's tab, or the lists for nil.
@@ -129,7 +144,7 @@ final class WindowManager {
             case let .pending(pending):
                 hostingController(PendingTabView(pending: pending, retry: { [tabs] in tabs.retry(pending) }, close: { [weak self] in self?.close(pending.id) }))
             case nil:
-                hostingController(ListsContent(lists: tabs.lists))
+                hostingController(ListsContent(lists: tabs.lists, search: listSearch))
             }
         }
         ReviewWindows.shared.show(selected?.pullRequestTab, in: window)
@@ -156,7 +171,7 @@ final class WindowManager {
     }
 
     private func makeWindow() -> LoupeWindow {
-        let chrome = WindowChrome(tabs: tabs, content: content)
+        let chrome = WindowChrome(tabs: tabs, search: listSearch, content: content)
         let controller = NSHostingController(rootView: chrome.frame(minWidth: 900, minHeight: 500))
         // The window keeps its own size; the content only sets the minimum.
         controller.sizingOptions = [.minSize]
@@ -234,6 +249,7 @@ final class LoupeWindow: NSWindow, NSWindowDelegate {
 /// in each item's own hosting controller.
 private struct WindowChrome: View {
     let tabs: TabsModel
+    let search: ListSearch
     let content: TabbedContentController
     @AppStorage("showsClosedPullRequests") private var showsClosed = false
     @AppStorage(ListMode.key) private var mode = ListMode.lists
@@ -285,6 +301,7 @@ private struct WindowChrome: View {
         Button("Refresh", systemImage: "arrow.clockwise") { Task { await lists.refresh() } }
             .keyboardShortcut("r")
             .disabled(lists.isLoading)
+        ListSearchToolbarItem(search: search)
     }
 }
 
@@ -296,15 +313,40 @@ private struct ControllerView: NSViewControllerRepresentable {
     func updateNSViewController(_ controller: NSViewController, context: Context) {}
 }
 
-/// The PR lists, whose refresh controls are in the window's toolbar.
+/// The PR lists, whose refresh controls and search are in the window's toolbar.
 private struct ListsContent: View {
     let lists: PullRequestListModel
+    let search: ListSearch
     @AppStorage("showsClosedPullRequests") private var showsClosed = false
     @AppStorage(ListMode.key) private var mode = ListMode.lists
 
     var body: some View {
         PullRequestListView(model: lists, showsClosed: showsClosed, mode: mode)
+            // Esc in the list, after Esc in the field cleared it and came back here.
+            .onKeyPress(.escape) { search.escape() ? .handled : .ignored }
     }
+}
+
+/// Edit ▸ Find ▸ Find… (⌘F), which searches the lists while they're shown and otherwise asks
+/// what has the focus in a PR's tab to find in itself.
+struct FindCommands: Commands {
+    let windows: WindowManager
+
+    var body: some Commands {
+        CommandGroup(after: .pasteboard) {
+            Divider()
+            Menu("Find") {
+                Button("Find…") { windows.find() }
+                    .keyboardShortcut("f")
+            }
+        }
+    }
+}
+
+/// The sender of a find action AppKit's text views take as "show the find bar", which they
+/// read from its tag as they would a menu item's.
+private final class ShowFindInterface: NSObject {
+    @objc let tag = NSTextFinder.Action.showFindInterface.rawValue
 }
 
 /// The tab keys: ⌘W and ⌥⌘W close PR tabs, ⌘⇧[ and ⌘⇧] step through the strip, and ⌘1–⌘9

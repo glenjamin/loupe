@@ -32,12 +32,16 @@ struct TodoListView: View {
 
     var body: some View {
         let todo = model.todo()
+        // A search shows its matches wherever they are, so nothing it finds is folded away.
+        let searching = model.isSearching
         let review = rows(todo.review)
         let yours = rows(todo.yours)
-        let waiting = showsWaiting ? rows(todo.waiting) : []
-        let overAMonth = showsOverAMonth ? rows(todo.overAMonth) : []
-        let overSixMonths = showsOverSixMonths ? rows(todo.overSixMonths) : []
-        if todo.isEmpty {
+        let waiting = showsWaiting || searching ? rows(todo.waiting) : []
+        let overAMonth = showsOverAMonth || searching ? rows(todo.overAMonth) : []
+        let overSixMonths = showsOverSixMonths || searching ? rows(todo.overSixMonths) : []
+        if todo.isEmpty && searching {
+            NoSearchMatches(text: model.searchText)
+        } else if todo.isEmpty {
             Text("Nothing to do")
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -97,28 +101,32 @@ struct TodoListView: View {
     }
 
     /// A section's title with its count, which folds and unfolds the section when clicked.
+    /// A section's title with its count, which folds and unfolds the section when clicked. A
+    /// search holds it open.
     private func foldingTitle(_ title: String, count: Int, shows: Binding<Bool>, marker: String, what: String) -> some View {
-        Button {
+        let isOpen = shows.wrappedValue || model.isSearching
+        return Button {
             shows.wrappedValue.toggle()
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "chevron.right")
-                    .rotationEffect(.degrees(shows.wrappedValue ? 90 : 0))
+                    .rotationEffect(.degrees(isOpen ? 90 : 0))
                     .font(.caption.weight(.semibold))
                 sectionTitle(title, count: count)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(model.isSearching)
         .background(SnapshotClickMarker(name: marker))
-        .help(shows.wrappedValue ? "Hide \(what)" : "Show \(what)")
+        .help(model.isSearching ? "Shown while searching" : isOpen ? "Hide \(what)" : "Show \(what)")
     }
 
     private func row(_ row: TodoRow) -> some View {
         let pullRequest = row.pullRequest
         let isReview = row.list == .toReview
         let stack = row.stackAbove.map { count in
-            StackDisclosure(count: count, isExpanded: expandedStacks.contains(row.id)) {
+            StackDisclosure(count: count, isExpanded: showsStack(of: row.id), isHeldOpen: model.isSearching) {
                 if expandedStacks.contains(row.id) { expandedStacks.remove(row.id) } else { expandedStacks.insert(row.id) }
             }
         }
@@ -138,9 +146,15 @@ struct TodoListView: View {
     private func rows(_ items: [TodoItem]) -> [TodoRow] {
         items.flatMap { item in
             let bottom = TodoRow(pullRequest: item.pullRequest, list: item.list, reason: item.reason, problems: item.problems, parent: item.parent, depth: 0, stackAbove: item.stacked.isEmpty ? nil : item.stacked.count)
-            guard expandedStacks.contains(item.id) else { return [bottom] }
+            guard showsStack(of: item.id) else { return [bottom] }
             return [bottom] + item.stacked.map { TodoRow(pullRequest: $0.pullRequest, list: item.list, reason: nil, problems: [], parent: $0.parent, depth: $0.depth, stackAbove: nil) }
         }
+    }
+
+    /// Whether the PRs stacked on the row's are listed under it: when asked, or while searching,
+    /// as those left are matches.
+    private func showsStack(of id: String) -> Bool {
+        expandedStacks.contains(id) || model.isSearching
     }
 
     /// How far each PR in a stack is stepped in from the one below it, as in the lists.
@@ -160,6 +174,8 @@ struct TodoListView: View {
 struct StackDisclosure: View {
     let count: Int
     let isExpanded: Bool
+    /// Set while a search keeps it shown.
+    var isHeldOpen = false
     let toggle: () -> Void
 
     var body: some View {
@@ -179,8 +195,9 @@ struct StackDisclosure: View {
         .buttonStyle(.plain)
         .font(.caption)
         .foregroundStyle(.secondary)
+        .disabled(isHeldOpen)
         .background(SnapshotClickMarker(name: "stack"))
-        .help(isExpanded ? "Hide the PRs stacked on this one" : "Show the PRs stacked on this one")
+        .help(isHeldOpen ? "Shown while searching" : isExpanded ? "Hide the PRs stacked on this one" : "Show the PRs stacked on this one")
     }
 }
 

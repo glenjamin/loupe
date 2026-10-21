@@ -14,6 +14,10 @@ public final class PullRequestListModel {
     public private(set) var error: String?
     public private(set) var isLoading = false
 
+    /// What the lists are narrowed to, typed into their search, for this session only. Each word
+    /// must match; see `matchesSearch`.
+    public var searchText = ""
+
     /// Where choosing a PR goes: the app opens it in a window tab.
     public var onOpen: @MainActor (PullRequestSummary) -> Void
 
@@ -105,14 +109,17 @@ public final class PullRequestListModel {
     /// unless asked for. So are stale ones, too old to be worth listing; a fresh request, or
     /// activity on a PR the viewer gave a verdict on, brings one back. Asked for, those come
     /// last, newest first, so the rest keep their place. The PRs of one stack are listed
-    /// together, from the bottom up, where the first of them would be.
+    /// together, from the bottom up, where the first of them would be. While searching, only
+    /// those that match are listed, stale ones included, so a search finds whatever the list
+    /// holds; a stack's matches are grouped among themselves.
     public func pullRequests(in list: PullRequestList, includingClosed: Bool = false, includingStale: Bool = false) -> [PullRequestSummary] {
         listing(in: list, includingClosed: includingClosed, includingStale: includingStale).map(\.pullRequest)
     }
 
     /// `pullRequests(in:includingClosed:includingStale:)` with each one's place in its stack.
     public func listing(in list: PullRequestList, includingClosed: Bool = false, includingStale: Bool = false) -> [StackedPullRequest] {
-        stacks.grouped(ordered(in: list, includingClosed: includingClosed, includingStale: includingStale))
+        let ordered = ordered(in: list, includingClosed: includingClosed, includingStale: includingStale || isSearching)
+        return stacks.grouped(isSearching ? ordered.filter(matchesSearch) : ordered)
     }
 
     /// How the open PRs known here stack, listed or not.
@@ -145,9 +152,11 @@ public final class PullRequestListModel {
         return pullRequest.viewerReviewMark(viewer: viewer)
     }
 
-    /// How many PRs `pullRequests(in:includingClosed:)` leaves out as stale.
+    /// How many PRs `pullRequests(in:includingClosed:)` leaves out as stale; none while
+    /// searching, which lists them.
     public func staleCount(in list: PullRequestList, includingClosed: Bool = false) -> Int {
-        listed(in: list, includingClosed: includingClosed).count { isStale($0, in: list) }
+        guard !isSearching else { return 0 }
+        return listed(in: list, includingClosed: includingClosed).count { isStale($0, in: list) }
     }
 
     /// Whether there's anything from GitHub to show yet, even if out of date.

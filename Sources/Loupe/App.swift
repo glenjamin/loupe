@@ -30,6 +30,7 @@ struct LoupeApp: App {
             .commands {
                 CommandGroup(replacing: .appSettings) {}
                 TabCommands(windows: windows)
+                FindCommands(windows: windows)
                 DiffCommands()
                 DebugCommands(windows: windows)
             }
