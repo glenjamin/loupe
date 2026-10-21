@@ -1,0 +1,34 @@
+# The Reviewers picker on the viewer's newest PR: ↓ and ↑ move its highlight with the focus kept
+# in the search field, Esc closes it, and Return asks the highlighted person, which a snapshot run
+# refuses before it reaches GitHub.
+wait settled
+open mine 1
+wait settled
+
+click button "Reviewers"
+wait until #reviewer-choice in #reviewer-picker
+expect field in #reviewer-picker is focused
+expect #reviewer-choice in #reviewer-picker count >2
+expect #reviewer-choice selected in #reviewer-picker missing
+
+press down down
+expect #reviewer-choice 2 in #reviewer-picker is selected
+expect #reviewer-choice selected in #reviewer-picker count 1
+expect field in #reviewer-picker is focused
+snap reviewer-highlight #reviewer-picker
+press up
+expect #reviewer-choice 1 in #reviewer-picker is selected
+expect #reviewer-choice 2 in #reviewer-picker is not selected
+
+press esc
+wait until #reviewer-picker missing
+
+# Those already asked come first, and Return on one withdraws the request, so go past them.
+click button "Reviewers"
+wait until #reviewer-choice in #reviewer-picker
+press down until #reviewer-choice selected in #reviewer-picker has no value "Requested"
+press return
+wait until text ~"Blocked in snapshot run" in #reviewer-picker
+expect-request requestReviews
+expect-no-request requested_reviewers
+snap reviewer-blocked

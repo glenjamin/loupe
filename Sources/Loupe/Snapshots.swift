@@ -69,14 +69,32 @@ enum SnapshotRun {
     private static let gitHubHold = GitHubHold(holdsConversations: isHoldingConversations, holdsNumberLookups: isHoldingLinkLookups)
     /// A run that merges each PR it can, with every write kept from GitHub.
     private static let isRehearsingMerges = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_MERGING"] == "1"
-    /// How the app talks to GitHub: directly, except in a run that holds some of it or
-    /// rehearses merges.
-    static let gitHubClient = if isRehearsingMerges {
+    /// Every request a snapshot run makes of GitHub goes through this, which sends only reads,
+    /// so nothing a run clicks can change anything there.
+    static let readOnlyGitHub = ReadOnlyTransport()
+    /// How the app talks to GitHub: directly, except in a snapshot run, which only reads, and
+    /// may hold some of it or rehearse merges.
+    static let gitHubClient = if directory == nil {
+        GitHubClient()
+    } else if isRehearsingMerges {
         GitHubClient(transport: MergeRehearsal())
     } else if isHoldingChecks || isHoldingConversations || isHoldingLinkLookups {
         GitHubClient(transport: gitHubHold)
     } else {
-        GitHubClient()
+        GitHubClient(transport: readOnlyGitHub)
+    }
+    static let gitHubNotifications = directory == nil ? GitHubNotifications() : GitHubNotifications(transport: readOnlyGitHub)
+    /// What a snapshot run kept from opening outside the app: links for the browser, and
+    /// checkouts for an editor.
+    private(set) static var blockedLaunches: [String] = []
+
+    /// In a snapshot run, records `launch` instead of letting it open another app, which would
+    /// show on the user's screen, and returns true.
+    static func refuses(_ launch: String) -> Bool {
+        guard directory != nil else { return false }
+        blockedLaunches.append(launch)
+        print("blocked in snapshot run: \(launch)")
+        return true
     }
 
     static func start(windows: WindowManager) {
@@ -99,6 +117,8 @@ enum SnapshotRun {
         Task {
             let lists = tabs.lists
             await wait(until: deadline) { !lists.isLoading && (lists.error != nil || (lists.lastRefreshed ?? .distantPast) >= started) }
+            // LOUPE_SNAPSHOT_SCRIPT=<file> drives the run from a script instead of the hooks below.
+            if let script = SnapshotScript.file { await SnapshotScript.run(script, windows: windows, directory: directory) }
             // LOUPE_SNAPSHOT_OPEN_LINK=<url> opens the link as one from another app would, its
             // PR's lookup held so its tab waits; with LOUPE_SNAPSHOT_OPEN_LINK_ANSWERED=1 the
             // lookup goes through, so a link to a PR GitHub hasn't got shows why.
@@ -795,6 +815,23 @@ func bringForward(_ window: NSWindow) {
         window.orderBack(nil)
     } else {
         window.makeKeyAndOrderFront(nil)
+    }
+}
+
+/// Keeps every window a snapshot run opens invisible, popovers included: AppKit moves a popover
+/// onto a screen, away from the off-screen window it hangs from, where it would show over the
+/// user's work. Snapshots draw windows' views directly, so they're drawn all the same.
+@MainActor
+func keepWindowsInvisible() {
+    for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification, NSWindow.didUpdateNotification] {
+        NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { notification in
+            // Windows post these on the main thread.
+            let window = notification.object as? NSWindow
+            MainActor.assumeIsolated {
+                guard let window, window.alphaValue != 0 else { return }
+                window.alphaValue = 0
+            }
+        }
     }
 }
 
@@ -2296,7 +2333,7 @@ private func readsBefore(_ view: NSView, _ other: NSView) -> Bool {
 }
 
 @MainActor
-private func descendants(of view: NSView) -> [NSView] {
+func descendants(of view: NSView) -> [NSView] {
     view.subviews + view.subviews.flatMap(descendants)
 }
 
@@ -2412,7 +2449,7 @@ private final class GitHubHold: HTTPTransport {
         if isHolding.withLock({ $0 }) || holdsConversations && isConversationFetch(request) || holdsNumberLookups && isNumberLookup(request) {
             try await Task.sleep(for: .seconds(3600))
         }
-        return try await URLSession.shared.send(request)
+        return try await SnapshotRun.readOnlyGitHub.send(request)
     }
 }
 
@@ -2432,7 +2469,7 @@ private final class MergeRehearsal: HTTPTransport {
         if isWrite || body.contains("mutation") {
             try await Task.sleep(for: .seconds(3600))
         }
-        return try await URLSession.shared.send(request)
+        return try await SnapshotRun.readOnlyGitHub.send(request)
     }
 }
 

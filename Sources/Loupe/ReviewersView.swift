@@ -164,6 +164,10 @@ private struct RequestReviewPopover: View {
                             }
                             .buttonStyle(.plain)
                             .help(choice.isRequested ? "Remove \(choice.reviewer.displayName) from the reviewers" : "")
+                            // The highlight is what Return picks, so assistive apps hear it as the selection.
+                            .accessibilityAddTraits(index == highlighted ? .isSelected : [])
+                            .accessibilityValue(choice.isRequested ? "Requested" : "")
+                            .accessibilityIdentifier("reviewer-choice")
                             .listRowBackground(
                                 index == highlighted ? RoundedRectangle(cornerRadius: 5).fill(.quaternary) : nil
                             )
@@ -183,6 +187,8 @@ private struct RequestReviewPopover: View {
         }
         .padding(10)
         .frame(width: 280, height: 320)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("reviewer-picker")
         // A no-op once fetched; after a failure, opening the popover again retries.
         .task {
             do {
@@ -228,6 +234,8 @@ private struct CandidateRow: View {
                 .foregroundStyle(.tint)
                 .opacity(isRequested ? 1 : 0)
                 .frame(width: 12)
+                // The row's value says so, as the symbol would be heard as the row being selected.
+                .accessibilityHidden(true)
             Image(systemName: reviewer.kind == .team ? "person.2" : "person")
                 .foregroundStyle(.secondary)
                 .frame(width: 18)

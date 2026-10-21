@@ -269,6 +269,8 @@ struct ConversationRow: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(sidebarRowStyle(isShown: isShown, isHovered: isHovered), in: RoundedRectangle(cornerRadius: 5))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("conversation-row")
         .onHover { isHovered = $0 }
         .padding(8)
     }

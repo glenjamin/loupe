@@ -1,5 +1,6 @@
 import AppKit
 import LoupeCore
+import LoupeGit
 import LoupeInbox
 import LoupeModel
 import LoupeStore
@@ -59,7 +60,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWindow.allowsAutomaticWindowTabbing = false
         TextEditingKeys.start()
         // Before any window shows, so a snapshot run is never activated by one.
-        if SnapshotRun.directory != nil { NSApp.setActivationPolicy(.accessory) }
+        if SnapshotRun.directory != nil {
+            NSApp.setActivationPolicy(.accessory)
+            ReadOnlyGit.enable()
+            keepWindowsInvisible()
+            SnapshotScript.exposeAccessibility()
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -245,7 +251,7 @@ extension FileDiff.Change {
     let client = SnapshotRun.gitHubClient
     // The tabs take over opening PRs.
     let lists = PullRequestListModel(client: client, store: store) { _ in }
-    return TabsModel(lists: lists, store: store, client: client)
+    return TabsModel(lists: lists, store: store, client: client, notifications: SnapshotRun.gitHubNotifications)
 }
 
 /// The on-disk store, or a throwaway one if it can't be opened, so the PR list still works.

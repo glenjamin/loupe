@@ -44,7 +44,8 @@ enum Git {
     /// `statuses` are the exit statuses that aren't failures, for commands such as `merge-tree`
     /// that answer with their status as well as their output.
     static func run(_ arguments: [String], in directory: URL, input: Data? = nil, environment: [String: String] = [:], timeout: Duration = .seconds(30), succeedingOn statuses: Set<Int32> = [0]) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
+        try ReadOnlyGit.check(arguments, environment: environment)
+        return try await withCheckedThrowingContinuation { continuation in
             onOwnThread {
                 continuation.resume(with: Result {
                     try runBlocking(arguments, in: directory, input: input, environment: environment, timeout: timeout, succeedingOn: statuses) { String(decoding: $0.readDataToEndOfFile(), as: UTF8.self) }
@@ -55,7 +56,8 @@ enum Git {
 
     /// git's stdout as bytes, for output that isn't text, such as an image's blob.
     static func data(_ arguments: [String], in directory: URL, environment: [String: String] = [:], timeout: Duration = .seconds(30)) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
+        try ReadOnlyGit.check(arguments, environment: environment)
+        return try await withCheckedThrowingContinuation { continuation in
             onOwnThread {
                 continuation.resume(with: Result { try runBlocking(arguments, in: directory, input: nil, environment: environment, timeout: timeout) { $0.readDataToEndOfFile() } })
             }
@@ -66,6 +68,7 @@ enum Git {
     /// where it reports progress, to `progress` as it comes. Cancelling the task kills git and
     /// throws `CancellationError` once it has exited.
     static func runReportingProgress(_ arguments: [String], in directory: URL, timeout: Duration, progress: @escaping @Sendable (String) -> Void) async throws {
+        try ReadOnlyGit.check(arguments, environment: [:])
         let watchdog = Watchdog()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in

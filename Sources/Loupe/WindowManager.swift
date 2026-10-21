@@ -239,6 +239,13 @@ final class LoupeWindow: NSWindow, NSWindowDelegate {
         SnapshotRun.directory == nil ? super.constrainFrameRect(frameRect, to: screen) : frameRect
     }
 
+    /// A scripted snapshot run's window acts as key, as the user's would be, without activating
+    /// the app, which would take the user's keyboard; views that act differently in the key
+    /// window, such as a list taking clicks, then act as they would for the user.
+    override var isKeyWindow: Bool {
+        SnapshotScript.file != nil || super.isKeyWindow
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         styleMask.contains(.closable)
     }

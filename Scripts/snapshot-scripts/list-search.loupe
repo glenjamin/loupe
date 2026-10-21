@@ -1,0 +1,36 @@
+# ⌘F on the lists shows the search field with the focus in it, typing narrows the lists as it
+# goes, Esc clears the search and goes back to the list, and Esc again hides the field, as
+# LOUPE_SNAPSHOT_SEARCH does.
+wait settled
+open lists
+expect search missing
+expect button in list 1 count >1
+
+press cmd+f
+expect search is focused
+
+# The viewer (glenjamin) is the author of every PR in Mine, so their login keeps them all.
+type "glenjamin"
+expect search has value "glenjamin"
+expect text ~"No pull requests match" missing
+expect button in list 1 count >1
+snap search-mine
+
+press esc
+expect search has value ""
+expect list 1 is focused
+press esc
+wait until search missing
+
+# Something no PR has: both lists empty out and say so, and Esc brings them back.
+press cmd+f
+type "zz-no-such-pull-request"
+expect text ~"No pull requests match" exists
+expect button in list missing
+snap search-nothing
+press esc
+expect search has value ""
+expect button in list 1 count >1
+press esc
+wait until search missing
+snap search-cleared

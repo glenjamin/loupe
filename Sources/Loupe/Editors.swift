@@ -5,6 +5,7 @@ import LoupeGit
 /// the editor's command-line launcher, which an app started from Finder can't count on finding.
 @MainActor
 func open(_ directory: URL, in editor: Editor) async throws {
+    guard !SnapshotRun.refuses("open \(directory.path(percentEncoded: false)) in \(editor.name)") else { return }
     guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: editor.bundleIdentifier) else {
         throw EditorNotInstalled(editor: editor)
     }

@@ -1,0 +1,23 @@
+# The sidebar's Conversation row tints while the pointer is over it, and clears once it leaves.
+wait settled
+open mine 1
+wait settled
+
+# Show a file first: while the conversation is shown its row is filled whatever the pointer does.
+click image #doc
+expect button "Conversation" is not selected
+snap conversation-row-resting #conversation-row
+
+hover button "Conversation"
+snap conversation-row-hovered #conversation-row
+expect-different conversation-row-resting conversation-row-hovered
+
+unhover
+snap conversation-row-left #conversation-row
+expect-same conversation-row-resting conversation-row-left
+
+# Clicking it shows the conversation, as LOUPE_SNAPSHOT_CLICK_CONVERSATION=1 does for every tab.
+click button "Conversation"
+expect button "Conversation" is selected
+wait settled
+snap conversation-shown

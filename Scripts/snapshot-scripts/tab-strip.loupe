@@ -1,0 +1,19 @@
+# The tab strip takes clicks, as LOUPE_SNAPSHOT_CLICK_TAB shows for one item, and ⌃Tab steps
+# along it through the window's key monitor.
+wait settled
+open mine 1
+wait settled
+expect window has no title "Pull Requests"
+
+click text "Pull Requests"
+expect window has title "Pull Requests"
+expect search missing
+snap strip-lists
+
+press ctrl+tab
+expect window has no title "Pull Requests"
+expect button "Conversation" exists
+snap strip-next
+
+press ctrl+shift+tab
+expect window has title "Pull Requests"

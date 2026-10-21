@@ -189,7 +189,49 @@ LOUPE_DATABASE=/tmp/loupe-db/loupe.sqlite LOUPE_SNAPSHOT_DIR=/tmp/loupe-snaps .b
 
 Snapshot runs use their own bundle, `.build/LoupeSnapshot.app`, named "Loupe Snapshot" with the id `com.glenmailer.Loupe.snapshot` and no URL types, so Launch Services, AppleScript, `open -a Loupe` and links never pick a snapshot run (or a worktree's snapshot bundle) for the real app, and building one never replaces a running `Loupe.app`. Its defaults are its own, with the real app's read beneath them, so it shows the same View settings and never writes the real app's.
 
-The run is an accessory process that's never activated, and its window is transparent and off every screen, so nothing shows while it runs.
+The run is an accessory process that's never activated, and its window is transparent and off every screen, so nothing shows while it runs. Popovers and any other window it opens are made transparent as they appear, as AppKit moves popovers onto a screen.
+
+Every snapshot run only reads. Each GitHub request goes through `ReadOnlyTransport`, which sends GraphQL queries, REST `GET`/`HEAD` and `POST /markdown` and refuses everything else (mutations, merges, review requests, comments, reactions) before it leaves the process, printing `blocked in snapshot run: <mutation or METHOD path>`; the UI then shows the refusal as it would GitHub's. git is kept to reads by `ReadOnlyGit`: fetches into `refs/loupe/` and Loupe's own objects and indexes still work, but cloning, switching branches and the like are refused the same way. Links for the browser and checkouts for an editor are printed instead of opened.
+
+### Snapshot scripts
+
+`LOUPE_SNAPSHOT_SCRIPT=<file>` drives a snapshot run from a script instead of the hooks above, for checking keyboard, click and hover behaviour as a user would see it. Write the script anywhere (the scratchpad is fine), then run it against a copy of the database:
+
+```sh
+mkdir -p $TMPDIR/loupe-db
+sqlite3 ~/Library/Application\ Support/Loupe/loupe.sqlite ".backup $TMPDIR/loupe-db/loupe.sqlite"
+LOUPE_DATABASE=$TMPDIR/loupe-db/loupe.sqlite LOUPE_SNAPSHOT_SCRIPT=Scripts/snapshot-scripts/reviewer-picker.loupe Scripts/snapshot.sh $TMPDIR/snaps
+```
+
+It starts once the lists have refreshed, prints `ok <line>: <step> — <what it found>` for each step and `passed N steps`, and exits 0. At the first failure it prints `FAIL <line>`, what was expected and found, and the part of the accessibility tree it looked in, writes `failure.png`, and exits 1 (2 if the script doesn't parse). `Scripts/snapshot-scripts/` has working examples: the reviewer picker's keys (`reviewer-picker.loupe`), the Conversation row's hover (`conversation-hover.loupe`), ⌘F on the lists (`list-search.loupe`) and the tab strip (`tab-strip.loupe`).
+
+One step a line; `#` starts a comment (`#name` mid-line is an identifier). Things are found in the accessibility tree, as VoiceOver sees it, across the window and any popover. Start with `dump` to find handles.
+
+Finding things, wherever a step takes `<query>`: `[role] ["text" | ~"text"] [#identifier] [selected] [N | last]`, then optionally `in <query part>` for something it must be inside, repeatable (`#reviewer-choice 2 in #reviewer-picker`). `"text"` matches a label, title, value, placeholder or identifier whole; `~"text"` matches part of one, ignoring case. `N` picks the Nth match from 1, in reading order; with no `N` the first is acted on. `selected` keeps only selected matches. Roles: `button`, `row`, `cell`, `text`, `field`, `search`, `textarea`, `checkbox`, `radio`, `list` (lists, outlines and tables), `group`, `image`, `link`, `menuitem`, `popup`, `menubutton`, `scroll`, `toolbar`, `popover`, `web`, `disclosure`, `tabs`, `segments`, `window`, `any`, or a raw `AXRole`/`AXSubrole`. Add `.accessibilityIdentifier("…")` (with `.accessibilityElement(children: .contain)` on a container) where there's no stable label.
+
+Conditions, wherever a step takes `<condition>`: `exists` (the default), `missing`, `is [not] selected|focused|enabled|disabled`, `has [no] value|title|label "text"|~"text"`, `count N|>N|<N` (over every match).
+
+| Step | Does |
+| --- | --- |
+| `open lists` / `open mine <n>` / `open to-review <n>` / `open owner/repo#<n>` | Shows the lists, the nth PR of a list, or a PR as a link from another app would (looked up on GitHub if not stored) |
+| `wait settled [timeout 30s]` | Until the lists have refreshed and the shown PR has its diff and conversation, or they failed |
+| `wait <duration>` | A pause: `500ms`, `2s` |
+| `wait until <query> [<condition>] [timeout 10s]` | Polls until it holds |
+| `click` / `double-click` `<query>` | At the element's centre, after moving the pointer there |
+| `right-click <query>` | Asks for the context menu without showing it and prints its items; `choose "Item"` then picks one |
+| `hover <query>` / `unhover` | Moves the pointer onto the element / off the window |
+| `press <key> [<key>…] [until <query> <condition>]` | Keys in turn, as `down`, `return`, `esc`, `tab`, `space`, `delete`, `up`/`left`/`right`, `home`, `end`, `pageup`, `pagedown`, `f1`…, or a character, with `cmd+`, `shift+`, `opt+`, `ctrl+`, `fn+` (`cmd+shift+p`, `ctrl+tab`); `until` repeats them (up to 30 times) until the condition holds |
+| `type "text"` | Types each character into whatever has the focus |
+| `scroll <query> up\|down <points>` | Scrolls whatever scrolls under the element |
+| `expect <query> [<condition>]` | Fails the run unless it holds |
+| `expect-request <name>` / `expect-no-request <name>` | Whether a blocked write was attempted, by a substring of its name: a mutation (`requestReviews`, `mergePullRequest`), a REST write (`DELETE /repos/…/requested_reviewers`, `merge-async`), `git switch …`, or `open … in the browser` |
+| `snap <name> [<query>]` | Writes `<name>.png` of the window, or cropped to the element |
+| `expect-different <a> <b>` / `expect-same <a> <b>` | Compares two snaps' pixels, as for a hover tint |
+| `dump [<query>]` / `dump windows` | Prints the accessibility tree (or the matches' subtrees) with frames / each window's frame, alpha and first responder |
+
+How input gets there, should something not respond: keys and clicks are `NSEvent`s queued with `NSApp.postEvent`, so local key monitors, menu key equivalents, the first responder and SwiftUI's `onKeyPress` see them as real ones; keys go to an open popover, else the window. Nothing goes through the window server, so the user's real mouse and keyboard are untouched. The app is never activated, which would take the user's keyboard, so in a script run the window reports itself key, and a click on a view that doesn't take a non-key window's first click (a list's rows) is sent to that view directly, as AppKit would once the window was key. Hover sends each tracking area's owner the enter, move and exit AppKit would send for the window server's mouse positions, which an off-screen window never gets; SwiftUI's `onHover` fires from these. Tooltips aren't shown, and a shown context menu would track the real mouse, so right-click only asks for the menu. A step's effects are given a quarter of a second to land, then the window is laid out and drawn. SwiftUI builds its accessibility tree only once an assistive app asks, so a script run asks at launch, as VoiceOver would.
+
+Some hooks have script ports, covering one PR rather than every tab: `LOUPE_SNAPSHOT_CLICK_CONVERSATION` (`conversation-hover.loupe`), `LOUPE_SNAPSHOT_CLICK_TAB` (`tab-strip.loupe`), `LOUPE_SNAPSHOT_SEARCH`'s list part (`list-search.loupe`) and `LOUPE_SNAPSHOT_REVIEWERS`' opening of the picker (`reviewer-picker.loupe`). The hooks stay for what they print.
 
 ## What the probe showed
 
