@@ -11,7 +11,7 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 - To check that clicks, keys and hover do what you built, write a script for `LOUPE_SNAPSHOT_SCRIPT` rather than a new `LOUPE_SNAPSHOT_*` hook: it finds things in the accessibility tree, asserts, writes PNGs and fails the run with a non-zero exit. Add it to the UI suite in `Scripts/ui-tests/`, which runs against the fake GitHub and fixture checkouts, so it stays deterministic. After UI changes run `Scripts/ui-tests.sh` (sandbox off) alongside `swift test`; both must pass. See "Snapshot scripts" in `NOTES.md`.
 - Never launch the app any other way (`swift run Loupe`, `open .build/Loupe.app`, the bundle's binary without `LOUPE_SNAPSHOT_DIR`). That opens real, maximised windows on the user's screens and leaves them there. Only `Scripts/snapshot.sh`, `Scripts/ui-tests.sh` and `--bench` are allowed.
 - Auth is `gh auth token`. Never write the token to disk, logs or fixtures.
-- Other checkouts beside this one under `~/Development/` are shared with other sessions: only read-only git there (`fetch`, `diff`, `log`, `remote get-url`). Never checkout, reset, or write.
+- Other git checkouts on this machine are in use by other sessions. While testing, only read from them (`fetch`, `diff`, `log`, `remote get-url`); never checkout, reset, commit or otherwise write.
 - Database: `~/Library/Application Support/Loupe/loupe.sqlite`. Tests use temp or in-memory databases.
 
 ## Targets
