@@ -1,5 +1,6 @@
 import Foundation
 import LoupeFakeGitHub
+import LoupeGit
 import LoupeGitHub
 import WebKit
 
@@ -7,7 +8,7 @@ import WebKit
 /// GitHub is `FixtureGitHub`, in-process, serving the anonymised captures under `probe/`, with no
 /// network and no `gh` token; the database starts empty at `<dir>/loupe.sqlite` unless
 /// `LOUPE_DATABASE` says otherwise; checkouts are looked for only in `<dir>/checkouts`, where
-/// `Loupe --fixture-checkouts <dir>/checkouts` builds them; the lists judge age by a fixed time
+/// `Loupe --fixture-checkouts <dir>/checkouts` builds them, unless `<dir>/config.json` says otherwise; the lists judge age by a fixed time
 /// near the captures; the real app's settings aren't read; web pages load nothing from the
 /// network; and CircleCI is never asked. Snapshot runs' write guards stay on.
 @MainActor
@@ -16,6 +17,13 @@ enum FixtureRun {
         URL(filePath: $0, directoryHint: .isDirectory)
     }
     static let checkouts = directory?.appending(path: "checkouts", directoryHint: .isDirectory)
+    /// The run's own config file, which a script's `<name>.config.json` becomes in the UI suite.
+    static let config = directory.map { ConfigFile(url: $0.appending(path: "config.json")) }
+    /// The checkouts as the folder to search, unless the run has a config file to say otherwise.
+    static var checkoutsWithoutConfig: URL? {
+        guard let config, !FileManager.default.fileExists(atPath: config.url.path(percentEncoded: false)) else { return nil }
+        return checkouts
+    }
     static let gitHub = checkouts.map(FixtureGitHub.init(checkouts:))
     /// Where the run's PRs are kept unless `LOUPE_DATABASE` says otherwise.
     static let database = directory.map { directory in

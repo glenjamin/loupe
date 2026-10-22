@@ -341,6 +341,22 @@ public final class PullRequestTab: Identifiable {
         await retry()
     }
 
+    /// The directories searched for the repo's checkout.
+    public var checkoutSearchRoots: [URL] {
+        lists.checkoutSearchRoots
+    }
+
+    /// Whether no folders to search for checkouts have been chosen yet.
+    public var needsCheckoutFolders: Bool {
+        lists.needsCheckoutFolders
+    }
+
+    /// Makes `folders` the ones searched for checkouts, as the lists do; this tab then looks for
+    /// its checkout again.
+    public func chooseCheckoutFolders(_ folders: [URL]) async throws {
+        try await lists.chooseCheckoutFolders(folders)
+    }
+
     /// Where cloning the repo would put it, if anywhere.
     public var cloneDestination: URL? {
         lists.cloneDestination(for: pullRequest.repository)

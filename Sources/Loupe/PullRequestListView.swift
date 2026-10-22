@@ -28,9 +28,14 @@ struct PullRequestListView: View {
                     }
                 }
                 .safeAreaInset(edge: .top, spacing: 0) {
-                    if let error = model.error {
-                        RefreshErrorBanner(error: error, lastRefreshed: model.lastRefreshed, isLoading: model.isLoading) {
-                            Task { await model.refresh() }
+                    VStack(spacing: 0) {
+                        if model.needsCheckoutFolders {
+                            CheckoutFoldersBanner(model: model)
+                        }
+                        if let error = model.error {
+                            RefreshErrorBanner(error: error, lastRefreshed: model.lastRefreshed, isLoading: model.isLoading) {
+                                Task { await model.refresh() }
+                            }
                         }
                     }
                 }
@@ -65,6 +70,35 @@ struct NoSearchMatches: View {
 }
 
 /// Shown above lists that couldn't be refreshed, so it's clear how old they are.
+/// Above the lists until the folders to search for checkouts are chosen, as on first launch,
+/// since no diffs can be shown before then.
+struct CheckoutFoldersBanner: View {
+    let model: PullRequestListModel
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "folder.badge.questionmark").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Where are your checkouts?").font(.callout.weight(.semibold))
+                Text("Diffs come from local git checkouts. Choose the folders they're in, and Loupe will look in each for one named after a pull request's repository.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button("Choose Folders…") {
+                chooseCheckoutFolders(startingAt: nil) { try await model.chooseCheckoutFolders($0) }
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("checkout-folders-banner")
+    }
+}
+
 struct RefreshErrorBanner: View {
     let error: String
     let lastRefreshed: Date?

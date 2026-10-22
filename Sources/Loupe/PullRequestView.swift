@@ -9,7 +9,6 @@ import SwiftUI
 /// whichever of them is chosen, the files once their diff is produced from the local checkout.
 struct PullRequestView: View {
     @Bindable var tab: PullRequestTab
-    let checkoutSearchRoots: [URL]
 
     var body: some View {
         let pullRequest = tab.pullRequest
@@ -25,7 +24,7 @@ struct PullRequestView: View {
                 Divider()
             }
             HSplitView {
-                ReviewSidebar(tab: tab, checkoutSearchRoots: checkoutSearchRoots)
+                ReviewSidebar(tab: tab)
                     .frame(minWidth: 200, idealWidth: 300, maxWidth: 500)
                 // Each stays once made, so switching keeps each one's place.
                 ZStack {
@@ -75,7 +74,7 @@ struct PullRequestView: View {
             } description: {
                 Text(noCheckoutDescription(pullRequest))
             } actions: {
-                NoCheckoutActions(tab: tab, checkoutSearchRoots: checkoutSearchRoots)
+                NoCheckoutActions(tab: tab)
             }
         case let .ready(diff):
             FileDetail(tab: tab)
@@ -94,7 +93,10 @@ struct PullRequestView: View {
     }
 
     private func noCheckoutDescription(_ pullRequest: PullRequestSummary) -> String {
-        let searched = "Diffs come from a local checkout. None was found named \(repositoryName(pullRequest)) under \(checkoutSearchRoots.map { tildePath($0) }.formatted())."
+        if tab.needsCheckoutFolders {
+            return "Diffs come from a local checkout. Choose the folders your checkouts are in, and Loupe will look there for one named \(repositoryName(pullRequest)), or locate one elsewhere."
+        }
+        let searched = "Diffs come from a local checkout. None was found named \(repositoryName(pullRequest)) under \(tab.checkoutSearchRoots.map { tildePath($0) }.formatted())."
         guard let destination = tab.cloneDestination else { return searched }
         return "\(searched) Clone it into \(tildePath(destination)), or locate one elsewhere."
     }
@@ -104,14 +106,13 @@ struct PullRequestView: View {
 /// shows beside the conversation too, with the ways to get one.
 struct NoCheckoutRow: View {
     let tab: PullRequestTab
-    let checkoutSearchRoots: [URL]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("No local checkout", systemImage: "folder.badge.questionmark")
                 .foregroundStyle(.secondary)
                 .help("Diffs and commits come from a local checkout of \(tab.pullRequest.repository), and none was found")
-            NoCheckoutActions(tab: tab, checkoutSearchRoots: checkoutSearchRoots, isCompact: true)
+            NoCheckoutActions(tab: tab, isCompact: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
@@ -124,7 +125,6 @@ struct NoCheckoutRow: View {
 /// and can be cancelled; one that failed says why.
 struct NoCheckoutActions: View {
     let tab: PullRequestTab
-    let checkoutSearchRoots: [URL]
     var isCompact = false
 
     var body: some View {
@@ -161,6 +161,13 @@ struct NoCheckoutActions: View {
 
     private var buttons: some View {
         HStack(spacing: 8) {
+            if tab.needsCheckoutFolders {
+                Button(isCompact ? "Choose Folders…" : "Choose Checkout Folders…") {
+                    chooseCheckoutFolders(startingAt: nil) { try await tab.chooseCheckoutFolders($0) }
+                }
+                .buttonStyle(.borderedProminent)
+                .help("Choose the folders your checkouts are in")
+            }
             if let destination = tab.cloneDestination {
                 Button(isCompact ? "Clone" : "Clone Repository") {
                     Task { await tab.cloneCheckout() }
@@ -169,7 +176,7 @@ struct NoCheckoutActions: View {
                 .help("Clone \(tab.pullRequest.repository) into \(tildePath(destination))")
             }
             Button(isCompact ? "Locate…" : "Locate Checkout…") {
-                locateCheckout(of: tab.pullRequest.repository, startingAt: checkoutSearchRoots.first) { directory in
+                locateCheckout(of: tab.pullRequest.repository, startingAt: tab.checkoutSearchRoots.first) { directory in
                     try await tab.locateCheckout(at: directory)
                 }
             }
@@ -183,7 +190,6 @@ struct NoCheckoutActions: View {
 /// picker and the files of the shown changes.
 struct ReviewSidebar: View {
     @Bindable var tab: PullRequestTab
-    let checkoutSearchRoots: [URL]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -212,7 +218,7 @@ struct ReviewSidebar: View {
                 .animation(.default, value: step)
                 Spacer(minLength: 0)
             case .noCheckout:
-                NoCheckoutRow(tab: tab, checkoutSearchRoots: checkoutSearchRoots)
+                NoCheckoutRow(tab: tab)
                 Spacer(minLength: 0)
             case .failed:
                 Spacer(minLength: 0)
@@ -1139,6 +1145,38 @@ func locateCheckout(of repository: String, startingAt directory: URL?, locate: @
         } catch {
             let alert = NSAlert()
             alert.messageText = "That isn't a checkout of \(repository)"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+}
+
+/// Asks for the folders checkouts are in, several at once, then hands them to `choose`, saying
+/// if they couldn't be kept. A snapshot run shows no panel: a fixture run chooses its checkouts,
+/// and any other chooses nothing.
+@MainActor func chooseCheckoutFolders(startingAt directory: URL?, choose: @escaping @MainActor ([URL]) async throws -> Void) {
+    let folders: [URL]
+    if SnapshotRun.refuses("chooseCheckoutFolders") {
+        guard let checkouts = FixtureRun.checkouts else { return }
+        folders = [checkouts]
+    } else {
+        let panel = NSOpenPanel()
+        panel.message = "Choose the folders your git checkouts are in. Loupe looks in each for a folder named after a pull request's repository."
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = directory ?? URL.homeDirectory
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        folders = panel.urls
+    }
+    Task {
+        do {
+            try await choose(folders)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Couldn't save the checkout folders"
             alert.informativeText = error.localizedDescription
             alert.runModal()
         }

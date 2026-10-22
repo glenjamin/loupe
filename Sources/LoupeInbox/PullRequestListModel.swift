@@ -20,6 +20,9 @@ public final class PullRequestListModel {
 
     /// Where choosing a PR goes: the app opens it in a window tab.
     public var onOpen: @MainActor (PullRequestSummary) -> Void
+    /// Called once new checkout folders have been chosen and searched; the tabs look for their
+    /// checkouts again.
+    public var onCheckoutFoldersChosen: @MainActor () async -> Void = {}
 
     private var snapshot: PullRequestSnapshot
     /// Open PRs in neither list, as last checked directly, for until their stored rows are read
@@ -38,7 +41,11 @@ public final class PullRequestListModel {
     /// The signed-in user's login, once stored by the lists or a tab.
     private var viewer: String?
     private let client: GitHubClient
-    private let checkoutResolver: CheckoutResolver
+    private var checkoutResolver: CheckoutResolver
+    /// False until the folders to search for checkouts have been chosen, as on first launch.
+    private var hasCheckoutFolders: Bool
+    /// Keeps newly chosen checkout folders for the next launch.
+    private let saveCheckoutFolders: @MainActor ([URL]) throws -> Void
     private let store: PullRequestStore
     private let refreshInterval: Duration
     private let staleAfter: Duration
@@ -53,14 +60,17 @@ public final class PullRequestListModel {
         refreshInterval: Duration = .seconds(180),
         staleAfter: Duration = .seconds(300),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
-        checkoutSearchRoots: [URL] = CheckoutResolver.defaultSearchRoots,
+        checkoutSearchRoots: [URL]?,
+        saveCheckoutFolders: @escaping @MainActor ([URL]) throws -> Void = { _ in },
         cloneConfig: [String: String] = [:],
         now: @escaping @MainActor () -> Date = { .now },
         onOpen: @escaping @MainActor (PullRequestSummary) -> Void
     ) {
         self.client = client
         self.store = store
-        checkoutResolver = CheckoutResolver(store: store, searchRoots: checkoutSearchRoots, cloneConfig: cloneConfig)
+        checkoutResolver = CheckoutResolver(store: store, searchRoots: checkoutSearchRoots ?? [], cloneConfig: cloneConfig)
+        hasCheckoutFolders = checkoutSearchRoots != nil
+        self.saveCheckoutFolders = saveCheckoutFolders
         self.refreshInterval = refreshInterval
         self.staleAfter = staleAfter
         self.sleep = sleep
@@ -284,6 +294,21 @@ public final class PullRequestListModel {
     /// The directories searched for a repo's checkout, so a manual locate can start there.
     public var checkoutSearchRoots: [URL] {
         checkoutResolver.searchRoots
+    }
+
+    /// Whether the folders to search for checkouts have yet to be chosen, so none are searched.
+    public var needsCheckoutFolders: Bool {
+        !hasCheckoutFolders
+    }
+
+    /// Makes `folders` the ones searched for checkouts, in order, keeping them for next time,
+    /// then looks again for the checkouts not yet found. Throws if they couldn't be kept.
+    public func chooseCheckoutFolders(_ folders: [URL]) async throws {
+        try saveCheckoutFolders(folders)
+        checkoutResolver.searchRoots = folders
+        hasCheckoutFolders = true
+        await resolveCheckouts()
+        await onCheckoutFoldersChosen()
     }
 
     /// Brings each list up to date with GitHub, then looks up the open PRs' statuses and finds

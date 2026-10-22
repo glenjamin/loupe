@@ -4,31 +4,22 @@ import LoupeStore
 /// Finds where GitHub repos are checked out on this machine, remembering what it finds in the
 /// store. Only ever reads from the checkouts, though it can clone a repo that has none.
 public struct CheckoutResolver: Sendable {
-    /// `~/Development/tamarinworks` then `~/Development/GitHub`.
-    public static var defaultSearchRoots: [URL] {
-        let development = URL.homeDirectory.appending(path: "Development", directoryHint: .isDirectory)
-        return [
-            development.appending(path: "tamarinworks", directoryHint: .isDirectory),
-            development.appending(path: "GitHub", directoryHint: .isDirectory),
-        ]
-    }
-
     /// Directories searched, in order, for a checkout named after a repo that has none stored.
-    public let searchRoots: [URL]
+    public var searchRoots: [URL]
     private let store: PullRequestStore
     /// Config a clone is made with, as `git clone --config` sets it in the new checkout; tests
     /// rewrite github.com to a local repo with it.
     private let cloneConfig: [String: String]
 
-    public init(store: PullRequestStore, searchRoots: [URL] = defaultSearchRoots, cloneConfig: [String: String] = [:]) {
+    public init(store: PullRequestStore, searchRoots: [URL], cloneConfig: [String: String] = [:]) {
         self.store = store
         self.searchRoots = searchRoots
         self.cloneConfig = cloneConfig
     }
 
     /// Where a clone of `repository` goes: under the search root named after its owner, as
-    /// `~/Development/tamarinworks` is for tamarinworks' repos, else under the last one, which
-    /// holds everyone else's. Nil with no search roots.
+    /// `~/Development/tamarinworks` would be for tamarinworks' repos, else under the last one,
+    /// which holds everyone else's. Nil with no search roots.
     public func cloneDestination(for repository: String) -> URL? {
         let parts = repository.split(separator: "/")
         guard let name = parts.last, let fallback = searchRoots.last else { return nil }

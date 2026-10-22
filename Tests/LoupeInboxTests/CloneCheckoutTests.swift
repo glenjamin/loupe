@@ -27,6 +27,26 @@ struct CloneCheckoutTests {
         #expect(try app.entries(of: app.ownersRoot) == [repositoryName(repository)], "nothing but the clone is left behind")
     }
 
+    @Test func choosingCheckoutFoldersFindsATabsCheckoutAndShowsTheDiff() async throws {
+        let repo = try await FakeRepository()
+        let app = try await CloneApp(serving: repo, foldersChosen: false)
+        let tab = try await app.openPushedPullRequest(in: repo)
+        guard case .noCheckout = tab.phase else { Issue.record("expected no checkout, got \(tab.phase)"); return }
+        #expect(tab.needsCheckoutFolders)
+        #expect(tab.cloneDestination == nil, "nowhere to clone to until folders are chosen")
+        let repository = tab.pullRequest.repository
+        let checkout = app.ownersRoot.appending(path: repositoryName(repository), directoryHint: .isDirectory)
+        // As a clone of github.com would be, fetching from the served repo meanwhile.
+        try await runGit(["clone", "--quiet", "--config", "url.\(app.served.path(percentEncoded: false)).insteadOf=https://github.com/", "https://github.com/\(repository)", checkout.path(percentEncoded: false)], in: app.root)
+
+        try await tab.chooseCheckoutFolders([app.ownersRoot, app.othersRoot])
+
+        guard case let .ready(review) = tab.phase else { Issue.record("expected the diff, got \(tab.phase)"); return }
+        #expect(review.changes.files.map(\.path) == ["app.go"])
+        #expect(!tab.needsCheckoutFolders)
+        #expect(tab.checkoutSearchRoots == [app.ownersRoot, app.othersRoot])
+    }
+
     @Test func aFailedCloneSaysWhyAndLeavesNothingBehind() async throws {
         let repo = try await FakeRepository()
         let app = try await CloneApp(serving: repo)
@@ -87,8 +107,9 @@ struct CloneCheckoutTests {
 }
 
 /// The app's models over the PR fixture, with two search roots in a temp directory, the first
-/// named after the fixture's owner and the other `GitHub`, and none holding a checkout. Clones
-/// fetch github.com from a directory serving `repo` under the PR's repo's name, once served.
+/// named after the fixture's owner and the other `GitHub`, and none holding a checkout; unless
+/// `foldersChosen`, they're yet to be chosen as the ones to search. Clones fetch github.com from
+/// a directory serving `repo` under the PR's repo's name, once served.
 @MainActor
 private final class CloneApp {
     let github: FakeGitHub
@@ -97,10 +118,11 @@ private final class CloneApp {
     let tabs: TabsModel
     let root: URL
     let ownersRoot: URL
-    private let served: URL
+    let othersRoot: URL
+    let served: URL
     private let repo: FakeRepository
 
-    init(serving repo: FakeRepository, cloneConfig: [String: String]? = nil) async throws {
+    init(serving repo: FakeRepository, cloneConfig: [String: String]? = nil, foldersChosen: Bool = true) async throws {
         self.repo = repo
         root = URL.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory).resolvingSymlinksInPath()
         served = root.appending(path: "github.com", directoryHint: .isDirectory)
@@ -110,12 +132,12 @@ private final class CloneApp {
         await probe.refresh()
         let owner = try #require(probe.pullRequests(in: .toReview).first?.repository.split(separator: "/").first)
         ownersRoot = root.appending(path: String(owner), directoryHint: .isDirectory)
-        let others = root.appending(path: "GitHub", directoryHint: .isDirectory)
-        for directory in [ownersRoot, others, served] {
+        othersRoot = root.appending(path: "GitHub", directoryHint: .isDirectory)
+        for directory in [ownersRoot, othersRoot, served] {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
         let config = cloneConfig ?? ["url.\(served.path(percentEncoded: false)).insteadOf": "https://github.com/"]
-        let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [ownersRoot, others], cloneConfig: config, onOpen: { _ in })
+        let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: foldersChosen ? [ownersRoot, othersRoot] : nil, cloneConfig: config, onOpen: { _ in })
         tabs = .manuallyTimed(lists: lists, store: store, client: details.client(), notifications: github.notifications())
         await lists.refresh()
     }

@@ -36,6 +36,12 @@ final class WindowManager {
         }
     }
 
+    /// Asks for the folders to search for checkouts, starting at the first of the current ones.
+    func askForCheckoutFolders() {
+        let lists = tabs.lists
+        chooseCheckoutFolders(startingAt: lists.checkoutSearchRoots.first) { try await lists.chooseCheckoutFolders($0) }
+    }
+
     /// Opens the window on the item shown last run and starts keeping the lists refreshed.
     func restore() {
         let window = makeWindow()
@@ -140,7 +146,7 @@ final class WindowManager {
         content.show(selected?.id) {
             switch selected {
             case let .pullRequest(tab):
-                hostingController(PullRequestView(tab: tab, checkoutSearchRoots: tabs.lists.checkoutSearchRoots))
+                hostingController(PullRequestView(tab: tab))
             case let .pending(pending):
                 hostingController(PendingTabView(pending: pending, retry: { [tabs] in tabs.retry(pending) }, close: { [weak self] in self?.close(pending.id) }))
             case nil:

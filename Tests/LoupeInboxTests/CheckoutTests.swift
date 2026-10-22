@@ -67,6 +67,38 @@ struct CheckoutTests {
         #expect(model.checkout(for: "honeycombio/libhoney-go") == .found(clone))
     }
 
+    @Test func firstLaunchSearchesNowhereUntilFoldersAreChosenThenKeepsThem() async throws {
+        let disk = try FakeDevelopmentDirectory()
+        let atrium = try await disk.checkout("atrium", in: disk.first, origin: "https://github.com/tamarinworks/atrium")
+        let config = ConfigFile(url: disk.root.appending(components: "config", "loupe", "config.json"))
+        let model = try disk.listModel(config: config)
+        await model.refresh()
+        #expect(model.needsCheckoutFolders)
+        #expect(model.checkout(for: "tamarinworks/atrium") == .notFound)
+
+        try await model.chooseCheckoutFolders([disk.first, disk.second])
+
+        #expect(!model.needsCheckoutFolders)
+        #expect(model.checkout(for: "tamarinworks/atrium") == .found(atrium))
+        let nextRun = try disk.listModel(config: config)
+        #expect(!nextRun.needsCheckoutFolders)
+        #expect(nextRun.checkoutSearchRoots == [disk.first, disk.second])
+    }
+
+    @Test func readsHandWrittenCheckoutFoldersUnderTheHomeDirectory() throws {
+        let disk = try FakeDevelopmentDirectory()
+        let config = ConfigFile(url: disk.root.appending(path: "config.json"))
+        try #"{"checkoutFolders": ["~/Development/tamarinworks", "/srv/checkouts"]}"#.write(to: config.url, atomically: true, encoding: .utf8)
+
+        #expect(try config.checkoutFolders() == [
+            URL.homeDirectory.appending(path: "Development/tamarinworks", directoryHint: .isDirectory),
+            URL(filePath: "/srv/checkouts", directoryHint: .isDirectory),
+        ])
+
+        try config.setCheckoutFolders([URL.homeDirectory.appending(path: "src", directoryHint: .isDirectory)])
+        #expect(try String(contentsOf: config.url, encoding: .utf8).contains(#""~/src""#), "kept readable for editing by hand")
+    }
+
     @Test func remembersCheckoutsAndLooksAgainForMisses() async throws {
         let disk = try FakeDevelopmentDirectory()
         let store = try PullRequestStore(url: disk.root.appending(path: "loupe.sqlite"))
@@ -183,6 +215,18 @@ private final class FakeDevelopmentDirectory: Sendable {
             client: FakeGitHub(fixture: "pr-list.json").client(),
             store: store ?? .inMemory(),
             checkoutSearchRoots: searchRoots ?? [first, second],
+            onOpen: { _ in }
+        )
+    }
+
+    /// A list model over the PR fixture searching the folders `config` has, as the app does.
+    @MainActor
+    func listModel(config: ConfigFile) throws -> PullRequestListModel {
+        try PullRequestListModel(
+            client: FakeGitHub(fixture: "pr-list.json").client(),
+            store: .inMemory(),
+            checkoutSearchRoots: config.checkoutFolders(),
+            saveCheckoutFolders: config.setCheckoutFolders,
             onOpen: { _ in }
         )
     }

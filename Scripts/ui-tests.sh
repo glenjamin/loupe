@@ -22,6 +22,9 @@ if [ "${1:-}" = "--run" ]; then
   mkdir -p "$run" "$out"
   # An APFS clone, so each run's own checkouts cost next to nothing.
   cp -cR "$suite/.checkouts" "$run/checkouts"
+  # A script's own config file, such as one with no checkout folders chosen yet.
+  config="${script%.loupe}.config.json"
+  if [ -f "$config" ]; then cp "$config" "$run/config.json"; fi
   id="com.glenmailer.Loupe.uitest.$name"
   defaults delete "$id" >/dev/null 2>&1 || true
   start=$(now_ms)

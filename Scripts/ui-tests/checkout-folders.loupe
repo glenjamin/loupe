@@ -1,0 +1,24 @@
+# With no checkout folders chosen, as on first launch, the lists ask for them and a PR whose
+# repo the fixtures have a checkout of shows none. Choosing them, which in a fixture run picks
+# its checkouts rather than showing a panel, finds the checkout and drops the prompt.
+wait settled
+open lists
+expect #checkout-folders-banner exists
+expect button "Choose Folders…" in #checkout-folders-banner
+snap lists-asking
+
+open tamarinworks/atrium#2928
+wait settled
+# It opens on the conversation, so the sidebar says so in the commit picker's place.
+expect text "No local checkout" exists
+expect button "Locate…" exists
+snap pr-asking
+click button "Choose Folders…"
+expect-request chooseCheckoutFolders
+wait until text "No local checkout" missing timeout 20s
+expect-request saveCheckoutFolders
+wait settled
+snap pr-found
+
+open lists
+expect #checkout-folders-banner missing

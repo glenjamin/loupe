@@ -1062,6 +1062,10 @@ At Glen's request the hide-whitespace toggle keeps a faint fill while off, so it
 
 Reversing part of the previous entry: on an inactive window the toggle's on state drops the accent like the "Reviewed" checkbox beside it. To stay distinct from the faint off fill it inverts instead, a near-full-strength primary fill with the glyph in the text background colour, so it is dark in light mode and light in dark mode.
 
+### Checkout folders are chosen on first launch and kept in a config file
+
+Reversing the fixed search roots of "Checkout locations live in the database and are discovered automatically": they were one machine's layout, wrong for anyone else. The folders are now asked for on first launch, by a banner above the lists and in the no-checkout pane rather than a panel thrown up at launch, so the lists can be read first. They're kept in `~/.config/loupe/config.json`, not the database, so they can be edited by hand or kept with dotfiles; the database stays in Application Support, as it's the app's own state. Until they're chosen nothing is searched and there's nowhere to clone to.
+
 ## Not yet decided
 
 Nothing is pending.

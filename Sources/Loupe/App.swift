@@ -29,7 +29,9 @@ struct LoupeApp: App {
         // A scene that opens no window, to hang the menus on.
         Settings { EmptyView() }
             .commands {
-                CommandGroup(replacing: .appSettings) {}
+                CommandGroup(replacing: .appSettings) {
+                    Button("Checkout Folders…") { windows.askForCheckoutFolders() }
+                }
                 TabCommands(windows: windows)
                 FindCommands(windows: windows)
                 DiffCommands()
@@ -250,12 +252,33 @@ extension FileDiff.Change {
     let store = openStore()
     let client = SnapshotRun.gitHubClient
     // The tabs take over opening PRs.
-    let lists = if let checkouts = FixtureRun.checkouts {
-        PullRequestListModel(client: client, store: store, checkoutSearchRoots: [checkouts], now: { FixtureRun.now }) { _ in }
+    let folders = checkoutFolders()
+    let lists = if FixtureRun.directory != nil {
+        PullRequestListModel(client: client, store: store, checkoutSearchRoots: folders.chosen, saveCheckoutFolders: folders.save, now: { FixtureRun.now }) { _ in }
     } else {
-        PullRequestListModel(client: client, store: store) { _ in }
+        PullRequestListModel(client: client, store: store, checkoutSearchRoots: folders.chosen, saveCheckoutFolders: folders.save) { _ in }
     }
     return TabsModel(lists: lists, store: store, client: client, notifications: SnapshotRun.gitHubNotifications)
+}
+
+/// The folders to search for checkouts, as the config file has them, and where newly chosen
+/// ones are kept. A snapshot run reads the file but never writes it; a fixture run reads its own,
+/// searching only its checkouts without one. A file that can't be read counts as no choice.
+@MainActor private func checkoutFolders() -> (chosen: [URL]?, save: @MainActor ([URL]) throws -> Void) {
+    let config = FixtureRun.config ?? ConfigFile(url: ConfigFile.defaultURL)
+    let chosen: [URL]?
+    do {
+        chosen = try config.checkoutFolders() ?? FixtureRun.checkoutsWithoutConfig.map { [$0] }
+    } catch {
+        FileHandle.standardError.write(Data("Couldn't read \(config.url.path(percentEncoded: false)), asking for checkout folders again: \(error)\n".utf8))
+        chosen = nil
+    }
+    let save: @MainActor ([URL]) throws -> Void = if SnapshotRun.directory != nil {
+        { folders in _ = SnapshotRun.refuses("saveCheckoutFolders \(folders.map { $0.path(percentEncoded: false) })") }
+    } else {
+        config.setCheckoutFolders
+    }
+    return (chosen, save)
 }
 
 /// The on-disk store, or a throwaway one if it can't be opened, so the PR list still works.

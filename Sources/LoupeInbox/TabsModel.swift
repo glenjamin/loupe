@@ -74,6 +74,7 @@ public final class TabsModel {
             log("Couldn't restore open tabs: \(error)")
         }
         lists.onOpen = { [weak self] in self?.open($0) }
+        lists.onCheckoutFoldersChosen = { [weak self] in await self?.retryMissingCheckouts() }
     }
 
     /// The open PRs, in the order they were opened, leaving out links still being looked up.
@@ -325,6 +326,16 @@ public final class TabsModel {
             try store.saveOpenTabs(tabs.map(\.id), selected: selected.flatMap(tab(id:))?.id)
         } catch {
             log("Couldn't save open tabs: \(error)")
+        }
+    }
+
+    /// Produces the diff again in each tab that found no checkout, as new folders may hold it.
+    private func retryMissingCheckouts() async {
+        await withDiscardingTaskGroup { group in
+            for tab in tabs {
+                guard case .noCheckout = tab.phase else { continue }
+                group.addTask { await tab.retry() }
+            }
         }
     }
 }
