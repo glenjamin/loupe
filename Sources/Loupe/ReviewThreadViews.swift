@@ -82,8 +82,8 @@ private struct NewCommentCard: View {
     /// otherwise posts at once, and ⌘⇧↩ does the other.
     private var actions: [ComposerAction] {
         let atOnce = "Post this comment at once, not as part of a review"
-        guard comment.target.takesReviewComments else {
-            let help = "Post this comment on this commit at once; GitHub's reviews only hold comments on the whole pull request's changes"
+        guard comment.takesReviewComments else {
+            let help = "Post this comment on this commit at once; GitHub's reviews only hold a comment on one line of a commit"
             return [ComposerAction(label: "Add single comment", help: help) { Task { await tab.sendComment() } }]
         }
         guard tab.canStartReview else {
@@ -111,7 +111,7 @@ private struct NewCommentCard: View {
     }
 
     private var caption: String {
-        guard comment.target.takesReviewComments else { return "Markdown. Posts at once: a review can't hold a comment on one commit." }
+        guard comment.takesReviewComments else { return "Markdown. Posts at once: a review can't hold a comment on several lines of one commit." }
         guard tab.canStartReview else { return "Markdown. Posts at once, not as part of a review." }
         return tab.pendingReview == nil
             ? "Markdown. ⌘↩ posts a single comment; ⌘⇧↩ starts a review."

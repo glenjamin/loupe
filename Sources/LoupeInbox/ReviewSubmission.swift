@@ -1,4 +1,5 @@
 import Foundation
+import LoupeCore
 import LoupeGitHub
 import LoupeModel
 import Observation
@@ -94,13 +95,13 @@ extension PullRequestTab {
     }
 
     /// Adds the comment being started to the viewer's pending review, starting the review with
-    /// it if they have none. It shows pending on its line and in the conversation straight
+    /// it if they have none; one on a commit goes in on that commit, as github.com's does. It shows pending on its line and in the conversation straight
     /// away, marked as sending until GitHub answers with its copy; then the threads are fetched
     /// again. A refusal takes it away and opens the draft again with the reason, and the
     /// threads are fetched anyway, so a review started or submitted elsewhere since is known
     /// when it's sent again.
     public func sendReviewComment() async {
-        guard canStartReview, let comment = threadActivity.newComment, comment.target.takesReviewComments, comment.draft.canSend,
+        guard canStartReview, let comment = threadActivity.newComment, comment.takesReviewComments, comment.draft.canSend,
               case let .ready(review) = phase
         else { return }
         threadActivity.newCommentError = nil
@@ -112,10 +113,14 @@ extension PullRequestTab {
         await storeOwnChanges()
         let added: (comment: ThreadComment, threadId: String?, reviewId: String)
         do {
-            let thread = DraftThread(
-                path: anchor.path, line: anchor.line, side: anchor.side.rawValue, startLine: comment.start?.line, startSide: comment.start?.side.rawValue, body: text
-            )
-            added = try await addToReview(thread, of: review.headOid)
+            if comment.target.isWholePullRequest {
+                let thread = DraftThread(
+                    path: anchor.path, line: anchor.line, side: anchor.side.rawValue, startLine: comment.start?.line, startSide: comment.start?.side.rawValue, body: text
+                )
+                added = try await addToReview(thread, of: review.headOid)
+            } else {
+                added = try await addToReview(text, on: anchor, of: comment.target.commitOid, in: review)
+            }
         } catch {
             undo(change)
             reopen(comment, because: "Couldn't add to your review: \(error.localizedDescription)")
@@ -279,23 +284,49 @@ private extension PullRequestTab {
     /// already being started rather than starting another. Returns the comment, its thread's id
     /// where GitHub gave it, and the review's id.
     func addToReview(_ thread: DraftThread, of head: String) async throws -> (comment: ThreadComment, threadId: String?, reviewId: String) {
-        if let reviewId = pendingReview?.id {
+        if let reviewId = try await reviewBeingWritten() {
             let posted = try await client.addThread(thread, toReview: reviewId)
             return (posted.comment, posted.id, reviewId)
         }
-        if let reviewStart {
-            let reviewId = try await reviewStart.value.id
-            let posted = try await client.addThread(thread, toReview: reviewId)
-            return (posted.comment, posted.id, reviewId)
-        }
-        let (client, id) = (client, id)
-        let start = Task { try await client.addReview(toPullRequest: id, commitId: head, body: nil, event: nil, threads: [thread]) }
-        reviewStart = start
-        defer { if reviewStart == start { reviewStart = nil } }
-        let started = try await start.value
+        let started = try await startReview(on: head, holding: [thread])
         guard let comment = started.comments.first else { throw GitHubError.graphQL(["GitHub didn't return the comment"]) }
         return (comment, nil, started.id)
     }
+
+    /// Adds a comment on `anchor` of `commit`'s own changes to the viewer's pending review,
+    /// starting an empty one on the head first if they have none. GitHub places it by where the
+    /// line is in its diff up to that commit, so that's found first.
+    func addToReview(_ text: String, on anchor: DiffAnchor, of commit: String, in review: ReviewDiff) async throws -> (comment: ThreadComment, threadId: String?, reviewId: String) {
+        let position = try await client.diffPosition(
+            ofLine: anchor.line, side: anchor.side.rawValue, path: anchor.path, from: review.mergeBase, to: commit, in: pullRequest.repository
+        )
+        guard let position else { throw LineNotInGitHubDiff() }
+        var reviewId = try await reviewBeingWritten()
+        if reviewId == nil { reviewId = try await startReview(on: review.headOid, holding: []).id }
+        guard let reviewId else { throw GitHubError.graphQL(["GitHub didn't return the review"]) }
+        let comment = try await client.addCommitComment(text, path: anchor.path, position: position, commitId: commit, toReview: reviewId)
+        return (comment, nil, reviewId)
+    }
+
+    /// The viewer's pending review's id, waiting for one being started; nil if they have none.
+    func reviewBeingWritten() async throws -> String? {
+        if let reviewId = pendingReview?.id { return reviewId }
+        return try await reviewStart?.value.id
+    }
+
+    func startReview(on head: String, holding threads: [DraftThread]) async throws -> PostedReview {
+        let (client, id) = (client, id)
+        let start = Task { try await client.addReview(toPullRequest: id, commitId: head, body: nil, event: nil, threads: threads) }
+        reviewStart = start
+        defer { if reviewStart == start { reviewStart = nil } }
+        return try await start.value
+    }
+}
+
+/// GitHub's diff from the PR's base to a commit can leave out a line of the commit's own
+/// changes, such as one the commit leaves as the base had it.
+private struct LineNotInGitHubDiff: LocalizedError {
+    var errorDescription: String? { "GitHub's diff of the pull request up to this commit doesn't show this line" }
 }
 
 private extension ReviewDraft {

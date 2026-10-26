@@ -119,8 +119,7 @@ public struct GitHubClient: Sendable {
 
         let (body, response) = try await transport.send(request)
         guard response.statusCode == 200 else {
-            let message = (try? JSONDecoder().decode(ErrorBody.self, from: body))?.message
-            throw GitHubError.http(status: response.statusCode, message: message)
+            throw GitHubError.http(status: response.statusCode, body: body)
         }
 
         let decoder = JSONDecoder()
@@ -311,6 +310,16 @@ public enum GitHubError: Error, Equatable, LocalizedError {
     }
 }
 
+extension GitHubError {
+    /// A refusal with GitHub's message from its error `body`, followed by any detail it gives,
+    /// such as which validation failed.
+    static func http(status: Int, body: Data) -> GitHubError {
+        guard let error = try? JSONDecoder().decode(ErrorBody.self, from: body) else { return .http(status: status, message: nil) }
+        let details = (error.errors ?? []).compactMap(\.text).filter { !$0.isEmpty }
+        return .http(status: status, message: details.isEmpty ? error.message : "\(error.message) (\(details.joined(separator: "; ")))")
+    }
+}
+
 extension URLSession: HTTPTransport {
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response) = try await data(for: request)
@@ -391,6 +400,27 @@ private struct GraphQLEnvelope<Payload: Decodable>: Decodable {
 
 private struct ErrorBody: Decodable {
     let message: String
+    let errors: [Detail]?
+
+    /// GitHub gives each as a sentence, or as an object with a message or naming what failed.
+    struct Detail: Decodable {
+        let text: String?
+
+        init(from decoder: any Decoder) throws {
+            if let sentence = try? decoder.singleValueContainer().decode(String.self) {
+                text = sentence
+                return
+            }
+            let fields = try decoder.container(keyedBy: Keys.self)
+            let message = try fields.decodeIfPresent(String.self, forKey: .message)
+            let named = try [Keys.resource, .field, .code].compactMap { try fields.decodeIfPresent(String.self, forKey: $0) }
+            text = message ?? (named.isEmpty ? nil : named.joined(separator: " "))
+        }
+
+        enum Keys: String, CodingKey {
+            case message, resource, field, code
+        }
+    }
 }
 
 extension GitHubClient {
@@ -422,8 +452,7 @@ extension GitHubClient {
 
         let (body, response) = try await transport.send(request)
         guard (200..<300).contains(response.statusCode) || alsoAccepting.contains(response.statusCode) else {
-            let message = (try? JSONDecoder().decode(ErrorBody.self, from: body))?.message
-            throw GitHubError.http(status: response.statusCode, message: message)
+            throw GitHubError.http(status: response.statusCode, body: body)
         }
         return body
     }

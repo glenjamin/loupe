@@ -90,6 +90,11 @@ public struct NewComment {
     /// The changes it was started on, whose lines it's numbered in.
     public let target: CommentTarget
     public let draft: CommentDraft
+
+    /// Whether it can go into a pending review: anything on the whole PR's diff, and one line of
+    /// a commit, as GitHub's only way to put a comment on another commit into a review takes no
+    /// range.
+    public var takesReviewComments: Bool { target.isWholePullRequest || start == nil }
 }
 
 /// The commit a new comment on the changes shown is anchored to, as GitHub takes it.
@@ -100,10 +105,6 @@ public struct CommentTarget: Sendable, Equatable {
     /// Whether deleted lines take comments. GitHub numbers a deleted line in the PR's base, so
     /// only a commit whose parent is that base can number them the same way.
     public let takesDeletedLines: Bool
-
-    /// Whether a comment on these changes can go into a pending review, which GitHub anchors to
-    /// the one commit the review is on and so only takes on the whole PR's diff.
-    public var takesReviewComments: Bool { isWholePullRequest }
 }
 
 /// A comment being written, as markdown. It closes as it's sent, the comment showing in its

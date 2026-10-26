@@ -439,6 +439,8 @@ struct ThreadsApp {
         try await repo.push(asPullRequest: listed.number)
         try await github.edit(listed.id) { $0.headRefOid = head; $0.baseRefOid = branchPoint }
         await conversations.setHead(head, of: listed.id)
+        await conversations.setBase(branchPoint, of: listed.id)
+        await conversations.serveDiffs(from: repo.origin)
         await tabs.lists.refresh()
         return try #require(tabs.lists.pullRequest(id: listed.id))
     }

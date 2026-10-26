@@ -38,8 +38,7 @@ public struct GitHubNotifications: Sendable {
             let pullRequests = threads.compactMap { $0.subject.type == "PullRequest" ? $0.subject.url.flatMap(PullRequestReference.init) : nil }
             return NotificationsPoll(outcome: .changed(pullRequests, lastModified: response.value(forHTTPHeaderField: "Last-Modified")), interval: interval)
         default:
-            let message = (try? JSONDecoder().decode(ErrorBody.self, from: body))?.message
-            throw GitHubError.http(status: response.statusCode, message: message)
+            throw GitHubError.http(status: response.statusCode, body: body)
         }
     }
 
@@ -89,6 +88,3 @@ private struct NotificationThread: Decodable {
     }
 }
 
-private struct ErrorBody: Decodable {
-    let message: String
-}

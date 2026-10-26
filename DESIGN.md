@@ -1070,6 +1070,14 @@ Reversing the fixed search roots of "Checkout locations live in the database and
 
 At Glen's request, reversing "Line counts don't follow it, as github.com's don't" from "Whitespace changes can be hidden per PR": with whitespace hidden, a count that still includes a reindented block says the PR is bigger than what's left to read. Each file's counts are now the lines its diff shows, in the file list and its header, and hidden files and the commit picker's diff-stats are counted by git with `-w` too. A file only whitespace changed in stays listed and counted as a file, at +0 −0, and the file list says "whitespace" for it in place of counts. A commit's or the changes since an anchor's stat shows the count with whitespace until it's been counted without, so the picker doesn't blank while it's counted; each way's counts are kept, so toggling back is instant. The reviewed count and "Self-reviewed" still go by files, which hiding whitespace doesn't change.
 
+### A comment on one line of a commit can go into a review
+
+Revising "A comment on a commit offers only "Add single comment"" from "One commit's changes take comments, and a selection of lines takes one comment on them all". github.com lets a comment from a PR's commit view join the pending review, and it has to: GitHub refused a single comment over REST with a 422 "Validation Failed" while the viewer had a review pending, so a reviewer with one open couldn't comment on a commit at all. Now a comment on one line of a commit offers "Start a review" / "Add review comment" beside "Add single comment", as the whole PR's diff does. It goes in with `addPullRequestReviewComment`, the one mutation that takes a `commitOID`, which GitHub has marked for removal but still runs. With no review pending, an empty one is started on the head first, as tried live: a review on the head holds comments on other commits, each keeping its own as `originalCommit`.
+
+That mutation places a comment by `position`, not line and side: the count of lines below the first hunk header in GitHub's diff of the file from the PR's base to that commit, deleted lines and later hunk headers included. Tried live, that's GitHub's own diff, which can draw hunks differently from git, so the position is counted in the file's patch from REST's compare of the merge base and the commit, not from the checkout. A line that diff doesn't show is refused with a reason rather than guessed. The mutation takes no range, so a comment on several lines of a commit still only posts at once, and the caption says so.
+
+REST refusals now carry GitHub's detail after its message, from the body's `errors`, so "Validation Failed" says which validation.
+
 ## Not yet decided
 
 Nothing is pending.

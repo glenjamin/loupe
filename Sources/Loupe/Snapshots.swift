@@ -2576,5 +2576,5 @@ private func snapshotLines(_ value: String) -> ClosedRange<Int>? {
 private func describe(_ comment: NewComment) -> String {
     let start = comment.start.map { "from \($0.side) line \($0.line) " } ?? ""
     let commit = comment.target.isWholePullRequest ? "the whole PR's diff" : "commit \(comment.target.commitOid.prefix(7))"
-    return "a comment is open \(start)on \(comment.anchor.side) line \(comment.anchor.line) of \(commit), reviews \(comment.target.takesReviewComments ? "offered" : "not offered")"
+    return "a comment is open \(start)on \(comment.anchor.side) line \(comment.anchor.line) of \(commit), reviews \(comment.takesReviewComments ? "offered" : "not offered")"
 }

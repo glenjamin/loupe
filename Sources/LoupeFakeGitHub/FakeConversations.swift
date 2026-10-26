@@ -52,6 +52,7 @@ actor FakeConversations {
     enum ReviewMutation: Equatable {
         case addReview(pullRequestId: String, commitId: String?, body: String?, event: String?, threads: [ThreadInput])
         case addThread(reviewId: String, ThreadInput)
+        case addCommitComment(reviewId: String, commitId: String, path: String, position: Int, body: String)
         case submit(reviewId: String, event: String, body: String?)
         case delete(reviewId: String)
         case deleteComment(id: String)
@@ -139,9 +140,25 @@ actor FakeConversations {
         var startSide: String? = nil
     }
 
+    /// Each PR's base, by id, for those given one, which a comment on a commit is placed from.
+    private var bases: [String: String] = [:]
+    /// The bare repo GitHub's compare and its diffs up to a commit are made from.
+    private var diffRepository: URL?
+
     /// Says what the PR's head is, as pushing to it does.
     func setHead(_ oid: String, of id: String) {
         heads[id] = oid
+    }
+
+    /// Says what the PR's base is, as opening it on a branch does.
+    func setBase(_ oid: String, of id: String) {
+        bases[id] = oid
+    }
+
+    /// Diffs commits from `origin`, a bare repo holding the PRs' commits, for GitHub's compare
+    /// and to place a comment on a commit by its position.
+    func serveDiffs(from origin: URL) {
+        diffRepository = origin
     }
     /// Every comment on a PR itself received, in order.
     private(set) var conversationCommentsReceived: [ConversationCommentInput] = []
@@ -451,6 +468,10 @@ actor FakeConversations {
             await pass(.resolve)
             return try setResolved(query.contains("unresolveReviewThread("), variables, url)
         }
+        if query.contains("addPullRequestReviewComment(") {
+            await pass(.addToReview)
+            return try await addCommitComment(variables, url)
+        }
         if query.contains("addPullRequestReviewThread(") {
             await pass(.addToReview)
             return try addReviewThread(variables, url)
@@ -579,6 +600,9 @@ actor FakeConversations {
             await pass(.removeReviewRequest)
             return try removeReviewRequests(request, repository: String(match.1), number: try require(Int(match.2)), url)
         }
+        if let match = url.path().wholeMatch(of: /\/repos\/[^\/]+\/[^\/]+\/compare\/([0-9a-f]+)\.\.\.([0-9a-f]+)/) {
+            return try await compare(String(match.1), String(match.2), url)
+        }
         try expect(request.httpMethod == "POST")
         try expect(request.value(forHTTPHeaderField: "Authorization") == "bearer \(FakeGitHub.validToken)")
         try expect(request.value(forHTTPHeaderField: "Accept") == "application/vnd.github.full+json", "so the comment comes back rendered")
@@ -612,7 +636,8 @@ actor FakeConversations {
     }
 
     /// A new comment on a line, or from `start_line` to `line`, which starts a thread by the
-    /// viewer at once, answered as GitHub does with the comment. It's made on `commit_id`; one
+    /// viewer at once, answered as GitHub does with the comment, or refused as GitHub refuses
+    /// it while the viewer has a pending review of the PR. It's made on `commit_id`; one
     /// on a commit older than the head is outdated on the whole PR's diff, as the fake doesn't
     /// diff to tell whether GitHub could carry it onto the head's lines.
     private func newComment(_ content: [String: Any], repository: String, number: Int, _ url: URL) throws -> (Data, HTTPURLResponse) {
@@ -627,6 +652,10 @@ actor FakeConversations {
         }
         guard let id = numbers[number] else {
             return (Data(#"{"message":"Not Found","status":"404"}"#.utf8), fakeResponse(url, status: 404))
+        }
+        if pendingReviews[id] != nil {
+            let refusal = #"{"message":"Validation Failed","errors":["user_id can only have one pending review per pull request"],"status":"422"}"#
+            return (Data(refusal.utf8), fakeResponse(url, status: 422))
         }
         try startThread(
             on: id, path: input.path, line: input.line, side: input.side, startLine: input.startLine, startSide: input.startSide, commit: input.commitId,
@@ -812,6 +841,46 @@ actor FakeConversations {
         posted["comments"] = ["nodes": comments]
         payload["thread"] = posted
         return (try JSONSerialization.data(withJSONObject: ["data": ["addPullRequestReviewThread": payload]]), fakeResponse(url, status: 200))
+    }
+
+    /// A comment on a commit into the viewer's pending review, placed as GitHub places it: on the
+    /// line at `position` in the diff from the PR's base to that commit, outdated on the head
+    /// unless it's the head.
+    private func addCommitComment(_ variables: [String: Any], _ url: URL) async throws -> (Data, HTTPURLResponse) {
+        let input = try require(variables["input"] as? [String: Any])
+        let reviewId = try require(input["pullRequestReviewId"] as? String)
+        let commit = try require(input["commitOID"] as? String)
+        let path = try require(input["path"] as? String)
+        let position = try require(input["position"] as? Int)
+        let body = try require(input["body"] as? String)
+        reviewMutationsReceived.append(.addCommitComment(reviewId: reviewId, commitId: commit, path: path, position: position, body: body))
+        if let refusal = try refusalOfReviewChanges("addPullRequestReviewComment", url) { return refusal }
+        guard let id = pullRequest(withPendingReview: reviewId) else { return try refusal(unresolved: reviewId, mutation: "addPullRequestReviewComment", url) }
+        let base = try require(bases[id], "the fake places a comment on a commit from the PR's base")
+        guard let (line, side) = row(atPosition: position, inPatch: try await patch(of: path, from: base, to: commit)) else {
+            return try unprocessable("addPullRequestReviewComment", "Pull request review thread position is invalid", url)
+        }
+        let threadId = try startThread(
+            on: id, path: path, line: line, side: side, commit: commit, outdated: heads[id] != commit, pending: true, body: body, by: FakeGitHub.viewer
+        )
+        let comment = try require(threads(of: id).first { $0["id"] as? String == threadId }.flatMap { comments(of: $0).first })
+        return (try JSONSerialization.data(withJSONObject: ["data": ["addPullRequestReviewComment": ["comment": comment]]]), fakeResponse(url, status: 200))
+    }
+
+    /// GitHub's compare of two commits: each file changed from their merge base to `head`, with
+    /// its patch from the first hunk header on.
+    private func compare(_ base: String, _ head: String, _ url: URL) async throws -> (Data, HTTPURLResponse) {
+        let repository = try require(diffRepository, "the fake compares commits once it's serving diffs")
+        let paths = try await runGit(["diff", "--name-only", "\(base)...\(head)"], in: repository).split(separator: "\n").map(String.init)
+        var files: [[String: Any]] = []
+        for path in paths { files.append(["filename": path, "patch": try await patch(of: path, from: base, to: head)]) }
+        return (try JSONSerialization.data(withJSONObject: ["files": files]), fakeResponse(url, status: 200))
+    }
+
+    private func patch(of path: String, from base: String, to head: String) async throws -> String {
+        let repository = try require(diffRepository, "the fake diffs commits once it's serving diffs")
+        let diff = try await runGit(["diff", "\(base)...\(head)", "--", path], in: repository)
+        return diff.range(of: "@@").map { String(diff[$0.lowerBound...]) } ?? ""
     }
 
     private func submitReview(_ variables: [String: Any], _ url: URL) async throws -> (Data, HTTPURLResponse) {
@@ -1426,4 +1495,22 @@ private var noReactions: [[String: Any]] {
     ["THUMBS_UP", "THUMBS_DOWN", "LAUGH", "HOORAY", "CONFUSED", "HEART", "ROCKET", "EYES"].map {
         ["content": $0, "viewerHasReacted": false, "reactors": ["totalCount": 0]]
     }
+}
+
+/// The line, and its side, at 1-based `position` below a patch's first hunk header, as GitHub
+/// counts a review comment's position.
+private func row(atPosition position: Int, inPatch patch: String) -> (line: Int, side: String)? {
+    var (counted, old, new) = (-1, 0, 0)
+    for row in patch.split(separator: "\n", omittingEmptySubsequences: false) {
+        counted += 1
+        if let header = row.firstMatch(of: /^@@ -(\d+)(?:,\d+)? \+(\d+)/) {
+            (old, new) = (Int(header.1) ?? 0, Int(header.2) ?? 0)
+            continue
+        }
+        let isRemoved = row.first == "-"
+        if counted == position { return isRemoved ? (old, "LEFT") : (new, "RIGHT") }
+        if row.first != "+" { old += 1 }
+        if !isRemoved { new += 1 }
+    }
+    return nil
 }

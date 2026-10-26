@@ -5,8 +5,9 @@ import LoupeInbox
 import LoupeModel
 import Testing
 
-/// Comments on one commit's own changes, as github.com takes them from a PR's commit view, and
-/// comments on a range of lines, on the whole PR's diff or a commit's.
+/// Comments on one commit's own changes, as github.com takes them from a PR's commit view, posted
+/// at once or into a review, and comments on a range of lines, on the whole PR's diff or a
+/// commit's.
 @MainActor
 struct CommitCommentTests {
     @Test func aCommentOnACommitsLinePostsOnThatCommitAndShowsThereAndOnThePullRequest() async throws {
@@ -22,11 +23,7 @@ struct CommitCommentTests {
 
         let anchor = DiffAnchor(path: "app.go", side: .right, line: 11)
         tab.startComment(at: anchor)
-        let comment = try #require(tab.shownNewComment)
-        #expect(!comment.target.takesReviewComments, "GitHub's pending reviews hold comments on the PR's head alone")
-        comment.draft.text = "Why a second line?"
-        await tab.sendReviewComment()
-        #expect(await app.conversations.reviewMutationsReceived.isEmpty, "nothing goes into a review from a commit")
+        try #require(tab.shownNewComment).draft.text = "Why a second line?"
         await tab.sendComment()
 
         #expect(await app.conversations.commentsReceived == [.init(
@@ -47,6 +44,67 @@ struct CommitCommentTests {
 
         let stored = try #require(try app.store.conversation(of: pullRequest.id)?.threads.first { $0.id == thread.id })
         #expect(stored.originalCommitOid == commit.oid, "kept with the conversation")
+    }
+
+    @Test func aCommentOnACommitsLineStartsAReviewOnTheHeadAndIsPlacedWhereGitHubsDiffUpToTheCommitHasIt() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest()
+        let tab = try await app.open(pullRequest)
+        let commit = try #require(tab.ready?.commits.first { $0.headline == "Change app.go" })
+        await tab.show(.commit(commit.oid))
+
+        tab.startComment(at: DiffAnchor(path: "app.go", side: .right, line: 11))
+        let comment = try #require(tab.shownNewComment)
+        #expect(comment.takesReviewComments)
+        comment.draft.text = "Why a second line?"
+        await tab.sendReviewComment()
+
+        let mutations = await app.conversations.reviewMutationsReceived
+        guard case let .addReview(_, commitId, _, event, threads)? = mutations.first, case let .addCommitComment(reviewId, onCommit, path, position, body)? = mutations.last else {
+            Issue.record("expected an empty review, then the comment on the commit: \(mutations)")
+            return
+        }
+        #expect(mutations.count == 2)
+        #expect(commitId == tab.ready?.headOid && event == nil && threads.isEmpty, "a review is of the head")
+        #expect(reviewId == tab.pendingReview?.id)
+        #expect((onCommit, path, position, body) == (commit.oid, "app.go", 6, "Why a second line?"), "three context lines, the old line 10, then 10a and 10b")
+        let file = tab.expandedFile(try #require(tab.file("app.go")))
+        let thread = try #require(tab.threads(on: file)?.anchored.first { $0.line == 11 }?.threads.first)
+        #expect(thread.comments.map(\.isPending) == [true])
+        #expect(thread.originalCommitOid == commit.oid)
+        #expect(tab.threadActivity.newCommentError == nil)
+
+        tab.startComment(at: DiffAnchor(path: "app.go", side: .left, line: 50))
+        try #require(tab.shownNewComment).draft.text = "Gone?"
+        await tab.sendReviewComment()
+        guard case let .addCommitComment(_, _, _, position, _)? = await app.conversations.reviewMutationsReceived.last else {
+            Issue.record("expected the comment on the commit")
+            return
+        }
+        #expect(position == 15, "the second hunk's header counts as a line, then three context lines")
+        #expect(await app.conversations.reviewMutationsReceived.count == 3, "into the review started, not another")
+        #expect(tab.threads(on: tab.expandedFile(try #require(tab.file("app.go"))))?.anchored.map(\.line) == [11, 50])
+    }
+
+    @Test func aRangeOnACommitTakesNoReviewAndASingleCommentWhileAReviewIsPendingSaysWhyGitHubRefusedIt() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest()
+        try await app.conversations.startPendingReview(on: pullRequest.id, path: "app.go", line: 11, body: "Hmm")
+        let tab = try await app.open(pullRequest)
+        let commit = try #require(tab.ready?.commits.first { $0.headline == "Change app.go" })
+        await tab.show(.commit(commit.oid))
+
+        tab.startComment(at: DiffAnchor(path: "app.go", side: .right, line: 12), from: DiffAnchor(path: "app.go", side: .right, line: 10))
+        let comment = try #require(tab.shownNewComment)
+        #expect(comment.start != nil && !comment.takesReviewComments, "GitHub places a comment on a commit in a review by one line")
+        comment.draft.text = "These three could be one."
+        await tab.sendReviewComment()
+        #expect(await app.conversations.reviewMutationsReceived.isEmpty)
+
+        await tab.sendComment()
+        #expect(await app.conversations.commentsReceived.count == 1)
+        #expect(tab.shownNewComment?.draft.text == "These three could be one.", "opened again to try another way")
+        #expect(tab.threadActivity.newCommentError?.hasPrefix("Couldn't comment: GitHub returned HTTP 422: Validation Failed (user_id can only have one pending review per pull request)") == true)
     }
 
     @Test func aCommitShowsOnlyThreadsMadeOnItOnTheLinesTheyWereMadeOnAndTheyTakeReplies() async throws {

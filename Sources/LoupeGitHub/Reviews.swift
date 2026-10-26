@@ -86,6 +86,30 @@ extension GitHubClient {
         return PostedThread(id: thread.id, comment: comment.comment)
     }
 
+    /// Adds a comment on a line of one commit to the viewer's pending review with `reviewId`, as
+    /// github.com does from a PR's commit view. GraphQL's only mutation that takes a commit,
+    /// which GitHub has marked for removal; it places the comment by `position`, as
+    /// `diffPosition` finds it.
+    @discardableResult
+    public func addCommitComment(_ body: String, path: String, position: Int, commitId: String, toReview reviewId: String) async throws -> ThreadComment {
+        let input = AddCommentInput(pullRequestReviewId: reviewId, commitOID: commitId, path: path, position: position, body: body)
+        let response: AddCommentResponse = try await query(Self.addCommitCommentMutation, variables: Input(input: input))
+        guard let comment = response.addPullRequestReviewComment?.comment else { throw GitHubError.graphQL(["GitHub didn't return the comment"]) }
+        return comment.comment
+    }
+
+    /// Where `line` on `side` of `path` sits in GitHub's diff of the file from `base` to
+    /// `commitId`, counted as the lines below its first hunk header, as GitHub's `position` is;
+    /// nil when that diff doesn't show the line. GitHub's own diff, from its compare, as it can
+    /// draw hunks differently from git.
+    public func diffPosition(ofLine line: Int, side: String, path: String, from base: String, to commitId: String, in repository: String) async throws -> Int? {
+        // The first page lists every changed file, however many commits there are.
+        let body = try await rest("GET", path: "/repos/\(repository)/compare/\(base)...\(commitId)?per_page=1")
+        let comparison = try JSONDecoder().decode(Comparison.self, from: body)
+        guard let patch = comparison.files.first(where: { $0.filename == path })?.patch else { return nil }
+        return position(ofLine: line, side: side, inPatch: patch)
+    }
+
     /// Submits the viewer's pending review with `reviewId`, its summary replaced by `body`.
     @discardableResult
     public func submitReview(_ reviewId: String, event: ReviewEvent, body: String) async throws -> PostedReview {
@@ -115,6 +139,12 @@ extension GitHubClient {
     static let addThreadMutation = """
         mutation($input: AddPullRequestReviewThreadInput!) {
           addPullRequestReviewThread(input: $input) { thread { id comments(first: 1) { nodes { ...PostedComment } } } }
+        }
+        """ + postedCommentFragment
+
+    static let addCommitCommentMutation = """
+        mutation($input: AddPullRequestReviewCommentInput!) {
+          addPullRequestReviewComment(input: $input) { comment { ...PostedComment } }
         }
         """ + postedCommentFragment
 
@@ -195,6 +225,14 @@ private struct AddThreadInput: Encodable, Sendable {
     let body: String
 }
 
+private struct AddCommentInput: Encodable, Sendable {
+    let pullRequestReviewId: String
+    let commitOID: String
+    let path: String
+    let position: Int
+    let body: String
+}
+
 private struct SubmitReviewInput: Encodable, Sendable {
     let pullRequestReviewId: String
     let event: String
@@ -227,6 +265,24 @@ private struct AddThreadResponse: Decodable {
     struct Thread: Decodable {
         let id: String
         let comments: Nodes<CommentNode>
+    }
+}
+
+private struct AddCommentResponse: Decodable {
+    let addPullRequestReviewComment: Payload?
+
+    struct Payload: Decodable {
+        let comment: CommentNode?
+    }
+}
+
+/// A REST compare's changed files, each with its patch unless GitHub leaves out one too big.
+private struct Comparison: Decodable {
+    let files: [File]
+
+    struct File: Decodable {
+        let filename: String
+        let patch: String?
     }
 }
 
@@ -287,3 +343,34 @@ private struct Nodes<Node: Decodable>: Decodable {
 
 /// For a mutation whose payload isn't needed; its errors still come through the envelope.
 private struct IgnoredPayload: Decodable {}
+
+/// The 1-based count of `patch`'s lines, after its first hunk header, down to `line` on `side`.
+private func position(ofLine line: Int, side: String, inPatch patch: String) -> Int? {
+    var (position, old, new) = (0, 0, 0)
+    var started = false
+    for row in patch.split(separator: "\n", omittingEmptySubsequences: false) {
+        if let header = row.firstMatch(of: /^@@ -(\d+)(?:,\d+)? \+(\d+)/) {
+            if started { position += 1 }
+            started = true
+            (old, new) = (Int(header.1) ?? 0, Int(header.2) ?? 0)
+            continue
+        }
+        guard started else { continue }
+        position += 1
+        switch row.first {
+        case "-":
+            if side == "LEFT", old == line { return position }
+            old += 1
+        case "+":
+            if side == "RIGHT", new == line { return position }
+            new += 1
+        case "\\":
+            continue
+        default:
+            if (side == "LEFT" ? old : new) == line { return position }
+            old += 1
+            new += 1
+        }
+    }
+    return nil
+}
