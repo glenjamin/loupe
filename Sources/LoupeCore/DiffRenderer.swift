@@ -293,10 +293,10 @@ private struct Style {
         let gutterWidth = digit * CGFloat(gutterColumns) + (fontSize / 3).rounded()
         let codeStart = gutterWidth + (fontSize * 2 / 3).rounded()
         let paragraph = NSMutableParagraphStyle()
-        // Rows are five thirds of the font size, as GitHub's 20pt at 12pt, with the extra space
-        // split above and below the text.
+        // Rows are one and a half times the font size, as VS Code's on macOS, with the extra
+        // space split above and below the text.
         let natural = ceil(font.ascender - font.descender + font.leading)
-        let extra = max(0, (fontSize * 5 / 3).rounded() - natural)
+        let extra = max(0, (fontSize * 3 / 2).rounded() - natural)
         paragraph.minimumLineHeight = natural + (extra / 2).rounded(.down)
         paragraph.maximumLineHeight = paragraph.minimumLineHeight
         paragraph.lineSpacing = extra - (extra / 2).rounded(.down)

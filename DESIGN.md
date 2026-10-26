@@ -1108,6 +1108,10 @@ At Glen's request, revising "The Conflicts badge lists the conflicting files, fo
 
 At Glen's request the diff's code is Monaco at 15pt rather than the system monospaced font at 12pt, with rows still five thirds of the font size. Monaco asks for leading that SF Mono doesn't, so the diff's layout ignores font leading, leaving each row, and each block laid over the diff, exactly as tall as its paragraph style says. The threads and comment boxes laid over the diff scale every text size by the code's size over the system's, so a comment's text is as large as the code; the same views shown over the conversation, in its reply and edit popovers, stay at the system's sizes. Buttons keep their control sizes.
 
+### The diff's rows are VS Code's height
+
+At Glen's request, revising the row height in "The diff is Monaco at 15pt, and its threads' text scales to match": rows are one and a half times the font size, rounded, as VS Code's are by default on macOS, so 23pt at 15pt, rather than GitHub's five thirds. Side by side with VS Code at the same font and size, the diff then reads the same.
+
 ## Not yet decided
 
 Nothing is pending.
