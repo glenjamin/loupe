@@ -1102,7 +1102,7 @@ At Glen's request, revising the part of "One commit's changes take comments, and
 
 ### A conflicting PR's files are marked as it opens
 
-At Glen's request, revising "The Conflicts badge lists the conflicting files, found by merging locally", which looked only when the popover first opened. When GitHub says a PR conflicts, its tab now looks as it loads, once the diff has fetched the head and base, and the file list marks each conflicting file the PR changes with a red "conflict" capsule beside its name, which says what it conflicts with when hovered. PRs GitHub doesn't flag are still only looked at when asked, so most tabs do no extra work; the merge is local and quick, and a reload looks afresh as before.
+At Glen's request, revising "The Conflicts badge lists the conflicting files, found by merging locally", which looked only when the popover first opened. When GitHub says a PR conflicts, its tab now looks as it loads, once the diff has fetched the head and base, and the file list marks each conflicting file the PR changes with a red "conflict" capsule beside its name, which says what it conflicts with when hovered. PRs GitHub doesn't flag aren't looked at, as nothing then offers the list, so most tabs do no extra work, and a conflict with a base GitHub hasn't checked against yet goes unseen until it does; the merge is local and quick, and a reload looks afresh as before.
 
 ## Not yet decided
 
