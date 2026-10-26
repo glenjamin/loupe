@@ -252,7 +252,8 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// Produces the diff and asks GitHub which files are viewed and for the conversation, unless
-    /// already asked. Returns once all three are done, one way or another.
+    /// already asked, then looks for the files that conflict if GitHub says the PR does. Returns
+    /// once all are done, one way or another.
     public func load() async {
         if let loading {
             await loading.value
@@ -272,6 +273,7 @@ public final class PullRequestTab: Identifiable {
             await viewer
             loading = nil
             followStoredChanges()
+            if self.pullRequest.mergeable == .conflicting { await findConflicts() }
         }
         loading = task
         await task.value

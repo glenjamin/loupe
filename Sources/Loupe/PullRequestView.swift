@@ -929,12 +929,18 @@ struct ReviewFileList: View {
     }
 
     private func row(_ path: String, help: String? = nil, @ViewBuilder trailing: () -> some View) -> some View {
-        ReviewFileRow(path: path, unresolvedThreads: tab.unresolvedThreadCount(of: path) ?? 0, state: tab.viewedState(of: path), isUnseparated: tab.unseparatedPaths.contains(path), trailing: trailing())
+        ReviewFileRow(path: path, unresolvedThreads: tab.unresolvedThreadCount(of: path) ?? 0, state: tab.viewedState(of: path), isUnseparated: tab.unseparatedPaths.contains(path), conflictsWith: conflicts(path), trailing: trailing())
             // SwiftUI's List doesn't tell a row it's on the accent-coloured selection, so the
             // row is told here: selected, with the list focused in the key window.
             .environment(\.backgroundProminence, isEmphasized(path) ? .increased : .standard)
             .help(help ?? path)
             .tag(Optional(path))
+    }
+
+    /// The base `path` conflicts with, once the conflicting files have been found.
+    private func conflicts(_ path: String) -> String? {
+        guard case let .found(paths)? = tab.conflictedFiles, paths.contains(path) else { return nil }
+        return tab.pullRequest.baseRefName
     }
 
     private func isEmphasized(_ path: String) -> Bool {
@@ -1000,7 +1006,8 @@ struct FileTreeRows<FileRow: View>: View {
 }
 
 /// A file in the list on one line: its name and open conversations, dimmed once viewed, flagged
-/// when it has changed since being viewed, then a tick once viewed and `trailing` at the end.
+/// when it has changed since being viewed or conflicts with the base, then a tick once viewed
+/// and `trailing` at the end.
 /// The tick's slot is kept when there's no tick, so marking a file doesn't shift its row.
 /// Selected in a key window, it all takes the selection's foreground, undimmed, as Finder's
 /// sidebar does, since colours and fading don't read on the accent background.
@@ -1010,6 +1017,8 @@ struct ReviewFileRow<Trailing: View>: View {
     let state: FileViewedState
     /// Whether its changes since a rebase couldn't be told apart from the rebase's.
     var isUnseparated = false
+    /// The base it conflicts with, if it does.
+    var conflictsWith: String? = nil
     let trailing: Trailing
     @Environment(\.backgroundProminence) private var prominence
 
@@ -1035,6 +1044,17 @@ struct ReviewFileRow<Trailing: View>: View {
             }
             if isUnseparated {
                 UnseparatedBadge(label: "rebase")
+            }
+            if let conflictsWith {
+                Text("conflict")
+                    .font(.caption2)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .foregroundStyle(prominence.rowStyle(.diffDanger))
+                    .overlay(Capsule().strokeBorder(prominence.rowStyle(.diffDanger)))
+                    .help("Conflicts with \(conflictsWith)")
+                    .fixedSize()
+                    .accessibilityIdentifier("conflict-marker")
             }
             Spacer(minLength: 4)
             // A clear view holds the slot, as an empty one takes no room in a stack.

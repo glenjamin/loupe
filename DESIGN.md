@@ -1100,6 +1100,10 @@ For a script's `hover` to open such a popover, a scripted run's window reports t
 
 At Glen's request, revising the part of "One commit's changes take comments, and a selection of lines takes one comment on them all" that kept several commits' changes, and those replayed across a rebase, from taking comments. Whatever those changes start from, they end at the head, so their new side's line numbers are the head's, the same `line` and side RIGHT a comment on the whole PR's diff uses. So a comment there goes on the head exactly as one on the whole PR's diff does, posted at once or into a review, ranges included, and the head's threads show on those lines, as on the whole PR's diff, without the "elsewhere" list of threads that aren't on its lines. Deleted lines take none, as they're the earlier head's, which GitHub doesn't number; nor does a file the PR doesn't change, which GitHub won't take comments on. Changes that don't end at the head, such as a force-push's from the conversation, still take none.
 
+### A conflicting PR's files are marked as it opens
+
+At Glen's request, revising "The Conflicts badge lists the conflicting files, found by merging locally", which looked only when the popover first opened. When GitHub says a PR conflicts, its tab now looks as it loads, once the diff has fetched the head and base, and the file list marks each conflicting file the PR changes with a red "conflict" capsule beside its name, which says what it conflicts with when hovered. PRs GitHub doesn't flag are still only looked at when asked, so most tabs do no extra work; the merge is local and quick, and a reload looks afresh as before.
+
 ## Not yet decided
 
 Nothing is pending.

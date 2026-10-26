@@ -22,3 +22,7 @@ expect button "Conversation" is not selected
 wait until #file-header
 expect ~"CHANGELOG.md" in #file-header
 snap conflicted-file-shown
+
+# The file list marks each conflicting file the PR changes, found as the PR opened.
+expect #conflict-marker
+snap conflict-markers

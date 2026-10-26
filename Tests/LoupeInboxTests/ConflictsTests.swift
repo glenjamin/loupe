@@ -6,7 +6,7 @@ import Testing
 
 @MainActor
 struct ConflictsTests {
-    @Test func thePullRequestsConflictingFilesAreFoundByMergingItIntoItsBaseAsFetched() async throws {
+    @Test func aConflictingPullRequestsFilesAreFoundAsItOpensByMergingItIntoItsBaseAsFetched() async throws {
         let app = try await SinceApp()
         let (pullRequest, _) = try await app.pushPullRequest()
         // The PR also deletes go.sum, a hidden file, which the base changes too.
@@ -15,13 +15,10 @@ struct ConflictsTests {
         let head = try await app.repo.git(["rev-parse", "HEAD"], in: app.repo.contributorDirectory)
         try await app.moveBase(["app.go": "package app\n\nfunc Hello() string { return \"hiya\" }\n", "go.sum": "example.com/lib v1.1.0 h1:def\n", "README": "The app.\n"])
         try await app.conflict(pullRequest, head: head)
-        let tab = try await app.open(pullRequest)
         let before = try await app.repo.checkoutState()
+        let tab = try await app.open(pullRequest)
+
         #expect(tab.pullRequest.mergeable == .conflicting)
-        #expect(tab.conflictedFiles == nil, "looked for only once asked")
-
-        await tab.findConflicts()
-
         #expect(tab.conflictedFiles == .found(["app.go", "go.sum"]), "not README, which only the base changed, nor notes.md, only the PR's")
         #expect(try await app.repo.checkoutState() == before, "the checkout is left alone")
         let made = try app.replayedObjects()
@@ -50,9 +47,22 @@ struct ConflictsTests {
         try await app.conflict(pullRequest, head: head)
         let tab = try await app.open(pullRequest)
 
+        #expect(tab.conflictedFiles == .found([]))
+    }
+
+    @Test func aPullRequestGitHubDoesntSayConflictsIsntLookedAtUntilAsked() async throws {
+        let app = try await SinceApp()
+        let (pullRequest, _) = try await app.pushPullRequest()
+        try await app.moveBase(["app.go": "package app\n\nfunc Hello() string { return \"hiya\" }\n"])
+        // GitHub has yet to work out whether it merges into the new base.
+        _ = try await app.forcePush(pullRequest)
+        let tab = try await app.open(pullRequest)
+        #expect(tab.pullRequest.mergeable != .conflicting)
+        #expect(tab.conflictedFiles == nil)
+
         await tab.findConflicts()
 
-        #expect(tab.conflictedFiles == .found([]))
+        #expect(tab.conflictedFiles == .found(["app.go"]))
     }
 
     @Test func theConflictingFilesFollowANewHeadOnReload() async throws {
@@ -61,16 +71,13 @@ struct ConflictsTests {
         try await app.moveBase(["app.go": "package app\n\nfunc Hello() string { return \"hiya\" }\n"])
         try await app.conflict(pullRequest, head: first)
         let tab = try await app.open(pullRequest)
-        await tab.findConflicts()
         #expect(tab.conflictedFiles == .found(["app.go"]))
 
-        // The author resolves it by merging the base in.
+        // The author resolves it by merging the base in, before GitHub has checked again.
         try await app.repo.git(["merge", "--quiet", "--no-edit", "-X", "theirs", "main"], in: app.repo.contributorDirectory)
         try await app.forcePush(pullRequest)
         await tab.reload()
-        #expect(tab.conflictedFiles == nil, "the new head is looked at afresh")
-        await tab.findConflicts()
-        #expect(tab.conflictedFiles == .found([]))
+        #expect(tab.conflictedFiles == .found([]), "the new head is looked at afresh")
     }
 
     @Test func withoutACheckoutTheConflictingFilesCantBeFound() async throws {
