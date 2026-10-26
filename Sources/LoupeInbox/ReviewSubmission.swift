@@ -78,15 +78,16 @@ extension PullRequestTab {
     }
 
     /// Whether the viewer can give the PR a verdict, approving it or asking for changes: it's
-    /// open and someone else's, as GitHub refuses either from a PR's author.
+    /// open and someone else's, as GitHub refuses either from a PR's author, and a verdict on
+    /// one merged or closed has nothing left to decide.
     public var canReview: Bool {
-        canStartReview && pullRequest.author != viewer
+        canStartReview && pullRequest.state == .open && pullRequest.author != viewer
     }
 
-    /// Whether the viewer can hold comments in a pending review and submit it: on any open PR,
-    /// their own included, whose review can only be submitted as a comment.
+    /// Whether the viewer can hold comments in a pending review and submit it: on any PR, their
+    /// own and merged or closed ones included, whose review can only be submitted as a comment.
     public var canStartReview: Bool {
-        viewer != nil && pullRequest.state == .open
+        viewer != nil
     }
 
     /// Whether the PR is the viewer's own, which GitHub won't let them approve or ask changes of.

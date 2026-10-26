@@ -315,7 +315,7 @@ struct ReviewSubmissionTests {
         #expect(tab.pendingReview?.id == reviewId, "still pending")
     }
 
-    @Test func onlyAnOpenPullRequestTakesAReviewAndOnlySomeoneElsesAVerdict() async throws {
+    @Test func anyPullRequestTakesAReviewButOnlySomeoneElsesOpenOneAVerdict() async throws {
         let app = try await ThreadsApp()
         let (mine, toReview) = (try #require(app.tabs.lists.pullRequests(in: .mine, includingStale: true).first), try #require(app.tabs.lists.pullRequests(in: .toReview).first))
         try await app.conversations.add(mine.id, author: FakeGitHub.viewer)
@@ -328,8 +328,26 @@ struct ReviewSubmissionTests {
         try await app.github.edit(theirs.id) { $0.state = "CLOSED"; $0.closedAt = Date.now.formatted(.iso8601) }
         try await app.tabs.lists.checkForChanges(to: [own.id, theirs.id])
 
-        #expect(own.pullRequest.state == .merged && !own.canStartReview && !own.canReview)
-        #expect(theirs.pullRequest.state == .closed && !theirs.canStartReview && !theirs.canReview)
+        #expect(own.pullRequest.state == .merged && own.canStartReview && !own.canReview)
+        #expect(theirs.pullRequest.state == .closed && theirs.canStartReview && !theirs.canReview, "verdicts are for open PRs")
+    }
+
+    @Test func aReviewOfAMergedPullRequestHoldsCommentsAndIsSubmittedAsAComment() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest()
+        let tab = try await app.open(pullRequest)
+        try await app.github.merge(tab.id)
+        try await app.tabs.lists.checkForChanges(to: [tab.id])
+        #expect(tab.pullRequest.state == .merged)
+
+        try await comment("Worth a follow-up?", at: DiffAnchor(path: "app.go", side: .right, line: 11), on: tab)
+        let reviewId = try #require(tab.pendingReview?.id)
+        #expect(!tab.canSubmitReview(as: .approve) && !tab.canSubmitReview(as: .requestChanges))
+        #expect(tab.canSubmitReview(as: .comment))
+        await tab.submitReview(as: .comment)
+
+        #expect(await app.conversations.reviewMutationsReceived.last == .submit(reviewId: reviewId, event: "COMMENT", body: ""))
+        #expect(tab.reviewDraft.error == nil && tab.pendingReview == nil)
     }
 
     /// Writes a comment under `anchor` and adds it to the viewer's review, starting one if need be.

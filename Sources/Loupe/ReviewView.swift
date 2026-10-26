@@ -7,7 +7,7 @@ import SwiftUI
 /// On anyone else's open PR, the header's review controls where the reviewers sit on the
 /// viewer's own: Request changes, Submit and Approve, each submitting at once with the summary
 /// written so far, and under them the pending count and "Summary…" to write it. On the viewer's
-/// own PR, which they can't approve or ask changes of, Submit is the only verdict, on that row.
+/// own PR, or a merged or closed one, which take no verdict, Submit is the only one, on that row.
 struct ReviewControls: View {
     let tab: PullRequestTab
 
@@ -92,7 +92,10 @@ struct ReviewControls: View {
             return "Write a summary or add comments first, to \(event == .requestChanges ? "request changes" : "submit without approving")"
         }
         let pending = tab.pendingReview.map { " with its \($0.commentCount) pending \($0.commentCount == 1 ? "comment" : "comments")" } ?? ""
-        guard tab.canReview else { return "Submits your review\(pending) now, as a comment. Authors can't approve or request changes on their own PR." }
+        guard tab.canReview else {
+            let why = tab.pullRequest.state == .open ? "Authors can't approve or request changes on their own PR." : "Only open PRs are approved or have changes requested."
+            return "Submits your review\(pending) now, as a comment. \(why)"
+        }
         if isApproved { return "You've approved this as it is. Clicking approves it again, submitting your review\(pending) now." }
         return "\(event.summary) Submits your review\(pending) now."
     }

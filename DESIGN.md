@@ -1078,6 +1078,10 @@ That mutation places a comment by `position`, not line and side: the count of li
 
 REST refusals now carry GitHub's detail after its message, from the body's `errors`, so "Validation Failed" says which validation.
 
+### Merged and closed PRs take a review, submitted as a comment
+
+At Glen's request, revising "The viewer's own PR takes a pending review, submitted as a comment", whose `canStartReview` was for open PRs only: a merged PR is still worth commenting on, and with no way to start a review there, each comment went out at once. GitHub takes a pending review on a merged PR (tried live, then deleted). So any PR now takes one: the comment box offers "Start a review" / "Add review comment" as elsewhere, and once a review is pending the header's right end shows the controls the viewer's own PR has, the pending count, "Summary…" and Submit. Approve and Request changes stay for someone else's open PR, as a verdict on one that's merged or closed has nothing left to decide; whether GitHub would take one wasn't tried, as that posts a review others see.
+
 ## Not yet decided
 
 Nothing is pending.

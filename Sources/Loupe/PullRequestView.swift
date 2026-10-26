@@ -364,7 +364,7 @@ struct PullRequestHeader: View {
                     if tab.canStartReview, tab.pendingReview != nil {
                         ReviewControls(tab: tab)
                     }
-                } else if tab.canReview {
+                } else if tab.canReview || (tab.canStartReview && tab.pendingReview != nil) {
                     ReviewControls(tab: tab)
                 }
             }
