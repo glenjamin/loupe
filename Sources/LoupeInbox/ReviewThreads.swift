@@ -94,14 +94,18 @@ public struct NewComment {
     /// Whether it can go into a pending review: anything on the whole PR's diff, and one line of
     /// a commit, as GitHub's only way to put a comment on another commit into a review takes no
     /// range.
-    public var takesReviewComments: Bool { target.isWholePullRequest || start == nil }
+    public var takesReviewComments: Bool { target.isOnHead || start == nil }
 }
 
 /// The commit a new comment on the changes shown is anchored to, as GitHub takes it.
 public struct CommentTarget: Sendable, Equatable {
     public let commitOid: String
-    /// The whole PR's diff, rather than one commit's own changes.
+    /// The whole PR's diff, rather than one commit's own changes or those since an earlier head.
     public let isWholePullRequest: Bool
+    /// Whether its lines are numbered as the head's, as the whole PR's diff and the changes
+    /// since an earlier head up to it are on their new side, so a comment goes on the head as
+    /// one on the whole PR's diff does, and the head's threads show on those lines.
+    public let isOnHead: Bool
     /// Whether deleted lines take comments. GitHub numbers a deleted line in the PR's base, so
     /// only a commit whose parent is that base can number them the same way.
     public let takesDeletedLines: Bool
@@ -186,12 +190,13 @@ extension PullRequestTab {
     /// The PR's review threads placed on `file`, as shown with any lines revealed around its
     /// hunks. On one commit's changes, only those made on that commit show, on the lines they
     /// were made on, as github.com shows them there; the rest belong to the whole PR's diff.
-    /// Nil when the changes shown aren't the PR's or one commit's, as nothing anchors to them.
+    /// The changes since an earlier head show the head's threads on their new side's lines.
+    /// Nil when nothing anchors to the changes shown.
     public func threads(on file: FileDiff) -> FileThreads? {
         guard let target = commentTarget, conversation != nil else { return nil }
         var anchored: [LineThreads] = []
         var elsewhere: [ReviewThread] = []
-        let threads = target.isWholePullRequest ? placedThreads : (conversation?.threads ?? []).filter { $0.originalCommitOid == target.commitOid }
+        let threads = target.isOnHead ? placedThreads : (conversation?.threads ?? []).filter { $0.originalCommitOid == target.commitOid }
         for thread in threads where thread.path == file.path {
             guard let lines = placedLines(of: thread), file.has(lines.upperBound, on: thread.side),
                   target.takesDeletedLines || thread.side == .right
@@ -214,7 +219,7 @@ extension PullRequestTab {
     /// whole file, or made on another commit.
     public func placedLines(of thread: ReviewThread) -> ClosedRange<Int>? {
         guard let target = commentTarget, !thread.isOnFile else { return nil }
-        let (start, end) = if target.isWholePullRequest {
+        let (start, end) = if target.isOnHead {
             thread.isOutdated ? (nil, nil) : (thread.startLine, thread.line)
         } else {
             thread.originalCommitOid == target.commitOid ? (thread.originalStartLine, thread.originalLine) : (nil, nil)
@@ -225,15 +230,20 @@ extension PullRequestTab {
 
     /// Where new comments on the changes shown go: the PR's head for its whole diff, or the
     /// commit for one commit's changes, including changes since an earlier head that are
-    /// exactly one commit's. Nil for any other changes, such as several commits' or those
-    /// replayed across a rebase, as GitHub has no commit whose own changes they are.
+    /// exactly one commit's. Other changes since an earlier head, several commits' or those
+    /// replayed across a rebase, go on the head too, on their new side only, as their deleted
+    /// lines are the earlier head's. Nil for changes that don't end at the head.
     public var commentTarget: CommentTarget? {
         guard case let .ready(review) = phase else { return nil }
         if shownChoice == .all {
-            return CommentTarget(commitOid: review.headOid, isWholePullRequest: true, takesDeletedLines: true)
+            return CommentTarget(commitOid: review.headOid, isWholePullRequest: true, isOnHead: true, takesDeletedLines: true)
         }
-        guard let range = shownRange, let commit = review.commits.first(where: { $0.range == range }) else { return nil }
-        return CommentTarget(commitOid: commit.oid, isWholePullRequest: false, takesDeletedLines: range.base == review.mergeBase)
+        guard let range = shownRange else { return nil }
+        if let commit = review.commits.first(where: { $0.range == range }) {
+            return CommentTarget(commitOid: commit.oid, isWholePullRequest: false, isOnHead: false, takesDeletedLines: range.base == review.mergeBase)
+        }
+        guard case .since = shownChoice, range.head == review.headOid else { return nil }
+        return CommentTarget(commitOid: review.headOid, isWholePullRequest: false, isOnHead: true, takesDeletedLines: false)
     }
 
     /// How many threads on the file at `path` aren't resolved, hidden files' included. Nil when
@@ -246,9 +256,12 @@ extension PullRequestTab {
     /// The rows of a file a comment can be started on: every line of `file` as shown, those
     /// revealed around its hunks included, with unchanged lines on the new side as on
     /// github.com, and deleted lines only where the commit numbers them as GitHub does. Nil
-    /// when the changes shown have no commit to anchor a comment to.
+    /// when the changes shown have no commit to anchor a comment to, and for a file the
+    /// changes since an earlier head show that the PR doesn't change, as GitHub takes comments
+    /// only on the PR's files.
     public func commentableAnchors(of file: FileDiff) -> Set<DiffAnchor>? {
         guard let target = commentTarget else { return nil }
+        if target.isOnHead, !target.isWholePullRequest, !isChanged(file.path) { return nil }
         return Set(file.hunks.flatMap(\.lines).map { $0.anchor(in: file.path) }.filter { target.takesDeletedLines || $0.side == .right })
     }
 

@@ -108,7 +108,7 @@ private struct NewCommentCard: View {
     private var header: String {
         let (start, end) = (comment.start, comment.anchor)
         let lines = linesText(from: start.map { ($0.line, $0.side == .left) }, to: (end.line, end.side == .left))
-        guard !comment.target.isWholePullRequest else { return "Comment on \(lines)" }
+        guard !comment.target.isOnHead else { return "Comment on \(lines)" }
         return "Comment on \(lines) of commit \(comment.target.commitOid.prefix(7))"
     }
 

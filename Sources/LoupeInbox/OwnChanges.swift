@@ -267,7 +267,7 @@ extension PullRequestTab {
     func sendingThread(for comment: NewComment, in review: ReviewDiff) -> ReviewThread {
         let (anchor, start, target) = (comment.anchor, comment.start, comment.target)
         let file = producedFile(anchor.path) ?? lastHiddenFileDiff(of: anchor.path)
-        let isOnHead = target.isWholePullRequest || (target.commitOid == review.headOid && anchor.side == .right && start?.side != .left)
+        let isOnHead = target.isOnHead || (target.commitOid == review.headOid && anchor.side == .right && start?.side != .left)
         func side(_ anchor: DiffAnchor) -> ReviewThread.Side { anchor.side == .left ? .left : .right }
         return ReviewThread(
             id: OwnChange.provisionalId(), isResolved: false, isOutdated: false, path: anchor.path,

@@ -114,7 +114,7 @@ extension PullRequestTab {
         await storeOwnChanges()
         let added: (comment: ThreadComment, threadId: String?, reviewId: String)
         do {
-            if comment.target.isWholePullRequest {
+            if comment.target.isOnHead {
                 let thread = DraftThread(
                     path: anchor.path, line: anchor.line, side: anchor.side.rawValue, startLine: comment.start?.line, startSide: comment.start?.side.rawValue, body: text
                 )

@@ -71,11 +71,19 @@ struct ChangesSinceTests {
         await tab.show(.since(opened))
         #expect(tab.shown?.files.map(\.path) == ["README", "notes.md"])
         let notes = try #require(tab.file("notes.md"))
-        #expect(tab.commentTarget == nil, "two commits' changes have no one commit to comment on")
-        #expect(tab.commentableAnchors(of: notes) == nil)
-        #expect(tab.threads(on: notes) == nil)
+        let target = try #require(tab.commentTarget)
+        #expect(target.isOnHead && !target.isWholePullRequest && target.commitOid == third, "two commits' changes are commented on at the head")
+        #expect(tab.commentableAnchors(of: notes) == [DiffAnchor(path: "notes.md", side: .right, line: 1)])
+        let readme = try #require(tab.file("README"))
+        #expect(tab.commentableAnchors(of: readme)?.contains { $0.side == .left } == false, "its deleted lines are the earlier head's")
         tab.startComment(at: DiffAnchor(path: "notes.md", side: .right, line: 1))
-        #expect(tab.threadActivity.newComment == nil)
+        let comment = try #require(tab.shownNewComment)
+        #expect(comment.takesReviewComments)
+        comment.draft.text = "Why notes?"
+        await tab.sendComment()
+        let sent = try #require(await app.conversations.commentsReceived.last)
+        #expect((sent.commitId, sent.path, sent.line, sent.side) == (third, "notes.md", 1, "RIGHT"), "as on the whole PR's diff")
+        #expect(tab.threads(on: notes)?.anchored.map(\.line) == [1], "the head's threads show on the new side")
 
         // The next launch opens it from the head last shown.
         let fourth = try await app.pushCommit(["notes.md": "More notes\n"], to: pullRequest)
@@ -122,8 +130,8 @@ struct ChangesSinceTests {
         #expect(lines?.contains("func Hello() string { return \"hey\" }") == true, "from the reviewed version")
         #expect(lines?.contains("func Hello() string { return \"hi\" }") == true)
         #expect(tab.unseparatedPaths.isEmpty)
-        #expect(tab.commentTarget == nil, "a replayed tree is no commit's")
-        #expect(tab.commentableAnchors(of: try #require(tab.file("app.go"))) == nil)
+        #expect(tab.commentTarget?.isOnHead == true, "a replayed tree is no commit's, but its new side is the head's")
+        #expect(tab.commentableAnchors(of: try #require(tab.file("app.go")))?.contains(DiffAnchor(path: "app.go", side: .right, line: 3)) == true)
 
         #expect(try await app.repo.checkoutState() == before, "the checkout is left alone")
     }
