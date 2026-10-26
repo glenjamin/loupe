@@ -34,4 +34,4 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 - Commit directly to `main` and push to `origin` (github.com/glenjamin/loupe, private); no branches or PRs. Headline says what changed, body says why only if not obvious, lines ≤80 chars.
 - The repo is public and meant to be general. Saying in passing that something is used at Geckoboard, and roughly how, is fine; keep the internals of private repos and tools (their names, code, hosts, data) out of code, docs, fixtures and commits, and build features against generic contracts.
 - Markdown files: one line per paragraph and per list item, soft-wrapped, never hard-wrapped to a column.
-- Keep `DESIGN.md` current: when a decision is made or reversed, add an entry rather than editing an old one.
+- Keep `DESIGN.md` current: when a decision is made or reversed, add an entry rather than editing an old one. A decision tried and reversed within the same piece of work can be folded into one entry saying where it landed and what was tried.

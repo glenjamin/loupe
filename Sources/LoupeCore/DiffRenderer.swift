@@ -80,7 +80,7 @@ public struct RenderedDiff {
     /// them, as GitHub's expand arrows do. Each of `blocks` gets an empty row of its height,
     /// left out of copies, for a view to be laid over.
     /// The code's size, unless a size is given.
-    public static let fontSize: CGFloat = 15
+    public static let fontSize: CGFloat = 13
 
     public init(file: FileDiff, fontSize: CGFloat = RenderedDiff.fontSize, expandable: ExpandableContext? = nil, blocks: [DiffBlock] = []) {
         let width = max(3, String(file.maxLineNumber).count)
@@ -287,16 +287,16 @@ private struct Style {
     let control: [NSAttributedString.Key: Any]
 
     init(fontSize: CGFloat, gutterColumns: Int) {
-        let font = NSFont(name: "Monaco", size: fontSize) ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let digit = ("0" as NSString).size(withAttributes: [.font: font]).width
         // The tint runs a little past the marker; the code starts a little past the tint.
         let gutterWidth = digit * CGFloat(gutterColumns) + (fontSize / 3).rounded()
         let codeStart = gutterWidth + (fontSize * 2 / 3).rounded()
         let paragraph = NSMutableParagraphStyle()
-        // Rows are one and a half times the font size, as VS Code's on macOS, with the extra
-        // space split above and below the text.
+        // Rows are five thirds of the font size, as GitHub's 20pt at 12pt, with the extra space
+        // split above and below the text.
         let natural = ceil(font.ascender - font.descender + font.leading)
-        let extra = max(0, (fontSize * 3 / 2).rounded() - natural)
+        let extra = max(0, (fontSize * 5 / 3).rounded() - natural)
         paragraph.minimumLineHeight = natural + (extra / 2).rounded(.down)
         paragraph.maximumLineHeight = paragraph.minimumLineHeight
         paragraph.lineSpacing = extra - (extra / 2).rounded(.down)
@@ -309,7 +309,7 @@ private struct Style {
         base = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph, .diffGutterWidth: gutterWidth]
         gutter = [.foregroundColor: NSColor.tertiaryLabelColor, .diffGutter: true]
         hunkHeader = [.foregroundColor: NSColor.secondaryLabelColor]
-        control = [.foregroundColor: NSColor.linkColor, .font: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)]
+        control = [.foregroundColor: NSColor.linkColor, .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)]
     }
 }
 

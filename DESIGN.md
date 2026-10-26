@@ -1104,13 +1104,9 @@ At Glen's request, revising the part of "One commit's changes take comments, and
 
 At Glen's request, revising "The Conflicts badge lists the conflicting files, found by merging locally", which looked only when the popover first opened. When GitHub says a PR conflicts, its tab now looks as it loads, once the diff has fetched the head and base, and the file list marks each conflicting file the PR changes with a red "conflict" capsule beside its name, which says what it conflicts with when hovered. PRs GitHub doesn't flag aren't looked at, as nothing then offers the list, so most tabs do no extra work, and a conflict with a base GitHub hasn't checked against yet goes unseen until it does; the merge is local and quick, and a reload looks afresh as before.
 
-### The diff is Monaco at 15pt, and its threads' text scales to match
+### The diff's code is the system monospaced font at 13pt, and its threads' text scales with it
 
-At Glen's request the diff's code is Monaco at 15pt rather than the system monospaced font at 12pt, with rows still five thirds of the font size. Monaco asks for leading that SF Mono doesn't, so the diff's layout ignores font leading, leaving each row, and each block laid over the diff, exactly as tall as its paragraph style says. The threads and comment boxes laid over the diff scale every text size by the code's size over the system's, so a comment's text is as large as the code; the same views shown over the conversation, in its reply and edit popovers, stay at the system's sizes. Buttons keep their control sizes.
-
-### The diff's rows are VS Code's height
-
-At Glen's request, revising the row height in "The diff is Monaco at 15pt, and its threads' text scales to match": rows are one and a half times the font size, rounded, as VS Code's are by default on macOS, so 23pt at 15pt, rather than GitHub's five thirds. Side by side with VS Code at the same font and size, the diff then reads the same.
+At Glen's request the code is a size up from 12pt, with rows still five thirds of the font size, as GitHub's 20pt at 12pt. Monaco at 15pt, 14pt and 13pt, with rows of VS Code's and GoLand's heights, were tried side by side with those editors and dropped. The threads and comment boxes laid over the diff scale every text size by the code's size over the system's, so a comment's text stays as large as the code if the code's size changes; the same views over the conversation, in its reply and edit popovers, stay at the system's sizes. The diff's layout ignores font leading, so each row, and each block laid over the diff, is exactly as tall as its paragraph style says whatever font it's in.
 
 ## Not yet decided
 
