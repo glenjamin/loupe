@@ -77,12 +77,16 @@ final class WindowManager {
     }
 
     /// ⌘F: on the lists, their search; in a PR's tab, whatever has the focus finds in itself,
-    /// as the diff and markdown boxes do with their find bars. The focus is the key window's,
-    /// such as a comment's popover, or else this window's, which needn't be key.
-    func find() {
-        guard tabs.selected != nil else { return listSearch.find() }
+    /// as the diff and markdown boxes do with their find bars. ⌘G and ⇧⌘G step through its
+    /// matches. The focus is the key window's, such as a comment's popover, or else this
+    /// window's, which needn't be key.
+    func find(_ step: NSTextFinder.Action = .showFindInterface) {
+        guard tabs.selected != nil else {
+            if step == .showFindInterface { listSearch.find() }
+            return
+        }
         let action = #selector(NSResponder.performTextFinderAction(_:))
-        let sender = ShowFindInterface()
+        let sender = TextFinderSender(tag: step.rawValue)
         if !NSApp.sendAction(action, to: nil, from: sender) {
             _ = window?.firstResponder?.tryToPerform(action, with: sender)
         }
@@ -347,7 +351,8 @@ private struct ListsContent: View {
 }
 
 /// Edit ▸ Find ▸ Find… (⌘F), which searches the lists while they're shown and otherwise asks
-/// what has the focus in a PR's tab to find in itself.
+/// what has the focus in a PR's tab to find in itself, then Find Next (⌘G) and Find Previous
+/// (⇧⌘G) in a PR's tab.
 struct FindCommands: Commands {
     let windows: WindowManager
 
@@ -357,15 +362,23 @@ struct FindCommands: Commands {
             Menu("Find") {
                 Button("Find…") { windows.find() }
                     .keyboardShortcut("f")
+                Button("Find Next") { windows.find(.nextMatch) }
+                    .keyboardShortcut("g")
+                Button("Find Previous") { windows.find(.previousMatch) }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
             }
         }
     }
 }
 
-/// The sender of a find action AppKit's text views take as "show the find bar", which they
-/// read from its tag as they would a menu item's.
-private final class ShowFindInterface: NSObject {
-    @objc let tag = NSTextFinder.Action.showFindInterface.rawValue
+/// The sender of a find action, which AppKit's text views read from its tag as they would a
+/// menu item's.
+private final class TextFinderSender: NSObject {
+    @objc let tag: Int
+
+    init(tag: Int) {
+        self.tag = tag
+    }
 }
 
 /// The tab keys: ⌘W and ⌥⌘W close PR tabs, ⌘⇧[ and ⌘⇧] step through the strip, and ⌘1–⌘9
