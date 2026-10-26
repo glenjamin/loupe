@@ -1086,8 +1086,6 @@ At Glen's request, revising "The viewer's own PR takes a pending review, submitt
 
 At Glen's request, revising "A new comment can start a review; ⌘↩ adds to the review only once one is pending", which kept "Add single comment" beside "Add review comment": GitHub refuses a comment at once over REST while the viewer has a review pending, so the button only ever failed. With a review pending the comment box offers "Add review comment" alone (⌘↩). A comment on several lines of one commit, which no review can hold, then offers nothing to send, and the caption says to submit or discard the review first; the draft stays. Replies to threads still post at once, as before.
 
-||||||| parent of 521e379 (List a PR's conflicting files from its Conflicts badge)
-
 ### The Conflicts badge lists the conflicting files, found by merging locally
 
 Glen asked to see more about a PR's conflicts than "Conflicts", at least which files. GitHub doesn't say: introspecting its GraphQL schema, a PR has only `mergeable` and `mergeStateStatus`, and the only conflict types are branch-protection rules'; REST's PR has the same two. So the files are found locally. The PR's head and its base, `baseRefOid`, the base branch's tip as GitHub last reported it, are already in the checkout once its diff is fetched, and `git merge-tree --write-tree -z --name-only --no-messages <base> <head>` lists the paths that don't merge, without touching branches, the index or the working tree. It's the same machinery as the rebase replay, writing to Loupe's own object directory with the checkout's as an alternate, so nothing is written into the checkout ("Objects Loupe makes are written to its own object directory, never a checkout's").
