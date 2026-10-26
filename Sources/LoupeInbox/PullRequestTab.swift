@@ -273,7 +273,8 @@ public final class PullRequestTab: Identifiable {
             await viewer
             loading = nil
             followStoredChanges()
-            if self.pullRequest.mergeable == .conflicting { await findConflicts() }
+            // Only once there's a diff, as a load without a checkout is made again when asked.
+            if case .ready = phase, self.pullRequest.mergeable == .conflicting { await findConflicts() }
         }
         loading = task
         await task.value

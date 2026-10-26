@@ -83,7 +83,14 @@ struct ConflictsTests {
     @Test func withoutACheckoutTheConflictingFilesCantBeFound() async throws {
         let app = try await SinceApp()
         let pullRequest = try #require(app.tabs.lists.pullRequests(in: .toReview).first)
+        try await app.github.setMergeState(of: pullRequest.id, "DIRTY", mergeable: "CONFLICTING")
+        await app.tabs.lists.refresh()
         let tab = try await app.open(pullRequest)
+        #expect(tab.pullRequest.mergeable == .conflicting)
+        guard case .noCheckout = tab.phase else {
+            Issue.record("expected opening it to settle on there being no checkout, got \(tab.phase)")
+            return
+        }
 
         await tab.findConflicts()
 
