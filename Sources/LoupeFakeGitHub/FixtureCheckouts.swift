@@ -3,7 +3,8 @@ import Foundation
 /// Local checkouts of some of the fixtures' repos, made with `FakeRepository` as the tests make
 /// theirs, so a run against the fixtures can diff those PRs, list their commits and lay their
 /// review threads: atrium #2928, awaiting the viewer's review, whose conversation is the one
-/// `FakeConversations` serves, with its threads' files; and the viewer's own gazette #272 and
+/// `FakeConversations` serves, with its threads' files, and which conflicts with master, moved on
+/// since; and the viewer's own gazette #272 and
 /// #273, stacked on it. Each checkout is `<directory>/<name>`, as the app looks for one, its
 /// origin and the contributor's clone beside it under `.origins`, and what each PR's branch holds
 /// is written to `branches.json` for `FixtureGitHub` to serve. Every commit has the same date,
@@ -26,13 +27,15 @@ public enum FixtureCheckouts {
         return try JSONDecoder().decode([Branch].self, from: Data(contentsOf: url))
     }
 
-    /// A PR's branch: the base it's onto and its commits, oldest first.
+    /// A PR's branch: the base it's onto, its commits, oldest first, and whether it conflicts
+    /// with that base.
     struct Branch: Codable {
         let repository: String
         let number: Int
         let base: String
         let commits: [String]
         let committedAt: Date
+        let conflicting: Bool
     }
 
     private static let manifest = "branches.json"
@@ -46,7 +49,6 @@ public enum FixtureCheckouts {
             "ledger/CHANGELOG.md": "# Changelog\n\n## 13 October 2026\n\nReports keep their filters when they're copied.\n",
             "ledger/kiln/models/recipe/new_report.go": newReport(fields: ["SpoolSketch bool", "Spindle time.Time", "Channel int", "SpindleWindow time.Duration", "Branch error", "TileValve int", "Bucket string"]),
         ])
-        let base = try await repo.git(["rev-parse", "HEAD"], in: repo.contributorDirectory)
         try await repo.switchTo("slice/share-report-filter-predicates", creatingFrom: "master")
         let added = try await repo.commit(["ledger/kiln/models/recipe/filter.go": filter], message: "Add a report's filter predicates")
         let shared = try await repo.commit([
@@ -54,7 +56,14 @@ public enum FixtureCheckouts {
         ], message: "Share the filter predicates with linked reports")
         let noted = try await repo.commit(["ledger/CHANGELOG.md": "# Changelog\n\n## 13 October 2026\n\nLinked reports share their filters.\n"], message: "Note the shared filters")
         try await repo.push(asPullRequest: 2928)
-        return [try branch("tamarinworks/atrium", 2928, base: base, commits: [added, shared, noted])]
+        // master has moved on since, changing the same lines, so the PR conflicts with it.
+        try await repo.switchTo("master")
+        let moved = try await repo.commit([
+            "ledger/CHANGELOG.md": "# Changelog\n\n## 13 October 2026\n\nReports load their charts in parallel.\n",
+            "ledger/kiln/models/recipe/new_report.go": newReport(fields: ["Chart int64", "SpoolSketch bool", "Spindle time.Time", "Channel int", "SpindleWindow time.Duration", "Branch error", "TileValve int", "Bucket string"]),
+        ], message: "Load report charts in parallel")
+        try await repo.push()
+        return [try branch("tamarinworks/atrium", 2928, base: moved, commits: [added, shared, noted], conflicting: true)]
     }
 
     private static func buildGazette(in directory: URL) async throws -> [Branch] {
@@ -94,8 +103,8 @@ public enum FixtureCheckouts {
         )
     }
 
-    private static func branch(_ repository: String, _ number: Int, base: String, commits: [String]) throws -> Branch {
-        Branch(repository: repository, number: number, base: base, commits: commits, committedAt: try Date(committedAt, strategy: .iso8601))
+    private static func branch(_ repository: String, _ number: Int, base: String, commits: [String], conflicting: Bool = false) throws -> Branch {
+        Branch(repository: repository, number: number, base: base, commits: commits, committedAt: try Date(committedAt, strategy: .iso8601), conflicting: conflicting)
     }
 }
 

@@ -350,7 +350,7 @@ private extension PullRequestTab {
     }
 }
 
-private extension FakeRepository {
+extension FakeRepository {
     /// Whether the reviewer's checkout has the commit, asked in a way that succeeds either way.
     func has(_ oid: String) async throws -> Bool {
         try await git(["cat-file", "--batch-all-objects", "--batch-check=%(objectname)"], in: checkout)

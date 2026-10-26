@@ -198,27 +198,14 @@ struct HoverPopoverAnchor: NSViewRepresentable {
 private struct CheckRow: View {
     let check: CheckContext
     let onOpen: () -> Void
-    @State private var isHovered = false
 
     var body: some View {
         if let url = check.url.flatMap(URL.init(string:)) {
-            Button {
+            PopoverRowButton {
                 openInBrowser(url)
                 onOpen()
             } label: {
-                label.background(isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 5))
-            }
-            .buttonStyle(.plain)
-            // Pointed at and clicked, never tabbed to, so no row shows a focus ring.
-            .focusable(false)
-            .onHover { isOver in
-                guard isOver != isHovered else { return }
-                isHovered = isOver
-                if isOver { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-            .onDisappear {
-                if isHovered { NSCursor.pop() }
-                isHovered = false
+                label
             }
         } else {
             label
@@ -244,6 +231,32 @@ private struct CheckRow: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .contentShape(Rectangle())
+    }
+}
+
+/// A row of a hover popover that does something when clicked, tinted and with a pointing hand
+/// while the pointer is over it.
+struct PopoverRowButton<Label: View>: View {
+    let action: () -> Void
+    @ViewBuilder let label: Label
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            label.background(isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
+        // Pointed at and clicked, never tabbed to, so no row shows a focus ring.
+        .focusable(false)
+        .onHover { isOver in
+            guard isOver != isHovered else { return }
+            isHovered = isOver
+            if isOver { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .onDisappear {
+            if isHovered { NSCursor.pop() }
+            isHovered = false
+        }
     }
 }
 

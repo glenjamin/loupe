@@ -12,8 +12,8 @@ public struct PullRequestDiffer: Sendable {
     public var localTimeout: Duration
 
     public var filter: PathFilter
-    /// Where the trees made by replaying a PR's changes onto a new base are written, an object
-    /// directory of Loupe's own shared by every checkout, as checkouts are only fetched into.
+    /// Where the trees and blobs Loupe merges are written, an object directory of its own shared
+    /// by every checkout, as checkouts are only fetched into.
     public var replayedObjects: URL
 
     public init(fetchTimeout: Duration = .seconds(120), localTimeout: Duration = .seconds(60), filter: PathFilter = .default, replayedObjects: URL = Self.defaultReplayedObjects) {
@@ -84,24 +84,19 @@ public struct PullRequestDiffer: Sendable {
         async let oldMergeBase = git(["merge-base", base, oldHead], in: checkout)
         async let newMergeBase = git(["merge-base", base, head], in: checkout)
         async let headTree = git(["rev-parse", "--verify", "\(head)^{tree}"], in: checkout)
-        async let ownObjects = git(["rev-parse", "--path-format=absolute", "--git-path", "objects"], in: checkout)
-        try FileManager.default.createDirectory(at: replayedObjects, withIntermediateDirectories: true)
-        // Written to Loupe's object directory, reading the checkout's through it.
-        let writing = [
-            "GIT_OBJECT_DIRECTORY": replayedObjects.path(percentEncoded: false),
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES": try await ownObjects.trimmed,
-        ]
-        let merged = try await Git.run(
-            ["merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", "--merge-base=\(try await oldMergeBase.trimmed)", try await newMergeBase.trimmed, oldHead],
-            in: checkout, environment: writing, timeout: localTimeout, succeedingOn: [0, 1]
-        )
-        // `<tree>NUL`, then for conflicts each conflicted path NUL and an empty field.
-        var fields = merged.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
-        let tree = fields.removeFirst()
-        var listed: Set<String> = []
-        let unseparated = fields.prefix { !$0.isEmpty }.filter { listed.insert($0).inserted }
-        let replayed = unseparated.isEmpty ? tree : try await taking(unseparated, from: oldHead, into: tree, in: checkout, environment: writing)
+        let writing = try await writingOwnObjects(in: checkout)
+        let merged = try await mergeTree(["--merge-base=\(try await oldMergeBase.trimmed)", try await newMergeBase.trimmed, oldHead], in: checkout, environment: writing)
+        let unseparated = merged.conflicted
+        let replayed = unseparated.isEmpty ? merged.tree : try await taking(unseparated, from: oldHead, into: merged.tree, in: checkout, environment: writing)
         return Replay(tree: replayed, head: head, unseparated: unseparated, isUnchanged: replayed == (try await headTree.trimmed))
+    }
+
+    /// The paths that conflict when `head` is merged into `base`, as merging the PR on GitHub
+    /// would find them, in git's order; none when it merges cleanly. Worked out with `git
+    /// merge-tree`, which leaves the checkout's branches, index and working tree alone, its
+    /// objects written to `replayedObjects`.
+    public func conflicts(mergingHead head: String, into base: String, in checkout: URL) async throws -> [String] {
+        try await mergeTree([base, head], in: checkout, environment: writingOwnObjects(in: checkout)).conflicted
     }
 
     /// The changes between two commits: the diff of the paths to review, and the hidden paths
@@ -421,6 +416,29 @@ public struct PullRequestDiffer: Sendable {
         let input = Data(paths.map { (entries[$0].map(String.init) ?? removal + $0) + "\0" }.joined().utf8)
         _ = try await run(["update-index", "-z", "--index-info"], input: input)
         return try await run(["write-tree"]).trimmed
+    }
+
+    /// `git merge-tree` of `revisions`: the merged tree, and the paths it couldn't merge.
+    private func mergeTree(_ revisions: [String], in checkout: URL, environment: [String: String]) async throws -> (tree: String, conflicted: [String]) {
+        let merged = try await Git.run(
+            ["merge-tree", "--write-tree", "-z", "--name-only", "--no-messages"] + revisions,
+            in: checkout, environment: environment, timeout: localTimeout, succeedingOn: [0, 1]
+        )
+        // `<tree>NUL`, then for conflicts each conflicted path NUL and an empty field.
+        var fields = merged.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+        let tree = fields.removeFirst()
+        var listed: Set<String> = []
+        return (tree, fields.prefix { !$0.isEmpty }.filter { listed.insert($0).inserted })
+    }
+
+    /// Has git write objects to Loupe's object directory, reading the checkout's through it.
+    private func writingOwnObjects(in checkout: URL) async throws -> [String: String] {
+        let ownObjects = try await git(["rev-parse", "--path-format=absolute", "--git-path", "objects"], in: checkout)
+        try FileManager.default.createDirectory(at: replayedObjects, withIntermediateDirectories: true)
+        return [
+            "GIT_OBJECT_DIRECTORY": replayedObjects.path(percentEncoded: false),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": ownObjects.trimmed,
+        ]
     }
 
     /// Lets a local git run read the objects replays have written, as diffing a replay needs.

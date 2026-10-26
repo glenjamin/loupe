@@ -358,14 +358,21 @@ struct StateBadge: View {
 }
 
 /// Shown only when GitHub says the PR conflicts with its base; nothing while it's still working
-/// that out.
+/// that out. On an open PR's tab, resting on it lists the conflicting files.
 struct ConflictsBadge: View {
     let pullRequest: PullRequestSummary
+    var tab: PullRequestTab? = nil
 
     var body: some View {
         if pullRequest.mergeable == .conflicting {
-            Badge(text: "Conflicts", tint: .diffDanger)
-                .help("This branch has conflicts that must be resolved before it can be merged")
+            if let tab {
+                Badge(text: "Conflicts", tint: .diffDanger)
+                    .background(HoverPopoverAnchor(content: ConflictsPopoverContent(tab: tab)))
+                    .accessibilityIdentifier("conflicts-badge")
+            } else {
+                Badge(text: "Conflicts", tint: .diffDanger)
+                    .help("This branch has conflicts that must be resolved before it can be merged")
+            }
         }
     }
 }

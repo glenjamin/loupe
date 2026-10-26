@@ -48,13 +48,19 @@ struct MergeBox: View {
         }
     }
 
-    /// A disabled button loses its tint, so the reason carries the red.
+    /// A disabled button loses its tint, so the reason carries the red. Resting on conflicts
+    /// lists the conflicting files, as the Conflicts badge does.
     @ViewBuilder private var reason: some View {
         if case let .blocked(blocker) = readiness {
-            Text(blocker.description)
+            let text = Text(blocker.description)
                 .font(.caption)
                 .foregroundStyle(.diffDanger)
                 .fixedSize()
+            if case .conflicts = blocker {
+                text.background(HoverPopoverAnchor(content: ConflictsPopoverContent(tab: tab)))
+            } else {
+                text
+            }
         }
     }
 

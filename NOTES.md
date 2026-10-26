@@ -235,7 +235,7 @@ Conditions, wherever a step takes `<condition>`: `exists` (the default), `missin
 | `wait until <query> [<condition>] [timeout 10s]` | Polls until it holds |
 | `click` / `double-click` `<query>` | At the element's centre, after moving the pointer there |
 | `right-click <query>` | Asks for the context menu without showing it and prints its items; `choose "Item"` then picks one |
-| `hover <query>` / `unhover` | Moves the pointer onto the element / off the window |
+| `hover <query>` / `unhover` | Moves the pointer onto the element / off the window; a hover popover, such as the checks' or conflicts', opens after its dwell, so `wait until` it |
 | `press <key> [<key>…] [until <query> <condition>]` | Keys in turn, as `down`, `return`, `esc`, `tab`, `space`, `delete`, `up`/`left`/`right`, `home`, `end`, `pageup`, `pagedown`, `f1`…, or a character, with `cmd+`, `shift+`, `opt+`, `ctrl+`, `fn+` (`cmd+shift+p`, `ctrl+tab`); `until` repeats them (up to 30 times) until the condition holds |
 | `type "text"` | Types each character into whatever has the focus |
 | `scroll <query> up\|down <points>` | Scrolls whatever scrolls under the element |

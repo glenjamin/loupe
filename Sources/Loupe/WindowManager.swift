@@ -252,6 +252,12 @@ final class LoupeWindow: NSWindow, NSWindowDelegate {
         SnapshotScript.file != nil || super.isKeyWindow
     }
 
+    /// A scripted snapshot run's pointer is where the script moved it, as the real mouse never
+    /// visits the off-screen window; views that ask where it is, such as hover popovers, agree.
+    override var mouseLocationOutsideOfEventStream: NSPoint {
+        SnapshotScript.pointerLocation(in: self) ?? super.mouseLocationOutsideOfEventStream
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         styleMask.contains(.closable)
     }

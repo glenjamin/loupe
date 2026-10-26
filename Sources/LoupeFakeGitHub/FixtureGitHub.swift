@@ -44,6 +44,7 @@ private struct Fakes: Sendable {
             guard let branch = branches.first(where: { $0.repository == pullRequest.repository.nameWithOwner && $0.number == pullRequest.number }) else { continue }
             let commits = branch.commits.map { FakePullRequest.HistoryCommit(oid: $0, committedDate: branch.committedAt) }
             try await github.setBranch(of: pullRequest.id, base: branch.base, commits: commits)
+            if branch.conflicting { try await github.setMergeState(of: pullRequest.id, "DIRTY", mergeable: "CONFLICTING") }
             if let head = commits.last { await conversations.setHead(head.oid, of: pullRequest.id) }
         }
     }

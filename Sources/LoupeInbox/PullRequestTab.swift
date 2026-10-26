@@ -172,6 +172,10 @@ public final class PullRequestTab: Identifiable {
     /// onto the new base, which the changes since are diffed from instead.
     private var replays: [DiffRange: Replay] = [:]
     private var preparingAnchors: Task<Void, Never>?
+    /// The files that conflict when a head is merged into a base, by the range from the base to
+    /// the head, once looked for.
+    private var conflicts: [DiffRange: ConflictedFiles] = [:]
+    private var findingConflicts: Task<Void, Never>?
     /// Each hidden file's diff once asked for, by range and path.
     private var hiddenFileDiffs: [HiddenFileKey: DiffState<FileDiff>] = [:]
     /// Each hidden file's latest diff, of whichever range, to show while another is made.
@@ -607,6 +611,60 @@ public final class PullRequestTab: Identifiable {
         }
         preparingAnchors = task
         await task.value
+    }
+
+    /// The files that conflict when the PR's head is merged into its base as last fetched, or
+    /// why they can't be told. Nil until looked for.
+    public var conflictedFiles: ConflictedFiles? {
+        switch phase {
+        case .noCheckout: .unavailable("There's no local checkout of \(pullRequest.repository) to look in.")
+        case let .failed(message): .unavailable("The PR couldn't be fetched to look: \(message)")
+        case .producing: nil
+        case let .ready(review): conflicts[conflictRange(of: review)]
+        }
+    }
+
+    /// Looks for the files that conflict when the PR's head is merged into its base, once its
+    /// diff has brought both into the checkout, as GitHub says only that something conflicts.
+    /// Joins a look already underway; one that failed is tried again.
+    public func findConflicts() async {
+        if let findingConflicts {
+            await findingConflicts.value
+            return await findConflicts()
+        }
+        await load()
+        guard case let .ready(review) = phase, let checkout else { return }
+        let range = conflictRange(of: review)
+        switch conflicts[range] {
+        case .found?: return
+        case .finding?, .unavailable?, nil: break
+        }
+        let differ = differ
+        let task = Task {
+            conflicts[range] = .finding
+            do {
+                conflicts[range] = .found(try await differ.conflicts(mergingHead: range.head, into: range.base, in: checkout))
+            } catch {
+                conflicts[range] = .unavailable(error.localizedDescription)
+            }
+            findingConflicts = nil
+        }
+        findingConflicts = task
+        await task.value
+    }
+
+    /// Whether `path` is among the whole PR's changes, hidden or not, so it can be shown.
+    public func isChanged(_ path: String) -> Bool {
+        guard case let .ready(review) = phase else { return false }
+        return review.changes.files.contains { $0.id == path } || review.changes.hidden.contains { $0.id == path }
+    }
+
+    /// Shows a file among the whole PR's changes, as a conflicting file is shown from the header.
+    public func showChangedFile(_ path: String) async {
+        guard isChanged(path) else { return }
+        section = .files
+        await show(.all)
+        selectedFile = path
     }
 
     /// Shows the changes a force-push made, from the head it replaced to the one it pushed, as
@@ -1232,6 +1290,11 @@ public final class PullRequestTab: Identifiable {
         }
     }
 
+    /// From the base the diff fetched to its head, which a merge of the PR would join.
+    private func conflictRange(of review: ReviewDiff) -> DiffRange {
+        DiffRange(base: review.base, head: review.headOid)
+    }
+
     /// From an anchor to the head its changes are shown up to, which names it for looking at.
     private func anchorRange(of anchor: ChangesAnchor, in review: ReviewDiff) -> DiffRange {
         DiffRange(base: anchor.oid, head: anchor.head ?? review.headOid)
@@ -1297,6 +1360,7 @@ public final class PullRequestTab: Identifiable {
             rangeStats = [:]
             anchorStates = [:]
             replays = [:]
+            conflicts = [:]
             hiddenFileDiffs = [:]
             packageLockChanges = [:]
             contextExpansions.reset()
@@ -1415,6 +1479,15 @@ public enum AnchorState: Sendable, Equatable {
     case onlyRebased
     /// Why its commits couldn't be fetched or looked at, including git's own message.
     case failed(String)
+}
+
+/// The files that conflict when a PR is merged into its base, as git finds them locally.
+public enum ConflictedFiles: Sendable, Equatable {
+    case finding
+    /// Their paths, in git's order; none if git merges it cleanly.
+    case found([String])
+    /// Why they can't be found, including git's own message.
+    case unavailable(String)
 }
 
 /// Where a diff made on demand has got to.

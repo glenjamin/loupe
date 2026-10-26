@@ -298,7 +298,7 @@ struct PullRequestHeader: View {
                     Text(verbatim: "\(repositoryName(pullRequest)) #\(pullRequest.number)")
                         .font(.headline.monospacedDigit())
                     StateBadge(pullRequest: pullRequest, showsOpen: true)
-                    ConflictsBadge(pullRequest: pullRequest)
+                    ConflictsBadge(pullRequest: pullRequest, tab: tab)
                     SelfReviewedBadge(isSelfReviewed: tab.isSelfReviewed)
                     if let review = tab.visualReview {
                         VisualReviewBadge(tab: tab, review: review)

@@ -1086,6 +1086,18 @@ At Glen's request, revising "The viewer's own PR takes a pending review, submitt
 
 At Glen's request, revising "A new comment can start a review; ⌘↩ adds to the review only once one is pending", which kept "Add single comment" beside "Add review comment": GitHub refuses a comment at once over REST while the viewer has a review pending, so the button only ever failed. With a review pending the comment box offers "Add review comment" alone (⌘↩). A comment on several lines of one commit, which no review can hold, then offers nothing to send, and the caption says to submit or discard the review first; the draft stays. Replies to threads still post at once, as before.
 
+||||||| parent of 521e379 (List a PR's conflicting files from its Conflicts badge)
+
+### The Conflicts badge lists the conflicting files, found by merging locally
+
+Glen asked to see more about a PR's conflicts than "Conflicts", at least which files. GitHub doesn't say: introspecting its GraphQL schema, a PR has only `mergeable` and `mergeStateStatus`, and the only conflict types are branch-protection rules'; REST's PR has the same two. So the files are found locally. The PR's head and its base, `baseRefOid`, the base branch's tip as GitHub last reported it, are already in the checkout once its diff is fetched, and `git merge-tree --write-tree -z --name-only --no-messages <base> <head>` lists the paths that don't merge, without touching branches, the index or the working tree. It's the same machinery as the rebase replay, writing to Loupe's own object directory with the checkout's as an alternate, so nothing is written into the checkout ("Objects Loupe makes are written to its own object directory, never a checkout's").
+
+On an open PR's tab, resting on the header's Conflicts badge opens a popover, as the checks glyph's does: "N files conflict with <base>", then each path, in git's order. A path among the PR's changes, hidden ones included, is a row that shows that file among the whole PR's changes when clicked, whatever commit was shown; one only the base changed, as when it renamed a file the PR edits, is listed greyed and can't be clicked. The merge box's "Conflicts with <base>" reason opens the same popover. The lists' badges keep their plain tooltip, as a row has no checkout work behind it. The lookup runs the first time the popover opens, not with every diff, since most PRs are never asked about; it's kept per base and head, so it's instant after and a reload looks afresh.
+
+GitHub's verdict can come from a newer base than the one last fetched. If git merges the PR into the fetched base cleanly, the popover says so, "No conflicts with <base> as last fetched", that GitHub may have checked a newer one, and offers Reload. With no checkout, or a diff that failed, it says why it can't look. Only paths are shown, not the kind of conflict (content, modify/delete, rename); `merge-tree`'s messages would give that if it's wanted.
+
+For a script's `hover` to open such a popover, a scripted run's window reports the script's pointer as the mouse's location, which the popover asks to know whether the pointer is still on it, and a hovered element anchors where popovers are placed, as a clicked one does.
+
 ## Not yet decided
 
 Nothing is pending.

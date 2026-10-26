@@ -18,6 +18,8 @@ final class SnapshotScript {
     private let directory: URL
     /// Where the pointer last moved to, so moving it away can say it left.
     private var pointer: (window: NSWindow, point: NSPoint)?
+    /// Where the pointer last moved to on screen, for windows to report as the mouse's location.
+    private static var pointerOnScreen: NSPoint?
     /// The frame of what was last clicked, in the main window, which a popover it opened hangs from.
     private var anchor: NSRect?
     /// The menu the last right-click asked for, which `choose` picks from.
@@ -114,6 +116,8 @@ final class SnapshotScript {
             return "at \(describe(node.centre)) in \(node.windowName)"
         case let .hover(query):
             let node = try find(query)
+            // A hover popover hangs from what it's over, as a click's does.
+            anchor = node.window === windows.mainWindow ? node.frame : anchor
             movePointer(to: node.centre, in: node.window)
             await settleInput()
             return "pointer at \(describe(node.centre))"
@@ -310,6 +314,13 @@ final class SnapshotScript {
         }
         hovered = now
         pointer = (window, point)
+        Self.pointerOnScreen = window.convertPoint(toScreen: point)
+    }
+
+    /// Where a script last moved the pointer, in `window`'s coordinates, or nil if it hasn't, or
+    /// this isn't a scripted run.
+    static func pointerLocation(in window: NSWindow) -> NSPoint? {
+        pointerOnScreen.map(window.convertPoint(fromScreen:))
     }
 
     /// The tracking areas of the window's shown views that `point` is inside. Tooltip areas are
@@ -442,7 +453,8 @@ final class SnapshotScript {
 
     // MARK: Windows
 
-    /// Moves each open popover back under what was last clicked, where it'd hang on screen.
+    /// Moves each open popover back under what was last clicked or hovered, where it'd hang on
+    /// screen.
     private func placeChildWindows() {
         guard let main = windows.mainWindow else { return }
         for child in main.childWindows ?? [] where child.isVisible {
@@ -457,6 +469,8 @@ final class SnapshotScript {
 
     private func writePNG(of node: AXNode?, to url: URL) async throws {
         guard let main = windows.mainWindow else { throw StepFailure(expected: "a window", found: "none") }
+        // A hover popover opens after its dwell, which can be after the hover step settled.
+        placeChildWindows()
         let image = await snapshot(window: main)
         guard let node else { return try pngData(of: image).write(to: url) }
         // The element as drawn over the window, from its frame relative to the main window.

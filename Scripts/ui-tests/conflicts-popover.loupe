@@ -1,0 +1,24 @@
+# Resting on an open PR's Conflicts badge lists the files that conflict with its base, found by
+# merging it into the base locally, and clicking one shows it in the diff.
+wait settled
+open tamarinworks/atrium#2928
+wait settled
+expect #conflicts-badge
+expect #conflicts-popover missing
+
+hover #conflicts-badge
+wait until ~"2 files conflict with master" in #conflicts-popover
+expect button "ledger/CHANGELOG.md" in #conflicts-popover
+expect button "ledger/kiln/models/recipe/new_report.go" in #conflicts-popover
+snap conflicts-popover
+snap conflicts-popover-crop #conflicts-popover
+
+# Still the conversation until a file is clicked.
+expect button "Conversation" is selected
+click button "ledger/CHANGELOG.md" in #conflicts-popover
+wait until #conflicts-popover missing
+wait settled
+expect button "Conversation" is not selected
+wait until #file-header
+expect ~"CHANGELOG.md" in #file-header
+snap conflicted-file-shown
