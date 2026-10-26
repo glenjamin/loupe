@@ -9,12 +9,12 @@ import Testing
 
 @MainActor
 struct WhitespaceTests {
-    @Test func hidingWhitespaceKeepsEveryFileListedWithItsCountsButShowsOnlyRealChanges() async throws {
+    @Test func hidingWhitespaceKeepsEveryFileListedButShowsAndCountsOnlyRealChanges() async throws {
         let (app, pullRequest) = try await WhitespaceApp.pushPullRequest()
         let tab = try await app.open(pullRequest)
         #expect(!tab.hidesWhitespace, "off as a tab opens")
         let paths = try #require(tab.shownFiles).map(\.path)
-        let stat = tab.diffStat(of: .all)
+        #expect(tab.diffStat(of: .all) == DiffStat(files: 2, additions: 12, deletions: 12))
         #expect(try #require(tab.file("indent.go")).hunks.count == 1)
 
         await tab.setHidesWhitespace(true)
@@ -23,7 +23,7 @@ struct WhitespaceTests {
         #expect(try #require(tab.shownFiles).map(\.path) == paths, "a file only reindented is still listed")
         let indent = try #require(tab.file("indent.go"))
         #expect(indent.isWhitespaceOnly && indent.hunks.isEmpty)
-        #expect((indent.additions, indent.deletions) == (10, 10), "counted as github.com counts it")
+        #expect((indent.additions, indent.deletions) == (0, 0))
         let mixed = try #require(tab.file("mixed.go"))
         #expect(!mixed.isWhitespaceOnly)
         #expect(mixed.hunks.flatMap(\.lines).map(\.kind) == [
@@ -32,9 +32,34 @@ struct WhitespaceTests {
             .context(old: 8, new: 8), .context(old: 9, new: 9), .context(old: 10, new: 10),
         ])
         #expect(mixed.hunks[0].lines[2].text == "    6 line", "an unchanged line reads as the head has it")
-        #expect((mixed.additions, mixed.deletions) == (2, 2))
-        #expect(tab.diffStat(of: .all) == stat, "the picker's stat stays as it was")
+        #expect((mixed.additions, mixed.deletions) == (1, 1))
+        #expect(tab.diffStat(of: .all) == DiffStat(files: 2, additions: 1, deletions: 1), "a file only reindented still counts as a file")
         #expect(app.tabs.tabs.allSatisfy { $0 === tab || !$0.hidesWhitespace }, "only this tab hides it")
+
+        await tab.setHidesWhitespace(false)
+        #expect(tab.diffStat(of: .all) == DiffStat(files: 2, additions: 12, deletions: 12))
+        #expect((try #require(tab.file("indent.go")).additions) == 10)
+    }
+
+    @Test func commitsAndHiddenFilesAreCountedWithoutWhitespaceWhileItsHidden() async throws {
+        let (app, pullRequest) = try await WhitespaceApp.pushPullRequest()
+        let tab = try await app.open(pullRequest)
+        let commits = try #require(tab.ready?.commits)
+        await tab.countCommitChanges()
+        #expect(tab.diffStat(of: .commit(commits[0].oid)) == DiffStat(files: 1, additions: 10, deletions: 10))
+
+        await tab.setHidesWhitespace(true)
+        #expect(tab.diffStat(of: .commit(commits[0].oid)) == DiffStat(files: 1, additions: 10, deletions: 10), "as it was until counted again")
+        await tab.countCommitChanges()
+        #expect(tab.diffStat(of: .commit(commits[0].oid)) == DiffStat(files: 1, additions: 0, deletions: 0))
+        #expect(tab.diffStat(of: .commit(commits[1].oid)) == DiffStat(files: 1, additions: 1, deletions: 1))
+        let vendored = try #require(tab.shownHidden?.first { $0.path == "vendor/example.com/lib/lib.go" })
+        #expect((vendored.additions, vendored.deletions) == (0, 0))
+
+        await tab.setHidesWhitespace(false)
+        #expect(tab.diffStat(of: .commit(commits[0].oid)) == DiffStat(files: 1, additions: 10, deletions: 10))
+        let counted = try #require(tab.shownHidden?.first { $0.path == vendored.path })
+        #expect((counted.additions, counted.deletions) == (1, 1))
     }
 
     @Test func eachWayIsKeptSoTogglingBackNeedsNoGit() async throws {
@@ -123,7 +148,7 @@ struct WhitespaceTests {
         let vendored = "vendor/example.com/lib/lib.go"
         await tab.diffHiddenFile(vendored)
         guard case let .ready(hidden)? = tab.hiddenFileDiff(of: vendored) else { throw Unexpected.notDiffed }
-        #expect(hidden.isWhitespaceOnly && (hidden.additions, hidden.deletions) == (1, 1))
+        #expect(hidden.isWhitespaceOnly && (hidden.additions, hidden.deletions) == (0, 0))
         await tab.setHidesWhitespace(false)
         #expect(tab.hiddenFileDiff(of: vendored).map { _ in "diffed" } == nil, "diffed again the other way when shown")
     }
@@ -180,5 +205,11 @@ private extension PullRequestTab {
     var shownFiles: [FileDiff]? {
         guard case let .ready(changes)? = shownChanges else { return nil }
         return changes.files
+    }
+
+    /// The hidden files in the shown changes.
+    var shownHidden: [ChangedFile]? {
+        guard case let .ready(changes)? = shownChanges else { return nil }
+        return changes.hidden
     }
 }

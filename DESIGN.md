@@ -1066,6 +1066,10 @@ Reversing part of the previous entry: on an inactive window the toggle's on stat
 
 Reversing the fixed search roots of "Checkout locations live in the database and are discovered automatically": they were one machine's layout, wrong for anyone else. The folders are now asked for on first launch, by a banner above the lists and in the no-checkout pane rather than a panel thrown up at launch, so the lists can be read first. They're kept in `~/.config/loupe/config.json`, not the database, so they can be edited by hand or kept with dotfiles; the database stays in Application Support, as it's the app's own state. Until they're chosen nothing is searched and there's nowhere to clone to.
 
+### Hiding whitespace leaves it out of the line counts too
+
+At Glen's request, reversing "Line counts don't follow it, as github.com's don't" from "Whitespace changes can be hidden per PR": with whitespace hidden, a count that still includes a reindented block says the PR is bigger than what's left to read. Each file's counts are now the lines its diff shows, in the file list and its header, and hidden files and the commit picker's diff-stats are counted by git with `-w` too. A file only whitespace changed in stays listed and counted as a file, at +0 −0, and the file list says "whitespace" for it in place of counts. A commit's or the changes since an anchor's stat shows the count with whitespace until it's been counted without, so the picker doesn't blank while it's counted; each way's counts are kept, so toggling back is instant. The reviewed count and "Self-reviewed" still go by files, which hiding whitespace doesn't change.
+
 ## Not yet decided
 
 Nothing is pending.

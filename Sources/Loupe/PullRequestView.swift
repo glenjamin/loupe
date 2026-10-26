@@ -643,7 +643,7 @@ struct CommitPicker: View {
             CommitList(tab: tab, commits: commits)
         }
         // Counted as soon as the commits are shown, so the list opens complete; it's cheap.
-        .task(id: commits.map(\.oid)) { await tab.countCommitChanges() }
+        .task(id: CommitCounts(commits: commits.map(\.oid), ignoresWhitespace: tab.hidesWhitespace)) { await tab.countCommitChanges() }
         // Likewise each earlier head the viewer saw, fetched first if the checkout lacks it.
         .task(id: tab.anchors) { await tab.prepareAnchors() }
         .background(
@@ -1081,7 +1081,7 @@ struct ReviewLineCounts: View {
 
     var body: some View {
         if file.additions == 0 && file.deletions == 0 {
-            Text(file.isBinary ? "binary" : file.change.summary)
+            Text(file.isBinary ? "binary" : file.isWhitespaceOnly ? "whitespace" : file.change.summary)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else {
@@ -1191,6 +1191,12 @@ func repositoryName(_ pullRequest: PullRequestSummary) -> String {
 /// A directory's path with the home directory as `~`.
 func tildePath(_ directory: URL) -> String {
     (directory.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
+}
+
+/// The commits counted, and whether whitespace is, for counting again when either changes.
+private struct CommitCounts: Equatable {
+    let commits: [String]
+    let ignoresWhitespace: Bool
 }
 
 /// Which file is shown of which changes, for work done once per file shown.

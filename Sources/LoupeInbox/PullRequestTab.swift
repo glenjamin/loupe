@@ -155,9 +155,9 @@ public final class PullRequestTab: Identifiable {
     /// The changes of each commit, or since an anchor, once asked for. A range names its commits,
     /// so these never go stale.
     private var pickedChanges: [ChangesKey: DiffState<ReviewChanges>] = [:]
-    /// Each commit's diff-stat, or the changes' since an anchor, once counted, which like their
-    /// changes never go stale.
-    private var rangeStats: [DiffRange: DiffStat] = [:]
+    /// Each commit's diff-stat, or the changes' since an anchor, once counted with or without
+    /// whitespace, which like their changes never go stale.
+    private var rangeStats: [ChangesKey: DiffStat] = [:]
     private var countingCommits: Task<Void, Never>?
     /// The head of the PR's diff shown the last time it was opened before this tab, read as the
     /// tab is made, so it stays put while the tab is open whatever's shown meanwhile.
@@ -464,8 +464,8 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// The changes over `range`. Ignoring whitespace, git leaves out the files only whitespace
-    /// changed in, so the files and their counts are taken from the diff with whitespace (made
-    /// alongside, and kept, unless it's known already), with the hunks of the diff without.
+    /// changed in, so the files are taken from the diff with whitespace (made alongside, and
+    /// kept, unless it's known already), with the hunks of the diff without.
     private func changes(of range: DiffRange, ignoringWhitespace: Bool, in review: ReviewDiff, checkout: URL) async -> DiffState<ReviewChanges> {
         let differ = differ
         func diffed(ignoringWhitespace: Bool) async throws -> ReviewChanges {
@@ -494,26 +494,37 @@ public final class PullRequestTab: Identifiable {
 
     /// How much `choice` changes the files to review: the whole PR's from its diff, a commit's
     /// or the changes since an anchor once counted. Hidden files aren't counted, as in the
-    /// count of files reviewed.
+    /// count of files reviewed. Hiding whitespace, its changes aren't counted either, once
+    /// they can be left out; until then the count is the one with them.
     public func diffStat(of choice: ChangesChoice) -> DiffStat? {
         guard case let .ready(review) = phase else { return nil }
-        guard choice != .all else { return DiffStat(review.changes.files) }
-        return range(of: choice, in: review).flatMap { rangeStats[$0] }
+        guard let range = range(of: choice, in: review) else { return nil }
+        func stat(ignoringWhitespace: Bool) -> DiffStat? {
+            let key = ChangesKey(range: range, ignoresWhitespace: ignoringWhitespace)
+            guard choice == .all else { return rangeStats[key] }
+            guard ignoringWhitespace else { return DiffStat(review.changes.files) }
+            guard case let .ready(changes)? = pickedChanges[key] else { return nil }
+            return DiffStat(changes.files)
+        }
+        return hidesWhitespace ? stat(ignoringWhitespace: true) ?? stat(ignoringWhitespace: false) : stat(ignoringWhitespace: false)
     }
 
-    /// Counts each commit's changes with git, unless already counted. A failure leaves them
-    /// uncounted, to be tried again when next asked.
+    /// Counts each commit's changes with git, and those since each anchor that can be shown,
+    /// with or without whitespace as it's hidden, unless already counted that way. A failure
+    /// leaves them uncounted, to be tried again when next asked.
     public func countCommitChanges() async {
         if let countingCommits {
             await countingCommits.value
             return await countCommitChanges()
         }
         guard case let .ready(review) = phase, let checkout else { return }
-        let ranges = review.commits.map(\.range).filter { rangeStats[$0] == nil }
+        let ignoring = hidesWhitespace
+        let anchored = anchors.filter { anchorState(of: $0) == .ready }.compactMap { range(of: .since($0), in: review) }
+        let ranges = (review.commits.map(\.range) + anchored).filter { rangeStats[ChangesKey(range: $0, ignoresWhitespace: ignoring)] == nil }
         guard !ranges.isEmpty else { return }
         let task = Task {
             do {
-                rangeStats.merge(try await differ.stats(of: ranges, in: checkout)) { $1 }
+                record(try await differ.stats(of: ranges, ignoringWhitespace: ignoring, in: checkout), ignoringWhitespace: ignoring)
             } catch {
                 log("Couldn't count the changes of \(title)'s commits: \(error.localizedDescription)")
             }
@@ -569,13 +580,14 @@ public final class PullRequestTab: Identifiable {
         }
         guard !ranges.isEmpty else { return }
         let repository = pullRequest.repository
+        let ignoring = hidesWhitespace
         let task = Task {
             for range in ranges { anchorStates[range] = .checking }
             for range in ranges {
                 do {
                     switch try await differ.ancestry(of: range.base, toHead: range.head, of: repository, in: checkout) {
                     case .ancestor:
-                        rangeStats.merge(try await differ.stats(of: [range], in: checkout)) { $1 }
+                        record(try await differ.stats(of: [range], ignoringWhitespace: ignoring, in: checkout), ignoringWhitespace: ignoring)
                         anchorStates[range] = .ready
                     case .rebased:
                         let replay = try await differ.replay(range.base, onto: range.head, base: review.base, in: checkout)
@@ -583,7 +595,7 @@ public final class PullRequestTab: Identifiable {
                             anchorStates[range] = .onlyRebased
                             continue
                         }
-                        rangeStats.merge(try await differ.stats(of: [replay.range], in: checkout)) { $1 }
+                        record(try await differ.stats(of: [replay.range], ignoringWhitespace: ignoring, in: checkout), ignoringWhitespace: ignoring)
                         replays[range] = replay
                         anchorStates[range] = .ready
                     }
@@ -648,9 +660,11 @@ public final class PullRequestTab: Identifiable {
             let text = try await differ.diff(of: file, in: range, ignoringWhitespace: ignoringWhitespace, checkout: checkout)
             let parsed = await Task.detached { DiffParser.parse(text) }.value
             // A change git shows no lines for, such as of mode alone or only of whitespace
-            // when that's ignored, is still the file; its counts are git's with whitespace.
+            // when that's ignored, is still the file.
             var diff = parsed.first { $0.path == path } ?? FileDiff(path: path, change: file.change, isBinary: file.isBinary, hunks: [])
-            if ignoringWhitespace { diff.countsWithWhitespace = LineTotals(additions: file.additions, deletions: file.deletions) }
+            if ignoringWhitespace, let counted = plainChanges(of: range)?.hidden.first(where: { $0.path == path }) {
+                diff.countsWithWhitespace = LineTotals(additions: counted.additions, deletions: counted.deletions)
+            }
             hiddenFileDiffs[key] = .ready(diff)
             lastHiddenFileDiffs[path] = diff
         } catch {
@@ -1223,6 +1237,18 @@ public final class PullRequestTab: Identifiable {
         DiffRange(base: anchor.oid, head: anchor.head ?? review.headOid)
     }
 
+    /// The changes over `range` with whitespace, once known.
+    private func plainChanges(of range: DiffRange) -> ReviewChanges? {
+        guard case let .ready(review) = phase else { return nil }
+        if range == review.range { return review.changes }
+        guard case let .ready(changes)? = pickedChanges[ChangesKey(range: range, ignoresWhitespace: false)] else { return nil }
+        return changes
+    }
+
+    private func record(_ stats: [DiffRange: DiffStat], ignoringWhitespace: Bool) {
+        for (range, stat) in stats { rangeStats[ChangesKey(range: range, ignoresWhitespace: ignoringWhitespace)] = stat }
+    }
+
     /// Keeps the shown file if `changes` has it, hidden or not, else shows the first file the
     /// list shows.
     private func keepSelection(in changes: ReviewChanges) {
@@ -1415,10 +1441,10 @@ private struct ChangesKey: Hashable {
 extension ReviewChanges {
     /// These changes with each file's hunks as `ignoring`, the same range's diff ignoring
     /// whitespace, has them: none for a file it leaves out, as only whitespace changed in it.
-    /// The files, their order and their counts stay these.
+    /// The files and their order stay these; the hidden files are counted as `ignoring` counts.
     func ignoringWhitespace(as ignoring: ReviewChanges) -> ReviewChanges {
         let ignored = Dictionary(ignoring.files.map { ($0.path, $0) }) { first, _ in first }
-        return ReviewChanges(files: files.map { $0.ignoringWhitespace(as: ignored[$0.path]) }, hidden: hidden)
+        return ReviewChanges(files: files.map { $0.ignoringWhitespace(as: ignored[$0.path]) }, hidden: ignoring.hidden)
     }
 }
 

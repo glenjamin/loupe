@@ -124,7 +124,7 @@ private struct FileHeader: View {
                     if hides != whitespace.hides { whitespace.toggle() }
                 }))
                     .toggleStyle(HeaderIconToggleStyle())
-                    .help("Leave changes to whitespace out of every file's diff in this PR, as github.com's Hide whitespace does; line counts still include them (⌃⌘H)")
+                    .help("Leave changes to whitespace out of every file's diff in this PR, as github.com's Hide whitespace does, and from the line counts (⌃⌘H)")
             }
             if let markdown {
                 Picker("Show", selection: Binding(get: { markdown.isRendered }, set: { markdown.setRendered($0) })) {

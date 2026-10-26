@@ -24,7 +24,7 @@ public struct FileDiff: Sendable, Identifiable {
     public var isBinary: Bool
     public var hunks: [Hunk]
     /// Set when the file was diffed ignoring changes to whitespace: the lines it adds and
-    /// deletes counting them, which its counts keep reporting, as github.com's do.
+    /// deletes counting them, which tell a file only whitespace changed in from one unchanged.
     public var countsWithWhitespace: LineTotals?
 
     public var id: String { path }
@@ -37,20 +37,22 @@ public struct FileDiff: Sendable, Identifiable {
         self.countsWithWhitespace = countsWithWhitespace
     }
 
-    public var additions: Int { countsWithWhitespace?.additions ?? hunks.reduce(0) { $0 + $1.lines.count(where: \.isAddition) } }
-    public var deletions: Int { countsWithWhitespace?.deletions ?? hunks.reduce(0) { $0 + $1.lines.count(where: \.isDeletion) } }
+    /// The lines shown added and deleted, so hiding whitespace leaves its changes uncounted.
+    public var additions: Int { hunks.reduce(0) { $0 + $1.lines.count(where: \.isAddition) } }
+    public var deletions: Int { hunks.reduce(0) { $0 + $1.lines.count(where: \.isDeletion) } }
 
     /// Whether the file was diffed ignoring changes to whitespace.
     public var ignoresWhitespace: Bool { countsWithWhitespace != nil }
 
     /// Whether ignoring whitespace left none of the file's changed lines to show.
     public var isWhitespaceOnly: Bool {
-        ignoresWhitespace && hunks.isEmpty && additions + deletions > 0
+        guard let countsWithWhitespace else { return false }
+        return hunks.isEmpty && countsWithWhitespace.additions + countsWithWhitespace.deletions > 0
     }
 
     /// This file as diffed ignoring whitespace, from `ignoring`, its diff of that kind, or nil
-    /// when git found nothing but whitespace changed in it. Keeps this diff's path, change and
-    /// counts, so the file list reads the same either way.
+    /// when git found nothing but whitespace changed in it. Keeps this diff's path and change, so
+    /// the file list holds the same files either way.
     public func ignoringWhitespace(as ignoring: FileDiff?) -> FileDiff {
         FileDiff(path: path, change: change, isBinary: isBinary, hunks: ignoring?.hunks ?? [], countsWithWhitespace: LineTotals(additions: additions, deletions: deletions))
     }

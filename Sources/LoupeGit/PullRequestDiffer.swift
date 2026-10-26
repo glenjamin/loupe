@@ -107,7 +107,7 @@ public struct PullRequestDiffer: Sendable {
     /// The changes between two commits: the diff of the paths to review, and the hidden paths
     /// listed but not diffed, as a vendored tree can be enormous. `ignoringWhitespace` diffs
     /// as github.com's "Hide whitespace" does, leaving out files only whitespace changed in;
-    /// the hidden paths and their counts are the same either way.
+    /// the hidden paths are the same either way, but their counts leave whitespace out too.
     public func diff(_ range: DiffRange, ignoringWhitespace: Bool = false, in checkout: URL) async throws -> RangeDiff {
         let changed = try await changedFiles(in: range, checkout: checkout)
         let hiding = try await hiddenPaths(changedIn: [range: changed.map(\.path)], checkout: checkout)[range] ?? []
@@ -115,7 +115,7 @@ public struct PullRequestDiffer: Sendable {
         let covering = coveringPaths(hiding: hidden.map(\.path), keeping: changed.map(\.path))
         let excludes = covering.map { ":(exclude,top,literal)\($0)" }
         async let text = git(["diff", "--no-color", "--no-ext-diff", "-M"] + Self.whitespace(ignoringWhitespace) + [range.base, range.head, "--", "."] + excludes, in: checkout)
-        let counts = try await lineCounts(in: range, under: covering + hidden.compactMap(\.renamedFrom), checkout: checkout)
+        let counts = try await lineCounts(in: range, under: covering + hidden.compactMap(\.renamedFrom), ignoringWhitespace: ignoringWhitespace, checkout: checkout)
         for index in hidden.indices {
             guard let count = counts[hidden[index].path] else { continue }
             hidden[index].additions = count.additions
@@ -127,13 +127,21 @@ public struct PullRequestDiffer: Sendable {
 
     /// How much each range changes the files to review, leaving out those `PathFilter` hides as
     /// the diff does. Each range is counted by a git run of its own, a few at a time.
-    public func stats(of ranges: [DiffRange], in checkout: URL) async throws -> [DiffRange: DiffStat] {
+    /// `ignoringWhitespace` leaves changes to whitespace uncounted, but still counts the files
+    /// only whitespace changed in, as the diff still lists them.
+    public func stats(of ranges: [DiffRange], ignoringWhitespace: Bool = false, in checkout: URL) async throws -> [DiffRange: DiffStat] {
         let counts = try await withThrowingTaskGroup(of: (DiffRange, [String: LineCount]).self) { group in
             var counts: [DiffRange: [String: LineCount]] = [:]
             var pending = ranges[...]
             func startNext() {
                 guard let range = pending.popFirst() else { return }
-                group.addTask { (range, try await lineCounts(in: range, checkout: checkout)) }
+                group.addTask {
+                    guard ignoringWhitespace else { return (range, try await lineCounts(in: range, checkout: checkout)) }
+                    async let ignoring = lineCounts(in: range, ignoringWhitespace: true, checkout: checkout)
+                    let changed = try await lineCounts(in: range, checkout: checkout)
+                    let counted = try await ignoring
+                    return (range, changed.mapValues { _ in LineCount(additions: 0, deletions: 0, isBinary: false) }.merging(counted) { $1 })
+                }
             }
             for _ in 0..<Self.concurrentRuns { startNext() }
             while let (range, count) = try await group.next() {
@@ -232,14 +240,15 @@ public struct PullRequestDiffer: Sendable {
     /// Lines added and deleted in each path changed under `paths`, by its new path, without
     /// producing the diff itself. A rename's old path belongs among `paths` so git still sees
     /// the rename.
-    private func lineCounts(in range: DiffRange, under paths: [String], checkout: URL) async throws -> [String: LineCount] {
+    private func lineCounts(in range: DiffRange, under paths: [String], ignoringWhitespace: Bool, checkout: URL) async throws -> [String: LineCount] {
         guard !paths.isEmpty else { return [:] }
-        return try await lineCounts(in: range, checkout: checkout, pathspecs: paths.map { ":(top,literal)\($0)" })
+        return try await lineCounts(in: range, ignoringWhitespace: ignoringWhitespace, checkout: checkout, pathspecs: paths.map { ":(top,literal)\($0)" })
     }
 
     /// Lines added and deleted in each path changed in `range`, or only under `pathspecs`.
-    private func lineCounts(in range: DiffRange, checkout: URL, pathspecs: [String] = []) async throws -> [String: LineCount] {
-        let fields = try await git(["diff", "--numstat", "-z", "--no-ext-diff", "-M", range.base, range.head, "--"] + pathspecs, in: checkout)
+    /// Ignoring whitespace, git leaves out the paths only whitespace changed in.
+    private func lineCounts(in range: DiffRange, ignoringWhitespace: Bool = false, checkout: URL, pathspecs: [String] = []) async throws -> [String: LineCount] {
+        let fields = try await git(["diff", "--numstat", "-z", "--no-ext-diff", "-M"] + Self.whitespace(ignoringWhitespace) + [range.base, range.head, "--"] + pathspecs, in: checkout)
             .split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
         var counts: [String: LineCount] = [:]
         var index = 0
