@@ -1082,6 +1082,10 @@ REST refusals now carry GitHub's detail after its message, from the body's `erro
 
 At Glen's request, revising "The viewer's own PR takes a pending review, submitted as a comment", whose `canStartReview` was for open PRs only: a merged PR is still worth commenting on, and with no way to start a review there, each comment went out at once. GitHub takes a pending review on a merged PR (tried live, then deleted). So any PR now takes one: the comment box offers "Start a review" / "Add review comment" as elsewhere, and once a review is pending the header's right end shows the controls the viewer's own PR has, the pending count, "Summary…" and Submit. Approve and Request changes stay for someone else's open PR, as a verdict on one that's merged or closed has nothing left to decide; whether GitHub would take one wasn't tried, as that posts a review others see.
 
+### Nothing posts at once while a review is pending
+
+At Glen's request, revising "A new comment can start a review; ⌘↩ adds to the review only once one is pending", which kept "Add single comment" beside "Add review comment": GitHub refuses a comment at once over REST while the viewer has a review pending, so the button only ever failed. With a review pending the comment box offers "Add review comment" alone (⌘↩). A comment on several lines of one commit, which no review can hold, then offers nothing to send, and the caption says to submit or discard the review first; the draft stays. Replies to threads still post at once, as before.
+
 ## Not yet decided
 
 Nothing is pending.

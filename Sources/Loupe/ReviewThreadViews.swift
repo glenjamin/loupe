@@ -78,10 +78,18 @@ private struct NewCommentCard: View {
     }
 
     /// Where the viewer can start a review, their own PR included, a single comment posted at
-    /// once and one into their review, as on github.com; ⌘↩ adds to a pending review, and
-    /// otherwise posts at once, and ⌘⇧↩ does the other.
+    /// once and one into their review, as on github.com, ⌘↩ posting at once and ⌘⇧↩ starting
+    /// the review. While a review is pending, adding to it is the only way, as GitHub refuses
+    /// a comment posted at once then.
     private var actions: [ComposerAction] {
         let atOnce = "Post this comment at once, not as part of a review"
+        if tab.pendingReview != nil {
+            guard comment.takesReviewComments else { return [] }
+            let add = ComposerAction(label: "Add review comment", help: "Add this comment to your pending review; no one else sees it until the review is submitted") {
+                Task { await tab.sendReviewComment() }
+            }
+            return [add]
+        }
         guard comment.takesReviewComments else {
             let help = "Post this comment on this commit at once; GitHub's reviews only hold a comment on one line of a commit"
             return [ComposerAction(label: "Add single comment", help: help) { Task { await tab.sendComment() } }]
@@ -90,16 +98,10 @@ private struct NewCommentCard: View {
             return [ComposerAction(label: "Comment", help: atOnce) { Task { await tab.sendComment() } }]
         }
         let single = ComposerAction(label: "Add single comment", help: atOnce) { Task { await tab.sendComment() } }
-        guard tab.pendingReview != nil else {
-            let start = ComposerAction(label: "Start a review", help: "Start a review with this comment; no one else sees it until the review is submitted") {
-                Task { await tab.sendReviewComment() }
-            }
-            return [single, start]
-        }
-        let add = ComposerAction(label: "Add review comment", help: "Add this comment to your pending review; no one else sees it until the review is submitted") {
+        let start = ComposerAction(label: "Start a review", help: "Start a review with this comment; no one else sees it until the review is submitted") {
             Task { await tab.sendReviewComment() }
         }
-        return [add, single]
+        return [single, start]
     }
 
     /// The lines it's on, and the commit for one started on a commit's own changes.
@@ -111,11 +113,14 @@ private struct NewCommentCard: View {
     }
 
     private var caption: String {
+        if tab.pendingReview != nil {
+            return comment.takesReviewComments
+                ? "Markdown. ⌘↩ adds to your review."
+                : "Markdown. A review can't hold several lines of one commit; submit or discard yours to post this."
+        }
         guard comment.takesReviewComments else { return "Markdown. Posts at once: a review can't hold a comment on several lines of one commit." }
         guard tab.canStartReview else { return "Markdown. Posts at once, not as part of a review." }
-        return tab.pendingReview == nil
-            ? "Markdown. ⌘↩ posts a single comment; ⌘⇧↩ starts a review."
-            : "Markdown. ⌘↩ adds to your review; ⌘⇧↩ posts a single comment."
+        return "Markdown. ⌘↩ posts a single comment; ⌘⇧↩ starts a review."
     }
 }
 

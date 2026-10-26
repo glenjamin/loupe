@@ -86,7 +86,7 @@ struct CommitCommentTests {
         #expect(tab.threads(on: tab.expandedFile(try #require(tab.file("app.go"))))?.anchored.map(\.line) == [11, 50])
     }
 
-    @Test func aRangeOnACommitTakesNoReviewAndASingleCommentWhileAReviewIsPendingSaysWhyGitHubRefusedIt() async throws {
+    @Test func whileAReviewIsPendingNothingPostsAtOnceAndARangeOnACommitCantBeSent() async throws {
         let app = try await ThreadsApp()
         let pullRequest = try await app.pushPullRequest()
         try await app.conversations.startPendingReview(on: pullRequest.id, path: "app.go", line: 11, body: "Hmm")
@@ -99,11 +99,23 @@ struct CommitCommentTests {
         #expect(comment.start != nil && !comment.takesReviewComments, "GitHub places a comment on a commit in a review by one line")
         comment.draft.text = "These three could be one."
         await tab.sendReviewComment()
+        await tab.sendComment()
         #expect(await app.conversations.reviewMutationsReceived.isEmpty)
+        #expect(await app.conversations.commentsReceived.isEmpty, "GitHub refuses a comment at once while a review is pending")
+        #expect(tab.shownNewComment?.draft.text == "These three could be one.", "kept to send once the review's done")
+    }
 
+    @Test func aSingleCommentGitHubRefusesForAReviewStartedElsewhereSaysWhy() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest()
+        let tab = try await app.open(pullRequest)
+        try await app.conversations.startPendingReview(on: pullRequest.id, path: "app.go", line: 11, body: "From the browser")
+
+        tab.startComment(at: DiffAnchor(path: "app.go", side: .right, line: 12))
+        try #require(tab.shownNewComment).draft.text = "Why?"
         await tab.sendComment()
         #expect(await app.conversations.commentsReceived.count == 1)
-        #expect(tab.shownNewComment?.draft.text == "These three could be one.", "opened again to try another way")
+        #expect(tab.shownNewComment?.draft.text == "Why?", "opened again to add to the review instead")
         #expect(tab.threadActivity.newCommentError?.hasPrefix("Couldn't comment: GitHub returned HTTP 422: Validation Failed (user_id can only have one pending review per pull request)") == true)
     }
 

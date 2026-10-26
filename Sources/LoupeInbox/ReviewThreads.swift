@@ -303,9 +303,10 @@ extension PullRequestTab {
     /// on, whose line numbers it uses: the head of the whole PR's diff, or one commit. It shows
     /// there and in the conversation straight away, marked as sending until GitHub answers with
     /// its copy; then the threads are fetched again in case of anything else new. A refusal
-    /// takes it away and opens the draft again with the reason.
+    /// takes it away and opens the draft again with the reason. Nothing posts while the viewer
+    /// has a review pending, as GitHub refuses a comment at once then.
     public func sendComment() async {
-        guard let comment = threadActivity.newComment, comment.draft.canSend, case let .ready(review) = phase else { return }
+        guard pendingReview == nil, let comment = threadActivity.newComment, comment.draft.canSend, case let .ready(review) = phase else { return }
         threadActivity.newCommentError = nil
         let pullRequest = pullRequest
         let known = Set((conversation?.threads ?? []).map(\.id) + threadsOfShownDiff.map(\.id))
