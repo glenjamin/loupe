@@ -5,6 +5,7 @@ import SwiftUI
 /// font on a rounded grey pill, padded from the text around it.
 struct InlineCodeText: View {
     let text: AttributedString
+    @Environment(\.commentScale) private var scale
 
     var body: some View {
         if #available(macOS 15, *) {
@@ -15,7 +16,7 @@ struct InlineCodeText: View {
                     segments.reduce(Text(verbatim: "")) { result, segment in
                         result + (segment.isCode ? Text(segment.text).customAttribute(InlineCodeRun()) : Text(segment.text))
                     }
-                    .textRenderer(InlineCodePills())
+                    .textRenderer(InlineCodePills(code: code))
                     .textSelection(.disabled)
                     .accessibilityHidden(true)
                 }
@@ -37,7 +38,7 @@ struct InlineCodeText: View {
         for run in text.runs {
             let isCode = run.inlinePresentationIntent?.contains(.code) == true
             var piece = AttributedString(text[run.range])
-            if isCode { piece[AttributeScopes.SwiftUIAttributes.FontAttribute.self] = InlineCode.font }
+            if isCode { piece[AttributeScopes.SwiftUIAttributes.FontAttribute.self] = code.font }
             if let last = segments.indices.last, segments[last].isCode == isCode {
                 segments[last].text += piece
             } else {
@@ -45,24 +46,32 @@ struct InlineCodeText: View {
             }
         }
         for index in segments.indices where segments[index].isCode {
-            padEnd(of: &segments[index].text)
-            if index > 0 { padEnd(of: &segments[index - 1].text) }
+            padEnd(of: &segments[index].text, by: code.horizontalPadding)
+            if index > 0 { padEnd(of: &segments[index - 1].text, by: code.horizontalPadding) }
         }
         return segments
     }
+
+    private var code: InlineCode {
+        InlineCode(scale: scale)
+    }
 }
 
-/// How inline code looks: Primer's `--bgColor-neutral-muted` and `code` styles.
-enum InlineCode {
-    static let font = Font.system(size: size, design: .monospaced)
+/// How inline code looks: Primer's `--bgColor-neutral-muted` and `code` styles, scaled with
+/// the comment.
+struct InlineCode {
+    let scale: CGFloat
+
+    var font: Font { .system(size: size, design: .monospaced) }
+    var size: CGFloat { NSFont.systemFontSize * 0.85 * scale }
+    var horizontalPadding: CGFloat { size * 0.4 }
+    var verticalPadding: CGFloat { size * 0.15 }
+
     static let background = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             ? NSColor(srgbRed: 0x65 / 255, green: 0x6C / 255, blue: 0x76 / 255, alpha: 0.2)
             : NSColor(srgbRed: 0x81 / 255, green: 0x8B / 255, blue: 0x98 / 255, alpha: 0.12)
     })
-    static let size = NSFont.systemFontSize * 0.85
-    static let horizontalPadding = size * 0.4
-    static let verticalPadding = size * 0.15
     static let cornerRadius: CGFloat = 6
 }
 
@@ -73,6 +82,8 @@ private struct InlineCodeRun: TextAttribute {}
 /// Draws a pill for each line's part of each span of inline code, and nothing else.
 @available(macOS 15, *)
 private struct InlineCodePills: TextRenderer {
+    let code: InlineCode
+
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         for line in layout {
             // The kerning that pads the code splits its runs, so touching runs make one pill.
@@ -93,8 +104,8 @@ private struct InlineCodePills: TextRenderer {
             for span in spans {
                 // The span's width takes in the kerning after its last character; the room before
                 // its first is in the run ahead of it.
-                let pill = CGRect(x: span.minX - InlineCode.horizontalPadding, y: span.minY - InlineCode.verticalPadding,
-                                  width: span.width + InlineCode.horizontalPadding, height: span.height + 2 * InlineCode.verticalPadding)
+                let pill = CGRect(x: span.minX - code.horizontalPadding, y: span.minY - code.verticalPadding,
+                                  width: span.width + code.horizontalPadding, height: span.height + 2 * code.verticalPadding)
                 context.fill(Path(roundedRect: pill, cornerRadius: InlineCode.cornerRadius), with: .color(InlineCode.background))
             }
         }
@@ -102,8 +113,8 @@ private struct InlineCodePills: TextRenderer {
 }
 
 /// Adds the code's padding after the last character of `text`.
-private func padEnd(of text: inout AttributedString) {
+private func padEnd(of text: inout AttributedString, by padding: CGFloat) {
     guard !text.characters.isEmpty else { return }
     let last = text.characters.index(before: text.endIndex)
-    text[last...][AttributeScopes.SwiftUIAttributes.KerningAttribute.self] = InlineCode.horizontalPadding
+    text[last...][AttributeScopes.SwiftUIAttributes.KerningAttribute.self] = padding
 }

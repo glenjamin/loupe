@@ -41,6 +41,8 @@ public final class DiffTextView: NSTextView {
         let storage = NSTextStorage()
         let layout = RowBackgroundLayoutManager()
         layout.allowsNonContiguousLayout = true
+        // Rows are as tall as their paragraph style says, whatever leading the font asks for.
+        layout.usesFontLeading = false
         storage.addLayoutManager(layout)
         let container = NSTextContainer(size: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
         container.lineFragmentPadding = 10

@@ -6,7 +6,8 @@ import SwiftUI
 
 /// The blocks a file's diff lays over its rows for its review threads: one under each line
 /// threads end on, one after the last row for those with nowhere in the diff to go, and the
-/// comment being started on one of the file's lines, if any.
+/// comment being started on one of the file's lines, if any. Their text is scaled up to sit with
+/// the code's.
 @MainActor
 func threadBlocks(for threads: FileThreads, onFileAt path: String, in tab: PullRequestTab) -> [DiffBlockContent] {
     let activity = tab.threadActivity
@@ -19,13 +20,13 @@ func threadBlocks(for threads: FileThreads, onFileAt path: String, in tab: PullR
         DiffBlockContent(
             id: "threads:\(line.side.rawValue):\(line.line)",
             placement: .after(side: line.side, line: line.line),
-            view: AnyView(ThreadStack(tab: tab, threads: line.threads)),
+            view: AnyView(ThreadStack(tab: tab, threads: line.threads).environment(\.commentScale, diffCommentScale)),
             reveal: reveal(line.threads)
         )
     }
     if !threads.elsewhere.isEmpty {
         blocks.append(DiffBlockContent(
-            id: "threads:elsewhere", placement: .end, view: AnyView(ElsewhereThreads(tab: tab, threads: threads.elsewhere)), reveal: reveal(threads.elsewhere)
+            id: "threads:elsewhere", placement: .end, view: AnyView(ElsewhereThreads(tab: tab, threads: threads.elsewhere).environment(\.commentScale, diffCommentScale)), reveal: reveal(threads.elsewhere)
         ))
     }
     // A comment being started goes under its line, after any threads already there.
@@ -34,7 +35,7 @@ func threadBlocks(for threads: FileThreads, onFileAt path: String, in tab: PullR
         blocks.append(DiffBlockContent(
             id: "new-comment:\(anchor.side.rawValue):\(anchor.line)",
             placement: .after(side: anchor.side, line: anchor.line),
-            view: AnyView(NewCommentCard(tab: tab, comment: comment))
+            view: AnyView(NewCommentCard(tab: tab, comment: comment).environment(\.commentScale, diffCommentScale))
         ))
     }
     return blocks
@@ -48,7 +49,7 @@ private struct NewCommentCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(verbatim: header)
-                .font(.caption)
+                .commentFont(.caption1)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
@@ -68,7 +69,7 @@ private struct NewCommentCard: View {
                     suggestedLines: tab.suggestedLines(for: comment)
                 )
             }
-            .font(.callout)
+            .commentFont(.callout)
             .padding(10)
         }
         .background(Color(nsColor: .textBackgroundColor))
@@ -148,7 +149,7 @@ private struct ElsewhereThreads: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Not on the current diff")
-                .font(.callout.weight(.semibold))
+                .commentFont(.callout, weight: .semibold)
                 .foregroundStyle(.secondary)
             ForEach(threads) { thread in
                 ThreadCard(tab: tab, thread: thread, showsHunk: !thread.diffHunk.isEmpty)
@@ -177,7 +178,7 @@ private struct ThreadCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .font(.callout)
+            .commentFont(.callout)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -246,7 +247,7 @@ private struct ThreadCard: View {
             Text(verbatim: place)
             if thread.isOutdated {
                 Text("Outdated")
-                    .font(.caption2)
+                    .commentFont(.caption2)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.5)))
@@ -254,7 +255,7 @@ private struct ThreadCard: View {
             Spacer(minLength: 0)
             resolveButton
         }
-        .font(.caption)
+        .commentFont(.caption1)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -298,7 +299,7 @@ private struct ThreadCard: View {
                     .help("Reply to this conversation; it posts at once, not as part of a review")
             }
         }
-        .font(.callout)
+        .commentFont(.callout)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
     }
@@ -572,7 +573,7 @@ private struct CommentView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .font(.callout)
+            .commentFont(.callout)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -607,11 +608,12 @@ private struct CommentView: View {
                         DeleteCommentButton(tab: tab, thread: thread, comment: comment)
                     }
                 }
-                .font(.callout)
+                .commentFont(.callout)
                 if let edit {
                     CommentEditor(tab: tab, edit: edit)
                 } else {
                     CommentBody(blocks: commentBlocks(comment.bodyHTML))
+                        .commentFont(.body)
                         .background(QuoteSource(threadId: thread.id, bodyHTML: comment.bodyHTML))
                 }
                 // A pending comment can't be reacted to until its review is submitted, nor one
@@ -689,12 +691,13 @@ struct CommentComposer: View {
     var suggestedLines: [String]?
     @State private var confirmsDiscard = false
     @State private var suggestionRequests = 0
+    @Environment(\.commentScale) private var scale
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             MarkdownEditor(
                 text: $draft.text, isEditable: true, tab: tab, save: { send(actions.first) }, alternateSave: alternateSave, cancel: escape ?? cancelAsking,
-                font: .systemFont(ofSize: NSFont.systemFontSize), minHeight: 96, focusRequests: takesFocus ? draft.focusRequests : 0,
+                font: .systemFont(ofSize: NSFont.systemFontSize * scale), minHeight: 96 * scale, focusRequests: takesFocus ? draft.focusRequests : 0,
                 suggestion: suggestedLines.map { SuggestionRequests(lines: $0, count: suggestionRequests, request: { suggestionRequests += 1 }) }
             )
             HStack(spacing: 8) {
@@ -773,7 +776,7 @@ struct CommentBody: View {
                         .textSelection(.enabled)
                 case let .code(code):
                     Text(verbatim: code)
-                        .font(.system(.callout, design: .monospaced))
+                        .commentFont(.callout, design: .monospaced)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                         .padding(8)
@@ -804,7 +807,7 @@ private struct SuggestionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Suggested change")
-                .font(.caption)
+                .commentFont(.caption1)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
@@ -817,7 +820,7 @@ private struct SuggestionView: View {
                     row(line, marker: "+", background: DiffColors.additionBackground, gutter: DiffColors.additionGutterBackground)
                 }
             }
-            .font(.system(.callout, design: .monospaced))
+            .commentFont(.callout, design: .monospaced)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -906,7 +909,7 @@ private struct HunkSnippet: View {
                     .background(background(of: line))
             }
         }
-        .font(.system(size: 12, design: .monospaced))
+        .commentFont(.callout, design: .monospaced)
         .padding(.vertical, 4)
     }
 
@@ -970,4 +973,39 @@ private func quoteSource(at point: NSPoint, in view: NSView) -> QuoteSource.Mark
         if let found = quoteSource(at: point, in: subview) { return found }
     }
     return nil
+}
+
+/// How much a thread laid over the diff scales its text from the system's sizes: its comments'
+/// text as large as the code's.
+@MainActor
+private let diffCommentScale = RenderedDiff.fontSize / NSFont.systemFontSize
+
+extension EnvironmentValues {
+    /// How much comments scale their text from the system's sizes.
+    var commentScale: CGFloat {
+        get { self[CommentScaleKey.self] }
+        set { self[CommentScaleKey.self] = newValue }
+    }
+}
+
+private struct CommentScaleKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 1
+}
+
+extension View {
+    /// The system's font for `style`, scaled by the comment scale.
+    func commentFont(_ style: NSFont.TextStyle, weight: Font.Weight = .regular, design: Font.Design = .default) -> some View {
+        modifier(CommentFont(style: style, weight: weight, design: design))
+    }
+}
+
+private struct CommentFont: ViewModifier {
+    let style: NSFont.TextStyle
+    let weight: Font.Weight
+    let design: Font.Design
+    @Environment(\.commentScale) private var scale
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: NSFont.preferredFont(forTextStyle: style).pointSize * scale, weight: weight, design: design))
+    }
 }

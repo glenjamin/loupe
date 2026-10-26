@@ -1104,6 +1104,10 @@ At Glen's request, revising the part of "One commit's changes take comments, and
 
 At Glen's request, revising "The Conflicts badge lists the conflicting files, found by merging locally", which looked only when the popover first opened. When GitHub says a PR conflicts, its tab now looks as it loads, once the diff has fetched the head and base, and the file list marks each conflicting file the PR changes with a red "conflict" capsule beside its name, which says what it conflicts with when hovered. PRs GitHub doesn't flag aren't looked at, as nothing then offers the list, so most tabs do no extra work, and a conflict with a base GitHub hasn't checked against yet goes unseen until it does; the merge is local and quick, and a reload looks afresh as before.
 
+### The diff is Monaco at 15pt, and its threads' text scales to match
+
+At Glen's request the diff's code is Monaco at 15pt rather than the system monospaced font at 12pt, with rows still five thirds of the font size. Monaco asks for leading that SF Mono doesn't, so the diff's layout ignores font leading, leaving each row, and each block laid over the diff, exactly as tall as its paragraph style says. The threads and comment boxes laid over the diff scale every text size by the code's size over the system's, so a comment's text is as large as the code; the same views shown over the conversation, in its reply and edit popovers, stay at the system's sizes. Buttons keep their control sizes.
+
 ## Not yet decided
 
 Nothing is pending.
