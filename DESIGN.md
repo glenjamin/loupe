@@ -1108,6 +1108,10 @@ At Glen's request, revising "The Conflicts badge lists the conflicting files, fo
 
 At Glen's request the code is a size up from 12pt, with rows still five thirds of the font size, as GitHub's 20pt at 12pt. Monaco at 15pt, 14pt and 13pt, with rows of VS Code's and GoLand's heights, were tried side by side with those editors and dropped. The threads and comment boxes laid over the diff scale every text size by the code's size over the system's, so a comment's text stays as large as the code if the code's size changes; the same views over the conversation, in its reply and edit popovers, stay at the system's sizes. The diff's layout ignores font leading, so each row, and each block laid over the diff, is exactly as tall as its paragraph style says whatever font it's in.
 
+### Each commit in the conversation's timeline shows when it was made
+
+Glen found the runs of commits in the timeline had no times, so a push couldn't be placed against the comments around it. Each commit row now ends with the same relative time as the rest of the page, with the full date on hover. It's the commit's `committedDate`, as GitHub's GraphQL API no longer says when a commit was pushed; a rebase can leave it earlier than the push, as in "To review marks what the viewer has reviewed, and what's been updated since".
+
 ## Not yet decided
 
 Nothing is pending.

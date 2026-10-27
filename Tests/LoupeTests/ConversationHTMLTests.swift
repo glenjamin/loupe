@@ -197,8 +197,8 @@ struct ConversationHTMLTests {
         let times = page.matches(of: /<time datetime="([^"]+)" title="([^"]+)">/).map { (String($0.1), String($0.2)) }
 
         let threadComments = everything.threads.flatMap(\.comments).map(\.createdAt)
-        let dates = [everything.createdAt] + everything.items.prefix(4).filter { $0.id != "commit1" }.map(\.date) + threadComments + everything.items.suffix(events.count).map(\.date)
-        #expect(times.map(\.0) == dates.map { $0.formatted(.iso8601) }, "the description, comments, review, each thread comment and every event, in order; a commit has none")
+        let dates = [everything.createdAt] + everything.items.prefix(4).map(\.date) + threadComments + everything.items.suffix(events.count).map(\.date)
+        #expect(times.map(\.0) == dates.map { $0.formatted(.iso8601) }, "the description, comments, commits, review, each thread comment and every event, in order")
         #expect(times.map(\.1) == dates.map { $0.formatted(date: .complete, time: .shortened) })
     }
 

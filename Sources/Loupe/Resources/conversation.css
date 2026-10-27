@@ -268,6 +268,7 @@ time { color: var(--muted); }
 .commits li { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
 .commits .headline { flex: 1; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .commits .sha { color: var(--muted); }
+.commits time { white-space: nowrap; }
 
 /* CI on the head commit. */
 .checks {

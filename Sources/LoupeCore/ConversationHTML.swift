@@ -32,7 +32,7 @@ public enum ConversationHTML {
         var commits: [TimelineItem] = []
         func flushCommits() {
             guard !commits.isEmpty else { return }
-            html += commitList(commits)
+            html += commitList(commits, now: now)
             commits = []
         }
         for item in conversation.items {
@@ -194,10 +194,10 @@ public enum ConversationHTML {
         return #"<pre class="hunk"><code>\#(rows)</code></pre>"#
     }
 
-    private static func commitList(_ commits: [TimelineItem]) -> String {
+    private static func commitList(_ commits: [TimelineItem], now: Date) -> String {
         let rows = commits.map { item -> String in
             guard case let .commit(oid, headline) = item.event else { return "" }
-            return #"<li>\#(avatar(item.actor, size: 20))<span class="headline">\#(escape(headline))</span><code class="sha">\#(escape(String(oid.prefix(7))))</code></li>"#
+            return #"<li>\#(avatar(item.actor, size: 20))<span class="headline">\#(escape(headline))</span><code class="sha">\#(escape(String(oid.prefix(7))))</code>\#(time(item.date, now: now))</li>"#
         }.joined()
         return #"<section class="item commits"><span class="icon">⎇</span><ul>\#(rows)</ul></section>"# + "\n"
     }
