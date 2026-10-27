@@ -38,7 +38,7 @@ struct SyntaxHighlightingTests {
         ("Gemfile", "# note"), ("a.swift", "// note"), ("a.json", "\"note\""), ("a.yml", "# note"),
         ("a.sh", "# note"), ("a.css", "/* note */"), ("a.html", "<!-- note -->"),
         ("Dockerfile", "# note"), ("a.sql", "-- note"), ("go.mod", "// note"), ("a.py", "# note"), ("a.md", "# Note"),
-        ("a.proto", "// note"),
+        ("a.proto", "// note"), ("main.tf", "# note"), ("prod.tfvars", "# note"), ("a.hcl", "# note"),
     ])
     func everySupportedLanguageHighlights(path: String, line: String) throws {
         #expect(SyntaxLanguage(path: path) != nil)
@@ -113,6 +113,37 @@ struct SyntaxHighlightingTests {
         #expect(colors(of: "name =", in: rendered, length: 4) == [DiffColors.syntaxConstant])
         #expect(colors(of: "1;", in: rendered, length: 1) == [DiffColors.syntaxConstant])
         #expect(colors(of: "2;", in: rendered, length: 1) == [DiffColors.syntaxConstant])
+    }
+
+    @Test func colorsATerraformFile() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/main.tf b/main.tf
+        --- a/main.tf
+        +++ b/main.tf
+        @@ -0,0 +1,9 @@
+        +# The app's bucket.
+        +resource "aws_s3_bucket" "app" {
+        +  bucket = "app-${var.env}"
+        +  count  = 2
+        +  tags   = merge(local.tags, { public = false })
+        +  lifecycle {
+        +    prevent_destroy = true
+        +  }
+        +}
+
+        """).files.first)
+        let rendered = showing(file)
+
+        #expect(colors(of: "# The app's bucket.", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: "resource", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "\"aws_s3_bucket\"", in: rendered) == [DiffColors.syntaxString])
+        #expect(colors(of: "\"app-", in: rendered) == [DiffColors.syntaxString])
+        #expect(colors(of: "var.env", in: rendered, length: 3) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "2\n", in: rendered, length: 1) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "merge", in: rendered) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "false", in: rendered) == [DiffColors.syntaxConstant])
+        // A nested block is named as a type is.
+        #expect(colors(of: "lifecycle", in: rendered) == [DiffColors.syntaxEntity])
     }
 
     @Test func aHunkStartingInsideADeclarationIsColouredAsPartOfIt() throws {

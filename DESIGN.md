@@ -1112,6 +1112,10 @@ At Glen's request the code is a size up from 12pt, with rows still five thirds o
 
 Glen found the runs of commits in the timeline had no times, so a push couldn't be placed against the comments around it. Each commit row now ends with the same relative time as the rest of the page, with the full date on hover. It's the commit's `committedDate`, as GitHub's GraphQL API no longer says when a commit was pushed; a rebase can leave it earlier than the push, as in "To review marks what the viewer has reviewed, and what's been updated since".
 
+### HCL is vendored as Protocol Buffers is, with nvim-treesitter's query
+
+Terraform files were plain, and the repos I review have plenty. The grammar is tree-sitter-grammars/tree-sitter-hcl at a tagged release, the one nvim-treesitter and Helix use, vendored as the `TreeSitterHCL` target as "Grammars CodeEditLanguages lacks are vendored as C targets" describes, with its external scanner, which heredocs and templates need. It ships no highlights query, so nvim-treesitter's is vendored beside it, pinned to a commit in `VERSION`; Helix's was the alternative, but leans on `#match?` lists of Terraform's words and is MPL-licensed. Linguist already names `.tf`, `.tfvars` and `.hcl` files HCL. The grammar's Terraform dialect isn't used: its parser is the same one under another name, there so nvim-treesitter can give Terraform files a query of their own. A top-level block's type (`resource`) takes the keyword colour, a nested block's (`lifecycle`) the entity colour, and attribute names stay plain, as in nvim-treesitter.
+
 ## Not yet decided
 
 Nothing is pending.

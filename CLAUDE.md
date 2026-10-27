@@ -18,6 +18,7 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 
 - `LoupeCore`: diff parsing and the `NSTextView`-based diff rendering. No network.
 - `TreeSitterProto`: the vendored Protocol Buffers grammar (C) and its highlights query; refreshed by `Scripts/update-tree-sitter-proto.sh`, never edited by hand.
+- `TreeSitterHCL`: the vendored HCL grammar (C), for Terraform, with nvim-treesitter's highlights query; refreshed by `Scripts/update-tree-sitter-hcl.sh`, never edited by hand.
 - `LoupeModel`: shared value types.
 - `LoupeGitHub`: GraphQL client, hand-written queries and `Codable`, no Apollo.
 - `LoupeStore`: SQLite via GRDB, with migrations.

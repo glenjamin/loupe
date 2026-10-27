@@ -3,6 +3,7 @@ import CodeEditLanguages
 import CodeLanguages_Container
 import os
 import SwiftTreeSitter
+import TreeSitterHCL
 import TreeSitterProto
 
 /// A grammar the diff view can highlight, chosen as GitHub does: the path's Linguist language,
@@ -269,14 +270,16 @@ private extension TreeSitterLanguage {
     }
 }
 
-/// Grammars CodeEditLanguages lacks, each vendored as a target of its own with the upstream
+/// Grammars CodeEditLanguages lacks, each vendored as a target of its own with a highlights
 /// query in its resource bundle.
 private enum VendoredGrammar: String {
     case proto
+    case hcl
 
     init?(linguistName: String) {
         switch linguistName {
         case "Protocol Buffer": self = .proto
+        case "HCL": self = .hcl
         default: return nil
         }
     }
@@ -284,12 +287,14 @@ private enum VendoredGrammar: String {
     var tsLanguage: OpaquePointer? {
         switch self {
         case .proto: tree_sitter_proto()
+        case .hcl: tree_sitter_hcl()
         }
     }
 
     var bundle: String {
         switch self {
         case .proto: "Loupe_TreeSitterProto"
+        case .hcl: "Loupe_TreeSitterHCL"
         }
     }
 }
