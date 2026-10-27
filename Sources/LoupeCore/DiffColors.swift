@@ -30,9 +30,9 @@ public enum DiffColors {
     public static let deletionWordBackground = dynamic(light: (0xFF, 0x81, 0x82, 0.4), dark: (0xF8, 0x51, 0x49, 0.4))
 }
 
-private typealias RGBA = (r: Int, g: Int, b: Int, a: CGFloat)
+typealias RGBA = (r: Int, g: Int, b: Int, a: CGFloat)
 
-private func dynamic(light: RGBA, dark: RGBA) -> NSColor {
+func dynamic(light: RGBA, dark: RGBA) -> NSColor {
     NSColor(name: nil) { appearance in
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         return color(isDark ? dark : light)

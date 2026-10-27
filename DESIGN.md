@@ -1122,6 +1122,10 @@ Glen asked for a key for every action and a list of them on `?`. Each shortcut i
 
 Approve (⌥⌘A), Request changes (⌥⌘X) and Submit (⌥⌘↩) ask first, in an alert naming what goes with the review, whereas their buttons submit at once: a key is easier to hit by mistake than a button, and a verdict can't be taken back. The alert is AppKit's, shown from the menu action, so no flag in the model can be left set if it fails to show; a shortcut pressed while the last alert is still closing does nothing.
 
+### Failed CircleCI jobs are read from the API the `circleci` CLI uses, shown natively
+
+A PR with failed checks that CircleCI ran gets a "CircleCI" row under Conversation (⌃4): a tab per failed job, and in each a choice of its failed steps' output, its failed tests and its artifacts. The jobs are read from CircleCI's v3 API, the one the open-source `circleci` CLI 1.7 reads its jobs, step output, test results and artifacts from, with the token the CLI is signed in with (the visual review's), rather than by running the CLI: one HTTP request per thing shown is quicker than a process per command, and a fake CircleCI can serve the tests and UI suite. v3 knows jobs only by id, so an older project's numbered job link goes through v2's job by number to its workflow; that's the one v2 request. Steps' output is shown as the terminal showed it (`TerminalText`: SGR colours in GitHub's log palette, `\r` rewriting the line), scrolled to its end, where the error is, in a read-only text view ⌘F searches; the full output rather than CircleCI's condensed form, as the condensed one cuts the context around the error. Each job is read only when shown, and an ended job's reads are kept in memory, as they never change; they aren't stored, as reading them again on the next launch is quick. Artifacts open in the browser, which CircleCI's web sign-in serves, rather than in Loupe. The chosen panel stays as jobs are switched, so the same thing can be compared across them.
+
 ## Not yet decided
 
 Nothing is pending.

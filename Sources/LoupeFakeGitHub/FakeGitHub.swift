@@ -971,12 +971,12 @@ struct FakeCheckContext: Codable, Sendable {
     var description: String?
     var targetUrl: String?
 
-    static func status(_ context: String, _ state: String, description: String? = nil) -> FakeCheckContext {
-        FakeCheckContext(__typename: "StatusContext", context: context, state: state, description: description)
+    static func status(_ context: String, _ state: String, description: String? = nil, url: String? = nil) -> FakeCheckContext {
+        FakeCheckContext(__typename: "StatusContext", context: context, state: state, description: description, targetUrl: url)
     }
 
-    static func checkRun(_ name: String, status: String, conclusion: String?, title: String? = nil) -> FakeCheckContext {
-        FakeCheckContext(__typename: "CheckRun", name: name, status: status, conclusion: conclusion, title: title)
+    static func checkRun(_ name: String, status: String, conclusion: String?, title: String? = nil, url: String? = nil) -> FakeCheckContext {
+        FakeCheckContext(__typename: "CheckRun", name: name, status: status, conclusion: conclusion, title: title, detailsUrl: url)
     }
 }
 

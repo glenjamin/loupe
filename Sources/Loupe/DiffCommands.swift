@@ -49,6 +49,9 @@ struct DiffCommands: Commands {
             Button("Visual Review") { tab?.showVisualReview() }
                 .keyboardShortcut(.visualReview)
                 .disabled(tab?.visualReview == nil)
+            Button("CircleCI Failures") { tab?.showCircleCI() }
+                .keyboardShortcut(.circleCI)
+                .disabled(tab?.failedCircleCIChecks.isEmpty != false)
             Divider()
             Button(listMode == .todo ? "Show Lists" : "Show TODO") { listMode = listMode == .todo ? .lists : .todo }
                 .keyboardShortcut(.toggleTodo)

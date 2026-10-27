@@ -1,0 +1,56 @@
+# A PR whose CircleCI jobs failed offers them under Conversation: a tab for each failed job,
+# and in each its failed steps' output, its failed tests and its artifacts, read from CircleCI.
+wait settled
+open tamarinworks/marmot#14268
+wait settled
+expect button ~"CircleCI"
+expect #circleci-pane missing
+
+click button ~"CircleCI"
+expect button ~"CircleCI" is selected
+wait until button "playwright" in #circleci-pane
+expect button "typecheck" in #circleci-pane
+expect button "playwright" in #circleci-pane is selected
+
+# Both parallel runs failed the same step: each is listed, the first's output shown from its end.
+wait until ~"shard 1 of 2" in #circleci-output
+expect ~"run 2 of 2" in #circleci-steps
+snap circleci-steps
+click ~"run 2 of 2" in #circleci-steps
+wait until ~"shard 2 of 2" in #circleci-output
+
+# Only the failed tests, each with its message.
+click radio ~"Failed tests (2)"
+wait until #circleci-tests
+expect ~"a board keeps its layout after a reload" in #circleci-tests
+expect ~"a link can be revoked" in #circleci-tests missing
+expect ~"Timeout 40000ms exceeded" in #circleci-test-message
+click ~"a shared link opens read-only" in #circleci-tests
+wait until ~"Expected: \"Read only\"" in #circleci-test-message
+snap circleci-tests
+
+# The artifacts as a tree; clicking one opens it in the browser, where CircleCI is signed in.
+click radio ~"Artifacts (3)"
+wait until #circleci-artifacts
+expect button ~"index.html" in #circleci-artifacts
+snap circleci-artifacts
+click button ~"index.html" in #circleci-artifacts
+expect-request playwright-report/index.html
+
+# The other job: one failed step, and no tests or artifacts stored. The panel chosen stays.
+click button "typecheck" in #circleci-pane
+wait until radio ~"Artifacts (0)" has value "1"
+expect ~"The job kept no files" in #circleci-pane
+expect radio ~"Failed tests (0)"
+click radio ~"Failed steps (1)"
+wait until ~"error TS2322" in #circleci-output
+expect #circleci-steps missing
+expect ~"exit code 2" in #circleci-pane
+snap circleci-typecheck
+
+# ⌃1 and ⌃4 go between the conversation and the jobs.
+press ctrl+1
+expect button ~"CircleCI" is not selected
+press ctrl+4
+expect button ~"CircleCI" is selected
+expect button "typecheck" in #circleci-pane is selected

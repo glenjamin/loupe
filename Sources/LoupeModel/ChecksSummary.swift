@@ -43,7 +43,7 @@ private func checks(_ count: Int) -> String {
 }
 
 /// What follows an integration's prefix: after the first ": ", else after the first "/".
-private func shortName(_ name: String) -> String {
+func shortName(_ name: String) -> String {
     let short = if let range = name.range(of: ": ") {
         name[range.upperBound...]
     } else if let slash = name.firstIndex(of: "/") {

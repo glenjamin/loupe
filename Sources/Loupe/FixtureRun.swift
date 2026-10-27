@@ -10,7 +10,8 @@ import WebKit
 /// `LOUPE_DATABASE` says otherwise; checkouts are looked for only in `<dir>/checkouts`, where
 /// `Loupe --fixture-checkouts <dir>/checkouts` builds them, unless `<dir>/config.json` says otherwise; the lists judge age by a fixed time
 /// near the captures; the real app's settings aren't read; web pages load nothing from the
-/// network; and CircleCI is never asked. Snapshot runs' write guards stay on.
+/// network; and CircleCI is `FakeCircleCI`, or for an artifact a CLI that doesn't exist. Snapshot
+/// runs' write guards stay on.
 @MainActor
 enum FixtureRun {
     static let directory = SnapshotRun.directory == nil ? nil : ProcessInfo.processInfo.environment["LOUPE_FIXTURES"].map {
@@ -25,6 +26,8 @@ enum FixtureRun {
         return checkouts
     }
     static let gitHub = checkouts.map(FixtureGitHub.init(checkouts:))
+    /// CircleCI's jobs for the fixtures' failed checks, in-process.
+    static let circleCI = directory == nil ? nil : FakeCircleCI.fixture()
     /// Where the run's PRs are kept unless `LOUPE_DATABASE` says otherwise.
     static let database = directory.map { directory in
         ProcessInfo.processInfo.environment["LOUPE_DATABASE"].map { URL(filePath: $0) } ?? directory.appending(path: "loupe.sqlite")

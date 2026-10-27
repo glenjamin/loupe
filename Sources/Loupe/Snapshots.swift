@@ -2392,6 +2392,7 @@ private extension ReviewSection {
         case "conversation": self = .conversation
         case "files": self = .files
         case "visual": self = .visualReview
+        case "circleci": self = .circleCI
         default: return nil
         }
     }

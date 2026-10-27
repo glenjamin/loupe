@@ -1051,10 +1051,24 @@ public final class PullRequestTab: Identifiable {
         conversation.flatMap { VisualReview.latest(in: $0.items) }
     }
 
+    /// The failed checks CircleCI ran, whose jobs the CircleCI section shows.
+    public var failedCircleCIChecks: [FailedCircleCICheck] {
+        pullRequest.checkContexts.failedCircleCIChecks
+    }
+
     /// What's shown beside the sidebar: the section chosen, or the conversation in place of a
-    /// visual review the conversation no longer has.
+    /// visual review the conversation no longer has, or of failed jobs that have since passed.
     public var shownSection: ReviewSection {
-        section == .visualReview && visualReview == nil ? .conversation : section
+        switch section {
+        case .visualReview where visualReview == nil: .conversation
+        case .circleCI where failedCircleCIChecks.isEmpty: .conversation
+        default: section
+        }
+    }
+
+    /// Shows the failed CircleCI jobs in place of the diff or conversation, if there are any.
+    public func showCircleCI() {
+        if !failedCircleCIChecks.isEmpty { section = .circleCI }
     }
 
     /// Shows the visual review's report in place of the diff or conversation, if there is one.
@@ -1390,12 +1404,13 @@ public enum PendingChange: Sendable, Equatable {
     case newCommits
 }
 
-/// What the PR view shows beside its sidebar: the conversation, the files, or CI's visual
-/// review report.
+/// What the PR view shows beside its sidebar: the conversation, the files, CI's visual review
+/// report, or its failed CircleCI jobs.
 public enum ReviewSection: Sendable, Hashable {
     case conversation
     case files
     case visualReview
+    case circleCI
 }
 
 /// Where a tab's diff has got to.

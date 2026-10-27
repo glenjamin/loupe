@@ -7,7 +7,7 @@ enum Shortcut: CaseIterable {
     case showShortcuts, showLists, selectTab, selectLastTab, previousTab, nextTab, closeTab, closeAllTabs
     case find, findNext, findPrevious, refresh
     case openSelected, toggleTodo, showClosed
-    case conversation, files, visualReview
+    case conversation, files, visualReview, circleCI
     case openOnGitHub, copyLink, openInEditor, editDescription, reviewers, merge
     case summary, approve, requestChanges, submitReview
     case nextFile, previousFile, markReviewedAndNext, toggleReviewed, nextCommit, previousCommit
@@ -27,7 +27,7 @@ enum Shortcut: CaseIterable {
         switch self {
         case .showShortcuts, .showLists, .selectTab, .selectLastTab, .previousTab, .nextTab, .closeTab, .closeAllTabs, .find, .findNext, .findPrevious, .refresh: .anywhere
         case .openSelected, .toggleTodo, .showClosed: .lists
-        case .conversation, .files, .visualReview, .openOnGitHub, .copyLink, .openInEditor, .editDescription, .reviewers, .merge: .pullRequest
+        case .conversation, .files, .visualReview, .circleCI, .openOnGitHub, .copyLink, .openInEditor, .editDescription, .reviewers, .merge: .pullRequest
         case .summary, .approve, .requestChanges, .submitReview: .review
         case .nextFile, .previousFile, .markReviewedAndNext, .toggleReviewed, .nextCommit, .previousCommit, .toggleRendered, .hideRevealedLines, .hideWhitespace, .wrapLines, .quoteReply: .files
         case .send, .sendSecond, .cancel, .togglePreview, .suggestChange, .moveByCodeWord: .comments
@@ -55,6 +55,7 @@ enum Shortcut: CaseIterable {
         case .conversation: "Conversation"
         case .files: "Files changed"
         case .visualReview: "Visual review"
+        case .circleCI: "Failed CircleCI jobs"
         case .openOnGitHub: "Open on GitHub"
         case .copyLink: "Copy the PR's link"
         case .openInEditor: "Check out and open in the editor"
@@ -104,6 +105,7 @@ enum Shortcut: CaseIterable {
         case .conversation: KeyboardShortcut("1", modifiers: .control)
         case .files: KeyboardShortcut("2", modifiers: .control)
         case .visualReview: KeyboardShortcut("3", modifiers: .control)
+        case .circleCI: KeyboardShortcut("4", modifiers: .control)
         case .openOnGitHub: KeyboardShortcut("o", modifiers: [.command, .shift])
         case .copyLink: KeyboardShortcut("c", modifiers: [.command, .shift])
         case .openInEditor: KeyboardShortcut("e", modifiers: [.command, .shift])

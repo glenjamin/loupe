@@ -45,6 +45,13 @@ struct PullRequestView: View {
                     if let editor {
                         DescriptionEditorView(editor: editor, tab: tab)
                     }
+                    let showsCircleCI = section == .circleCI
+                    if let failures = showsCircleCI ? CircleCIPages.failures(for: tab) : CircleCIPages.existingFailures(for: tab) {
+                        CircleCIPane(failures: failures, checks: tab.failedCircleCIChecks, isShown: showsCircleCI)
+                            .opacity(showsCircleCI ? 1 : 0)
+                            .allowsHitTesting(showsCircleCI)
+                            .accessibilityHidden(!showsCircleCI)
+                    }
                     let showsVisualReview = section == .visualReview
                     if let review = tab.visualReview, let page = showsVisualReview ? VisualReviewPage.page(for: tab) : VisualReviewPage.existingPage(for: tab) {
                         VisualReviewPane(page: page, review: review, isShown: showsVisualReview)
@@ -186,14 +193,18 @@ struct NoCheckoutActions: View {
     }
 }
 
-/// The PR's navigation: its conversation at the top, then once the diff is ready the commit
-/// picker and the files of the shown changes.
+/// The PR's navigation: its conversation at the top, with its failed CircleCI jobs and CI's
+/// visual review under it when there are any, then once the diff is ready the commit picker and
+/// the files of the shown changes.
 struct ReviewSidebar: View {
     @Bindable var tab: PullRequestTab
 
     var body: some View {
         VStack(spacing: 0) {
             ConversationRow(tab: tab)
+            if !tab.failedCircleCIChecks.isEmpty {
+                CircleCIRow(tab: tab)
+            }
             if let review = tab.visualReview {
                 VisualReviewRow(tab: tab, review: review)
             }
