@@ -8,9 +8,8 @@ import SwiftUI
 /// and names the branches; leaving draft doesn't, as GitHub lets it be undone. GitHub's refusal
 /// of either is shown by `MergeErrorLabel`.
 struct MergeBox: View {
-    let tab: PullRequestTab
+    @Bindable var tab: PullRequestTab
     let readiness: MergeReadiness
-    @State private var confirming = false
 
     var body: some View {
         let pullRequest = tab.pullRequest
@@ -40,7 +39,7 @@ struct MergeBox: View {
                 MergeFirstLabel(parent: bottom)
             }
         }
-        .alert(Text(verbatim: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName)?"), isPresented: $confirming) {
+        .alert(Text(verbatim: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName)?"), isPresented: $tab.isConfirmingMerge) {
             Button("Merge") { Task { await tab.merge() } }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -72,7 +71,7 @@ struct MergeBox: View {
     }
 
     private func mergeButton(_ pullRequest: PullRequestSummary) -> some View {
-        Button("Merge", systemImage: "arrow.triangle.merge") { confirming = true }
+        Button("Merge", systemImage: "arrow.triangle.merge") { tab.isConfirmingMerge = true }
             .buttonStyle(.borderedProminent)
             .tint(tint)
             .disabled(readiness != .ready || tab.isMerging)
@@ -90,7 +89,7 @@ struct MergeBox: View {
 
     private func help(_ pullRequest: PullRequestSummary) -> String {
         switch readiness {
-        case .ready: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName) with a merge commit"
+        case .ready: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName) with a merge commit (⇧⌘M)"
         case let .blocked(.stacked(number, cascades: true)):
             "Merging this would merge #\(number) and any others below it in the stack too, so a stack is merged from the bottom, one PR at a time. Merge #\(number) first."
         case let .blocked(.stacked(number, cascades: false)):

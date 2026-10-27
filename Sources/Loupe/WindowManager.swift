@@ -287,10 +287,9 @@ private struct WindowChrome: View {
                     if let item {
                         let url = item.url
                         Button("Open on GitHub", systemImage: "safari") { openInBrowser(url) }
-                            .help("Open on GitHub")
+                            .help("Open on GitHub (⇧⌘O)")
                         Button("Copy Link", systemImage: "link") { copyLink(url) }
-                            .keyboardShortcut("c", modifiers: [.command, .shift])
-                            .help("Copy the PR's GitHub link")
+                            .help("Copy the PR's GitHub link (⇧⌘C)")
                     } else {
                         listsItems
                     }
@@ -322,7 +321,7 @@ private struct WindowChrome: View {
             // The TODO view is of open PRs only.
             .disabled(mode == .todo)
         Button("Refresh", systemImage: "arrow.clockwise") { Task { await lists.refresh() } }
-            .keyboardShortcut("r")
+            .help("Refresh (⌘R)")
             .disabled(lists.isLoading)
         ListSearchToolbarItem(search: search)
     }
@@ -361,11 +360,11 @@ struct FindCommands: Commands {
             Divider()
             Menu("Find") {
                 Button("Find…") { windows.find() }
-                    .keyboardShortcut("f")
+                    .keyboardShortcut(.find)
                 Button("Find Next") { windows.find(.nextMatch) }
-                    .keyboardShortcut("g")
+                    .keyboardShortcut(.findNext)
                 Button("Find Previous") { windows.find(.previousMatch) }
-                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                    .keyboardShortcut(.findPrevious)
             }
         }
     }
@@ -390,23 +389,23 @@ struct TabCommands: Commands {
         // In place of SwiftUI's Close and Close All, which would close the window.
         CommandGroup(replacing: .saveItem) {
             Button("Close Tab") { windows.closeSelectedTab() }
-                .keyboardShortcut("w")
+                .keyboardShortcut(.closeTab)
             Button("Close All Tabs") { windows.closeAllTabs() }
-                .keyboardShortcut("w", modifiers: [.command, .option])
+                .keyboardShortcut(.closeAllTabs)
         }
         CommandGroup(before: .windowArrangement) {
             Button("Show Pull Requests") { windows.showLists() }
-                .keyboardShortcut("1")
+                .keyboardShortcut(.showLists)
             Button("Select Previous Tab") { windows.selectAdjacent(-1) }
-                .keyboardShortcut("[", modifiers: [.command, .shift])
+                .keyboardShortcut(.previousTab)
             Button("Select Next Tab") { windows.selectAdjacent(1) }
-                .keyboardShortcut("]", modifiers: [.command, .shift])
+                .keyboardShortcut(.nextTab)
             ForEach(2..<9) { number in
                 Button("Select Tab \(number)") { windows.selectTab(number: number) }
                     .keyboardShortcut(KeyEquivalent(Character("\(number)")))
             }
             Button("Select Last Tab") { windows.selectTab(number: 9) }
-                .keyboardShortcut("9")
+                .keyboardShortcut(.selectLastTab)
             Divider()
         }
     }
@@ -460,7 +459,7 @@ private let appIcon = AppDelegate.iconURL.flatMap(NSImage.init(contentsOf:))
 
 /// Puts a link on the pasteboard as text and as a URL, so it pastes as either.
 @MainActor
-private func copyLink(_ url: URL) {
+func copyLink(_ url: URL) {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
     pasteboard.setString(url.absoluteString, forType: .string)

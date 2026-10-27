@@ -145,6 +145,45 @@ struct ViewedFilesTests {
         #expect(await app.viewed.state(of: "go.sum", in: pullRequest.id) == .viewed)
     }
 
+    @Test func theFileKeysStepThroughTheListInItsTreeOrderHiddenFilesLastStoppingAtTheEnds() async throws {
+        let repo = try await FakeRepository()
+        let app = try await ViewedApp()
+        let pullRequest = try await app.pushPullRequest(changing: ["a.txt", "lib/b.txt", "go.sum"], in: repo)
+        await app.viewed.add(pullRequest.id, files: [("a.txt", .viewed), ("lib/b.txt", .unviewed), ("go.sum", .unviewed)])
+        let tab = try await app.open(pullRequest)
+        #expect(tab.selectedFile == "lib/b.txt")
+
+        tab.selectAdjacentFile(1)
+        #expect(tab.selectedFile == "a.txt", "reviewed files aren't passed over")
+        tab.selectAdjacentFile(1)
+        #expect(tab.selectedFile == "go.sum")
+        tab.selectAdjacentFile(1)
+        #expect(tab.selectedFile == "go.sum", "the last file stays")
+        tab.selectAdjacentFile(-1)
+        tab.selectAdjacentFile(-1)
+        tab.selectAdjacentFile(-1)
+        #expect(tab.selectedFile == "lib/b.txt", "the first file stays")
+        #expect(await app.viewed.mutations.isEmpty, "stepping marks nothing")
+    }
+
+    @Test func theCommitKeysStepFromTheWholePRThroughEachCommitAndBack() async throws {
+        let repo = try await FakeRepository()
+        let app = try await ViewedApp()
+        let (pullRequest, commits) = try await app.pushPullRequest(commits: [["a.txt"], ["b.txt"]], in: repo)
+        let tab = try await app.open(pullRequest)
+        #expect(tab.shownChoice == .all)
+
+        await tab.showAdjacentCommit(1)
+        #expect(tab.shownChoice == .commit(commits[0]))
+        await tab.showAdjacentCommit(1)
+        await tab.showAdjacentCommit(1)
+        #expect(tab.shownChoice == .commit(commits[1]), "the last commit stays")
+        await tab.showAdjacentCommit(-1)
+        await tab.showAdjacentCommit(-1)
+        await tab.showAdjacentCommit(-1)
+        #expect(tab.shownChoice == .all, "back to the whole PR's changes, and no further")
+    }
+
     @Test func onceACommitsFilesAreReviewedMovingOnShowsTheNextCommitsFirstUnreviewedFile() async throws {
         let repo = try await FakeRepository()
         let app = try await ViewedApp()

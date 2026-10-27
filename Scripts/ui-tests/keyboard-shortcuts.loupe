@@ -1,0 +1,50 @@
+# ? lists every shortcut in a sheet that Esc closes, and the files' plain keys and the Review
+# menu's verdict keys act on the shown PR, a verdict asking before anything is sent.
+wait settled
+open tamarinworks/atrium#2928
+wait settled
+
+press shift+/
+wait until any #keyboard-shortcuts
+expect text "Next file"
+expect text "Approve, once confirmed"
+snap shortcuts
+press esc
+wait until any #keyboard-shortcuts missing
+
+# The files: j and k step through the list, stopping at its ends.
+click image #doc
+expect text "ledger/kiln/models/recipe/filter.go" in #file-header
+press j
+expect text "ledger/kiln/models/recipe/new_report.go" in #file-header
+press j j
+expect text "ledger/CHANGELOG.md" in #file-header
+press k k k
+expect text "ledger/kiln/models/recipe/filter.go" in #file-header
+
+# . and , step through the commits, from the whole PR's changes and back to them.
+press .
+wait until button ~"59ad169  Add a report's filter predicates"
+press . . .
+wait until button ~"All 3 commits" missing
+press , , , ,
+wait until button ~"All 3 commits"
+
+# ⌥⌘A asks before approving; backing out says nothing to GitHub. The alert's own buttons are
+# clicked, as an inactive app's alert never takes the keyboard.
+press opt+cmd+a
+wait until button "Cancel" in AXSheet
+expect text "Approve this pull request?"
+snap approve-asked
+click button "Cancel" in AXSheet
+# Until it has closed, another can't open.
+wait until AXSheet missing
+expect-no-request addPullRequestReview
+expect-no-request submitPullRequestReview
+
+# Confirming sends the approval: the PR shows as approved as it is now.
+expect button "Approve"
+press opt+cmd+a
+wait until button "Approve" in AXSheet
+click button "Approve" in AXSheet
+wait until button "Approved"

@@ -260,7 +260,7 @@ final class SnapshotScript {
     }
 
     private func childWindows(of window: NSWindow) -> [NSWindow] {
-        (window.childWindows ?? []).filter(\.isVisible).flatMap { [$0] + childWindows(of: $0) }
+        ((window.childWindows ?? []) + [window.attachedSheet].compactMap { $0 }).filter(\.isVisible).flatMap { [$0] + childWindows(of: $0) }
     }
 
     private func findAll(_ query: Query) -> [AXNode] {
@@ -409,7 +409,8 @@ final class SnapshotScript {
     }
 
     private func keyboardWindow() -> NSWindow? {
-        NSApp.keyWindow ?? shownWindows().first { $0.canBecomeKey }
+        // A dismissed alert can stay the key window, out of sight.
+        NSApp.keyWindow.flatMap { $0.isVisible ? $0 : nil } ?? shownWindows().first { $0.canBecomeKey }
     }
 
     /// Scrolls whatever scrolls under the element, as a mouse wheel would, by `distance` points,
@@ -945,7 +946,9 @@ struct Chord {
             let character = String(UnicodeScalar(special.character).map(Character.init) ?? " ")
             self.init(characters: character, ignoring: character, keyCode: special.code, modifiers: modifiers.union(special.flags))
         } else if key.count == 1, let character = key.first, let code = keyCodes[character] {
-            let typed = modifiers.contains(.shift) ? String(character).uppercased() : String(character)
+            // Shift types a capital, or the symbol over the key: `shift+/` is `?`.
+            let shifted = shiftedKeys.first { $0.value.0 == character }?.key
+            let typed = modifiers.contains(.shift) ? shifted.map(String.init) ?? String(character).uppercased() : String(character)
             // Control turns a letter into its control character, as the keyboard does.
             let controlled = modifiers.contains(.control) ? character.asciiValue.flatMap { $0 >= 97 && $0 <= 122 ? String(UnicodeScalar($0 - 96)) : nil } : nil
             self.init(characters: controlled ?? typed, ignoring: String(character), keyCode: code, modifiers: modifiers)

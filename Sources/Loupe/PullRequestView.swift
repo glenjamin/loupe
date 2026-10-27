@@ -360,11 +360,9 @@ struct PullRequestHeader: View {
             VStack(alignment: .trailing, spacing: 6) {
                 if let reviewers = tab.reviewers {
                     ReviewersBlock(tab: tab, reviewers: reviewers)
-                    // Under the reviewers rather than beside Merge, so neither moves.
-                    if tab.canStartReview, tab.pendingReview != nil {
-                        ReviewControls(tab: tab)
-                    }
-                } else if tab.canReview || (tab.canStartReview && tab.pendingReview != nil) {
+                }
+                // Under the reviewers rather than beside Merge, so neither moves.
+                if tab.showsReviewControls {
                     ReviewControls(tab: tab)
                 }
             }

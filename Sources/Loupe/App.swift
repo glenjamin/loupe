@@ -34,7 +34,7 @@ struct LoupeApp: App {
                 }
                 TabCommands(windows: windows)
                 FindCommands(windows: windows)
-                DiffCommands()
+                DiffCommands(windows: windows)
                 DebugCommands(windows: windows)
             }
     }

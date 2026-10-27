@@ -46,7 +46,7 @@ struct ReviewControls: View {
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
-                .help(summaryHelp)
+                .help(summaryHelp + " (⌥⌘S)")
                 .background(SummaryButtonMarker())
                 .popover(isPresented: $draft.isWritingSummary, arrowEdge: .bottom) {
                     SummaryPopover(tab: tab, draft: draft)
@@ -103,6 +103,38 @@ struct ReviewControls: View {
     private var summaryHelp: String {
         let sent = tab.canReview ? "sent with whichever of the buttons above you click" : "sent with Submit"
         return tab.pendingReview == nil ? "Write the review's summary, \(sent)" : "Write the review's summary, \(sent), or discard the pending review"
+    }
+}
+
+/// Asks before submitting the verdict a shortcut picked, naming what goes with it: a key is
+/// easier to press by mistake than a button is to click.
+@MainActor
+enum VerdictConfirmation {
+    static func ask(_ verdict: ReviewEvent, of tab: PullRequestTab, in window: NSWindow) {
+        guard window.attachedSheet == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = question(verdict)
+        alert.informativeText = message(tab)
+        alert.addButton(withTitle: verdict.title)
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            Task { await tab.submitReview(as: verdict) }
+        }
+    }
+
+    private static func question(_ verdict: ReviewEvent) -> String {
+        switch verdict {
+        case .approve: "Approve this pull request?"
+        case .requestChanges: "Request changes on this pull request?"
+        case .comment: "Submit your review?"
+        }
+    }
+
+    private static func message(_ tab: PullRequestTab) -> String {
+        let summary = tab.reviewSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "no summary" : "your summary"
+        guard let count = tab.pendingReview?.commentCount, count > 0 else { return "It's sent to GitHub now with \(summary)." }
+        return "It's sent to GitHub now with \(summary) and \(count) pending \(count == 1 ? "comment" : "comments")."
     }
 }
 
@@ -328,7 +360,7 @@ private struct RowWidthStack: Layout {
     }
 }
 
-private extension ReviewEvent {
+extension ReviewEvent {
     var title: String {
         switch self {
         case .comment: "Submit"

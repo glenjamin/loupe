@@ -76,6 +76,10 @@ public final class PullRequestTab: Identifiable {
     public let images: ImagePreviews
     /// The description being edited, shown in place of the conversation, or nil when it isn't.
     public private(set) var descriptionEditor: DescriptionEditor?
+    /// Whether Merge is asking to be confirmed.
+    public var isConfirmingMerge = false
+    /// Whether the picker of reviewers to ask is open.
+    public var isAskingReviewers = false
     /// The unchanged lines revealed around each file's hunks.
     public let contextExpansions: ContextExpansions
     /// What's been opened up among the review threads.

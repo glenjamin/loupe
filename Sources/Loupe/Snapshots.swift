@@ -2312,7 +2312,8 @@ private func placePopover(under anchor: NSRect, in window: NSWindow) {
 @MainActor
 private func drawChildWindows(of window: NSWindow, onto rep: NSBitmapImageRep, over base: NSWindow? = nil) {
     let base = base ?? window
-    for child in window.childWindows ?? [] where child.isVisible {
+    // Sheets too, which aren't child windows.
+    for child in (window.childWindows ?? []) + [window.attachedSheet].compactMap({ $0 }) where child.isVisible {
         defer { drawChildWindows(of: child, onto: rep, over: base) }
         guard let view = child.contentView, let image = render(view) else { continue }
         let inChild = view.convert(view.bounds, to: nil)

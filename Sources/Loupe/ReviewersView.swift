@@ -6,14 +6,13 @@ import SwiftUI
 /// review stands, and a button to ask more people. Kept to a few compact rows at the header's
 /// right, with any more summed up.
 struct ReviewersBlock: View {
-    let tab: PullRequestTab
+    @Bindable var tab: PullRequestTab
     let reviewers: [ReviewerStatus]
-    @State private var asking = false
 
     var body: some View {
         // The first reviewer row sits on the button's baseline, reading as one line with it.
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            if let error = tab.reviewRequestError, !asking {
+            if let error = tab.reviewRequestError, !tab.isAskingReviewers {
                 Image(systemName: "exclamationmark.triangle")
                     .foregroundStyle(.diffDanger)
                     .help(error)
@@ -29,11 +28,11 @@ struct ReviewersBlock: View {
                 .font(.caption)
             }
             // The size of Merge beside it, so the two read as the header's controls.
-            Button("Reviewers", systemImage: "person.badge.plus") { asking = true }
+            Button("Reviewers", systemImage: "person.badge.plus") { tab.isAskingReviewers = true }
                 .buttonStyle(.bordered)
-                .help("Request a review")
-                .background(ReviewersButtonMarker(isPresented: $asking))
-                .popover(isPresented: $asking, arrowEdge: .bottom) {
+                .help("Request a review (⌥⌘R)")
+                .background(ReviewersButtonMarker(isPresented: $tab.isAskingReviewers))
+                .popover(isPresented: $tab.isAskingReviewers, arrowEdge: .bottom) {
                     RequestReviewPopover(tab: tab)
                 }
         }
