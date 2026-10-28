@@ -151,6 +151,11 @@ final class SnapshotScript {
             return "to \(focusDescription())"
         case let .scroll(query, distance):
             return try await scroll(find(query), by: distance)
+        case let .drag(query, distance):
+            let node = try find(query)
+            await drag(node, by: distance)
+            await settleInput()
+            return "from \(describe(node.centre)) in \(node.windowName)"
         case let .expect(query, predicate):
             let found = check(query, predicate)
             guard found.holds else { throw StepFailure(expected: "\(query) \(predicate)", found: found.note, scope: query) }
@@ -378,6 +383,31 @@ final class SnapshotScript {
         }
     }
 
+
+    private func drag(_ node: AXNode, by distance: CGFloat) async {
+        movePointer(to: node.centre, in: node.window)
+        let window = node.window
+        let end = NSPoint(x: node.centre.x + distance, y: node.centre.y)
+        // In steps, as a hand would, so a gesture sees the drag start before it ends.
+        let path = (1...Self.dragSteps).map { step in
+            NSPoint(x: node.centre.x + distance * CGFloat(step) / CGFloat(Self.dragSteps), y: node.centre.y)
+        }
+        guard let down = mouseEvent(.leftMouseDown, at: node.centre, in: window, clickCount: 1),
+              let up = mouseEvent(.leftMouseUp, at: end, in: window, clickCount: 1)
+        else { return }
+        let drags = path.compactMap { mouseEvent(.leftMouseDragged, at: $0, in: window, clickCount: 1) }
+        // Through the window, which hands each to the view the drag began in.
+        window.sendEvent(down)
+        for event in drags {
+            try? await Task.sleep(for: .milliseconds(20))
+            window.sendEvent(event)
+        }
+        window.sendEvent(up)
+        movePointer(to: end, in: window)
+    }
+
+    private static let dragSteps = 8
+
     /// Asks the view under the element for its context menu, as a right-click would, without
     /// showing it: a shown menu tracks the real mouse on the user's screen until dismissed.
     private func rightClick(_ node: AXNode) throws -> String {
@@ -393,7 +423,7 @@ final class SnapshotScript {
     }
 
     private func mouseEvent(_ type: NSEvent.EventType, at point: NSPoint, in window: NSWindow, clickCount: Int) -> NSEvent? {
-        let isDown = [.leftMouseDown, .rightMouseDown].contains(type)
+        let isDown = [.leftMouseDown, .leftMouseDragged, .rightMouseDown].contains(type)
         return NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: isDown ? 1 : 0)
     }
 
@@ -683,6 +713,8 @@ enum Step {
     case press([Chord], until: (Query, Predicate)?)
     case type(String)
     case scroll(Query, CGFloat)
+    /// Drags from the middle of what the query finds, this far right, or left if negative.
+    case drag(Query, CGFloat)
     case expect(Query, Predicate)
     case expectRequest(String, attempted: Bool)
     case snap(String, Query?)
@@ -732,6 +764,12 @@ enum Step {
             guard ["up", "down"].contains(direction) else { throw ScriptError("scroll goes up or down, not \(direction)") }
             let distance = CGFloat(try tokens.number())
             self = .scroll(query, direction == "down" ? distance : -distance)
+        case "drag":
+            let query = try Query(&tokens)
+            let direction = try tokens.word()
+            guard ["left", "right"].contains(direction) else { throw ScriptError("drag goes left or right, not \(direction)") }
+            let distance = CGFloat(try tokens.number())
+            self = .drag(query, direction == "right" ? distance : -distance)
         case "expect": self = .expect(try Query(&tokens), try Predicate(&tokens))
         case "expect-request": self = .expectRequest(try tokens.word(), attempted: true)
         case "expect-no-request": self = .expectRequest(try tokens.word(), attempted: false)

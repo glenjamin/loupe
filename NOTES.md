@@ -241,6 +241,7 @@ Conditions, wherever a step takes `<condition>`: `exists` (the default), `missin
 | `press <key> [<key>…] [until <query> <condition>]` | Keys in turn, as `down`, `return`, `esc`, `tab`, `space`, `delete`, `up`/`left`/`right`, `home`, `end`, `pageup`, `pagedown`, `f1`…, or a character, with `cmd+`, `shift+`, `opt+`, `ctrl+`, `fn+` (`cmd+shift+p`, `ctrl+tab`); `until` repeats them (up to 30 times) until the condition holds |
 | `type "text"` | Types each character into whatever has the focus |
 | `scroll <query> up\|down <points>` | Scrolls whatever scrolls under the element |
+| `drag <query> left\|right <points>` | Presses at the element's middle, moves that far in steps and lets go, each event sent through the window; for AppKit views that track drags themselves, as SwiftUI's `DragGesture` ignores synthesised events |
 | `expect <query> [<condition>]` | Fails the run unless it holds |
 | `expect-request <name>` / `expect-no-request <name>` | Whether a blocked write was attempted, by a substring of its name: a mutation (`requestReviews`, `mergePullRequest`), a REST write (`DELETE /repos/…/requested_reviewers`, `merge-async`), `git switch …`, or `open … in the browser` |
 | `snap <name> [<query>]` | Writes `<name>.png` of the window, or cropped to the element |
