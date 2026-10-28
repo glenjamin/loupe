@@ -476,6 +476,76 @@ struct PullRequestListTests {
         #expect(model.verdict(on: asked, in: .toReview) == nil)
     }
 
+
+    @Test func theReviewColumnsSplitPullRequestsByTheViewersReview() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let toReview = model.pullRequests(in: .toReview)
+        let (commented, changesAsked, approved) = (toReview[0], toReview[1], toReview[2])
+        try await github.review(commented.id, "COMMENTED")
+        try await github.review(changesAsked.id, "CHANGES_REQUESTED")
+        try await github.review(approved.id, "APPROVED")
+        await model.refresh()
+
+        #expect(model.pullRequests(in: .toReview, stage: .toReview).map(\.id) == toReview.dropFirst(3).map(\.id))
+        #expect(Set(model.pullRequests(in: .toReview, stage: .reviewing).map(\.id)) == [commented.id, changesAsked.id])
+        #expect(model.pullRequests(in: .toReview, stage: .approved).map(\.id) == [approved.id])
+    }
+
+    @Test func anApprovalStaysApprovedAfterAPushButIsReviewedAgainOnceTheViewerIsAsked() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let approved = try #require(model.pullRequests(in: .toReview).first)
+        try await github.review(approved.id, "APPROVED")
+        await model.refresh()
+
+        await github.passTime(60)
+        try await github.push(to: approved.id)
+        await model.refresh()
+        #expect(model.pullRequests(in: .toReview, stage: .approved).map(\.id) == [approved.id], "still approved, marked updated")
+
+        try await github.requestReview(of: approved.id)
+        await model.refresh()
+        #expect(model.pullRequests(in: .toReview, stage: .approved).isEmpty)
+        #expect(model.pullRequests(in: .toReview, stage: .reviewing).map(\.id) == [approved.id])
+    }
+
+    @Test func aDismissedApprovalTheViewerIsAskedAgainAboutIsBeingReviewed() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let dismissed = try #require(model.pullRequests(in: .toReview).first)
+        try await github.review(dismissed.id, "APPROVED")
+        await model.refresh()
+
+        try await github.dismissReview(of: dismissed.id)
+        try await github.requestReview(of: dismissed.id)
+        await model.refresh()
+
+        #expect(model.pullRequests(in: .toReview, stage: .reviewing).map(\.id) == [dismissed.id])
+    }
+
+    @Test func eachReviewColumnCountsItsOwnHiddenPullRequests() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let clock = StoppedClock(at: .now)
+        let model = try listModel(github, now: { clock.now })
+        await model.refresh()
+        let approved = try #require(model.pullRequests(in: .toReview).first)
+        try await github.review(approved.id, "APPROVED")
+        await model.refresh()
+        let approvedAt = try #require(model.pullRequest(id: approved.id)).updatedAt
+
+        clock.now = approvedAt + days(31)
+
+        let hidden = model.staleCount(in: .toReview)
+        #expect(model.staleCount(in: .toReview, stage: .approved) == 1)
+        #expect(model.staleCount(in: .toReview, stage: .toReview) + model.staleCount(in: .toReview, stage: .reviewing) == hidden - 1)
+        #expect(model.pullRequests(in: .toReview, stage: .approved).isEmpty)
+        #expect(model.pullRequests(in: .toReview, stage: .approved, includingStale: true).map(\.id) == [approved.id])
+    }
+
     @Test func pullRequestsTheViewerHasGivenAVerdictOnFollowThoseAwaitingThem() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
