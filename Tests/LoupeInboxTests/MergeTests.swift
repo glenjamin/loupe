@@ -227,6 +227,43 @@ struct MergeTests {
         #expect(app.tabs.lists.pullRequests(in: .mine, includingClosed: true, includingStale: true).first { $0.id == pullRequest.id }?.state == .merged)
     }
 
+    @Test func anOpenTabFollowsItsMergeCommitsChecksUntilTheyFinish() async throws {
+        let app = try await MergeApp()
+        let pullRequest = try app.mergeable()
+        try await app.github.setMergeState(of: pullRequest.id, "CLEAN")
+        let tab = try await app.open(pullRequest)
+        await app.tabs.lists.refresh()
+        await tab.merge()
+
+        try await app.github.setMergeCommitChecks(of: pullRequest.id, state: "PENDING", [.status("ci/circleci: test", "PENDING")])
+        await app.tabs.watchMergeCommits()
+        #expect(tab.pullRequest.mergeCommitChecks == .pending)
+
+        try await app.github.setMergeCommitChecks(of: pullRequest.id, state: "FAILURE", [.status("ci/circleci: test", "FAILURE")])
+        await app.tabs.watchMergeCommits()
+        #expect(tab.pullRequest.mergeCommitChecks == .failure)
+        #expect(tab.pullRequest.mergeCommitCheckContexts.failedCheckNames == ["test"])
+
+        // Finished, they're not asked about again.
+        let asked = await app.github.statusLookups.count
+        await app.tabs.watchMergeCommits()
+        #expect(await app.github.statusLookups.count == asked)
+    }
+
+    @Test func aClosedTabsMergeCommitIsNotFollowed() async throws {
+        let app = try await MergeApp()
+        let pullRequest = try app.mergeable()
+        try await app.github.setMergeState(of: pullRequest.id, "CLEAN")
+        let tab = try await app.open(pullRequest)
+        await app.tabs.lists.refresh()
+        await tab.merge()
+        app.tabs.close(pullRequest.id)
+
+        let asked = await app.github.statusLookups.count
+        await app.tabs.watchMergeCommits()
+        #expect(await app.github.statusLookups.count == asked)
+    }
+
     @Test func aMergeGitHubRefusesSaysWhyAndLeavesThePullRequestOpen() async throws {
         let app = try await MergeApp()
         let pullRequest = try app.mergeable()

@@ -669,7 +669,9 @@ public final class PullRequestListModel {
         return now().timeIntervalSince(requestedAt ?? pullRequest.updatedAt) > Self.staleAge
     }
 
-    private func awaitsMergeCommitChecks(_ pullRequest: PullRequestSummary) -> Bool {
+    /// Whether the checks on the commit that merged `pullRequest` may yet change: it merged
+    /// within `mergeCommitCheckWindow`, and they haven't been seen to pass or fail.
+    func awaitsMergeCommitChecks(_ pullRequest: PullRequestSummary) -> Bool {
         guard pullRequest.state == .merged, let mergedAt = pullRequest.mergedAt,
               now().timeIntervalSince(mergedAt) < Self.mergeCommitCheckWindow else { return false }
         return switch pullRequest.mergeCommitChecks {

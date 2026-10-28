@@ -223,12 +223,15 @@ final class WindowManager {
         return true
     }
 
-    /// Keeps the lists refreshed, and watches open PRs for changes unless this is a snapshot run,
-    /// which shouldn't wait on GitHub's notifications. Coming back to the app or its window also
+    /// Keeps the lists refreshed, and watches open PRs for changes and the checks on the merge
+    /// commits of those merged unless this is a snapshot run, which shouldn't wait on GitHub. Coming back to the app or its window also
     /// checks the shown PR and reloads any new commits, which were only offered while it was read.
     private func startRefreshing() {
         Task { await tabs.lists.keepRefreshed() }
-        if SnapshotRun.directory == nil { Task { await tabs.keepWatchingForChanges() } }
+        if SnapshotRun.directory == nil {
+            Task { await tabs.keepWatchingForChanges() }
+            Task { await tabs.keepWatchingMergeCommits() }
+        }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
