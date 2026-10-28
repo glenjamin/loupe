@@ -1,13 +1,19 @@
-# To review splits into three columns by how far the viewer has got with each PR: those they
-# haven't reviewed, those they're part way through, and those they've approved. The fixtures
-# hold no reviews of the viewer's, so every PR waits in the first.
+# To review is one list in three sections, by how far the viewer has got with each PR: those
+# they haven't reviewed, those they're part way through, and those they've approved. It sits
+# beside Mine in a split the viewer can resize. The fixtures hold no reviews of the viewer's,
+# so every PR waits in the first section.
 wait settled
 open lists
 expect text "Mine (19)" exists
-expect text "To review (13)" exists
-expect text "Reviewing (0)" exists
-expect text "Approved (0)" exists
+expect AXHeading "To review (13)" in list 2 exists
 expect button ~"atrium #2928" in list 2 exists
 expect list count 2
-expect text "Nothing here" count 2
+expect AXSplitter exists
 snap review-columns
+
+# The other two sections follow the first's PRs, each saying it's empty.
+scroll list 2 down 20000
+wait until AXHeading "Approved (0)" in list 2 exists
+expect AXHeading "Reviewing (0)" in list 2 exists
+expect text "Nothing here" in list 2 count 2
+snap review-columns-end

@@ -18,14 +18,11 @@ struct PullRequestListView: View {
                     case .lists where model.isSearching && PullRequestList.allCases.allSatisfy({ model.pullRequests(in: $0, includingClosed: showsClosed).isEmpty }):
                         NoSearchMatches(text: model.searchText)
                     case .lists:
-                        HStack(spacing: 0) {
+                        HSplitView {
                             PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, showsClosed: showsClosed, model: model)
-                            Divider()
-                            PullRequestColumn(title: "To review", list: .toReview, stage: .toReview, showsAuthor: true, showsClosed: showsClosed, model: model)
-                            Divider()
-                            PullRequestColumn(title: "Reviewing", list: .toReview, stage: .reviewing, showsAuthor: true, showsClosed: showsClosed, model: model)
-                            Divider()
-                            PullRequestColumn(title: "Approved", list: .toReview, stage: .approved, showsAuthor: true, showsClosed: showsClosed, model: model)
+                                .frame(minWidth: Self.minColumnWidth, maxWidth: .infinity)
+                            ReviewColumn(showsClosed: showsClosed, model: model)
+                                .frame(minWidth: Self.minColumnWidth, maxWidth: .infinity)
                         }
                     case .todo:
                         TodoListView(model: model)
@@ -58,6 +55,9 @@ struct PullRequestListView: View {
             }
         }
     }
+
+    /// Narrow enough to give the other column most of the window, wide enough for a row's title.
+    private static let minColumnWidth: CGFloat = 280
 }
 
 /// In place of the lists when nothing in them matches the search.
@@ -137,8 +137,6 @@ struct RefreshErrorBanner: View {
 struct PullRequestColumn: View {
     let title: String
     let list: PullRequestList
-    /// Narrows To review to the PRs at this stage of the viewer's review.
-    var stage: ReviewStage?
     let showsAuthor: Bool
     let showsClosed: Bool
     let model: PullRequestListModel
@@ -148,7 +146,7 @@ struct PullRequestColumn: View {
     @State private var showsStale = false
 
     var body: some View {
-        let listing = model.listing(in: list, stage: stage, includingClosed: showsClosed, includingStale: showsStale)
+        let listing = model.listing(in: list, includingClosed: showsClosed, includingStale: showsStale)
         let pullRequests = listing.map(\.pullRequest)
         VStack(alignment: .leading, spacing: 0) {
             Text("\(title) (\(pullRequests.count))")
@@ -161,13 +159,7 @@ struct PullRequestColumn: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(listing, selection: $selection) { listed in
-                    let pullRequest = listed.pullRequest
-                    Button { model.open(pullRequest) } label: {
-                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, selfReview: model.selfReview(of: pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent, reviewMark: model.reviewMark(on: pullRequest, in: list))
-                            .padding(.leading, CGFloat(listed.depth) * Self.stackIndent)
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu { CheckoutMenu(repository: pullRequest.repository, model: model) }
+                    ListedRow(listed: listed, list: list, showsAuthor: showsAuthor, model: model)
                 }
                 .onKeyPress(.return) {
                     guard let pullRequest = pullRequests.first(where: { $0.id == selection }) else { return .ignored }
@@ -175,20 +167,80 @@ struct PullRequestColumn: View {
                     return .handled
                 }
             }
-            let stale = model.staleCount(in: list, stage: stage, includingClosed: showsClosed)
+            let stale = model.staleCount(in: list, includingClosed: showsClosed)
             if stale > 0 {
-                Button(showsStale ? "Hide \(stale) older than a month" : "\(stale) older than a month hidden") {
-                    showsStale.toggle()
-                }
-                .buttonStyle(.borderless)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .background(StaleToggleMarker())
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                StaleToggle(count: stale, isShown: $showsStale)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// To review's PRs in one list, in a section for each stage of the viewer's review, so the
+/// stages take only the room their PRs need.
+struct ReviewColumn: View {
+    let showsClosed: Bool
+    let model: PullRequestListModel
+    /// Moved with the arrow keys across the sections; Return opens it.
+    @State private var selection: PullRequestSummary.ID?
+    /// The stages whose PRs held back as stale are listed, for this session only.
+    @State private var showingStale: Set<ReviewStage> = []
+
+    var body: some View {
+        let sections = ReviewStage.allCases.map { stage in
+            (stage: stage, listing: model.listing(in: .toReview, stage: stage, includingClosed: showsClosed, includingStale: showingStale.contains(stage)))
+        }
+        List(selection: $selection) {
+            ForEach(sections, id: \.stage) { section in
+                // A plain row rather than a section header, which would stay pinned over the rows.
+                Text("\(section.stage.title) (\(section.listing.count))")
+                    .font(.headline)
+                    .padding(.top, section.stage == ReviewStage.allCases.first ? 0 : 12)
+                    .accessibilityAddTraits(.isHeader)
+                if section.listing.isEmpty {
+                    Text(model.isSearching ? "No matches" : "Nothing here")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(section.listing) { listed in
+                    ListedRow(listed: listed, list: .toReview, showsAuthor: true, model: model)
+                }
+                let stale = model.staleCount(in: .toReview, stage: section.stage, includingClosed: showsClosed)
+                if stale > 0 {
+                    StaleToggle(count: stale, isShown: Binding {
+                        showingStale.contains(section.stage)
+                    } set: { shown in
+                        if shown { showingStale.insert(section.stage) } else { showingStale.remove(section.stage) }
+                    })
+                }
+            }
+        }
+        .onKeyPress(.return) {
+            let pullRequests = sections.flatMap { $0.listing.map(\.pullRequest) }
+            guard let pullRequest = pullRequests.first(where: { $0.id == selection }) else { return .ignored }
+            model.open(pullRequest)
+            return .handled
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// A listed PR's row, which opens it when clicked.
+struct ListedRow: View {
+    let listed: StackedPullRequest
+    let list: PullRequestList
+    let showsAuthor: Bool
+    let model: PullRequestListModel
+
+    var body: some View {
+        let pullRequest = listed.pullRequest
+        Button { model.open(pullRequest) } label: {
+            PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, selfReview: model.selfReview(of: pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent, reviewMark: model.reviewMark(on: pullRequest, in: list))
+                .padding(.leading, CGFloat(listed.depth) * Self.stackIndent)
+        }
+        .buttonStyle(.plain)
+        .contextMenu { CheckoutMenu(repository: pullRequest.repository, model: model) }
     }
 
     /// How far each PR in a stack is stepped in from the one below it.
@@ -200,6 +252,22 @@ struct PullRequestColumn: View {
     private func staleRequestedAt(of pullRequest: PullRequestSummary) -> Date? {
         guard list == .toReview, model.isStale(pullRequest, in: list), model.verdict(on: pullRequest, in: list) == nil else { return nil }
         return pullRequest.reviewRequestedAt ?? pullRequest.updatedAt
+    }
+}
+
+/// Says how many PRs are hidden for being over a month old, and lists or hides them when clicked.
+struct StaleToggle: View {
+    let count: Int
+    @Binding var isShown: Bool
+
+    var body: some View {
+        Button(isShown ? "Hide \(count) older than a month" : "\(count) older than a month hidden") {
+            isShown.toggle()
+        }
+        .buttonStyle(.borderless)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .background(StaleToggleMarker())
     }
 }
 
@@ -557,4 +625,15 @@ struct StaleToggleMarker: NSViewRepresentable {
 
     func makeNSView(context: Context) -> Marker { Marker() }
     func updateNSView(_ view: Marker, context: Context) {}
+}
+
+
+private extension ReviewStage {
+    var title: String {
+        switch self {
+        case .toReview: "To review"
+        case .reviewing: "Reviewing"
+        case .approved: "Approved"
+        }
+    }
 }
