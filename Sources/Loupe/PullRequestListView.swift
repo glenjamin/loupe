@@ -18,11 +18,10 @@ struct PullRequestListView: View {
                     case .lists where model.isSearching && PullRequestList.allCases.allSatisfy({ model.pullRequests(in: $0, includingClosed: showsClosed).isEmpty }):
                         NoSearchMatches(text: model.searchText)
                     case .lists:
-                        HSplitView {
+                        ListsSplit {
                             PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, showsClosed: showsClosed, model: model)
-                                .frame(minWidth: Self.minColumnWidth, maxWidth: .infinity)
+                        } trailing: {
                             ReviewColumn(showsClosed: showsClosed, model: model)
-                                .frame(minWidth: Self.minColumnWidth, maxWidth: .infinity)
                         }
                     case .todo:
                         TodoListView(model: model)
@@ -55,9 +54,104 @@ struct PullRequestListView: View {
             }
         }
     }
+}
 
-    /// Narrow enough to give the other column most of the window, wide enough for a row's title.
-    private static let minColumnWidth: CGFloat = 280
+
+/// Mine and To review side by side, divided where the viewer last dragged the divider between
+/// them. It's kept as Mine's share of the width, so the split holds as the window resizes.
+struct ListsSplit<Leading: View, Trailing: View>: View {
+    @ViewBuilder let leading: Leading
+    @ViewBuilder let trailing: Trailing
+    @AppStorage("listsSplit") private var share = 0.5
+    /// Mine's share when the drag under way began.
+    @State private var dragStart: Double?
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width - 1
+            HStack(spacing: 0) {
+                leading
+                    .frame(width: Self.clamped(width * share, in: width))
+                Divider()
+                    .overlay {
+                        DividerGrip { moved in
+                            let start = dragStart ?? share
+                            dragStart = start
+                            share = Self.clamped(width * start + moved, in: width) / width
+                        } ended: {
+                            dragStart = nil
+                        }
+                        .frame(width: Self.grabWidth)
+                    }
+                    // Over both lists, so either side of the line can be grabbed.
+                    .zIndex(1)
+                    // A slider to accessibility, which reads and moves the split as one.
+                    .accessibilityRepresentation {
+                        // Mine's share in whole percent.
+                        Slider(value: Binding { (share * 100).rounded() } set: { share = Self.clamped(width * $0 / 100, in: width) / width }, in: 0...100, step: 1)
+                            .accessibilityLabel("Divider between the lists")
+                            .accessibilityIdentifier("lists-divider")
+                    }
+                trailing
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    /// Narrow enough to give the other list most of the window, wide enough for a row's title.
+    private static var minWidth: CGFloat { 280 }
+    private static var grabWidth: CGFloat { 8 }
+
+    private static func clamped(_ leadingWidth: CGFloat, in width: CGFloat) -> CGFloat {
+        min(max(leadingWidth, minWidth), max(width - minWidth, minWidth))
+    }
+}
+
+
+/// Where the lists' divider is grabbed: an AppKit view, so it shows the resize cursor and
+/// follows a drag by its events' own positions.
+struct DividerGrip: NSViewRepresentable {
+    /// How far right the pointer has moved since the drag began, negative for left.
+    let moved: (CGFloat) -> Void
+    let ended: () -> Void
+
+    func makeNSView(context: Context) -> Grip {
+        let grip = Grip()
+        updateNSView(grip, context: context)
+        return grip
+    }
+
+    func updateNSView(_ grip: Grip, context: Context) {
+        grip.moved = moved
+        grip.ended = ended
+    }
+
+    final class Grip: NSView {
+        var moved: (CGFloat) -> Void = { _ in }
+        var ended: () -> Void = {}
+        /// In the window, which stays put as the divider moves under the pointer.
+        private var startX: CGFloat?
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            startX = event.locationInWindow.x
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let startX else { return }
+            moved(event.locationInWindow.x - startX)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            startX = nil
+            ended()
+        }
+    }
 }
 
 /// In place of the lists when nothing in them matches the search.
