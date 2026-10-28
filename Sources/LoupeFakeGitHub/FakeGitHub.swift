@@ -284,6 +284,14 @@ actor FakeGitHub: HTTPTransport {
         pullRequests[index].checkContexts = contexts
     }
 
+    /// Changes the checks on the commit merging the PR with `id` made on its base branch, which
+    /// GitHub doesn't record as an update to the PR either.
+    func setMergeCommitChecks(of id: String, state: String, _ contexts: [FakeCheckContext]) throws {
+        let index = try require(pullRequests.firstIndex { $0.id == id })
+        try expect(pullRequests[index].state == "MERGED", "only a merged PR has a merge commit")
+        pullRequests[index].mergeCommitChecks = (state, contexts)
+    }
+
     /// Sets whether the PR with `id` merges cleanly and can be merged now, which GitHub works
     /// out in the background and doesn't record as an update to the PR.
     func setMergeState(of id: String, _ state: String, mergeable: String = "MERGEABLE") throws {
@@ -555,9 +563,12 @@ actor FakeGitHub: HTTPTransport {
         return Envelope(data: StatusPayload(nodes: ids.map { id in
             pullRequests.first { $0.id == id }.map { pullRequest in
                 let rollup = pullRequest.commits.nodes.first?.commit.statusCheckRollup.map { StatusPayload.Rollup(state: $0.state, contexts: .init(nodes: pullRequest.checkContexts)) }
+                let mergeCommit = pullRequest.state == "MERGED" ? StatusPayload.Commit(statusCheckRollup: pullRequest.mergeCommitChecks.map {
+                    StatusPayload.Rollup(state: $0.state, contexts: .init(nodes: $0.contexts))
+                }) : nil
                 return StatusPayload.Node(
                     id: id, mergeable: pullRequest.mergeable, mergeStateStatus: pullRequest.mergeStateStatus, reviewDecision: pullRequest.reviewDecision,
-                    commits: .init(nodes: [.init(commit: .init(statusCheckRollup: rollup))])
+                    commits: .init(nodes: [.init(commit: .init(statusCheckRollup: rollup))]), mergeCommit: mergeCommit
                 )
             }
         }))
@@ -762,6 +773,8 @@ struct FakePullRequest: Codable, Sendable {
     /// The head commit's checks, whether it merges cleanly and whether it can be merged now,
     /// which only a lookup by id asks for.
     var checkContexts: [FakeCheckContext] = []
+    /// Once merged, the merge commit's checks: nil until it has any.
+    var mergeCommitChecks: (state: String, contexts: [FakeCheckContext])?
     var mergeable = "UNKNOWN"
     var mergeStateStatus = "UNKNOWN"
     /// The GitHub stack it's in and its place there, 1 at the bottom.
@@ -1097,6 +1110,7 @@ private struct StatusPayload: Codable {
         let mergeStateStatus: String?
         let reviewDecision: String?
         let commits: Connection<CommitNode>
+        var mergeCommit: Commit?
     }
 
     struct Connection<Element: Codable>: Codable { let nodes: [Element] }

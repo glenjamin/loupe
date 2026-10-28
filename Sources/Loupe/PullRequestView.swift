@@ -364,6 +364,9 @@ struct PullRequestHeader: View {
                     MergeBox(tab: tab, readiness: readiness)
                 } else if let outcome = PullRequestOutcome(pullRequest) {
                     OutcomeLabel(outcome: outcome)
+                    if let checks = pullRequest.mergeCommitChecks {
+                        MergeCommitChecks(state: checks, contexts: pullRequest.mergeCommitCheckContexts, base: pullRequest.baseRefName)
+                    }
                 } else if tab.canReview, let verdict = tab.viewerVerdict {
                     ViewerVerdictLabel(verdict: verdict)
                 }
@@ -482,6 +485,30 @@ struct FailedCheckNames: View {
                 .truncationMode(.tail)
                 .layoutPriority(-1)
         }
+    }
+}
+
+/// Under "Merged": how the checks went on the commit the merge made on the base branch, and
+/// which failed, so a merge that broke the base branch shows.
+struct MergeCommitChecks: View {
+    let state: CheckState
+    let contexts: [CheckContext]
+    let base: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ChecksIcon(state: state, contexts: contexts)
+            Text(verbatim: base)
+                .font(.caption.monospaced())
+            FailedCheckNames(state: state, contexts: contexts)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .frame(maxWidth: 240)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Checks on \(base): \(contexts.summary ?? state.rawValue.lowercased())")
+        .accessibilityIdentifier("merge-commit-checks")
     }
 }
 

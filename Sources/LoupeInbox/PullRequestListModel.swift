@@ -547,14 +547,15 @@ public final class PullRequestListModel {
     /// Each open PR's checks and mergeability, looked up by id as asking the searches for them
     /// takes a full page to GitHub's time limit. Every open PR stored is asked about, those only
     /// open in tabs included, as a check finishing doesn't change a PR's update time, so the
-    /// searches for changes never report it. Batches small enough for GitHub to answer in time
+    /// searches for changes never report it. So is each PR merged lately whose merge commit's
+    /// checks haven't been seen to finish. Batches small enough for GitHub to answer in time
     /// are asked a few at once, and each is stored as it lands, so one GitHub gives up on leaves
     /// only its PRs' statuses as last looked up; that doesn't count as the lists failing to
     /// refresh.
     private func refreshStatuses() async {
         var ids: [String] = []
         for pullRequest in PullRequestList.allCases.flatMap({ snapshot[$0] }) + snapshot.unlisted
-        where pullRequest.state == .open && !ids.contains(pullRequest.id) {
+        where (pullRequest.state == .open || awaitsMergeCommitChecks(pullRequest)) && !ids.contains(pullRequest.id) {
             ids.append(pullRequest.id)
         }
         var batches = stride(from: 0, to: ids.count, by: GitHubClient.statusBatchSize).map { start in
@@ -619,6 +620,11 @@ public final class PullRequestListModel {
     /// doesn't wait seconds on each in turn, few enough to stay clear of its secondary limits.
     static let statusLookupsAtOnce = 4
 
+    /// How long after a merge its commit's checks are looked for until they finish: long enough
+    /// for the base branch's CI to run, short enough that a merge commit without checks isn't
+    /// asked about for ever.
+    static let mergeCommitCheckWindow: TimeInterval = 24 * 60 * 60
+
     /// How many PRs deep a stack is followed down its branches in one refresh; a GitHub stack is
     /// found whole at once.
     static let stackLookupRounds = 5
@@ -661,6 +667,15 @@ public final class PullRequestListModel {
     public func isStale(_ pullRequest: PullRequestSummary, in list: PullRequestList) -> Bool {
         let requestedAt = list == .toReview && verdict(on: pullRequest, in: list) == nil ? pullRequest.reviewRequestedAt : nil
         return now().timeIntervalSince(requestedAt ?? pullRequest.updatedAt) > Self.staleAge
+    }
+
+    private func awaitsMergeCommitChecks(_ pullRequest: PullRequestSummary) -> Bool {
+        guard pullRequest.state == .merged, let mergedAt = pullRequest.mergedAt,
+              now().timeIntervalSince(mergedAt) < Self.mergeCommitCheckWindow else { return false }
+        return switch pullRequest.mergeCommitChecks {
+        case .success, .failure, .error: false
+        case .pending, .expected, .unknown, nil: true
+        }
     }
 }
 

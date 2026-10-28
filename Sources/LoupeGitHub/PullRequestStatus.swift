@@ -2,8 +2,9 @@ import Foundation
 import LoupeModel
 
 extension GitHubClient {
-    /// The head commit's checks, whether it merges cleanly, whether it can be merged now and its
-    /// review decision, for each PR in `ids`, keyed by id,
+    /// The head commit's checks, whether it merges cleanly, whether it can be merged now, its
+    /// review decision and, once merged, the merge commit's checks, for each PR in `ids`, keyed
+    /// by id,
     /// looked up by id in batches small enough to stay well inside GitHub's time limit. PRs
     /// GitHub no longer has (or no longer shows the user) are left out.
     public func statuses(ofPullRequests ids: [String]) async throws -> [String: PullRequestStatus] {
@@ -13,9 +14,12 @@ extension GitHubClient {
             let response: StatusResponse = try await query(Self.statusQuery, variables: NodesVariables(ids: batch), allowingMissingNodes: true)
             for case let node? in response.nodes {
                 let rollup = node.commits.nodes.first?.commit.statusCheckRollup
+                let mergeRollup = node.mergeCommit?.statusCheckRollup
                 statuses[node.id] = PullRequestStatus(
                     checks: rollup?.state,
                     checkContexts: rollup?.contexts.nodes.compactMap(\.check) ?? [],
+                    mergeCommitChecks: mergeRollup?.state,
+                    mergeCommitCheckContexts: mergeRollup?.contexts.nodes.compactMap(\.check) ?? [],
                     mergeable: node.mergeable,
                     mergeStateStatus: node.mergeStateStatus,
                     reviewDecision: node.reviewDecision
@@ -41,6 +45,7 @@ extension GitHubClient {
               commits(last: 1) {
                 nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes { \(checkContextFields) } } } } }
               }
+              mergeCommit { statusCheckRollup { state contexts(first: 50) { nodes { \(checkContextFields) } } } }
             }
           }
         }
@@ -91,6 +96,8 @@ private struct StatusResponse: Decodable {
         let mergeStateStatus: MergeStateStatus
         let reviewDecision: ReviewDecision?
         let commits: SearchPageResponse.Connection<CommitNode>
+        /// Null until merged.
+        let mergeCommit: Commit?
     }
 
     struct CommitNode: Decodable { let commit: Commit }

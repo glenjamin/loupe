@@ -47,7 +47,18 @@ private struct Fakes: Sendable {
             if branch.conflicting { try await github.setMergeState(of: pullRequest.id, "DIRTY", mergeable: "CONFLICTING") }
             if let head = commits.last { await conversations.setHead(head.oid, of: pullRequest.id) }
         }
+        for pullRequest in await github.everyPullRequest where pullRequest.state == "MERGED" {
+            try await github.setMergeCommitChecks(of: pullRequest.id, state: "FAILURE", Self.brokenBaseBranch)
+        }
     }
+
+    /// The base branch's checks after a merge that broke it, the failed job one the CircleCI
+    /// fixture has.
+    static let brokenBaseBranch: [FakeCheckContext] = [
+        .status("ci/circleci: build", "SUCCESS"),
+        .status("ci/circleci: typecheck", "FAILURE", url: "https://app.circleci.com/workflow/38f76f1c-9800-7454-8f63-a838bc6fff99/job/c0555525-bd97-b6dd-530a-7ffc511c2525"),
+        .status("ci/circleci: deploy", "PENDING"),
+    ]
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let url = try require(request.url, "a request with no URL")

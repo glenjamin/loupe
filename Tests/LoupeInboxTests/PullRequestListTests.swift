@@ -321,6 +321,53 @@ struct PullRequestListTests {
         #expect(try store.snapshot()[.mine].contains { $0.id == merged.id && $0.state == .merged })
     }
 
+    @Test func aMergedPullRequestsMergeCommitChecksAreFollowedUntilTheyFinish() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+        let merged = try #require(model.pullRequests(in: .mine, includingStale: true).last)
+
+        try await github.merge(merged.id)
+        try await github.setMergeCommitChecks(of: merged.id, state: "PENDING", [.status("ci/circleci: test", "PENDING")])
+        await model.refresh()
+        #expect(model.pullRequest(id: merged.id)?.mergeCommitChecks == .pending)
+
+        try await github.setMergeCommitChecks(of: merged.id, state: "FAILURE", [
+            .status("ci/circleci: build", "SUCCESS"),
+            .status("ci/circleci: test", "FAILURE"),
+        ])
+        await model.refresh()
+        let failed = try #require(model.pullRequest(id: merged.id))
+        #expect(failed.mergeCommitChecks == .failure)
+        #expect(failed.mergeCommitCheckContexts.failedCheckNames == ["test"])
+        #expect(failed.checks == merged.checks, "the head's checks are kept apart")
+
+        // Once finished they're not asked about again.
+        let asked = await github.statusLookups.count
+        await model.refresh()
+        #expect(await !github.statusLookups.dropFirst(asked).joined().contains(merged.id))
+    }
+
+    @Test func aMergeCommitWithNoChecksIsOnlyAskedAboutForADay() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let clock = StoppedClock(at: .now)
+        let model = try listModel(github, now: { clock.now })
+        await model.refresh()
+        let merged = try #require(model.pullRequests(in: .mine, includingStale: true).last)
+        try await github.merge(merged.id)
+
+        var asked = await github.statusLookups.count
+        await model.refresh()
+        #expect(await github.statusLookups.dropFirst(asked).joined().contains(merged.id))
+        let stored = try #require(model.pullRequest(id: merged.id))
+        #expect(stored.mergeCommitChecks == nil)
+
+        clock.now = try #require(stored.mergedAt) + days(1)
+        asked = await github.statusLookups.count
+        await model.refresh()
+        #expect(await !github.statusLookups.dropFirst(asked).joined().contains(merged.id))
+    }
+
     @Test func aRefreshWithNoChangesKeepsEverything() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)

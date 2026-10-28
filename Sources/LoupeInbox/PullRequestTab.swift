@@ -1051,9 +1051,10 @@ public final class PullRequestTab: Identifiable {
         conversation.flatMap { VisualReview.latest(in: $0.items) }
     }
 
-    /// The failed checks CircleCI ran, whose jobs the CircleCI section shows.
+    /// The failed checks CircleCI ran, whose jobs the CircleCI section shows: the head's, then
+    /// once merged the merge commit's.
     public var failedCircleCIChecks: [FailedCircleCICheck] {
-        pullRequest.checkContexts.failedCircleCIChecks
+        pullRequest.checkContexts.failedCircleCIChecks + pullRequest.mergeCommitCheckContexts.failedCircleCIChecks
     }
 
     /// What's shown beside the sidebar: the section chosen, or the conversation in place of a

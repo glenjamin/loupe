@@ -1,0 +1,11 @@
+# A merged PR shows, under "Merged", how the checks went on the commit the merge made on its
+# base branch; a failed CircleCI job there is offered under Conversation.
+wait settled
+open tamarinworks/porter#1522
+wait settled
+wait until #merge-commit-checks
+expect #merge-commit-checks has label "Checks on master: 1 of 3 checks failed"
+snap merge-commit-checks
+snap header-merged
+click button ~"CircleCI"
+wait until button "typecheck" in #circleci-pane

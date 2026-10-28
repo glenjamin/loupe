@@ -22,6 +22,10 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     /// The head commit's statuses and check runs one by one. Empty until they've been looked
     /// up, as searches don't fetch them.
     public let checkContexts: [CheckContext]
+    /// The checks on the commit merging the PR made on its base branch, overall and one by one.
+    /// Nil and empty until the merged PR is looked up by id, or when that commit has none.
+    public let mergeCommitChecks: CheckState?
+    public let mergeCommitCheckContexts: [CheckContext]
     /// Nil until looked up by id, as asking the searches for it takes them past GitHub's time
     /// limit. `.unknown` while GitHub is still working it out.
     public let mergeable: MergeableState?
@@ -86,6 +90,8 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         reviewDecision: ReviewDecision?,
         checks: CheckState?,
         checkContexts: [CheckContext] = [],
+        mergeCommitChecks: CheckState? = nil,
+        mergeCommitCheckContexts: [CheckContext] = [],
         mergeable: MergeableState? = nil,
         mergeStateStatus: MergeStateStatus? = nil,
         updatedAt: Date,
@@ -121,6 +127,8 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
         self.reviewDecision = reviewDecision
         self.checks = checks
         self.checkContexts = checkContexts
+        self.mergeCommitChecks = mergeCommitChecks
+        self.mergeCommitCheckContexts = mergeCommitCheckContexts
         self.mergeable = mergeable
         self.mergeStateStatus = mergeStateStatus
         self.updatedAt = updatedAt
@@ -155,19 +163,25 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
 }
 
 /// What a PR's lookup by id says of its head commit: its checks, overall and one by one,
-/// whether it merges cleanly, whether it can be merged now and its review decision.
+/// whether it merges cleanly, whether it can be merged now and its review decision; and once
+/// merged, the checks on the commit that merged it.
 public struct PullRequestStatus: Sendable, Equatable {
     /// Nil when the head commit has no statuses or check runs.
     public let checks: CheckState?
     public let checkContexts: [CheckContext]
+    /// Nil while the PR is open, or when the merge commit has no statuses or check runs.
+    public let mergeCommitChecks: CheckState?
+    public let mergeCommitCheckContexts: [CheckContext]
     public let mergeable: MergeableState
     public let mergeStateStatus: MergeStateStatus
     /// Nil when the base branch doesn't require reviews.
     public let reviewDecision: ReviewDecision?
 
-    public init(checks: CheckState?, checkContexts: [CheckContext], mergeable: MergeableState, mergeStateStatus: MergeStateStatus, reviewDecision: ReviewDecision?) {
+    public init(checks: CheckState?, checkContexts: [CheckContext], mergeCommitChecks: CheckState? = nil, mergeCommitCheckContexts: [CheckContext] = [], mergeable: MergeableState, mergeStateStatus: MergeStateStatus, reviewDecision: ReviewDecision?) {
         self.checks = checks
         self.checkContexts = checkContexts
+        self.mergeCommitChecks = mergeCommitChecks
+        self.mergeCommitCheckContexts = mergeCommitCheckContexts
         self.mergeable = mergeable
         self.mergeStateStatus = mergeStateStatus
         self.reviewDecision = reviewDecision

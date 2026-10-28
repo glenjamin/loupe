@@ -122,12 +122,16 @@ public struct PullRequestStore: Sendable {
         try await database.write { db in
             for (id, status) in statuses where try PullRequestRow.exists(db, key: id) {
                 try db.execute(
-                    sql: "UPDATE pullRequest SET checkState = ?, mergeable = ?, mergeStateStatus = ?, reviewDecision = ? WHERE id = ?",
-                    arguments: [status.checks?.rawValue, status.mergeable.rawValue, status.mergeStateStatus.rawValue, status.reviewDecision?.rawValue, id]
+                    sql: "UPDATE pullRequest SET checkState = ?, mergeCommitCheckState = ?, mergeable = ?, mergeStateStatus = ?, reviewDecision = ? WHERE id = ?",
+                    arguments: [status.checks?.rawValue, status.mergeCommitChecks?.rawValue, status.mergeable.rawValue, status.mergeStateStatus.rawValue, status.reviewDecision?.rawValue, id]
                 )
                 try PullRequestCheckRow.filter(Column("pullRequestId") == id).deleteAll(db)
                 for (position, check) in status.checkContexts.enumerated() {
                     try PullRequestCheckRow(pullRequestId: id, position: position, check).insert(db)
+                }
+                try MergeCommitCheckRow.filter(Column("pullRequestId") == id).deleteAll(db)
+                for (position, check) in status.mergeCommitCheckContexts.enumerated() {
+                    try MergeCommitCheckRow(PullRequestCheckRow(pullRequestId: id, position: position, check)).insert(db)
                 }
             }
             return try Self.snapshot(db)
@@ -250,11 +254,18 @@ public struct PullRequestStore: Sendable {
 
     /// The PRs stored in `rows`, with their checks.
     static func summaries(of rows: [PullRequestRow], _ db: Database) throws -> [PullRequestSummary] {
+        let ids = rows.map(\.id)
         let checks = try Dictionary(
-            grouping: PullRequestCheckRow.filter(rows.map(\.id).contains(Column("pullRequestId"))).order(Column("position")).fetchAll(db),
+            grouping: PullRequestCheckRow.filter(ids.contains(Column("pullRequestId"))).order(Column("position")).fetchAll(db),
             by: \.pullRequestId
         )
-        return rows.map { $0.summary(checkContexts: checks[$0.id, default: []].map(\.check)) }
+        let mergeCommitChecks = try Dictionary(
+            grouping: MergeCommitCheckRow.filter(ids.contains(Column("pullRequestId"))).order(Column("position")).fetchAll(db).map(\.row),
+            by: \.pullRequestId
+        )
+        return rows.map { row in
+            row.summary(checkContexts: checks[row.id, default: []].map(\.check), mergeCommitCheckContexts: mergeCommitChecks[row.id, default: []].map(\.check))
+        }
     }
 
     private static var migrator: DatabaseMigrator {
@@ -659,6 +670,21 @@ public struct PullRequestStore: Sendable {
                 t.add(column: "originalCommitOid", .text)
             }
         }
+        // The checks on the commit each merged PR made on its base branch, as last looked up.
+        migrator.registerMigration("Merge commit checks") { db in
+            try db.alter(table: "pullRequest") { t in
+                t.add(column: "mergeCommitCheckState", .text)
+            }
+            try db.create(table: "mergeCommitCheck") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequest", onDelete: .cascade)
+                t.column("position", .integer).notNull()
+                t.column("name", .text).notNull()
+                t.column("status", .text).notNull()
+                t.column("description", .text)
+                t.column("url", .text)
+                t.primaryKey(["pullRequestId", "position"])
+            }
+        }
         return migrator
     }
 
@@ -743,6 +769,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
     let closedAt: Date?
     let reviewDecision: String?
     let checkState: String?
+    let mergeCommitCheckState: String?
     let updatedAt: Date
     let headRefName: String
     let baseRefName: String
@@ -784,6 +811,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         closedAt = pullRequest.closedAt
         reviewDecision = pullRequest.reviewDecision?.rawValue
         checkState = pullRequest.checks?.rawValue
+        mergeCommitCheckState = pullRequest.mergeCommitChecks?.rawValue ?? stored?.mergeCommitCheckState
         updatedAt = pullRequest.updatedAt
         headRefName = pullRequest.headRefName
         baseRefName = pullRequest.baseRefName
@@ -814,7 +842,7 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
         forcePushedSinceViewerReviewAt = latest == nil ? stored?.forcePushedSinceViewerReviewAt : latest?.forcePushedAt
     }
 
-    func summary(checkContexts: [CheckContext]) -> PullRequestSummary {
+    func summary(checkContexts: [CheckContext], mergeCommitCheckContexts: [CheckContext]) -> PullRequestSummary {
         PullRequestSummary(
             id: id,
             repository: repository,
@@ -830,6 +858,8 @@ struct PullRequestRow: Codable, FetchableRecord, PersistableRecord {
             // GitHub's rollup is stored as given; the tolerated Codecov failures are let off here.
             checks: checkState.map { CheckState(lenientRawValue: $0).tolerating(checkContexts) },
             checkContexts: checkContexts,
+            mergeCommitChecks: mergeCommitCheckState.map { CheckState(lenientRawValue: $0).tolerating(mergeCommitCheckContexts) },
+            mergeCommitCheckContexts: mergeCommitCheckContexts,
             mergeable: mergeable.map(MergeableState.init(lenientRawValue:)),
             mergeStateStatus: mergeStateStatus.map(MergeStateStatus.init(lenientRawValue:)),
             updatedAt: updatedAt,
@@ -885,6 +915,25 @@ private struct PullRequestCheckRow: Codable, FetchableRecord, PersistableRecord 
 
     var check: CheckContext {
         CheckContext(name: name, status: CheckStatus(rawValue: status) ?? .neutral, description: description, url: url)
+    }
+}
+
+/// A check on a merged PR's merge commit, kept apart from its head's.
+private struct MergeCommitCheckRow: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "mergeCommitCheck"
+
+    let row: PullRequestCheckRow
+
+    init(_ row: PullRequestCheckRow) {
+        self.row = row
+    }
+
+    init(from decoder: any Decoder) throws {
+        row = try PullRequestCheckRow(from: decoder)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        try row.encode(to: encoder)
     }
 }
 

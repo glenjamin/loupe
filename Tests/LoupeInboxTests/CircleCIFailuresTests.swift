@@ -59,6 +59,22 @@ struct CircleCIFailuresTests {
         #expect(tab.shownSection == .conversation)
     }
 
+    @Test func aMergeThatBreaksTheBaseBranchShowsItsFailedJobs() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = try #require(app.mine.first { $0.number == 14268 })
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+
+        try await app.github.setChecks(of: pullRequest.id, state: "SUCCESS", [.status("ci/circleci: playwright", "SUCCESS")])
+        try await app.github.merge(pullRequest.id)
+        let job = "https://app.circleci.com/workflow/8d0e2a52-3c1f-4a7b-9e1d-2f6b8c4a1e90/job/5c9f3e1a-7b2d-4e8f-a1c6-3d9b2e7f4a10"
+        try await app.github.setMergeCommitChecks(of: pullRequest.id, state: "FAILURE", [.status("ci/circleci: deploy", "FAILURE", url: job)])
+        await app.tabs.lists.refresh()
+
+        #expect(tab.pullRequest.mergeCommitChecks == .failure)
+        #expect(tab.failedCircleCIChecks == [FailedCircleCICheck(name: "deploy", link: .job(id: "5c9f3e1a-7b2d-4e8f-a1c6-3d9b2e7f4a10"))])
+    }
+
     @Test func checksLinkingAWorkflowOrAJobByNumberLeadToTheirJobs() async throws {
         let workflow = "8d0e2a52-3c1f-4a7b-9e1d-2f6b8c4a1e90"
         // A page of one job, so the workflow's jobs take several.

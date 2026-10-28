@@ -1132,6 +1132,12 @@ The PRs asked of the viewer are split by how far they've got with each, so what'
 
 The three were first tried as columns of their own beside Mine, which gave three quarters of the window to reviews, though most time goes on Mine and incoming reviews are turned around quickly. So the To review column is one list with a heading row per stage, each taking only the rows it has and with its own hidden-older-than-a-month toggle, and Mine and To review sit side by side with a divider the viewer drags to give either more room, down to 280pt each. Where it was left is kept in the app's preferences as Mine's share of the width, so it holds as the window resizes and across launches. SwiftUI's `HSplitView` can't save its divider, so the split is Loupe's own: its grab area is an AppKit view, which shows the resize cursor and follows a drag by its events, and to accessibility it's a slider of Mine's share in percent. The headings are plain rows rather than section headers, which stay pinned and let the rows show through as they scroll under. The TODO view is unchanged.
 
+### A merged PR shows the checks on its merge commit, under "Merged"
+
+Once a PR is merged, what matters is whether the base branch's CI passed on the commit the merge made, so the header shows that commit's checks under "Merged": the checks glyph with its hover list, the base branch's name, and the failed checks' names in red. The head's checks stay where they were, as they describe what was reviewed. A failed CircleCI job on the merge commit joins the head's in the CircleCI section, under the job's own name, as the job lookup matches a workflow's jobs by the check's name.
+
+The merge commit's checks come with the existing lookup of statuses by id (`mergeCommit`, null while open), stored apart from the head's. A check finishing isn't an update to the PR, so the lists' refresh asks about each PR merged in the last day until its merge commit's checks have passed or failed; a day is ample for the base branch's CI and stops a merge commit without checks being asked about for ever. An older merged PR is asked about as its tab is shown, as every tab is.
+
 ## Not yet decided
 
 Nothing is pending.
