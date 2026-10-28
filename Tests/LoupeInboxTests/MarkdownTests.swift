@@ -34,6 +34,25 @@ struct MarkdownTests {
         #expect(await app.markdown.requests.count == 1, "a file's rendering at a head is kept")
     }
 
+    @Test func aFilesFrontmatterIsRenderedAsYAMLCodeRatherThanARuleAndHeading() async throws {
+        let app = try await MarkdownApp()
+        let repo = try await FakeRepository()
+        let pullRequest = try await app.pushPullRequest(in: repo, changing: [
+            "post.md": "---\ntitle: Hello\nnote: \"```\"\n---\n# Body\n",
+            "notes.md": "Intro\n\n---\n\nMore\n---\n",
+        ])
+        let tab = try await app.open(pullRequest)
+
+        for path in ["post.md", "notes.md"] {
+            let file = try #require(tab.file(path))
+            await tab.renderMarkdown(try #require(tab.markdownSource(of: file)))
+        }
+        #expect(await Set(app.markdown.requests.map(\.text)) == [
+            "````yaml\ntitle: Hello\nnote: \"```\"\n````\n# Body\n",
+            "Intro\n\n---\n\nMore\n---\n",
+        ], "only a rule on the first line opens frontmatter, fenced past any backticks inside it")
+    }
+
     @Test func aDeletedMarkdownFileRendersAsItWasAtTheBase() async throws {
         let app = try await MarkdownApp()
         let repo = try await FakeRepository()

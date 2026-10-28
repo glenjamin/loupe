@@ -50,7 +50,7 @@ public final class MarkdownPreviews {
         renderings[source] = .rendering
         do {
             let text = try await differ.contents(of: source.path, at: source.oid, in: checkout)
-            renderings[source] = .ready(try await client.renderMarkdown(text, in: source.repository))
+            renderings[source] = .ready(try await client.renderMarkdown(MarkdownHTML.fencingFrontmatter(text), in: source.repository))
         } catch {
             renderings[source] = .failed(error.localizedDescription)
         }

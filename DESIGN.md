@@ -1138,6 +1138,10 @@ Once a PR is merged, what matters is whether the base branch's CI passed on the 
 
 The merge commit's checks come with the existing lookup of statuses by id (`mergeCommit`, null while open), stored apart from the head's. A check finishing isn't an update to the PR, so the lists' refresh asks about each PR merged in the last day until its merge commit's checks have passed or failed; a day is ample for the base branch's CI and stops a merge commit without checks being asked about for ever. An older merged PR is asked about as its tab is shown, as every tab is. Merging from Loupe looks them up at once, and while a PR merged in that day is open in a tab its merge commit's checks are looked up every 15 seconds until they finish, so the base branch's CI can be watched from the tab as on GitHub; the lists' few minutes is too slow for that.
 
+### A rendered file's frontmatter shows as YAML code
+
+`POST /markdown` doesn't know YAML frontmatter, so a file opening with a `---` block rendered as a rule and a heading of its lines run together. Now a rendered file whose first line is `---`, up to the next `---` or `...` line, is sent to GitHub as a fenced `yaml` code block, which GitHub highlights; drafts are left alone, as GitHub's comments have no frontmatter either. github.com's file view shows frontmatter as a table, nested tables for lists and maps, but building that would mean a YAML parser and a renderer of our own for that part; the code block shows exactly what was written.
+
 ## Not yet decided
 
 Nothing is pending.
