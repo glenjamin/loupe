@@ -122,13 +122,14 @@ public final class PullRequestListModel {
     /// are listed together, from the bottom up, where the first of them would be. While
     /// searching, only those that match are listed, stale ones included, so a search finds
     /// whatever the list holds; a stack's matches are grouped among themselves.
-    public func pullRequests(in list: PullRequestList, includingClosed: Bool = false, includingStale: Bool = false) -> [PullRequestSummary] {
-        listing(in: list, includingClosed: includingClosed, includingStale: includingStale).map(\.pullRequest)
+    public func pullRequests(in list: PullRequestList, stage: ReviewStage? = nil, includingClosed: Bool = false, includingStale: Bool = false) -> [PullRequestSummary] {
+        listing(in: list, stage: stage, includingClosed: includingClosed, includingStale: includingStale).map(\.pullRequest)
     }
 
     /// `pullRequests(in:includingClosed:includingStale:)` with each one's place in its stack.
-    public func listing(in list: PullRequestList, includingClosed: Bool = false, includingStale: Bool = false) -> [StackedPullRequest] {
-        let ordered = ordered(in: list, includingClosed: includingClosed, includingStale: includingStale || isSearching)
+    /// With a stage, only the PRs at that stage of the viewer's review.
+    public func listing(in list: PullRequestList, stage: ReviewStage? = nil, includingClosed: Bool = false, includingStale: Bool = false) -> [StackedPullRequest] {
+        let ordered = ordered(in: list, includingClosed: includingClosed, includingStale: includingStale || isSearching).filter { isAt(stage, $0) }
         return stacks.grouped(isSearching ? ordered.filter(matchesSearch) : ordered)
     }
 
@@ -164,9 +165,21 @@ public final class PullRequestListModel {
 
     /// How many PRs `pullRequests(in:includingClosed:)` leaves out as stale; none while
     /// searching, which lists them.
-    public func staleCount(in list: PullRequestList, includingClosed: Bool = false) -> Int {
+    public func staleCount(in list: PullRequestList, stage: ReviewStage? = nil, includingClosed: Bool = false) -> Int {
         guard !isSearching else { return 0 }
-        return listed(in: list, includingClosed: includingClosed).count { isStale($0, in: list) }
+        return listed(in: list, includingClosed: includingClosed).count { isStale($0, in: list) && isAt(stage, $0) }
+    }
+
+    /// How far the viewer has got with reviewing a PR they're asked about: an approval that
+    /// stands, even with commits since, is approved, and any other review of theirs, or an
+    /// approval they've been asked to look at again, is still being reviewed.
+    public func reviewStage(of pullRequest: PullRequestSummary) -> ReviewStage {
+        if verdict(on: pullRequest, in: .toReview) == .approved { return .approved }
+        return reviewMark(on: pullRequest, in: .toReview) == nil ? .toReview : .reviewing
+    }
+
+    private func isAt(_ stage: ReviewStage?, _ pullRequest: PullRequestSummary) -> Bool {
+        stage.map { reviewStage(of: pullRequest) == $0 } ?? true
     }
 
     /// Whether there's anything from GitHub to show yet, even if out of date.
@@ -649,6 +662,17 @@ public final class PullRequestListModel {
         let requestedAt = list == .toReview && verdict(on: pullRequest, in: list) == nil ? pullRequest.reviewRequestedAt : nil
         return now().timeIntervalSince(requestedAt ?? pullRequest.updatedAt) > Self.staleAge
     }
+}
+
+
+/// Where a PR in To review stands with the viewer, each shown in a column of its own.
+public enum ReviewStage: Sendable, CaseIterable {
+    /// They haven't reviewed it.
+    case toReview
+    /// They've commented or asked for changes, or been asked to look again since approving.
+    case reviewing
+    /// Their approval stands.
+    case approved
 }
 
 /// Whether a repo's local checkout is known.

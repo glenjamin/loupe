@@ -18,10 +18,10 @@ struct PullRequestListView: View {
                     case .lists where model.isSearching && PullRequestList.allCases.allSatisfy({ model.pullRequests(in: $0, includingClosed: showsClosed).isEmpty }):
                         NoSearchMatches(text: model.searchText)
                     case .lists:
-                        HStack(spacing: 0) {
+                        ListsSplit {
                             PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, showsClosed: showsClosed, model: model)
-                            Divider()
-                            PullRequestColumn(title: "To review", list: .toReview, showsAuthor: true, showsClosed: showsClosed, model: model)
+                        } trailing: {
+                            ReviewColumn(showsClosed: showsClosed, model: model)
                         }
                     case .todo:
                         TodoListView(model: model)
@@ -52,6 +52,104 @@ struct PullRequestListView: View {
                 ProgressView("Loading pull requests…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+    }
+}
+
+
+/// Mine and To review side by side, divided where the viewer last dragged the divider between
+/// them. It's kept as Mine's share of the width, so the split holds as the window resizes.
+struct ListsSplit<Leading: View, Trailing: View>: View {
+    @ViewBuilder let leading: Leading
+    @ViewBuilder let trailing: Trailing
+    @AppStorage("listsSplit") private var share = 0.5
+    /// Mine's share when the drag under way began.
+    @State private var dragStart: Double?
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width - 1
+            HStack(spacing: 0) {
+                leading
+                    .frame(width: Self.clamped(width * share, in: width))
+                Divider()
+                    .overlay {
+                        DividerGrip { moved in
+                            let start = dragStart ?? share
+                            dragStart = start
+                            share = Self.clamped(width * start + moved, in: width) / width
+                        } ended: {
+                            dragStart = nil
+                        }
+                        .frame(width: Self.grabWidth)
+                    }
+                    // Over both lists, so either side of the line can be grabbed.
+                    .zIndex(1)
+                    // A slider to accessibility, which reads and moves the split as one.
+                    .accessibilityRepresentation {
+                        // Mine's share in whole percent.
+                        Slider(value: Binding { (share * 100).rounded() } set: { share = Self.clamped(width * $0 / 100, in: width) / width }, in: 0...100, step: 1)
+                            .accessibilityLabel("Divider between the lists")
+                            .accessibilityIdentifier("lists-divider")
+                    }
+                trailing
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    /// Narrow enough to give the other list most of the window, wide enough for a row's title.
+    private static var minWidth: CGFloat { 280 }
+    private static var grabWidth: CGFloat { 8 }
+
+    private static func clamped(_ leadingWidth: CGFloat, in width: CGFloat) -> CGFloat {
+        min(max(leadingWidth, minWidth), max(width - minWidth, minWidth))
+    }
+}
+
+
+/// Where the lists' divider is grabbed: an AppKit view, so it shows the resize cursor and
+/// follows a drag by its events' own positions.
+struct DividerGrip: NSViewRepresentable {
+    /// How far right the pointer has moved since the drag began, negative for left.
+    let moved: (CGFloat) -> Void
+    let ended: () -> Void
+
+    func makeNSView(context: Context) -> Grip {
+        let grip = Grip()
+        updateNSView(grip, context: context)
+        return grip
+    }
+
+    func updateNSView(_ grip: Grip, context: Context) {
+        grip.moved = moved
+        grip.ended = ended
+    }
+
+    final class Grip: NSView {
+        var moved: (CGFloat) -> Void = { _ in }
+        var ended: () -> Void = {}
+        /// In the window, which stays put as the divider moves under the pointer.
+        private var startX: CGFloat?
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            startX = event.locationInWindow.x
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let startX else { return }
+            moved(event.locationInWindow.x - startX)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            startX = nil
+            ended()
         }
     }
 }
@@ -155,13 +253,7 @@ struct PullRequestColumn: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(listing, selection: $selection) { listed in
-                    let pullRequest = listed.pullRequest
-                    Button { model.open(pullRequest) } label: {
-                        PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, selfReview: model.selfReview(of: pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent, reviewMark: model.reviewMark(on: pullRequest, in: list))
-                            .padding(.leading, CGFloat(listed.depth) * Self.stackIndent)
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu { CheckoutMenu(repository: pullRequest.repository, model: model) }
+                    ListedRow(listed: listed, list: list, showsAuthor: showsAuthor, model: model)
                 }
                 .onKeyPress(.return) {
                     guard let pullRequest = pullRequests.first(where: { $0.id == selection }) else { return .ignored }
@@ -171,18 +263,78 @@ struct PullRequestColumn: View {
             }
             let stale = model.staleCount(in: list, includingClosed: showsClosed)
             if stale > 0 {
-                Button(showsStale ? "Hide \(stale) older than a month" : "\(stale) older than a month hidden") {
-                    showsStale.toggle()
-                }
-                .buttonStyle(.borderless)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .background(StaleToggleMarker())
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                StaleToggle(count: stale, isShown: $showsStale)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// To review's PRs in one list, in a section for each stage of the viewer's review, so the
+/// stages take only the room their PRs need.
+struct ReviewColumn: View {
+    let showsClosed: Bool
+    let model: PullRequestListModel
+    /// Moved with the arrow keys across the sections; Return opens it.
+    @State private var selection: PullRequestSummary.ID?
+    /// The stages whose PRs held back as stale are listed, for this session only.
+    @State private var showingStale: Set<ReviewStage> = []
+
+    var body: some View {
+        let sections = ReviewStage.allCases.map { stage in
+            (stage: stage, listing: model.listing(in: .toReview, stage: stage, includingClosed: showsClosed, includingStale: showingStale.contains(stage)))
+        }
+        List(selection: $selection) {
+            ForEach(sections, id: \.stage) { section in
+                // A plain row rather than a section header, which would stay pinned over the rows.
+                Text("\(section.stage.title) (\(section.listing.count))")
+                    .font(.headline)
+                    .padding(.top, section.stage == ReviewStage.allCases.first ? 0 : 12)
+                    .accessibilityAddTraits(.isHeader)
+                if section.listing.isEmpty {
+                    Text(model.isSearching ? "No matches" : "Nothing here")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(section.listing) { listed in
+                    ListedRow(listed: listed, list: .toReview, showsAuthor: true, model: model)
+                }
+                let stale = model.staleCount(in: .toReview, stage: section.stage, includingClosed: showsClosed)
+                if stale > 0 {
+                    StaleToggle(count: stale, isShown: Binding {
+                        showingStale.contains(section.stage)
+                    } set: { shown in
+                        if shown { showingStale.insert(section.stage) } else { showingStale.remove(section.stage) }
+                    })
+                }
+            }
+        }
+        .onKeyPress(.return) {
+            let pullRequests = sections.flatMap { $0.listing.map(\.pullRequest) }
+            guard let pullRequest = pullRequests.first(where: { $0.id == selection }) else { return .ignored }
+            model.open(pullRequest)
+            return .handled
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// A listed PR's row, which opens it when clicked.
+struct ListedRow: View {
+    let listed: StackedPullRequest
+    let list: PullRequestList
+    let showsAuthor: Bool
+    let model: PullRequestListModel
+
+    var body: some View {
+        let pullRequest = listed.pullRequest
+        Button { model.open(pullRequest) } label: {
+            PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, selfReview: model.selfReview(of: pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent, reviewMark: model.reviewMark(on: pullRequest, in: list))
+                .padding(.leading, CGFloat(listed.depth) * Self.stackIndent)
+        }
+        .buttonStyle(.plain)
+        .contextMenu { CheckoutMenu(repository: pullRequest.repository, model: model) }
     }
 
     /// How far each PR in a stack is stepped in from the one below it.
@@ -194,6 +346,22 @@ struct PullRequestColumn: View {
     private func staleRequestedAt(of pullRequest: PullRequestSummary) -> Date? {
         guard list == .toReview, model.isStale(pullRequest, in: list), model.verdict(on: pullRequest, in: list) == nil else { return nil }
         return pullRequest.reviewRequestedAt ?? pullRequest.updatedAt
+    }
+}
+
+/// Says how many PRs are hidden for being over a month old, and lists or hides them when clicked.
+struct StaleToggle: View {
+    let count: Int
+    @Binding var isShown: Bool
+
+    var body: some View {
+        Button(isShown ? "Hide \(count) older than a month" : "\(count) older than a month hidden") {
+            isShown.toggle()
+        }
+        .buttonStyle(.borderless)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .background(StaleToggleMarker())
     }
 }
 
@@ -491,8 +659,8 @@ struct ReviewDecisionLabel: View {
 
     var body: some View {
         switch decision {
-        case .approved: Text("Approved").foregroundStyle(.diffSuccess)
-        case .changesRequested: Text("Changes requested").foregroundStyle(.diffDanger)
+        case .approved: Badge(text: "Approved", tint: .diffSuccess)
+        case .changesRequested: Badge(text: "Changes requested", tint: .diffDanger)
         case .reviewRequired, .unknown, nil:
             let names = (requestedReviewers ?? []).compactMap(\.name)
             if !names.isEmpty {
@@ -551,4 +719,15 @@ struct StaleToggleMarker: NSViewRepresentable {
 
     func makeNSView(context: Context) -> Marker { Marker() }
     func updateNSView(_ view: Marker, context: Context) {}
+}
+
+
+private extension ReviewStage {
+    var title: String {
+        switch self {
+        case .toReview: "To review"
+        case .reviewing: "Reviewing"
+        case .approved: "Approved"
+        }
+    }
 }

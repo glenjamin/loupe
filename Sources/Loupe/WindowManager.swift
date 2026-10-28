@@ -302,12 +302,14 @@ private struct WindowChrome: View {
         let lists = tabs.lists
         if lists.isLoading {
             ProgressView().controlSize(.small)
+                .padding(.leading, 8)
         }
         if let lastRefreshed = lists.lastRefreshed {
             EveryMinute { now in
                 Text("Refreshed \(lastRefreshed.ago(now: now))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
             }
         }
         Picker("View", selection: $mode) {
