@@ -209,6 +209,7 @@ struct MergeTests {
         await app.tabs.lists.refresh()
         #expect(tab.mergeReadiness == .ready)
         let lookups = await app.github.pullRequestLookups.count
+        let statusLookups = await app.github.statusLookups.count
 
         await tab.merge()
 
@@ -217,6 +218,7 @@ struct MergeTests {
         ])
         #expect(await app.github.asyncMergesReceived.isEmpty, "only a stacked PR merges in the background")
         #expect(await app.github.pullRequestLookups.dropFirst(lookups) == [[pullRequest.id]], "looked up again at once")
+        #expect(await app.github.statusLookups.dropFirst(statusLookups) == [[pullRequest.id]], "its merge commit's checks too")
         #expect(tab.pullRequest.state == .merged)
         #expect(tab.mergeReadiness == nil, "nothing left to merge")
         #expect(!tab.isMerging)

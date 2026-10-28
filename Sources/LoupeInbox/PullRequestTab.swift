@@ -969,7 +969,8 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// Merges the PR with a merge commit, provided its head is still the one last looked up,
-    /// then looks it up again so it shows as merged everywhere. A refusal is kept to show.
+    /// then looks it up again so it shows as merged everywhere, its merge commit's checks
+    /// included. A refusal is kept to show.
     public func merge() async {
         let pullRequest = pullRequest
         guard !isMerging, mergeReadiness == .ready, let head = pullRequest.headRefOid else { return }
@@ -991,6 +992,7 @@ public final class PullRequestTab: Identifiable {
         }
         do {
             try await lists.checkForChanges(to: [id])
+            try await lists.checkStatuses(of: [id])
         } catch {
             log("Couldn't look up \(title) after merging it: \(error.localizedDescription)")
         }
