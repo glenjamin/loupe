@@ -21,7 +21,11 @@ struct PullRequestListView: View {
                         HStack(spacing: 0) {
                             PullRequestColumn(title: "Mine", list: .mine, showsAuthor: false, showsClosed: showsClosed, model: model)
                             Divider()
-                            PullRequestColumn(title: "To review", list: .toReview, showsAuthor: true, showsClosed: showsClosed, model: model)
+                            PullRequestColumn(title: "To review", list: .toReview, stage: .toReview, showsAuthor: true, showsClosed: showsClosed, model: model)
+                            Divider()
+                            PullRequestColumn(title: "Reviewing", list: .toReview, stage: .reviewing, showsAuthor: true, showsClosed: showsClosed, model: model)
+                            Divider()
+                            PullRequestColumn(title: "Approved", list: .toReview, stage: .approved, showsAuthor: true, showsClosed: showsClosed, model: model)
                         }
                     case .todo:
                         TodoListView(model: model)
@@ -133,6 +137,8 @@ struct RefreshErrorBanner: View {
 struct PullRequestColumn: View {
     let title: String
     let list: PullRequestList
+    /// Narrows To review to the PRs at this stage of the viewer's review.
+    var stage: ReviewStage?
     let showsAuthor: Bool
     let showsClosed: Bool
     let model: PullRequestListModel
@@ -142,7 +148,7 @@ struct PullRequestColumn: View {
     @State private var showsStale = false
 
     var body: some View {
-        let listing = model.listing(in: list, includingClosed: showsClosed, includingStale: showsStale)
+        let listing = model.listing(in: list, stage: stage, includingClosed: showsClosed, includingStale: showsStale)
         let pullRequests = listing.map(\.pullRequest)
         VStack(alignment: .leading, spacing: 0) {
             Text("\(title) (\(pullRequests.count))")
@@ -169,7 +175,7 @@ struct PullRequestColumn: View {
                     return .handled
                 }
             }
-            let stale = model.staleCount(in: list, includingClosed: showsClosed)
+            let stale = model.staleCount(in: list, stage: stage, includingClosed: showsClosed)
             if stale > 0 {
                 Button(showsStale ? "Hide \(stale) older than a month" : "\(stale) older than a month hidden") {
                     showsStale.toggle()
