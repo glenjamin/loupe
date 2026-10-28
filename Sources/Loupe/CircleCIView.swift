@@ -106,7 +106,7 @@ struct CircleCIPane: View {
     }
 }
 
-/// A job's tab in the pane's bar: its name, marked as failed, filled while shown.
+/// A job's tab in the pane's bar: its name, marked as failed, filled red while shown.
 private struct JobTab: View {
     let job: CircleCIJob
     let isSelected: Bool
@@ -124,7 +124,7 @@ private struct JobTab: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-            .background(sidebarRowStyle(isShown: isSelected, isHovered: isHovered), in: RoundedRectangle(cornerRadius: 5))
+            .background(isSelected ? AnyShapeStyle(Color.red) : sidebarRowStyle(isShown: false, isHovered: isHovered), in: RoundedRectangle(cornerRadius: 5))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -152,11 +152,15 @@ private struct JobView: View {
             .padding(.vertical, 6)
             .accessibilityIdentifier("circleci-panel")
             Divider()
-            switch failures.panel {
-            case .steps: StepsPanel(failures: failures, job: job)
-            case .tests: TestsPanel(failures: failures, job: job)
-            case .artifacts: ArtifactsPanel(failures: failures, job: job)
+            // Fills the rest, so a panel with little to say doesn't push the picker down.
+            Group {
+                switch failures.panel {
+                case .steps: StepsPanel(failures: failures, job: job)
+                case .tests: TestsPanel(failures: failures, job: job)
+                case .artifacts: ArtifactsPanel(failures: failures, job: job)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

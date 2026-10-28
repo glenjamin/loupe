@@ -41,6 +41,7 @@ expect-request playwright-report/index.html
 click button "typecheck" in #circleci-pane
 wait until radio ~"Artifacts (0)" has value "1"
 expect ~"The job kept no files" in #circleci-pane
+snap circleci-no-artifacts
 expect radio ~"Failed tests (0)"
 click radio ~"Failed steps (1)"
 wait until ~"error TS2322" in #circleci-output

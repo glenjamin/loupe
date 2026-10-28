@@ -100,6 +100,11 @@ final class SnapshotScript {
         case let .waitUntil(query, predicate, timeout):
             let deadline = Date.now + timeout.timeInterval
             while true {
+                // Drawn first, as a screen would between polls, so updates made in drawing land.
+                for window in shownWindows() {
+                    window.layoutIfNeeded()
+                    window.displayIfNeeded()
+                }
                 let found = check(query, predicate)
                 if found.holds { return found.note }
                 if Date.now >= deadline {
