@@ -659,8 +659,8 @@ struct ReviewDecisionLabel: View {
 
     var body: some View {
         switch decision {
-        case .approved: Text("Approved").foregroundStyle(.diffSuccess)
-        case .changesRequested: Text("Changes requested").foregroundStyle(.diffDanger)
+        case .approved: Badge(text: "Approved", tint: .diffSuccess)
+        case .changesRequested: Badge(text: "Changes requested", tint: .diffDanger)
         case .reviewRequired, .unknown, nil:
             let names = (requestedReviewers ?? []).compactMap(\.name)
             if !names.isEmpty {
