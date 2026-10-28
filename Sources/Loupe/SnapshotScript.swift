@@ -162,6 +162,10 @@ final class SnapshotScript {
                 throw StepFailure(expected: "\(attempted ? "an" : "no") attempt at \(name)", found: blocked.isEmpty ? "nothing blocked" : "blocked: \(blocked.joined(separator: "; "))")
             }
             return attempted ? "blocked: \(matching.joined(separator: "; "))" : nil
+        case let .expectCopied(text):
+            let copied = SnapshotRun.pasteboard.string(forType: .string)
+            guard copied == text else { throw StepFailure(expected: "\"\(text)\" copied", found: copied.map { "\"\($0)\" copied" } ?? "nothing copied") }
+            return nil
         case let .snap(name, query):
             let url = directory.appending(path: "\(name).png")
             try await writePNG(of: query.map(find), to: url)
@@ -685,6 +689,7 @@ enum Step {
     case scroll(Query, CGFloat)
     case expect(Query, Predicate)
     case expectRequest(String, attempted: Bool)
+    case expectCopied(String)
     case snap(String, Query?)
     case compare(String, String, differ: Bool)
     case dump(Query?)
@@ -735,6 +740,7 @@ enum Step {
         case "expect": self = .expect(try Query(&tokens), try Predicate(&tokens))
         case "expect-request": self = .expectRequest(try tokens.word(), attempted: true)
         case "expect-no-request": self = .expectRequest(try tokens.word(), attempted: false)
+        case "expect-copied": self = .expectCopied(try tokens.string())
         case "snap":
             let name = try tokens.word()
             self = .snap(name, tokens.isEmpty ? nil : try Query(&tokens))

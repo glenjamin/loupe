@@ -325,9 +325,12 @@ struct PullRequestHeader: View {
                     if let author = pullRequest.author {
                         Label(author, systemImage: "person")
                     }
-                    Text("\(pullRequest.headRefName) → \(pullRequest.baseRefName)")
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
+                    HStack(spacing: 4) {
+                        CopyBranchButton(branch: pullRequest.headRefName)
+                        Text(verbatim: "→ \(pullRequest.baseRefName)")
+                            .textSelection(.enabled)
+                    }
+                    .font(.caption.monospaced())
                     OpenInEditorButton(pullRequest: pullRequest, tab: tab)
                     if let checks = pullRequest.checks {
                         ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
@@ -380,6 +383,42 @@ struct PullRequestHeader: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+}
+
+/// The PR's branch name, which a click copies, saying so for a moment.
+struct CopyBranchButton: View {
+    let branch: String
+    @State private var copies = 0
+    @State private var isHovered = false
+
+    var body: some View {
+        Button {
+            copyText(branch)
+            copies += 1
+        } label: {
+            HStack(spacing: 3) {
+                Text(verbatim: branch)
+                    .underline(isHovered)
+                if copies > 0 {
+                    Label("Copied", systemImage: "checkmark")
+                        .labelStyle(.iconOnly)
+                        .foregroundStyle(.green)
+                        .transition(.opacity)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(Text(verbatim: "Copy \(branch)"))
+        .accessibilityIdentifier("copy-branch")
+        // Each copy shows the tick afresh, and it fades a moment after the last.
+        .task(id: copies) {
+            guard copies > 0 else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation { copies = 0 }
+        }
     }
 }
 

@@ -49,6 +49,9 @@ enum SnapshotRun {
     static let directory = ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_DIR"].map {
         URL(filePath: $0, directoryHint: .isDirectory)
     }
+    /// Where the app's copy buttons put things: in a run, a pasteboard of its own, so a run never
+    /// replaces what the user has copied.
+    static let pasteboard = directory == nil ? NSPasteboard.general : NSPasteboard.withUniqueName()
     /// A run whose markdown boxes open on Preview rather than Write.
     static let previewsDrafts = directory != nil && ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_PREVIEW"] == "1"
     /// What a run fills the comments it starts with: `LOUPE_SNAPSHOT_DRAFT=long` asks for a draft

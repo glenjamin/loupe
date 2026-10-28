@@ -1,0 +1,11 @@
+# Clicking the branch name in a PR's header copies it, ticked for a moment; Copy Link copies the link.
+wait settled
+open tamarinworks/marmot#14268
+wait settled
+click #copy-branch
+expect-copied "let-bundler-split-entry"
+expect button ~"Copied"
+snap copied #copy-branch
+wait until button ~"Copied" missing timeout 5s
+click button "Copy Link"
+expect-copied "https://github.com/tamarinworks/marmot/pull/14268"

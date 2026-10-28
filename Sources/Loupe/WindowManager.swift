@@ -460,8 +460,15 @@ private let appIcon = AppDelegate.iconURL.flatMap(NSImage.init(contentsOf:))
 /// Puts a link on the pasteboard as text and as a URL, so it pastes as either.
 @MainActor
 func copyLink(_ url: URL) {
-    let pasteboard = NSPasteboard.general
+    let pasteboard = SnapshotRun.pasteboard
     pasteboard.clearContents()
     pasteboard.setString(url.absoluteString, forType: .string)
     pasteboard.writeObjects([url as NSURL])
+}
+
+@MainActor
+func copyText(_ text: String) {
+    let pasteboard = SnapshotRun.pasteboard
+    pasteboard.clearContents()
+    pasteboard.setString(text, forType: .string)
 }
