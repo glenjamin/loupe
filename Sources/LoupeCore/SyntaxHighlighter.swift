@@ -15,7 +15,12 @@ public struct SyntaxLanguage: Sendable, Hashable {
     public let rawValue: String
 
     public init?(path: String) {
-        guard let grammar = Linguist.languages.languages(forPath: path).lazy.compactMap(Self.grammar(forLinguistName:)).first else { return nil }
+        var languages = Linguist.languages.languages(forPath: path)
+        // A suffix Linguist doesn't know, such as a deployment's (`database.yml.ci`), is passed over
+        // for the extension before it. Only for colouring: GitHub goes by the last extension.
+        let stem = (path as NSString).deletingPathExtension
+        if languages.isEmpty, stem != path { languages = Linguist.languages.languages(forPath: stem) }
+        guard let grammar = languages.lazy.compactMap(Self.grammar(forLinguistName:)).first else { return nil }
         rawValue = grammar
     }
 }

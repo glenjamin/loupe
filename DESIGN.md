@@ -1166,6 +1166,10 @@ GraphQL schemas and queries were plain. The grammar is bkegley/tree-sitter-graph
 
 SCSS stylesheets were plain. The grammar is tree-sitter-grammars/tree-sitter-scss, vendored as the `TreeSitterSCSS` target as "Grammars CodeEditLanguages lacks are vendored as C targets" describes. It's the maintained successor to serenadeai/tree-sitter-scss, which nvim-treesitter still pins and which hasn't changed since 2022; its one tag predates its licence file, so it's pinned to a commit, recorded in `VERSION`, and its parser is ABI 15. The grammar extends tree-sitter-css, and its own highlights query covers only what SCSS adds (variables, `@mixin`, `@include`, `//` comments), so the highlighter compiles CodeEditLanguages' CSS query beneath it, as nvim-treesitter's `; inherits: css` does: selectors, properties and values colour as in a `.css` file. nvim-treesitter's SCSS query was the alternative, but it's written for serenadeai's node names. As the query lists its generic `(identifier) @variable` after the mixin's name, and later patterns win, a mixin's name where it's declared stays plain while an `@include`d one takes the entity colour.
 
+### A suffix Linguist doesn't know is passed over for colouring
+
+Files such as `database.yml.ci` and `memcache.yml.docker`, one copy of a config per environment, were plain: Linguist goes by a name's last extension, and `.ci` and `.docker` are no language's. So when Linguist finds no language for a path at all, the highlighter looks it up again less its last extension, and colours `database.yml.ci` as YAML and `settings.json.sample` as JSON. It's not a YAML rule, as any language's files get such suffixes. A suffix Linguist knows always wins, even for a language with no grammar, so `notes.yml.txt` stays plain Text, and a double extension of a language's own (`.html.tmpl`) is never split. Only the highlighter does this: whether a file is Markdown, and so shown rendered, still goes by Linguist alone, as GitHub wouldn't render `README.md.example`.
+
 ## Not yet decided
 
 Nothing is pending.

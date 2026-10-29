@@ -82,6 +82,38 @@ struct SyntaxHighlightingTests {
         #expect(SyntaxLanguage(path: "build.gradle.kts") == SyntaxLanguage(path: "a.kt"))
     }
 
+    @Test(arguments: ["config/database.yml.ci", "vault.yml.ci", "memcache.yml.docker"])
+    func takesTheLanguageFromBeforeASuffixLinguistDoesNotKnow(path: String) throws {
+        let settings = { (path: String) in
+            try #require(Diff(parsing: """
+            diff --git a/\(path) b/\(path)
+            --- a/\(path)
+            +++ b/\(path)
+            @@ -0,0 +1,2 @@
+            +# Test settings.
+            +host: localhost
+
+            """).files.first)
+        }
+        let rendered = showing(try settings(path))
+        let yaml = showing(try settings("config/database.yml"))
+
+        #expect(colors(of: "# Test settings.", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: "host", in: rendered) != [NSColor.textColor])
+        #expect(colors(of: "host", in: rendered) == colors(of: "host", in: yaml))
+    }
+
+    @Test func aSuffixLinguistKnowsIsNotPassedOver() {
+        #expect(SyntaxLanguage(path: "config.json.example") == SyntaxLanguage(path: "a.json"))
+        #expect(SyntaxLanguage(path: "settings.json.sample") == SyntaxLanguage(path: "a.json"))
+        // `.html.tmpl` is a language's own extension, so it isn't taken for HTML.
+        #expect(SyntaxLanguage(path: "page.html.tmpl") != SyntaxLanguage(path: "a.html"))
+        // `.txt` is Text, which has no grammar, so the file stays plain rather than YAML.
+        #expect(SyntaxLanguage(path: "notes.yml.txt") == nil)
+        // Only the name's own suffix is passed over, not a directory's.
+        #expect(SyntaxLanguage(path: "config.yml/README") == nil)
+    }
+
     @Test func colorsAProtocolBufferFile() throws {
         let file = try #require(Diff(parsing: """
         diff --git a/user.proto b/user.proto
