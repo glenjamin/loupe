@@ -3,6 +3,7 @@ import CodeEditLanguages
 import CodeLanguages_Container
 import os
 import SwiftTreeSitter
+import TreeSitterGoTemplate
 import TreeSitterGraphQL
 import TreeSitterHCL
 import TreeSitterMake
@@ -286,6 +287,7 @@ private enum VendoredGrammar: String {
     case graphql
     case scss
     case make
+    case goTemplate
 
     init?(linguistName: String) {
         switch linguistName {
@@ -294,6 +296,7 @@ private enum VendoredGrammar: String {
         case "GraphQL": self = .graphql
         case "SCSS": self = .scss
         case "Makefile": self = .make
+        case "Go Template": self = .goTemplate
         default: return nil
         }
     }
@@ -305,6 +308,7 @@ private enum VendoredGrammar: String {
         case .graphql: tree_sitter_graphql()
         case .scss: tree_sitter_scss()
         case .make: tree_sitter_make()
+        case .goTemplate: tree_sitter_gotmpl()
         }
     }
 
@@ -315,6 +319,7 @@ private enum VendoredGrammar: String {
         case .graphql: "Loupe_TreeSitterGraphQL"
         case .scss: "Loupe_TreeSitterSCSS"
         case .make: "Loupe_TreeSitterMake"
+        case .goTemplate: "Loupe_TreeSitterGoTemplate"
         }
     }
 
@@ -324,7 +329,7 @@ private enum VendoredGrammar: String {
         let own = bundledResource("queries/highlights.scm", in: bundle)
         return switch self {
         case .scss: [codeEditLanguagesQuery(folder: "css", file: "highlights"), own]
-        case .proto, .hcl, .graphql, .make: [own]
+        case .proto, .hcl, .graphql, .make, .goTemplate: [own]
         }
     }
 }

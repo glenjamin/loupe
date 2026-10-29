@@ -21,6 +21,7 @@ let package = Package(
                 "TreeSitterGraphQL",
                 "TreeSitterSCSS",
                 "TreeSitterMake",
+                "TreeSitterGoTemplate",
             ],
             resources: [.copy("Resources/linguist"), .copy("Resources/quote-selection.js"), .copy("Resources/quote-reply.js"), .copy("Resources/relative-times.js")],
             swiftSettings: strictSwift()
@@ -60,6 +61,14 @@ let package = Package(
         // Makefiles, which CodeEditLanguages lacks, vendored by Scripts/update-tree-sitter-make.sh.
         .target(
             name: "TreeSitterMake",
+            exclude: ["LICENSE", "README.md", "VERSION"],
+            sources: ["src/parser.c"],
+            resources: [.copy("queries")],
+            cSettings: [.headerSearchPath("src")]
+        ),
+        // Go templates, which CodeEditLanguages lacks, vendored by Scripts/update-tree-sitter-go-template.sh.
+        .target(
+            name: "TreeSitterGoTemplate",
             exclude: ["LICENSE", "README.md", "VERSION"],
             sources: ["src/parser.c"],
             resources: [.copy("queries")],

@@ -42,6 +42,8 @@ struct SyntaxHighlightingTests {
         ("a.graphql", "# note"), ("a.gql", "# note"), ("schema.graphqls", "# note"),
         ("a.scss", "// note"),
         ("Makefile", "# note"), ("GNUmakefile", "# note"), ("rules.mk", "# note"), ("build.mak", "# note"),
+        ("a.tmpl", "{{/* note */}}"), ("a.gotmpl", "{{/* note */}}"), ("a.gohtml", "{{/* note */}}"),
+        ("a.html.tmpl", "{{/* note */}}"), ("a.tpl", "{{/* note */}}"), ("_helpers.tpl", "{{/* note */}}"),
     ])
     func everySupportedLanguageHighlights(path: String, line: String) throws {
         #expect(SyntaxLanguage(path: path) != nil)
@@ -107,7 +109,8 @@ struct SyntaxHighlightingTests {
     @Test func aSuffixLinguistKnowsIsNotPassedOver() {
         #expect(SyntaxLanguage(path: "config.json.example") == SyntaxLanguage(path: "a.json"))
         #expect(SyntaxLanguage(path: "settings.json.sample") == SyntaxLanguage(path: "a.json"))
-        // `.html.tmpl` is a language's own extension, so it isn't taken for HTML.
+        // `.html.tmpl` is Go Template's own extension, so it isn't taken for HTML.
+        #expect(SyntaxLanguage(path: "page.html.tmpl") == SyntaxLanguage(path: "a.tmpl"))
         #expect(SyntaxLanguage(path: "page.html.tmpl") != SyntaxLanguage(path: "a.html"))
         // `.txt` is Text, which has no grammar, so the file stays plain rather than YAML.
         #expect(SyntaxLanguage(path: "notes.yml.txt") == nil)
@@ -294,6 +297,38 @@ struct SyntaxHighlightingTests {
         }
         // A recipe is shell, which isn't parsed, so only Make's own syntax in it is coloured.
         #expect(colors(of: "build -o", in: rendered) == [NSColor.textColor])
+    }
+
+    @Test func colorsAGoTemplate() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/page.html.tmpl b/page.html.tmpl
+        --- a/page.html.tmpl
+        +++ b/page.html.tmpl
+        @@ -0,0 +1,8 @@
+        +{{/* The list of users. */}}
+        +<ul class="users">
+        +{{- range $i, $user := .Users }}
+        +  <li>{{ printf "%d: %s" $i $user.Name | html }}</li>
+        +{{- else }}
+        +  <li>None, {{ len .Users }} in all</li>
+        +{{- end }}
+        +</ul>
+
+        """).files.first)
+        let rendered = showing(file)
+
+        #expect(colors(of: "/* The list of users. */", in: rendered) == [DiffColors.syntaxComment])
+        for keyword in ["range", "else", "end"] {
+            #expect(colors(of: keyword, in: rendered) == [DiffColors.syntaxKeyword], "\(keyword)")
+        }
+        #expect(colors(of: ":=", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "printf", in: rendered) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "\"%d: %s\"", in: rendered) == [DiffColors.syntaxString])
+        #expect(colors(of: "Name", in: rendered) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "len", in: rendered) == [DiffColors.syntaxEntity])
+        // The HTML around the actions isn't parsed, so it stays plain.
+        #expect(colors(of: "<ul class=\"users\">", in: rendered) == [NSColor.textColor])
+        #expect(colors(of: "None, ", in: rendered) == [NSColor.textColor])
     }
 
     @Test func aHunkStartingInsideADeclarationIsColouredAsPartOfIt() throws {
