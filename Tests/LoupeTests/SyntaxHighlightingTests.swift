@@ -44,6 +44,7 @@ struct SyntaxHighlightingTests {
         ("Makefile", "# note"), ("GNUmakefile", "# note"), ("rules.mk", "# note"), ("build.mak", "# note"),
         ("a.tmpl", "{{/* note */}}"), ("a.gotmpl", "{{/* note */}}"), ("a.gohtml", "{{/* note */}}"),
         ("a.html.tmpl", "{{/* note */}}"), ("a.tpl", "{{/* note */}}"), ("_helpers.tpl", "{{/* note */}}"),
+        ("a.hbs", "{{! note }}"), ("a.handlebars", "{{! note }}"), ("a.hb", "{{! note }}"),
     ])
     func everySupportedLanguageHighlights(path: String, line: String) throws {
         #expect(SyntaxLanguage(path: path) != nil)
@@ -329,6 +330,49 @@ struct SyntaxHighlightingTests {
         // The HTML around the actions isn't parsed, so it stays plain.
         #expect(colors(of: "<ul class=\"users\">", in: rendered) == [NSColor.textColor])
         #expect(colors(of: "None, ", in: rendered) == [NSColor.textColor])
+    }
+
+    @Test func colorsAHandlebarsTemplate() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/card.hbs b/card.hbs
+        --- a/card.hbs
+        +++ b/card.hbs
+        @@ -0,0 +1,10 @@
+        +{{!-- A user's card. --}}
+        +<div class="card">
+        +  {{#if user.admin}}
+        +    <Badge @kind="admin" />
+        +  {{else}}
+        +    <span>{{format-count total max=3}}</span>
+        +  {{/if}}
+        +  {{#each items as |item|}}<li>{{item.name}}</li>{{/each}}
+        +  <p>Thanks!</p>
+        +</div>
+
+        """).files.first)
+        let rendered = showing(file)
+
+        #expect(colors(of: "{{!-- A user's card. --}}", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: "if", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "each", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "else", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "as |", in: rendered, length: 2) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "format-count", in: rendered) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "max=", in: rendered, length: 3) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "3}}", in: rendered, length: 1) == [DiffColors.syntaxConstant])
+        // A mustache takes the tag colour, its helper and arguments aside.
+        #expect(colors(of: "{{item.name}}", in: rendered) == [DiffColors.syntaxTag])
+        // Glimmer parses the HTML too: tags, attributes and their values are coloured, the text isn't.
+        #expect(colors(of: "div", in: rendered) == [DiffColors.syntaxTag])
+        #expect(colors(of: "class", in: rendered) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "\"card\"", in: rendered) == [DiffColors.syntaxString])
+        #expect(colors(of: "Badge", in: rendered) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "Thanks!", in: rendered) == [NSColor.textColor])
+    }
+
+    @Test func takesAnHbFileForHandlebarsRatherThanHarbour() {
+        #expect(SyntaxLanguage(path: "templates/card.hb") == SyntaxLanguage(path: "card.hbs"))
+        #expect(SyntaxLanguage(path: "templates/card.HB") == SyntaxLanguage(path: "card.hbs"))
     }
 
     @Test func aHunkStartingInsideADeclarationIsColouredAsPartOfIt() throws {

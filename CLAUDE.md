@@ -23,6 +23,7 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 - `TreeSitterSCSS`: the vendored SCSS grammar (C) and its highlights query, which the highlighter puts CodeEditLanguages' CSS query beneath; refreshed by `Scripts/update-tree-sitter-scss.sh`, never edited by hand.
 - `TreeSitterMake`: the vendored Makefile grammar (C) and its highlights query; refreshed by `Scripts/update-tree-sitter-make.sh`, never edited by hand.
 - `TreeSitterGoTemplate`: the vendored Go template grammar (C) and its highlights query; refreshed by `Scripts/update-tree-sitter-go-template.sh`, never edited by hand.
+- `TreeSitterGlimmer`: the vendored Glimmer grammar (C), Ember's Handlebars, for Handlebars templates, and its highlights query; refreshed by `Scripts/update-tree-sitter-glimmer.sh`, never edited by hand.
 - `LoupeModel`: shared value types.
 - `LoupeGitHub`: GraphQL client, hand-written queries and `Codable`, no Apollo.
 - `LoupeStore`: SQLite via GRDB, with migrations.

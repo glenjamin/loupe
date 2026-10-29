@@ -3,6 +3,7 @@ import CodeEditLanguages
 import CodeLanguages_Container
 import os
 import SwiftTreeSitter
+import TreeSitterGlimmer
 import TreeSitterGoTemplate
 import TreeSitterGraphQL
 import TreeSitterHCL
@@ -17,7 +18,8 @@ public struct SyntaxLanguage: Sendable, Hashable {
     public let rawValue: String
 
     public init?(path: String) {
-        var languages = Linguist.languages.languages(forPath: path)
+        var languages = Self.extensionOverrides[(path as NSString).pathExtension.lowercased()].map { [$0] }
+            ?? Linguist.languages.languages(forPath: path)
         // A suffix Linguist doesn't know, such as a deployment's (`database.yml.ci`), is passed over
         // for the extension before it. Only for colouring: GitHub goes by the last extension.
         let stem = (path as NSString).deletingPathExtension
@@ -25,6 +27,12 @@ public struct SyntaxLanguage: Sendable, Hashable {
         guard let grammar = languages.lazy.compactMap(Self.grammar(forLinguistName:)).first else { return nil }
         rawValue = grammar
     }
+
+    /// Extensions whose files are, in practice, another language than Linguist names.
+    private static let extensionOverrides = [
+        // Linguist has `.hb` only as Harbour's, but it's far more often a Handlebars template.
+        "hb": "Handlebars",
+    ]
 }
 
 /// How a highlighted span is coloured, following GitHub's Primer syntax palette.
@@ -288,6 +296,7 @@ private enum VendoredGrammar: String {
     case scss
     case make
     case goTemplate
+    case glimmer
 
     init?(linguistName: String) {
         switch linguistName {
@@ -297,6 +306,7 @@ private enum VendoredGrammar: String {
         case "SCSS": self = .scss
         case "Makefile": self = .make
         case "Go Template": self = .goTemplate
+        case "Handlebars": self = .glimmer
         default: return nil
         }
     }
@@ -309,6 +319,7 @@ private enum VendoredGrammar: String {
         case .scss: tree_sitter_scss()
         case .make: tree_sitter_make()
         case .goTemplate: tree_sitter_gotmpl()
+        case .glimmer: tree_sitter_glimmer()
         }
     }
 
@@ -320,6 +331,7 @@ private enum VendoredGrammar: String {
         case .scss: "Loupe_TreeSitterSCSS"
         case .make: "Loupe_TreeSitterMake"
         case .goTemplate: "Loupe_TreeSitterGoTemplate"
+        case .glimmer: "Loupe_TreeSitterGlimmer"
         }
     }
 
@@ -329,7 +341,7 @@ private enum VendoredGrammar: String {
         let own = bundledResource("queries/highlights.scm", in: bundle)
         return switch self {
         case .scss: [codeEditLanguagesQuery(folder: "css", file: "highlights"), own]
-        case .proto, .hcl, .graphql, .make, .goTemplate: [own]
+        case .proto, .hcl, .graphql, .make, .goTemplate, .glimmer: [own]
         }
     }
 }
