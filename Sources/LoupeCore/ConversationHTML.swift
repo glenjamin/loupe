@@ -139,7 +139,7 @@ public enum ConversationHTML {
         let classes = ["thread", isResolved ? "resolved" : nil, isOutdated ? "outdated" : nil].compactMap { $0 }.joined(separator: " ")
         // The app finds the thread by its id, to put a reply to it beside it.
         let id = thread.map { #" data-thread-id="\#(escape($0.id))""# } ?? ""
-        return #"<details class="\#(classes)"\#(id)\#(isResolved ? "" : " open")><summary>\#(place)\#(badges)\#(showInDiff)</summary>\#(hunk(comment.diffHunk))\#(replies)\#(actions)</details>"#
+        return #"<details class="\#(classes)"\#(id)\#(isResolved ? "" : " open")><summary>\#(place)\#(badges)\#(showInDiff)</summary>\#(hunk(comment, in: thread))\#(replies)\#(actions)</details>"#
     }
 
     /// Reply, and resolve or unresolve, where the viewer may; a thread in the viewer's pending
@@ -184,14 +184,81 @@ public enum ConversationHTML {
     private static let smiley = #"<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.75" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="5.75" cy="6.5" r="1" fill="currentColor"/><circle cx="10.25" cy="6.5" r="1" fill="currentColor"/><path d="M5.25 9.75a3.25 3.25 0 0 0 5.5 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>"#
 
     /// The last few lines of the hunk, ending on the commented line, as github.com shows.
-    private static func hunk(_ diffHunk: String) -> String {
-        let lines = diffHunk.split(separator: "\n", omittingEmptySubsequences: false).filter { !$0.hasPrefix("@@") }.suffix(4)
-        guard !lines.isEmpty else { return "" }
-        let rows = lines.map { line in
-            let kind = line.hasPrefix("+") ? "add" : line.hasPrefix("-") ? "del" : "ctx"
-            return #"<span class="\#(kind)">\#(escape(String(line)))</span>"#
-        }.joined(separator: "\n")
-        return #"<pre class="hunk"><code>\#(rows)</code></pre>"#
+    /// The commented lines at the end of the hunk, as github.com shows them: all of a thread on
+    /// several lines, under which lines they are, or else the last four. Rows are numbered on the
+    /// thread's side and highlighted as the diff is, parsing the whole hunk for context.
+    private static func hunk(_ comment: ReviewComment, in thread: ReviewThread?) -> String {
+        guard let parsed = DiffParser.parseHunks(comment.diffHunk).first, !parsed.lines.isEmpty else { return "" }
+        let side = thread?.side ?? .right
+        let startSide = thread?.startSide ?? side
+        let end = thread?.originalLine ?? comment.originalLine
+        var first = parsed.lines.count - min(4, parsed.lines.count)
+        var caption = ""
+        if let start = thread?.originalStartLine, let end, start != end || startSide != side,
+           let index = parsed.lines.lastIndex(where: { number($0, on: startSide) == start }) {
+            first = index
+            caption = #"<div class="hunk-lines">Comment on lines \#(lineLabel(start, on: startSide)) to \#(lineLabel(end, on: side))</div>"#
+        }
+        let shown = parsed.lines[first...]
+
+        // The highlighter's runs are offsets into the shown rows' code, one row per line.
+        var offsets: [Int] = []
+        var length = 0
+        for line in shown {
+            offsets.append(length)
+            length += line.text.utf16.count + 1
+        }
+        var plan = SyntaxLanguage(path: comment.path).map(SyntaxPlan.init)
+        if plan != nil {
+            let enclosing = enclosingLine(of: parsed)
+            var newSide = SyntaxPlan.Side(context: enclosing)
+            var oldSide = SyntaxPlan.Side(context: enclosing)
+            for (index, line) in parsed.lines.enumerated() {
+                let target = index >= first ? offsets[index - first] : nil
+                let count = line.text.utf16.count
+                if line.newLine != nil { newSide.append(line.text, mappedTo: target, length: count) }
+                if line.oldLine != nil { oldSide.append(line.text, mappedTo: line.isDeletion ? target : nil, length: count) }
+            }
+            plan?.sides = [newSide, oldSide]
+        }
+        var styles = [SyntaxStyle?](repeating: nil, count: length)
+        for run in plan?.runs() ?? [] {
+            for offset in run.range.lowerBound..<run.range.upperBound where offset < length { styles[offset] = run.style }
+        }
+
+        let rows = zip(shown, offsets).map { line, offset in
+            let (kind, marker) = line.isAddition ? ("add", "+") : line.isDeletion ? ("del", "-") : ("ctx", " ")
+            let lineNumber = number(line, on: side) ?? line.newLine ?? line.oldLine
+            let code = Array(line.text.utf16)
+            let html = highlighted(code, styles: Array(styles[offset..<offset + code.count]))
+            return #"<tr class="\#(kind)"><td class="num">\#(lineNumber.map(String.init) ?? "")</td><td class="code"><span class="marker">\#(marker)</span>\#(html)</td></tr>"#
+        }.joined()
+        return #"\#(caption)<div class="hunk-scroll"><table class="hunk">\#(rows)</table></div>"#
+    }
+
+    /// A line's number in the side's version of the file, if it's in that version.
+    private static func number(_ line: DiffLine, on side: ReviewThread.Side) -> Int? {
+        side == .left ? line.oldLine : line.newLine
+    }
+
+    /// A line's number marked with its side, as github.com names a thread's lines.
+    private static func lineLabel(_ line: Int, on side: ReviewThread.Side) -> String {
+        side == .left ? #"<span class="del">-\#(line)</span>"# : #"<span class="add">+\#(line)</span>"#
+    }
+
+    /// A row's code, escaped, with each stretch of one syntax style in a span of its class.
+    private static func highlighted(_ code: [UTF16.CodeUnit], styles: [SyntaxStyle?]) -> String {
+        var html = ""
+        var start = 0
+        while start < code.count {
+            let style = styles[start]
+            var end = start + 1
+            while end < code.count, styles[end] == style { end += 1 }
+            let text = escape(String(decoding: code[start..<end], as: UTF16.self))
+            html += style.map { #"<span class="syntax-\#($0)">\#(text)</span>"# } ?? text
+            start = end
+        }
+        return html
     }
 
     private static func commitList(_ commits: [TimelineItem], now: Date) -> String {

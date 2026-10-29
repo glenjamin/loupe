@@ -28,12 +28,35 @@ struct ConversationHTMLTests {
         #expect(reviewHTML.contains(#"<span class="badge changes-requested">Changes requested</span>"#))
         #expect(reviewHTML.contains("<p>Two things</p>"))
         #expect(reviewHTML.contains("<code>app/widget.go:12</code>"))
-        #expect(reviewHTML.contains(#"<span class="add">+  return &lt;nil&gt;</span>"#), "the end of the hunk, escaped")
+        #expect(reviewHTML.contains(#"<tr class="add"><td class="num">11</td><td class="code"><span class="marker">+</span>  <span class="syntax-keyword">return</span> <span class="syntax-keyword">&lt;</span>"#), "the end of the hunk, numbered, highlighted and escaped")
         #expect(reviewHTML.contains("<p>Why nil?</p>"))
         #expect(reviewHTML.contains("<p>Because.</p>"), "a later reply shows in its thread")
         #expect(reviewHTML.contains("<code>README.md:3</code>"), "the original line once outdated")
         #expect(page.components(separatedBy: "<p>Because.</p>").count == 2, "the reply shows once")
     }
+
+
+    @Test func aThreadOnSeveralLinesShowsThemAllUnderWhichLinesItsOn() throws {
+        let snippet = try hunk(in: render(snippetConversation(startLine: 3)))
+        #expect(rowNumbers(in: snippet) == [3, 4, 5, 6, 7], "from its first line to its last, as github.com shows")
+        let page = try render(snippetConversation(startLine: 3))
+        #expect(page.contains(#"<div class="hunk-lines">Comment on lines <span class="add">+3</span> to <span class="add">+7</span></div>"#))
+    }
+
+    @Test func aThreadOnOneLineShowsTheLastFewLinesOfItsHunk() throws {
+        let page = try render(snippetConversation(startLine: nil))
+        #expect(rowNumbers(in: try hunk(in: page)) == [4, 5, 6, 7])
+        #expect(!page.contains(#"class="hunk-lines""#), "no range to name")
+    }
+
+    @Test func aThreadsSnippetIsHighlightedAsTheDiffIsWithItsRowsAndTabsKept() throws {
+        let snippet = try hunk(in: render(snippetConversation(startLine: 3)))
+        #expect(snippet.contains(#"<span class="syntax-keyword">func</span>"#))
+        #expect(snippet.contains(#"<span class="syntax-comment">// done</span>"#))
+        #expect(snippet.contains("<td class=\"code\"><span class=\"marker\">+</span>\t<span class=\"syntax-keyword\">return</span>"), "tabs are left for the stylesheet to size")
+        #expect(!snippet.contains("\n"), "nothing between rows to draw as a blank line")
+    }
+
 
     @Test func resolvedAndOutdatedThreadsAreMarkedAndResolvedOnesStartFolded() throws {
         let page = try render(conversation)
@@ -272,6 +295,27 @@ private let conversation = Conversation(
     ]
 )
 
+
+/// A review on a Go hunk whose last line, 7, is commented on, from `startLine` when on several.
+private func snippetConversation(startLine: Int?) -> Conversation {
+    let diffHunk = "@@ -1,1 +1,7 @@ package main\n import \"fmt\"\n+\n+func add(a, b int) int {\n+\treturn a + b\n+}\n+\n+// done"
+    let author = Participant(login: "reviewer", avatarURL: nil)
+    return Conversation(
+        id: "PR_2", author: author, createdAt: now, bodyHTML: "", reactions: [],
+        items: [
+            TimelineItem(id: "r1", date: now, actor: author, event: .review(state: .commented, bodyHTML: "", comments: [
+                ReviewComment(id: "rc1", bodyHTML: "<p>Nice</p>", path: "main.go", line: 7, originalLine: 7, diffHunk: diffHunk, isOutdated: false, isMinimized: false, replyTo: nil),
+            ])),
+        ],
+        threads: [
+            ReviewThread(id: "t1", isResolved: false, isOutdated: false, path: "main.go", line: 7, startLine: startLine, originalLine: 7, originalStartLine: startLine, diffHunk: diffHunk, comments: [
+                ThreadComment(id: "rc1", author: author, createdAt: now, bodyHTML: "<p>Nice</p>", isMinimized: false),
+            ]),
+        ],
+        checks: []
+    )
+}
+
 private func render(_ conversation: Conversation) throws -> String {
     let (template, stylesheet) = try templates()
     return ConversationHTML.page(conversation, template: template, stylesheet: stylesheet, now: now)
@@ -303,4 +347,17 @@ private func deletionLinks(in page: String) -> [String] {
     hrefs(in: page).compactMap(CommentLink.init(url:)).compactMap { link in
         if case let .delete(id) = link.target { id } else { nil }
     }
+}
+
+
+/// The page's first thread snippet.
+private func hunk(in page: String) throws -> Substring {
+    let start = try #require(page.range(of: #"<table class="hunk">"#))
+    let end = try #require(page.range(of: "</table>", range: start.upperBound..<page.endIndex))
+    return page[start.lowerBound..<end.upperBound]
+}
+
+/// The line numbers down a snippet's rows.
+private func rowNumbers(in snippet: Substring) -> [Int] {
+    snippet.matches(of: /<td class="num">(\d+)<\/td>/).compactMap { Int($0.1) }
 }

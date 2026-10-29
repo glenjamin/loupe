@@ -1142,6 +1142,10 @@ The merge commit's checks come with the existing lookup of statuses by id (`merg
 
 `POST /markdown` doesn't know YAML frontmatter, so a file opening with a `---` block rendered as a rule and a heading of its lines run together. Now a rendered file whose first line is `---`, up to the next `---` or `...` line, is sent to GitHub as a fenced `yaml` code block, which GitHub highlights; drafts are left alone, as GitHub's comments have no frontmatter either. github.com's file view shows frontmatter as a table, nested tables for lists and maps, but building that would mean a YAML parser and a renderer of our own for that part; the code block shows exactly what was written.
 
+### A conversation thread shows the lines it's on, numbered and highlighted
+
+A thread in the conversation showed the last four lines of its diff hunk. That's what github.com shows for a comment on one line, but a comment on several lines shows them all, under "Comment on lines +214 to +227". The snippet now ends on the commented line and starts at the thread's original start line, found in the hunk on its side; the hunk is from the commit the thread was made on, so the original lines, not the current ones, number it. It's a table of the line numbers on the thread's side, a `+`/`-` marker and the code. Tabs are four columns wide, as in the diff. The code is coloured by the diff's tree-sitter highlighter, with the whole hunk parsed for context and the runs written out as spans in Primer's light syntax colours, since the page uses Primer's light theme. Rows used to be block spans in a `<pre>` with newlines between them, and each newline drew as a blank line.
+
 ## Not yet decided
 
 Nothing is pending.
