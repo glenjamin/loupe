@@ -39,12 +39,7 @@ struct MergeBox: View {
                 MergeFirstLabel(parent: bottom)
             }
         }
-        .alert(Text(verbatim: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName)?"), isPresented: $tab.isConfirmingMerge) {
-            Button("Merge") { Task { await tab.merge() } }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(verbatim: "This adds a merge commit to \(pullRequest.baseRefName).")
-        }
+        .confirmingMerge(of: tab)
     }
 
     /// A disabled button loses its tint, so the reason carries the red. Resting on conflicts
@@ -75,7 +70,7 @@ struct MergeBox: View {
             .buttonStyle(.borderedProminent)
             .tint(tint)
             .disabled(readiness != .ready || tab.isMerging)
-            .help(help(pullRequest))
+            .help(readiness.help(pullRequest))
     }
 
     /// Green to go, red when blocked, and the plain disabled button while GitHub works it out.
@@ -86,17 +81,31 @@ struct MergeBox: View {
         case .checking, .draft: nil
         }
     }
+}
 
-    private func help(_ pullRequest: PullRequestSummary) -> String {
-        switch readiness {
-        case .ready: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName) with a merge commit (⇧⌘M)"
-        case let .blocked(.stacked(number, cascades: true)):
-            "Merging this would merge #\(number) and any others below it in the stack too, so a stack is merged from the bottom, one PR at a time. Merge #\(number) first."
-        case let .blocked(.stacked(number, cascades: false)):
-            "This is based on \(pullRequest.baseRefName), a branch of the stack below it, so merging it would merge it into that branch. Merge #\(number) first."
-        case let .blocked(blocker): "Can't merge: \(blocker.description)"
-        case .checking, .draft: "GitHub is still working out whether this can be merged"
+/// Under the viewer's approval of someone else's open PR: a small Merge link, as GitHub lets a
+/// reviewer who can write to the repo merge it. It merges as the merge box does, asking first,
+/// and is greyed out while GitHub says it can't be merged, resting on it saying why.
+struct MergeLink: View {
+    @Bindable var tab: PullRequestTab
+    let readiness: MergeReadiness
+
+    var body: some View {
+        Group {
+            if tab.isMerging {
+                Text("Merging…")
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Merge") { tab.isConfirmingMerge = true }
+                    .buttonStyle(.link)
+                    .disabled(readiness != .ready)
+                    .help(readiness.help(tab.pullRequest))
+                    .accessibilityIdentifier("merge-link")
+            }
         }
+        .font(.caption)
+        .fixedSize()
+        .confirmingMerge(of: tab)
     }
 }
 
@@ -223,6 +232,42 @@ extension ViewerVerdict.Since: CustomStringConvertible {
         case .commits(1): "1 commit since"
         case let .commits(count): "\(count) commits since"
         case .changed: "changed since"
+        }
+    }
+}
+
+extension View {
+    /// Asks before merging the tab's PR, naming the branches, once `isConfirmingMerge` is set.
+    func confirmingMerge(of tab: PullRequestTab) -> some View {
+        modifier(MergeConfirmation(tab: tab))
+    }
+}
+
+private struct MergeConfirmation: ViewModifier {
+    @Bindable var tab: PullRequestTab
+
+    func body(content: Content) -> some View {
+        let pullRequest = tab.pullRequest
+        content.alert(Text(verbatim: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName)?"), isPresented: $tab.isConfirmingMerge) {
+            Button("Merge") { Task { await tab.merge() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(verbatim: "This adds a merge commit to \(pullRequest.baseRefName).")
+        }
+    }
+}
+
+extension MergeReadiness {
+    /// What merging would do, or why it can't be done yet.
+    func help(_ pullRequest: PullRequestSummary) -> String {
+        switch self {
+        case .ready: "Merge \(pullRequest.headRefName) into \(pullRequest.baseRefName) with a merge commit (⇧⌘M)"
+        case let .blocked(.stacked(number, cascades: true)):
+            "Merging this would merge #\(number) and any others below it in the stack too, so a stack is merged from the bottom, one PR at a time. Merge #\(number) first."
+        case let .blocked(.stacked(number, cascades: false)):
+            "This is based on \(pullRequest.baseRefName), a branch of the stack below it, so merging it would merge it into that branch. Merge #\(number) first."
+        case let .blocked(blocker): "Can't merge: \(blocker.description)"
+        case .checking, .draft: "GitHub is still working out whether this can be merged"
         }
     }
 }

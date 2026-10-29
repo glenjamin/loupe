@@ -369,6 +369,9 @@ struct PullRequestHeader: View {
                     }
                 } else if tab.canReview, let verdict = tab.viewerVerdict {
                     ViewerVerdictLabel(verdict: verdict)
+                    if let readiness = tab.approvedMergeReadiness {
+                        MergeLink(tab: tab, readiness: readiness)
+                    }
                 }
                 if let error = tab.mergeError {
                     MergeErrorLabel(error: error)

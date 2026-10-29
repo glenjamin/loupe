@@ -1154,6 +1154,10 @@ Loupe crashed twice in a dark wake, the lid closed and no screen: a list refresh
 
 To review's one list mixes each stage's heading, its PRs, "Nothing here" and the stale toggle, and a refresh moves PRs between stages as the viewer's reviews change. Built as a `ForEach` of stages each holding rows that come and go on conditions, only the PRs had ids; the rest had SwiftUI's structural ones, and an update moving rows crashed AppKit's table as it measured a row's height. The list is now one flat run of rows, each with an id of its own (a stage's heading, empty word and toggle by the stage, a PR by its id), the non-PR rows unselectable, so the table is told plainly which row went where. It looks and behaves as before.
 
+### Someone else's PR the viewer approved can be merged from under the approval
+
+GitHub lets a reviewer who can write to the repo merge a PR, and once the viewer has approved, merging is often what's left. So under "You approved" on someone else's open PR there's a small Merge link, in the caption's size so the approval stays what the section says. It merges as the merge box does on the viewer's own PRs, with the same readiness (only approved PRs GitHub would merge, the bottom of a stack first), the same confirmation naming the branches, ⇧⌘M, a merge commit and GitHub's refusal shown beneath. While GitHub won't merge it, the link is greyed out and resting on it says why, rather than the red reason the merge box gives, which would outshout the approval. A draft offers no link, as leaving draft is its author's call. Whether the viewer can write to the repo isn't looked up: GitHub's refusal says so.
+
 ## Not yet decided
 
 Nothing is pending.

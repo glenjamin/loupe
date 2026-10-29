@@ -948,13 +948,23 @@ public final class PullRequestTab: Identifiable {
         await refreshConversation()
     }
 
-    /// Whether the PR can be merged from here, offered only on the viewer's own PRs: nil on
-    /// anyone else's, and once it's merged or closed. Only the bottom open PR of a stack can be
+    /// Whether the PR can be merged from the merge box, on the viewer's own PRs: nil on anyone
+    /// else's, and once it's merged or closed. Only the bottom open PR of a stack can be
     /// merged, as merging one above it on GitHub would merge those below it too, unseen.
     public var mergeReadiness: MergeReadiness? {
-        guard isViewersOwn, let readiness = MergeReadiness(pullRequest) else { return nil }
-        guard readiness != .draft, let bottom = mergeFirst else { return readiness }
-        return .blocked(.stacked(on: bottom.number, cascades: pullRequest.stackId != nil))
+        isViewersOwn ? readinessToMerge : nil
+    }
+
+    /// Whether someone else's open PR the viewer has approved can be merged from here, as GitHub
+    /// lets a reviewer who can write to the repo. Nil on a draft, which is its author's to finish.
+    public var approvedMergeReadiness: MergeReadiness? {
+        guard !isViewersOwn, viewerVerdict?.state == .approved, let readiness = readinessToMerge, readiness != .draft else { return nil }
+        return readiness
+    }
+
+    /// Whether merging now would go to GitHub, from the merge box or the approval's link.
+    public var isReadyToMerge: Bool {
+        !isMerging && (mergeReadiness ?? approvedMergeReadiness) == .ready
     }
 
     /// The PR's stack as seen from it, for its header; nil when it isn't stacked.
@@ -973,7 +983,7 @@ public final class PullRequestTab: Identifiable {
     /// included. A refusal is kept to show.
     public func merge() async {
         let pullRequest = pullRequest
-        guard !isMerging, mergeReadiness == .ready, let head = pullRequest.headRefOid else { return }
+        guard isReadyToMerge, let head = pullRequest.headRefOid else { return }
         isMerging = true
         defer { isMerging = false }
         mergeError = nil
@@ -1278,6 +1288,12 @@ public final class PullRequestTab: Identifiable {
 
     private var isViewersOwn: Bool {
         viewerLogin != nil && pullRequest.author == viewerLogin
+    }
+
+    private var readinessToMerge: MergeReadiness? {
+        guard let readiness = MergeReadiness(pullRequest) else { return nil }
+        guard readiness != .draft, let bottom = lists.stacks.bottom(under: pullRequest) else { return readiness }
+        return .blocked(.stacked(on: bottom.number, cascades: pullRequest.stackId != nil))
     }
 
     /// Fetches GitHub's suggested reviewers once a tab, sharing a fetch already on its way. A

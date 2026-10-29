@@ -355,14 +355,43 @@ struct MergeTests {
         #expect(await app.github.readyForReviewReceived.isEmpty)
     }
 
-    @Test func someoneElsesPullRequestOffersNoMerge() async throws {
+    @Test func someoneElsesPullRequestTheViewerHasntApprovedOffersNoMerge() async throws {
         let app = try await MergeApp()
         let pullRequest = app.conversation.toReview[0]
         try await app.github.setMergeState(of: pullRequest.id, "CLEAN")
         let tab = try await app.open(pullRequest)
+        try await app.conversation.conversations.review("CHANGES_REQUESTED", by: FakeGitHub.viewer, on: pullRequest.id, commit: try await app.github.head(of: pullRequest.id))
+        await tab.reload()
         await app.tabs.lists.refresh()
 
         #expect(tab.mergeReadiness == nil)
+        #expect(tab.approvedMergeReadiness == nil, "not without the viewer's approval")
+        #expect(!tab.isReadyToMerge)
+    }
+
+    @Test func someoneElsesPullRequestTheViewerApprovedCanBeMergedLikeTheirOwn() async throws {
+        let app = try await MergeApp()
+        let pullRequest = app.conversation.toReview[0]
+        try await app.github.setMergeState(of: pullRequest.id, "BLOCKED")
+        let tab = try await app.open(pullRequest)
+        let head = try await app.github.head(of: pullRequest.id)
+        try await app.conversation.conversations.review("APPROVED", by: FakeGitHub.viewer, on: pullRequest.id, commit: head)
+        await tab.reload()
+        await app.tabs.lists.refresh()
+        #expect(tab.mergeReadiness == nil, "the merge box stays the author's")
+        #expect(tab.approvedMergeReadiness == .blocked(.notApproved), "GitHub still wants its approvals")
+
+        try await app.github.edit(pullRequest.id) { $0.reviewDecision = "APPROVED" }
+        try await app.github.setMergeState(of: pullRequest.id, "CLEAN")
+        await app.tabs.lists.refresh()
+        #expect(tab.approvedMergeReadiness == .ready)
+
+        await tab.merge()
+        #expect(await app.github.mergesReceived == [
+            MergeInput(pullRequestId: pullRequest.id, mergeMethod: "MERGE", expectedHeadOid: head),
+        ])
+        #expect(tab.pullRequest.state == .merged)
+        #expect(tab.approvedMergeReadiness == nil, "nothing left to merge")
     }
 }
 

@@ -1,0 +1,8 @@
+# Under the viewer's approval of someone else's PR, a small Merge link merges it as the merge
+# box would on their own, asking first; it's greyed out while GitHub won't merge it yet.
+wait settled
+open tamarinworks/atrium#2928
+wait settled
+wait until #merge-link
+expect #merge-link is disabled
+snap header-merge-link

@@ -86,7 +86,7 @@ struct DiffCommands: Commands {
                 .disabled(tab?.reviewers == nil)
             Button("Merge…") { tab?.isConfirmingMerge = true }
                 .keyboardShortcut(.merge)
-                .disabled(tab?.mergeReadiness != .ready || tab?.isMerging == true)
+                .disabled(tab?.isReadyToMerge != true)
         }
         CommandMenu("Review") {
             Button("Summary…") {
