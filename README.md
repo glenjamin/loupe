@@ -16,6 +16,7 @@ It's built for one person's workflow and shared as is.
 ```sh
 ./start.sh          # builds .build/Loupe.app and opens it
 ./start.sh release  # an optimised build
+./start.sh install  # copies a release build to ~/Applications/Loupe.app
 ```
 
 On first launch Loupe asks which folders your checkouts are in, and looks in each for a directory named after a PR's repo. The choice is kept in `~/.config/loupe/config.json`, which you can edit by hand, and can be changed from Loupe ▸ Checkout Folders…. Loupe only reads from checkouts, apart from fetching PR heads into its own `refs/loupe/` refs and cloning a repo you ask it to.
