@@ -1146,6 +1146,10 @@ The merge commit's checks come with the existing lookup of statuses by id (`merg
 
 A thread in the conversation showed the last four lines of its diff hunk. That's what github.com shows for a comment on one line, but a comment on several lines shows them all, under "Comment on lines +214 to +227". The snippet now ends on the commented line and starts at the thread's original start line, found in the hunk on its side; the hunk is from the commit the thread was made on, so the original lines, not the current ones, number it. It's a table of the line numbers on the thread's side, a `+`/`-` marker and the code. Tabs are four columns wide, as in the diff. The code is coloured by the diff's tree-sitter highlighter, with the whole hunk parsed for context and the runs written out as spans in Primer's light syntax colours, since the page uses Primer's light theme. Rows used to be block spans in a `<pre>` with newlines between them, and each newline drew as a blank line. A range of more than six lines would push the comment far down, so it shows its last six, fading in at the top to say there's more above, under a strip reading "Show all 14 lines" that reveals the rest and then reads "Show less" to fold them again. The page runs no script, so the strip is the label of a hidden checkbox that the stylesheet reads.
 
+### Nothing is fetched while the screens sleep
+
+Loupe crashed twice in a dark wake, the lid closed and no screen: a list refresh finished, and AppKit's layout of the window went round for ever, SwiftUI's hosting view asking for its constraints again on each pass, until AppKit gave up after more passes than the window has views and stopped the app. Which view keeps asking isn't known, but in a dark wake nobody sees the window and the network comes and goes, so rather than chase it, the lists' refresh and the open PRs' watches stop when the screens sleep and start again when they wake, each with a round at once, so the lists are no older than a few seconds when they're next seen. A refresh stopped part way isn't reported as a failure, as it says nothing about GitHub.
+
 ## Not yet decided
 
 Nothing is pending.

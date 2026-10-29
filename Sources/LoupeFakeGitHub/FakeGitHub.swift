@@ -418,10 +418,10 @@ actor FakeGitHub: HTTPTransport {
         }
 
         let body = try JSONDecoder().decode(GraphQLRequest.self, from: try require(request.httpBody))
-        if body.variables.query != nil { await pass(.search) }
+        if body.variables.query != nil { try await pass(.search) }
         let isStackLookup = body.query.contains("stack { entries")
-        if body.variables.ids != nil, !body.query.contains("contexts"), !isStackLookup, body.query.contains("fragment PullRequestRow") { await pass(.lookup) }
-        if body.variables.number != nil { await pass(.numberLookup) }
+        if body.variables.ids != nil, !body.query.contains("contexts"), !isStackLookup, body.query.contains("fragment PullRequestRow") { try await pass(.lookup) }
+        if body.variables.number != nil { try await pass(.numberLookup) }
         if body.query.contains("mergePullRequest(") {
             return (try mergePullRequest(try require(body.variables.input)), httpResponse(url, status: 200))
         }
@@ -451,10 +451,12 @@ actor FakeGitHub: HTTPTransport {
         return (try JSONEncoder().encode(response), httpResponse(url, status: 200))
     }
 
-    /// Waits while requests of this kind are held.
-    private func pass(_ gate: Gate) async {
+    /// Waits while requests of this kind are held, then fails as `URLSession` does if the
+    /// request's task was cancelled meanwhile.
+    private func pass(_ gate: Gate) async throws {
         guard held.contains(gate) else { return }
         await withCheckedContinuation { waiting[gate, default: []].append($0) }
+        if Task.isCancelled { throw URLError(.cancelled) }
     }
 
     private func search(_ variables: GraphQLRequest.Variables) throws -> Envelope<SearchPayload> {

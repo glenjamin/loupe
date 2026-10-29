@@ -436,6 +436,8 @@ public final class PullRequestListModel {
                 if !failures.contains(message) { failures.append(message) }
             }
         }
+        // Stopped part way, as when the screens sleep, it says nothing about GitHub.
+        guard !Task.isCancelled else { return }
         error = failures.isEmpty ? nil : failures.joined(separator: "\n")
     }
 

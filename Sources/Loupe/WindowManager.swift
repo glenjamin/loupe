@@ -17,6 +17,8 @@ final class WindowManager {
     let listSearch: ListSearch
     private let content = TabbedContentController()
     private var window: LoupeWindow?
+    /// The lists' refresh and the open PRs' watches, while the screens are awake.
+    private var refreshing: [Task<Void, Never>] = []
 
     init(tabs: TabsModel) {
         self.tabs = tabs
@@ -227,10 +229,16 @@ final class WindowManager {
     /// commits of those merged unless this is a snapshot run, which shouldn't wait on GitHub. Coming back to the app or its window also
     /// checks the shown PR and reloads any new commits, which were only offered while it was read.
     private func startRefreshing() {
-        Task { await tabs.lists.keepRefreshed() }
-        if SnapshotRun.directory == nil {
-            Task { await tabs.keepWatchingForChanges() }
-            Task { await tabs.keepWatchingMergeCommits() }
+        keepRefreshing()
+        // A refresh landing in a dark wake, the screens off and the lid perhaps closed, can
+        // send the window's layout round for ever until AppKit stops the app; nobody's looking
+        // then anyway, so nothing is fetched until the screens wake, when it all catches up.
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stopRefreshing() }
+        }
+        workspace.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.keepRefreshing() }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -242,6 +250,23 @@ final class WindowManager {
         NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.tabs.checkShownForChanges() }
         }
+    }
+
+    /// Starts refreshing the lists and watching the open PRs, each starting with a round now,
+    /// unless they're already going.
+    private func keepRefreshing() {
+        guard refreshing.isEmpty else { return }
+        refreshing = [Task { await tabs.lists.keepRefreshed() }]
+        if SnapshotRun.directory == nil {
+            refreshing.append(Task { await tabs.keepWatchingForChanges() })
+            refreshing.append(Task { await tabs.keepWatchingMergeCommits() })
+        }
+    }
+
+    /// Stops them, along with any round under way.
+    private func stopRefreshing() {
+        for task in refreshing { task.cancel() }
+        refreshing = []
     }
 }
 

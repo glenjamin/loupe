@@ -1116,6 +1116,22 @@ struct PullRequestListTests {
         #expect(await github.requestCount == requests, "nothing refreshes once cancelled")
     }
 
+    @Test func aRefreshStoppedPartWayIsNotReportedAsFailing() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let model = try listModel(github)
+        await model.refresh()
+
+        await github.hold(.search)
+        let refreshing = Task { await model.keepRefreshed() }
+        await github.arrival(of: .search)
+        refreshing.cancel()
+        await github.release(.search)
+        await refreshing.value
+
+        #expect(model.error == nil)
+        #expect(!model.isLoading)
+    }
+
     @Test func openingAPullRequestHandsItToTheSelectionHandler() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         var opened: [URL] = []
