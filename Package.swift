@@ -19,6 +19,7 @@ let package = Package(
                 "TreeSitterProto",
                 "TreeSitterHCL",
                 "TreeSitterGraphQL",
+                "TreeSitterSCSS",
             ],
             resources: [.copy("Resources/linguist"), .copy("Resources/quote-selection.js"), .copy("Resources/quote-reply.js"), .copy("Resources/relative-times.js")],
             swiftSettings: strictSwift()
@@ -44,6 +45,14 @@ let package = Package(
             name: "TreeSitterGraphQL",
             exclude: ["LICENSE", "README.md", "VERSION"],
             sources: ["src/parser.c"],
+            resources: [.copy("queries")],
+            cSettings: [.headerSearchPath("src")]
+        ),
+        // SCSS, which CodeEditLanguages lacks, vendored by Scripts/update-tree-sitter-scss.sh.
+        .target(
+            name: "TreeSitterSCSS",
+            exclude: ["LICENSE", "README.md", "VERSION"],
+            sources: ["src/parser.c", "src/scanner.c"],
             resources: [.copy("queries")],
             cSettings: [.headerSearchPath("src")]
         ),

@@ -6,6 +6,7 @@ import SwiftTreeSitter
 import TreeSitterGraphQL
 import TreeSitterHCL
 import TreeSitterProto
+import TreeSitterSCSS
 
 /// A grammar the diff view can highlight, chosen as GitHub does: the path's Linguist language,
 /// then the CodeEditLanguages or vendored grammar for it. The first of an ambiguous extension's languages
@@ -188,10 +189,10 @@ private struct Grammar: Sendable {
 
     private static func compile(_ syntax: SyntaxLanguage) -> Grammar? {
         if let vendored = VendoredGrammar(rawValue: syntax.rawValue) {
-            return compile(vendored.tsLanguage, queries: [bundledResource("queries/highlights.scm", in: vendored.bundle)], laterPatternsWin: true)
+            return compile(vendored.tsLanguage, queries: vendored.highlightQueries, laterPatternsWin: true)
         }
         guard let id = TreeSitterLanguage(rawValue: syntax.rawValue) else { return nil }
-        let urls = highlightQueries(id).map { bundledResource("Resources/tree-sitter-\($0.folder)/\($0.file).scm", in: "CodeEditLanguages_CodeEditLanguages") }
+        let urls = highlightQueries(id).map { codeEditLanguagesQuery(folder: $0.folder, file: $0.file) }
         return compile(id.tsLanguage, queries: urls, laterPatternsWin: id != .go)
     }
 
@@ -277,12 +278,14 @@ private enum VendoredGrammar: String {
     case proto
     case hcl
     case graphql
+    case scss
 
     init?(linguistName: String) {
         switch linguistName {
         case "Protocol Buffer": self = .proto
         case "HCL": self = .hcl
         case "GraphQL": self = .graphql
+        case "SCSS": self = .scss
         default: return nil
         }
     }
@@ -292,6 +295,7 @@ private enum VendoredGrammar: String {
         case .proto: tree_sitter_proto()
         case .hcl: tree_sitter_hcl()
         case .graphql: tree_sitter_graphql()
+        case .scss: tree_sitter_scss()
         }
     }
 
@@ -300,6 +304,17 @@ private enum VendoredGrammar: String {
         case .proto: "Loupe_TreeSitterProto"
         case .hcl: "Loupe_TreeSitterHCL"
         case .graphql: "Loupe_TreeSitterGraphQL"
+        case .scss: "Loupe_TreeSitterSCSS"
+        }
+    }
+
+    /// The grammar's highlights query, with that of the grammar it extends beneath it: SCSS's
+    /// query covers only what SCSS adds to CSS, as editors compose it.
+    var highlightQueries: [URL?] {
+        let own = bundledResource("queries/highlights.scm", in: bundle)
+        return switch self {
+        case .scss: [codeEditLanguagesQuery(folder: "css", file: "highlights"), own]
+        case .proto, .hcl, .graphql: [own]
         }
     }
 }
@@ -375,4 +390,8 @@ private extension SyntaxPlan.Side {
         let length = first.utf16.count
         return Self(context: context, text: first, utf16Count: length, lines: lines.filter { $0.source < length })
     }
+}
+
+private func codeEditLanguagesQuery(folder: String, file: String) -> URL? {
+    bundledResource("Resources/tree-sitter-\(folder)/\(file).scm", in: "CodeEditLanguages_CodeEditLanguages")
 }

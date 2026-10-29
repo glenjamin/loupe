@@ -40,6 +40,7 @@ struct SyntaxHighlightingTests {
         ("Dockerfile", "# note"), ("a.sql", "-- note"), ("go.mod", "// note"), ("a.py", "# note"), ("a.md", "# Note"),
         ("a.proto", "// note"), ("main.tf", "# note"), ("prod.tfvars", "# note"), ("a.hcl", "# note"),
         ("a.graphql", "# note"), ("a.gql", "# note"), ("schema.graphqls", "# note"),
+        ("a.scss", "// note"),
     ])
     func everySupportedLanguageHighlights(path: String, line: String) throws {
         #expect(SyntaxLanguage(path: path) != nil)
@@ -185,6 +186,45 @@ struct SyntaxHighlightingTests {
         #expect(colors(of: "User", in: rendered) == [DiffColors.syntaxEntity])
         #expect(colors(of: "implements", in: rendered) == [DiffColors.syntaxKeyword])
         #expect(colors(of: "login", in: rendered) == [DiffColors.syntaxConstant])
+    }
+
+    @Test func colorsAnSCSSFile() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/button.scss b/button.scss
+        --- a/button.scss
+        +++ b/button.scss
+        @@ -0,0 +1,14 @@
+        +// Buttons.
+        +@use "sass:math";
+        +$gap: 4px;
+        +
+        +@mixin pad($size) {
+        +  padding: math.div($size, 2);
+        +}
+        +
+        +.button {
+        +  color: #fff;
+        +  @include pad($gap);
+        +  &:hover { font-weight: bold; }
+        +  /* Lifted. */
+        +}
+
+        """).files.first)
+        let rendered = showing(file)
+
+        #expect(colors(of: "// Buttons.", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: "/* Lifted. */", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: "@use", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "\"sass:math\"", in: rendered) == [DiffColors.syntaxString])
+        #expect(colors(of: "@mixin", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "@include", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "pad($gap)", in: rendered, length: 3) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "4px", in: rendered, length: 1) == [DiffColors.syntaxConstant])
+        // CSS's own syntax is coloured as in a CSS file.
+        #expect(colors(of: "button", in: rendered) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "color", in: rendered) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "font-weight", in: rendered) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "hover", in: rendered) == [DiffColors.syntaxConstant])
     }
 
     @Test func aHunkStartingInsideADeclarationIsColouredAsPartOfIt() throws {
