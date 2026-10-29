@@ -178,6 +178,37 @@ time { color: var(--muted); }
 .hunk-scroll .hunk tr.del { background: var(--del-bg); }
 .hunk-scroll .hunk tr.add .num { background: var(--add-num-bg); color: var(--fg); }
 .hunk-scroll .hunk tr.del .num { background: var(--del-num-bg); color: var(--fg); }
+/* A long thread's snippet: its last six lines, fading in at the top, under a strip that shows
+   them all and hides them again. */
+.hunk-snippet label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--subtle);
+  color: var(--link);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  cursor: pointer;
+}
+.hunk-snippet label:hover { background: var(--reacted-bg); }
+.hunk-snippet label::before { content: "\2195"; font-size: 14px; }
+.hunk-show-all:checked + label .show-all,
+.hunk-show-all:not(:checked) + label .show-less { display: none; }
+.hunk-show-all:not(:checked) ~ .hunk-scroll tr.more { display: none; }
+.hunk-show-all:not(:checked) ~ .hunk-scroll { position: relative; }
+.hunk-show-all:not(:checked) ~ .hunk-scroll::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  background: linear-gradient(#ffffffd9, #ffffff00);
+  pointer-events: none;
+}
 /* Primer's syntax palette, as the diff colours code. */
 .syntax-keyword { color: #cf222e; }
 .syntax-string { color: #0a3069; }

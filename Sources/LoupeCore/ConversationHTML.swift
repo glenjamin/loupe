@@ -185,7 +185,7 @@ public enum ConversationHTML {
 
     /// The last few lines of the hunk, ending on the commented line, as github.com shows.
     /// The commented lines at the end of the hunk, as github.com shows them: all of a thread on
-    /// several lines, under which lines they are, or else the last four. Rows are numbered on the
+    /// several lines, under which lines they are (the last six until "Show all"), or else the last four. Rows are numbered on the
     /// thread's side and highlighted as the diff is, parsing the whole hunk for context.
     private static func hunk(_ comment: ReviewComment, in thread: ReviewThread?) -> String {
         guard let parsed = DiffParser.parseHunks(comment.diffHunk).first, !parsed.lines.isEmpty else { return "" }
@@ -226,14 +226,22 @@ public enum ConversationHTML {
             for offset in run.range.lowerBound..<run.range.upperBound where offset < length { styles[offset] = run.style }
         }
 
-        let rows = zip(shown, offsets).map { line, offset in
+        // Past six lines, the rest start hidden, under a control to show them all and hide them
+        // again; it's a checkbox the stylesheet reads, as the page runs no script.
+        let hidden = max(0, shown.count - 6)
+        let rows = zip(shown, offsets).enumerated().map { index, row in
+            let (line, offset) = row
             let (kind, marker) = line.isAddition ? ("add", "+") : line.isDeletion ? ("del", "-") : ("ctx", " ")
+            let folding = index < hidden ? " more" : ""
             let lineNumber = number(line, on: side) ?? line.newLine ?? line.oldLine
             let code = Array(line.text.utf16)
             let html = highlighted(code, styles: Array(styles[offset..<offset + code.count]))
-            return #"<tr class="\#(kind)"><td class="num">\#(lineNumber.map(String.init) ?? "")</td><td class="code"><span class="marker">\#(marker)</span>\#(html)</td></tr>"#
+            return #"<tr class="\#(kind)\#(folding)"><td class="num">\#(lineNumber.map(String.init) ?? "")</td><td class="code"><span class="marker">\#(marker)</span>\#(html)</td></tr>"#
         }.joined()
-        return #"\#(caption)<div class="hunk-scroll"><table class="hunk">\#(rows)</table></div>"#
+        let table = #"<div class="hunk-scroll"><table class="hunk">\#(rows)</table></div>"#
+        guard hidden > 0 else { return caption + table }
+        let id = escape("hunk-\(comment.id)")
+        return #"\#(caption)<div class="hunk-snippet"><input type="checkbox" class="hunk-show-all" id="\#(id)" hidden><label for="\#(id)"><span class="show-all">Show all \#(shown.count) lines</span><span class="show-less">Show less</span></label>\#(table)</div>"#
     }
 
     /// A line's number in the side's version of the file, if it's in that version.

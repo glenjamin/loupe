@@ -49,6 +49,20 @@ struct ConversationHTMLTests {
         #expect(!page.contains(#"class="hunk-lines""#), "no range to name")
     }
 
+
+    @Test func aThreadOnMoreThanSixLinesShowsTheLastSixUntilShowAllIsChosen() throws {
+        let long = try render(snippetConversation(lines: 14))
+        let snippet = try hunk(in: long)
+        #expect(rowNumbers(in: snippet) == Array(1...14), "every line is there for Show all to reveal")
+        #expect(snippet.matches(of: /<tr class="add more">/).count == 8, "all but the last six start hidden")
+        #expect(long.contains(#"<input type="checkbox" class="hunk-show-all" id="hunk-rc1" hidden><label for="hunk-rc1"><span class="show-all">Show all 14 lines</span><span class="show-less">Show less</span></label>"#), "one control both ways")
+
+        let six = try render(snippetConversation(lines: 6))
+        #expect(!six.contains(#"class="hunk-show-all""#) && !six.contains("more\""), "six lines show whole")
+    }
+
+
+
     @Test func aThreadsSnippetIsHighlightedAsTheDiffIsWithItsRowsAndTabsKept() throws {
         let snippet = try hunk(in: render(snippetConversation(startLine: 3)))
         #expect(snippet.contains(#"<span class="syntax-keyword">func</span>"#))
@@ -298,17 +312,27 @@ private let conversation = Conversation(
 
 /// A review on a Go hunk whose last line, 7, is commented on, from `startLine` when on several.
 private func snippetConversation(startLine: Int?) -> Conversation {
-    let diffHunk = "@@ -1,1 +1,7 @@ package main\n import \"fmt\"\n+\n+func add(a, b int) int {\n+\treturn a + b\n+}\n+\n+// done"
+    snippetConversation(startLine: startLine, diffHunk: "@@ -1,1 +1,7 @@ package main\n import \"fmt\"\n+\n+func add(a, b int) int {\n+\treturn a + b\n+}\n+\n+// done", line: 7)
+}
+
+/// A review on a hunk of `count` added lines, all commented on.
+private func snippetConversation(lines count: Int) -> Conversation {
+    let added = (1...count).map { "+x\($0) := \($0)" }.joined(separator: "\n")
+    return snippetConversation(startLine: 1, diffHunk: "@@ -0,0 +1,\(count) @@\n" + added, line: count)
+}
+
+/// A review commenting on `line`, the hunk's last, from `startLine` when on several.
+private func snippetConversation(startLine: Int?, diffHunk: String, line: Int) -> Conversation {
     let author = Participant(login: "reviewer", avatarURL: nil)
     return Conversation(
         id: "PR_2", author: author, createdAt: now, bodyHTML: "", reactions: [],
         items: [
             TimelineItem(id: "r1", date: now, actor: author, event: .review(state: .commented, bodyHTML: "", comments: [
-                ReviewComment(id: "rc1", bodyHTML: "<p>Nice</p>", path: "main.go", line: 7, originalLine: 7, diffHunk: diffHunk, isOutdated: false, isMinimized: false, replyTo: nil),
+                ReviewComment(id: "rc1", bodyHTML: "<p>Nice</p>", path: "main.go", line: line, originalLine: line, diffHunk: diffHunk, isOutdated: false, isMinimized: false, replyTo: nil),
             ])),
         ],
         threads: [
-            ReviewThread(id: "t1", isResolved: false, isOutdated: false, path: "main.go", line: 7, startLine: startLine, originalLine: 7, originalStartLine: startLine, diffHunk: diffHunk, comments: [
+            ReviewThread(id: "t1", isResolved: false, isOutdated: false, path: "main.go", line: line, startLine: startLine, originalLine: line, originalStartLine: startLine, diffHunk: diffHunk, comments: [
                 ThreadComment(id: "rc1", author: author, createdAt: now, bodyHTML: "<p>Nice</p>", isMinimized: false),
             ]),
         ],
