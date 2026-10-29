@@ -3,6 +3,7 @@ import CodeEditLanguages
 import CodeLanguages_Container
 import os
 import SwiftTreeSitter
+import TreeSitterGraphQL
 import TreeSitterHCL
 import TreeSitterProto
 
@@ -275,11 +276,13 @@ private extension TreeSitterLanguage {
 private enum VendoredGrammar: String {
     case proto
     case hcl
+    case graphql
 
     init?(linguistName: String) {
         switch linguistName {
         case "Protocol Buffer": self = .proto
         case "HCL": self = .hcl
+        case "GraphQL": self = .graphql
         default: return nil
         }
     }
@@ -288,6 +291,7 @@ private enum VendoredGrammar: String {
         switch self {
         case .proto: tree_sitter_proto()
         case .hcl: tree_sitter_hcl()
+        case .graphql: tree_sitter_graphql()
         }
     }
 
@@ -295,6 +299,7 @@ private enum VendoredGrammar: String {
         switch self {
         case .proto: "Loupe_TreeSitterProto"
         case .hcl: "Loupe_TreeSitterHCL"
+        case .graphql: "Loupe_TreeSitterGraphQL"
         }
     }
 }

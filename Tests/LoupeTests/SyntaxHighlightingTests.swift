@@ -39,6 +39,7 @@ struct SyntaxHighlightingTests {
         ("a.sh", "# note"), ("a.css", "/* note */"), ("a.html", "<!-- note -->"),
         ("Dockerfile", "# note"), ("a.sql", "-- note"), ("go.mod", "// note"), ("a.py", "# note"), ("a.md", "# Note"),
         ("a.proto", "// note"), ("main.tf", "# note"), ("prod.tfvars", "# note"), ("a.hcl", "# note"),
+        ("a.graphql", "# note"), ("a.gql", "# note"), ("schema.graphqls", "# note"),
     ])
     func everySupportedLanguageHighlights(path: String, line: String) throws {
         #expect(SyntaxLanguage(path: path) != nil)
@@ -144,6 +145,46 @@ struct SyntaxHighlightingTests {
         #expect(colors(of: "false", in: rendered) == [DiffColors.syntaxConstant])
         // A nested block is named as a type is.
         #expect(colors(of: "lifecycle", in: rendered) == [DiffColors.syntaxEntity])
+    }
+
+    @Test func colorsAGraphQLFile() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/repo.graphql b/repo.graphql
+        --- a/repo.graphql
+        +++ b/repo.graphql
+        @@ -0,0 +1,13 @@
+        +# Looks up a repository.
+        +query Repo($owner: String!, $first: Int = 10) {
+        +  repository(owner: $owner, name: "app") {
+        +    issues(first: $first) @include(if: true) {
+        +      totalCount
+        +    }
+        +  }
+        +}
+        +
+        +"Someone with an account."
+        +type User implements Node {
+        +  login: String!
+        +}
+
+        """).files.first)
+        let rendered = showing(file)
+
+        #expect(colors(of: "# Looks up a repository.", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: "query", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "$owner:", in: rendered, length: 6) == [DiffColors.syntaxVariable])
+        #expect(colors(of: "String!", in: rendered, length: 6) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "10", in: rendered) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "repository(", in: rendered, length: 10) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "name:", in: rendered, length: 4) == [DiffColors.syntaxVariable])
+        #expect(colors(of: "\"app\"", in: rendered) == [DiffColors.syntaxString])
+        #expect(colors(of: "@include", in: rendered) == [DiffColors.syntaxEntity])
+        // A description is documentation, so it reads as a comment.
+        #expect(colors(of: "\"Someone with an account.\"", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: "type", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "User", in: rendered) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "implements", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "login", in: rendered) == [DiffColors.syntaxConstant])
     }
 
     @Test func aHunkStartingInsideADeclarationIsColouredAsPartOfIt() throws {

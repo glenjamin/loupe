@@ -1158,6 +1158,10 @@ To review's one list mixes each stage's heading, its PRs, "Nothing here" and the
 
 GitHub lets a reviewer who can write to the repo merge a PR, and once the viewer has approved, merging is often what's left. So under "You approved" on someone else's open PR there's a small Merge link, in the caption's size so the approval stays what the section says. It merges as the merge box does on the viewer's own PRs, with the same readiness (only approved PRs GitHub would merge, the bottom of a stack first), the same confirmation naming the branches, ⇧⌘M, a merge commit and GitHub's refusal shown beneath. While GitHub won't merge it, the link is greyed out and resting on it says why, rather than the red reason the merge box gives, which would outshout the approval. A draft offers no link, as leaving draft is its author's call. Whether the viewer can write to the repo isn't looked up: GitHub's refusal says so.
 
+### GraphQL is vendored as Protocol Buffers is, with the grammar's own query
+
+GraphQL schemas and queries were plain. The grammar is bkegley/tree-sitter-graphql, the one nvim-treesitter and Helix use, vendored as the `TreeSitterGraphQL` target as "Grammars CodeEditLanguages lacks are vendored as C targets" describes; it has no tags and nothing on its default branch since 2021, so it's pinned to the commit nvim-treesitter pins, recorded in `VERSION`. Its parser is ABI 13, the oldest the runtime still accepts. Unlike HCL it ships a highlights query, which is used as is; nvim-treesitter's is the same patterns with newer capture names, which would colour no differently. The grammar has no C binding, so the update script writes the header declaring its one function. Linguist names `.graphql`, `.gql` and `.graphqls` files GraphQL. Descriptions take the comment colour, as the grammar's query says, types the entity colour, fields the constant colour and arguments the variable colour.
+
 ## Not yet decided
 
 Nothing is pending.
