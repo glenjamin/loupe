@@ -41,6 +41,7 @@ struct SyntaxHighlightingTests {
         ("a.proto", "// note"), ("main.tf", "# note"), ("prod.tfvars", "# note"), ("a.hcl", "# note"),
         ("a.graphql", "# note"), ("a.gql", "# note"), ("schema.graphqls", "# note"),
         ("a.scss", "// note"),
+        ("Makefile", "# note"), ("GNUmakefile", "# note"), ("rules.mk", "# note"), ("build.mak", "# note"),
     ])
     func everySupportedLanguageHighlights(path: String, line: String) throws {
         #expect(SyntaxLanguage(path: path) != nil)
@@ -72,8 +73,8 @@ struct SyntaxHighlightingTests {
         #expect(SyntaxLanguage(path: "deploy/Dockerfile") == SyntaxLanguage(path: "a.dockerfile"))
         #expect(SyntaxLanguage(path: "go.mod") != nil)
         #expect(SyntaxLanguage(path: "go.mod") != SyntaxLanguage(path: "a.go"))
-        // Linguist knows Makefiles, but there's no grammar to colour them with.
-        #expect(SyntaxLanguage(path: "Makefile") == nil)
+        #expect(SyntaxLanguage(path: "Makefile") == SyntaxLanguage(path: "rules.mk"))
+        #expect(SyntaxLanguage(path: "Makefile.in") == SyntaxLanguage(path: "rules.mk"))
     }
 
     @Test func picksALanguageByTheLongestExtension() {
@@ -257,6 +258,42 @@ struct SyntaxHighlightingTests {
         #expect(colors(of: "color", in: rendered) == [DiffColors.syntaxConstant])
         #expect(colors(of: "font-weight", in: rendered) == [DiffColors.syntaxConstant])
         #expect(colors(of: "hover", in: rendered) == [DiffColors.syntaxConstant])
+    }
+
+    @Test func colorsAMakefile() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/Makefile b/Makefile
+        --- a/Makefile
+        +++ b/Makefile
+        @@ -0,0 +1,10 @@
+        +# Builds the app.
+        +.PHONY: build
+        +GO ?= go
+        +SOURCES := $(wildcard *.go)
+        +
+        +build: $(SOURCES)
+        +\t@$(GO) build -o $@ ./...
+        +ifeq ($(CI),true)
+        +include ci.mk
+        +endif
+
+        """).files.first)
+        let rendered = showing(file)
+
+        #expect(colors(of: "# Builds the app.", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: ".PHONY", in: rendered) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "build:", in: rendered, length: 5) == [DiffColors.syntaxEntity])
+        // A variable's name takes the string colour, as the query matches the shell's.
+        #expect(colors(of: "GO ?=", in: rendered, length: 2) == [DiffColors.syntaxString])
+        #expect(colors(of: "?=", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "wildcard", in: rendered) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "$(SOURCES)", in: rendered, length: 2) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "SOURCES)", in: rendered, length: 7) == [DiffColors.syntaxString])
+        for keyword in ["ifeq", "include", "endif"] {
+            #expect(colors(of: keyword, in: rendered) == [DiffColors.syntaxKeyword], "\(keyword)")
+        }
+        // A recipe is shell, which isn't parsed, so only Make's own syntax in it is coloured.
+        #expect(colors(of: "build -o", in: rendered) == [NSColor.textColor])
     }
 
     @Test func aHunkStartingInsideADeclarationIsColouredAsPartOfIt() throws {

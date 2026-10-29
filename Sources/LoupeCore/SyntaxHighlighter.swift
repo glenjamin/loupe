@@ -5,6 +5,7 @@ import os
 import SwiftTreeSitter
 import TreeSitterGraphQL
 import TreeSitterHCL
+import TreeSitterMake
 import TreeSitterProto
 import TreeSitterSCSS
 
@@ -284,6 +285,7 @@ private enum VendoredGrammar: String {
     case hcl
     case graphql
     case scss
+    case make
 
     init?(linguistName: String) {
         switch linguistName {
@@ -291,6 +293,7 @@ private enum VendoredGrammar: String {
         case "HCL": self = .hcl
         case "GraphQL": self = .graphql
         case "SCSS": self = .scss
+        case "Makefile": self = .make
         default: return nil
         }
     }
@@ -301,6 +304,7 @@ private enum VendoredGrammar: String {
         case .hcl: tree_sitter_hcl()
         case .graphql: tree_sitter_graphql()
         case .scss: tree_sitter_scss()
+        case .make: tree_sitter_make()
         }
     }
 
@@ -310,6 +314,7 @@ private enum VendoredGrammar: String {
         case .hcl: "Loupe_TreeSitterHCL"
         case .graphql: "Loupe_TreeSitterGraphQL"
         case .scss: "Loupe_TreeSitterSCSS"
+        case .make: "Loupe_TreeSitterMake"
         }
     }
 
@@ -319,7 +324,7 @@ private enum VendoredGrammar: String {
         let own = bundledResource("queries/highlights.scm", in: bundle)
         return switch self {
         case .scss: [codeEditLanguagesQuery(folder: "css", file: "highlights"), own]
-        case .proto, .hcl, .graphql: [own]
+        case .proto, .hcl, .graphql, .make: [own]
         }
     }
 }

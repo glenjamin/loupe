@@ -21,6 +21,7 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 - `TreeSitterHCL`: the vendored HCL grammar (C), for Terraform, with nvim-treesitter's highlights query; refreshed by `Scripts/update-tree-sitter-hcl.sh`, never edited by hand.
 - `TreeSitterGraphQL`: the vendored GraphQL grammar (C) and its highlights query; refreshed by `Scripts/update-tree-sitter-graphql.sh`, never edited by hand.
 - `TreeSitterSCSS`: the vendored SCSS grammar (C) and its highlights query, which the highlighter puts CodeEditLanguages' CSS query beneath; refreshed by `Scripts/update-tree-sitter-scss.sh`, never edited by hand.
+- `TreeSitterMake`: the vendored Makefile grammar (C) and its highlights query; refreshed by `Scripts/update-tree-sitter-make.sh`, never edited by hand.
 - `LoupeModel`: shared value types.
 - `LoupeGitHub`: GraphQL client, hand-written queries and `Codable`, no Apollo.
 - `LoupeStore`: SQLite via GRDB, with migrations.
