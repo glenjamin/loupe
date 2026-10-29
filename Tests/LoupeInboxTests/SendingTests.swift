@@ -151,7 +151,7 @@ struct SendingTests {
         let page = try conversationPage(tab)
         let card = try #require(section(of: page, from: #"data-thread-id="\#(shown.id)""#))
         #expect(card.contains("Is anything still using this?") && card.contains("Sending…"))
-        #expect(card.contains("50 line"), "its line of code")
+        #expect(text(of: card).contains("50 line"), "its line of code")
 
         await app.conversations.release(.comment)
         await sending.value
@@ -387,6 +387,11 @@ struct SendingTests {
 
     private func conversationPage(_ tab: PullRequestTab) throws -> String {
         ConversationHTML.page(try #require(tab.conversation), template: "{{content}}", stylesheet: "")
+    }
+
+    /// `html`'s text without its markup, as a reader sees it whatever highlighting splits it.
+    private func text(of html: String) -> String {
+        html.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
     }
 
     /// The page from `marker` to the next thread, or its end.
