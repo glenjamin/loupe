@@ -128,6 +128,7 @@ Icon/render.sh
 ```sh
 ./start.sh                 # debug build of Loupe.app, then opens it
 ./start.sh release         # same with an optimised build
+./start.sh install         # release build copied to ~/Applications/Loupe.app
 sh Scripts/bundle.sh && open .build/Loupe.app   # the two steps separately
 ```
 

@@ -19,6 +19,8 @@
   --neutral-bg: #eff2f5;
   --add-bg: #dafbe1;
   --del-bg: #ffebe9;
+  --add-num-bg: #aceebb;
+  --del-num-bg: #ffcecb;
   --code-bg: #818b981f;
   --reacted-bg: #ddf4ff;
 }
@@ -147,17 +149,74 @@ time { color: var(--muted); }
   line-height: 20px;
 }
 .thread-actions a:hover { background: var(--subtle); text-decoration: none; }
-.hunk {
+.hunk-lines { padding: 6px 12px; font-size: 12px; color: var(--muted); }
+.hunk-lines .add { color: var(--success); }
+.hunk-lines .del { color: var(--danger); }
+.hunk-scroll { border-bottom: 1px solid var(--border); overflow-x: auto; }
+/* Under .hunk-scroll to win over the rules for markdown tables in a review's body. */
+.hunk-scroll .hunk {
+  display: table;
+  min-width: 100%;
   margin: 0;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--border);
+  border-collapse: collapse;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   line-height: 20px;
-  overflow-x: auto;
 }
-.hunk span { display: block; padding: 0 12px; white-space: pre; }
-.hunk .add { background: var(--add-bg); }
-.hunk .del { background: var(--del-bg); }
+.hunk-scroll .hunk tr { background: none; }
+.hunk-scroll .hunk td { padding: 0; border: 0; vertical-align: top; }
+.hunk-scroll .hunk .num {
+  width: 1%;
+  padding: 0 10px 0 16px;
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+}
+.hunk-scroll .hunk .code { padding: 0 12px 0 8px; white-space: pre; tab-size: 4; }
+.hunk .marker { display: inline-block; width: 2ch; user-select: none; }
+.hunk-scroll .hunk tr.add { background: var(--add-bg); }
+.hunk-scroll .hunk tr.del { background: var(--del-bg); }
+.hunk-scroll .hunk tr.add .num { background: var(--add-num-bg); color: var(--fg); }
+.hunk-scroll .hunk tr.del .num { background: var(--del-num-bg); color: var(--fg); }
+/* A long thread's snippet: its last six lines, fading in at the top, under a strip that shows
+   them all and hides them again. */
+.hunk-snippet label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--subtle);
+  color: var(--link);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  cursor: pointer;
+}
+.hunk-snippet label:hover { background: var(--reacted-bg); }
+.hunk-snippet label::before { content: "\2195"; font-size: 14px; }
+.hunk-show-all:checked + label .show-all,
+.hunk-show-all:not(:checked) + label .show-less { display: none; }
+.hunk-show-all:not(:checked) ~ .hunk-scroll tr.more { display: none; }
+.hunk-show-all:not(:checked) ~ .hunk-scroll { position: relative; }
+.hunk-show-all:not(:checked) ~ .hunk-scroll::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  background: linear-gradient(#ffffffd9, #ffffff00);
+  pointer-events: none;
+}
+/* Primer's syntax palette, as the diff colours code. */
+.syntax-keyword { color: #cf222e; }
+.syntax-string { color: #0a3069; }
+.syntax-comment { color: #6e7781; }
+.syntax-entity { color: #8250df; }
+.syntax-constant { color: #0550ae; }
+.syntax-variable { color: #953800; }
+.syntax-tag { color: #116329; }
 .thread-comment { display: flex; gap: 8px; padding: 10px 12px; }
 .thread-comment + .thread-comment { border-top: 1px solid var(--border-muted); }
 .thread-comment > div { flex: 1; min-width: 0; }
