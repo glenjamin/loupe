@@ -1150,6 +1150,10 @@ A thread in the conversation showed the last four lines of its diff hunk. That's
 
 Loupe crashed twice in a dark wake, the lid closed and no screen: a list refresh finished, and AppKit's layout of the window went round for ever, SwiftUI's hosting view asking for its constraints again on each pass, until AppKit gave up after more passes than the window has views and stopped the app. Which view keeps asking isn't known, but in a dark wake nobody sees the window and the network comes and goes, so rather than chase it, the lists' refresh and the open PRs' watches stop when the screens sleep and start again when they wake, each with a round at once, so the lists are no older than a few seconds when they're next seen. A refresh stopped part way isn't reported as a failure, as it says nothing about GitHub.
 
+### To review's rows each have an id of their own
+
+To review's one list mixes each stage's heading, its PRs, "Nothing here" and the stale toggle, and a refresh moves PRs between stages as the viewer's reviews change. Built as a `ForEach` of stages each holding rows that come and go on conditions, only the PRs had ids; the rest had SwiftUI's structural ones, and an update moving rows crashed AppKit's table as it measured a row's height. The list is now one flat run of rows, each with an id of its own (a stage's heading, empty word and toggle by the stage, a PR by its id), the non-PR rows unselectable, so the table is told plainly which row went where. It looks and behaves as before.
+
 ## Not yet decided
 
 Nothing is pending.

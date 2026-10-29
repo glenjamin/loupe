@@ -283,40 +283,51 @@ struct ReviewColumn: View {
     @State private var showingStale: Set<ReviewStage> = []
 
     var body: some View {
-        let sections = ReviewStage.allCases.map { stage in
-            (stage: stage, listing: model.listing(in: .toReview, stage: stage, includingClosed: showsClosed, includingStale: showingStale.contains(stage)))
-        }
+        let rows = rows
         List(selection: $selection) {
-            ForEach(sections, id: \.stage) { section in
-                // A plain row rather than a section header, which would stay pinned over the rows.
-                Text("\(section.stage.title) (\(section.listing.count))")
-                    .font(.headline)
-                    .padding(.top, section.stage == ReviewStage.allCases.first ? 0 : 12)
-                    .accessibilityAddTraits(.isHeader)
-                if section.listing.isEmpty {
+            ForEach(rows) { row in
+                switch row {
+                case let .heading(stage, count):
+                    // A plain row rather than a section header, which would stay pinned over the rows.
+                    Text("\(stage.title) (\(count))")
+                        .font(.headline)
+                        .padding(.top, stage == ReviewStage.allCases.first ? 0 : 12)
+                        .accessibilityAddTraits(.isHeader)
+                        .selectionDisabled()
+                case .empty:
                     Text(model.isSearching ? "No matches" : "Nothing here")
                         .foregroundStyle(.secondary)
-                }
-                ForEach(section.listing) { listed in
+                        .selectionDisabled()
+                case let .pullRequest(listed):
                     ListedRow(listed: listed, list: .toReview, showsAuthor: true, model: model)
-                }
-                let stale = model.staleCount(in: .toReview, stage: section.stage, includingClosed: showsClosed)
-                if stale > 0 {
-                    StaleToggle(count: stale, isShown: Binding {
-                        showingStale.contains(section.stage)
+                case let .stale(stage, count):
+                    StaleToggle(count: count, isShown: Binding {
+                        showingStale.contains(stage)
                     } set: { shown in
-                        if shown { showingStale.insert(section.stage) } else { showingStale.remove(section.stage) }
+                        if shown { showingStale.insert(stage) } else { showingStale.remove(stage) }
                     })
+                    .selectionDisabled()
                 }
             }
         }
         .onKeyPress(.return) {
-            let pullRequests = sections.flatMap { $0.listing.map(\.pullRequest) }
-            guard let pullRequest = pullRequests.first(where: { $0.id == selection }) else { return .ignored }
-            model.open(pullRequest)
+            guard case let .pullRequest(listed)? = rows.first(where: { $0.id == selection }) else { return .ignored }
+            model.open(listed.pullRequest)
             return .handled
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Each stage's heading, then its PRs or a word that it has none, then any toggle for its
+    /// stale ones, in one list so the stages take only the room their PRs need.
+    private var rows: [ReviewRow] {
+        ReviewStage.allCases.flatMap { stage in
+            let listing = model.listing(in: .toReview, stage: stage, includingClosed: showsClosed, includingStale: showingStale.contains(stage))
+            let stale = model.staleCount(in: .toReview, stage: stage, includingClosed: showsClosed)
+            return [.heading(stage, count: listing.count)]
+                + (listing.isEmpty ? [.empty(stage)] : listing.map(ReviewRow.pullRequest))
+                + (stale > 0 ? [.stale(stage, count: stale)] : [])
+        }
     }
 }
 
@@ -728,6 +739,25 @@ private extension ReviewStage {
         case .toReview: "To review"
         case .reviewing: "Reviewing"
         case .approved: "Approved"
+        }
+    }
+}
+
+/// A row of To review's list. Each has an id of its own, the PR's for a PR, so as a refresh
+/// moves PRs between stages AppKit's table is told plainly which row went where, which it
+/// needs to keep its rows' heights straight.
+private enum ReviewRow: Identifiable {
+    case heading(ReviewStage, count: Int)
+    case empty(ReviewStage)
+    case pullRequest(StackedPullRequest)
+    case stale(ReviewStage, count: Int)
+
+    var id: String {
+        switch self {
+        case let .heading(stage, _): "heading-\(stage)"
+        case let .empty(stage): "empty-\(stage)"
+        case let .pullRequest(listed): listed.id
+        case let .stale(stage, _): "stale-\(stage)"
         }
     }
 }
