@@ -91,12 +91,18 @@ public struct PullRequestDiffer: Sendable {
         return Replay(tree: replayed, head: head, unseparated: unseparated, isUnchanged: replayed == (try await headTree.trimmed))
     }
 
-    /// The paths that conflict when `head` is merged into `base`, as merging the PR on GitHub
-    /// would find them, in git's order; none when it merges cleanly. Worked out with `git
-    /// merge-tree`, which leaves the checkout's branches, index and working tree alone, its
+    /// The paths that conflict when `head`, of PR `number`, is merged into branch `baseRefName`
+    /// as the remote has it now, as merging the PR on GitHub would find them, in git's order;
+    /// none when it merges cleanly. The branch's tip is fetched into
+    /// `refs/loupe/pull/<number>/base` because GitHub judges conflicts against it, while the
+    /// PR's `baseRefOid` stays where the base was when the head was last pushed. Worked out with
+    /// `git merge-tree`, which leaves the checkout's branches, index and working tree alone, its
     /// objects written to `replayedObjects`.
-    public func conflicts(mergingHead head: String, into base: String, in checkout: URL) async throws -> [String] {
-        try await mergeTree([base, head], in: checkout, environment: writingOwnObjects(in: checkout)).conflicted
+    public func conflicts(mergingHead head: String, of number: Int, of repository: String, into baseRefName: String, in checkout: URL) async throws -> [String] {
+        let remote = await Git.remotes(of: checkout).matching(repository)?.name ?? "origin"
+        let base = "refs/loupe/pull/\(number)/base"
+        try await fetch([remote, "+refs/heads/\(baseRefName):\(base)"], in: checkout)
+        return try await mergeTree([base, head], in: checkout, environment: writingOwnObjects(in: checkout)).conflicted
     }
 
     /// The changes between two commits: the diff of the paths to review, and the hidden paths

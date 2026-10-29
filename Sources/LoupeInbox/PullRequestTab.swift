@@ -176,8 +176,8 @@ public final class PullRequestTab: Identifiable {
     /// onto the new base, which the changes since are diffed from instead.
     private var replays: [DiffRange: Replay] = [:]
     private var preparingAnchors: Task<Void, Never>?
-    /// The files that conflict when a head is merged into a base, by the range from the base to
-    /// the head, once looked for.
+    /// The files that conflict when a diff's head is merged into its base branch's tip, by the
+    /// diff's range from its base to its head, once looked for.
     private var conflicts: [DiffRange: ConflictedFiles] = [:]
     private var findingConflicts: Task<Void, Never>?
     /// Each hidden file's diff once asked for, by range and path.
@@ -647,10 +647,11 @@ public final class PullRequestTab: Identifiable {
         case .finding?, .unavailable?, nil: break
         }
         let differ = differ
+        let pullRequest = pullRequest
         let task = Task {
             conflicts[range] = .finding
             do {
-                conflicts[range] = .found(try await differ.conflicts(mergingHead: range.head, into: range.base, in: checkout))
+                conflicts[range] = .found(try await differ.conflicts(mergingHead: range.head, of: pullRequest.number, of: pullRequest.repository, into: pullRequest.baseRefName, in: checkout))
             } catch {
                 conflicts[range] = .unavailable(error.localizedDescription)
             }
@@ -1330,7 +1331,7 @@ public final class PullRequestTab: Identifiable {
         }
     }
 
-    /// From the base the diff fetched to its head, which a merge of the PR would join.
+    /// Names a look for the diff's conflicts; the base branch merged into is fetched as it's made.
     private func conflictRange(of review: ReviewDiff) -> DiffRange {
         DiffRange(base: review.base, head: review.headOid)
     }

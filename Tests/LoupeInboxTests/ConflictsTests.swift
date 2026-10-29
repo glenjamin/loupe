@@ -50,6 +50,23 @@ struct ConflictsTests {
         #expect(tab.conflictedFiles == .found([]))
     }
 
+    @Test func theFilesAreFoundAgainstTheBaseBranchsTipThoughGitHubsBaseOidStaysWhereTheHeadWasPushed() async throws {
+        let app = try await SinceApp()
+        let (pullRequest, head) = try await app.pushPullRequest()
+        let pushedOnto = try #require(app.tabs.lists.pullRequest(id: pullRequest.id)?.baseRefOid)
+        // The base moves on after the last push, changing the PR's lines; GitHub says it now
+        // conflicts, but keeps the base it recorded when the head was pushed.
+        try await app.moveBase(["app.go": "package app\n\nfunc Hello() string { return \"hiya\" }\n"])
+        try await app.github.edit(pullRequest.id) { $0.baseRefName = "main" }
+        try await app.github.setMergeState(of: pullRequest.id, "DIRTY", mergeable: "CONFLICTING")
+        await app.tabs.lists.refresh()
+        let tab = try await app.open(pullRequest)
+
+        #expect(tab.pullRequest.baseRefOid == pushedOnto)
+        #expect(tab.ready?.headOid == head)
+        #expect(tab.conflictedFiles == .found(["app.go"]))
+    }
+
     @Test func aPullRequestGitHubDoesntSayConflictsIsntLookedAtUntilAsked() async throws {
         let app = try await SinceApp()
         let (pullRequest, _) = try await app.pushPullRequest()
