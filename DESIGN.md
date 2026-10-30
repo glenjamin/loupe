@@ -1186,6 +1186,10 @@ Handlebars templates were plain. There's no established Handlebars tree-sitter g
 
 A PR GitHub said conflicted showed "No conflicts with master as last fetched", and Reload didn't change it. The local merge was into the PR's `baseRefOid`, but GitHub only moves that when the head is pushed, while it judges `mergeable` against the base branch's current tip. So a base that moved on after the last push into the PR's lines left Loupe merging into the old base for good. Looking for conflicts now fetches the base branch from the checkout's remote into `refs/loupe/pull/<number>/base`, beside the PR's head, and merges into that. This revises "The Conflicts badge lists the conflicting files, found by merging locally". The diff still runs from where the head branched off `baseRefOid`, so it still matches GitHub's files changed. Asking GitHub for the branch's tip (`baseRef { target { oid } }`) in the lookup that brings `mergeable` would have meant storing another oid and fetching it by oid anyway. The fetch costs a round trip only for PRs that GitHub says conflict, or when the popover asks, and "as last fetched" and Reload now mean what they say. Offline, the popover says the fetch failed rather than giving an answer for an old base.
 
+### Nothing is fetched while the screen is locked either
+
+Loupe crashed the same way again after the screens woke: they woke onto the lock screen, refreshing started at once, a request failed on a connection dropped in sleep, and the window's layout went round until AppKit stopped the app. All three crashes so far came while the screen was locked, so refreshing and the open PRs' watches now also stop while it's locked, starting again, with a round at once, only when the screens are both awake and unlocked. Which view keeps asking for layout is still unknown.
+
 ## Not yet decided
 
 Nothing is pending.

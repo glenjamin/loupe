@@ -19,6 +19,7 @@ final class WindowManager {
     private var window: LoupeWindow?
     /// The lists' refresh and the open PRs' watches, while the screens are awake.
     private var refreshing: [Task<Void, Never>] = []
+    private var refreshPauses: Set<RefreshPause> = []
 
     init(tabs: TabsModel) {
         self.tabs = tabs
@@ -230,15 +231,22 @@ final class WindowManager {
     /// checks the shown PR and reloads any new commits, which were only offered while it was read.
     private func startRefreshing() {
         keepRefreshing()
-        // A refresh landing in a dark wake, the screens off and the lid perhaps closed, can
-        // send the window's layout round for ever until AppKit stops the app; nobody's looking
-        // then anyway, so nothing is fetched until the screens wake, when it all catches up.
+        // A refresh landing while the screen is locked or asleep can send the window's layout
+        // round for ever until AppKit stops the app; nobody's looking then anyway, so nothing
+        // is fetched until the screens are awake and unlocked, when it all catches up.
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.stopRefreshing() }
+            MainActor.assumeIsolated { self?.pauseRefreshing(.screensAsleep, true) }
         }
         workspace.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.keepRefreshing() }
+            MainActor.assumeIsolated { self?.pauseRefreshing(.screensAsleep, false) }
+        }
+        let distributed = DistributedNotificationCenter.default()
+        distributed.addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pauseRefreshing(.screenLocked, true) }
+        }
+        distributed.addObserver(forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pauseRefreshing(.screenLocked, false) }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -263,10 +271,16 @@ final class WindowManager {
         }
     }
 
-    /// Stops them, along with any round under way.
-    private func stopRefreshing() {
-        for task in refreshing { task.cancel() }
-        refreshing = []
+    /// Stops them, along with any round under way, while there's any reason to, and starts them
+    /// again once there's none.
+    private func pauseRefreshing(_ reason: RefreshPause, _ paused: Bool) {
+        if paused { refreshPauses.insert(reason) } else { refreshPauses.remove(reason) }
+        if refreshPauses.isEmpty {
+            keepRefreshing()
+        } else {
+            for task in refreshing { task.cancel() }
+            refreshing = []
+        }
     }
 }
 
@@ -501,4 +515,8 @@ func copyText(_ text: String) {
     let pasteboard = SnapshotRun.pasteboard
     pasteboard.clearContents()
     pasteboard.setString(text, forType: .string)
+}
+
+enum RefreshPause {
+    case screensAsleep, screenLocked
 }
