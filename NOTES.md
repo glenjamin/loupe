@@ -246,13 +246,13 @@ Conditions, wherever a step takes `<condition>`: `exists` (the default), `missin
 | `wait settled [timeout 30s]` | Until the lists have refreshed and the shown PR has its diff, not still being replaced, and its conversation, or they failed |
 | `wait <duration>` | A pause: `500ms`, `2s` |
 | `wait until <query> [<condition>] [timeout 10s]` | Polls until it holds |
-| `click` / `double-click` `<query>` | At the element's centre, after moving the pointer there |
+| `click` / `double-click` / `shift-click` `<query>` | At the element's centre, after moving the pointer there; `shift-click` holds Shift |
 | `right-click <query>` | Asks for the context menu without showing it and prints its items; `choose "Item"` then picks one |
-| `hover <query>` / `unhover` | Moves the pointer onto the element / off the window; a hover popover, such as the checks' or conflicts', opens after its dwell, so `wait until` it |
+| `hover <query> [left\|right\|up\|down <points>]` / `unhover` | Moves the pointer onto the element, or that far from its centre (to reach one row of the diff's text) / off the window; a hover popover, such as the checks' or conflicts', opens after its dwell, so `wait until` it |
 | `press <key> [<key>…] [until <query> <condition>]` | Keys in turn, as `down`, `return`, `esc`, `tab`, `space`, `delete`, `up`/`left`/`right`, `home`, `end`, `pageup`, `pagedown`, `f1`…, or a character, with `cmd+`, `shift+`, `opt+`, `ctrl+`, `fn+` (`cmd+shift+p`, `ctrl+tab`); `until` repeats them (up to 30 times) until the condition holds |
 | `type "text"` | Types each character into whatever has the focus |
 | `scroll <query> up\|down <points>` | Scrolls whatever scrolls under the element |
-| `drag <query> left\|right <points>` | Presses at the element's middle, moves that far in steps and lets go, each event sent through the window; for AppKit views that track drags themselves, as SwiftUI's `DragGesture` ignores synthesised events |
+| `drag <query> left\|right\|up\|down <points>` | Presses at the element's middle, moves that far in steps and lets go, each event sent through the window; for AppKit views that track drags themselves, as SwiftUI's `DragGesture` ignores synthesised events |
 | `expect <query> [<condition>]` | Fails the run unless it holds |
 | `expect-request <name>` / `expect-no-request <name>` | Whether a blocked write was attempted, by a substring of its name: a mutation (`requestReviews`, `mergePullRequest`), a REST write (`DELETE /repos/…/requested_reviewers`, `merge-async`), `git switch …`, or `open … in the browser` |
 | `expect-copied "text"` | Fails the run unless the app last copied that text; a run copies to a pasteboard of its own, never the user's |

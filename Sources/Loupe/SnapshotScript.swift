@@ -116,16 +116,17 @@ final class SnapshotScript {
             let node = try find(query)
             anchor = node.window === windows.mainWindow ? node.frame : anchor
             if kind == .right { return try rightClick(node) }
-            await click(node, twice: kind == .double)
+            await click(node, twice: kind == .double, modifiers: kind == .shift ? .shift : [])
             await settleInput()
             return "at \(describe(node.centre)) in \(node.windowName)"
-        case let .hover(query):
+        case let .hover(query, offset):
             let node = try find(query)
             // A hover popover hangs from what it's over, as a click's does.
             anchor = node.window === windows.mainWindow ? node.frame : anchor
-            movePointer(to: node.centre, in: node.window)
+            let point = NSPoint(x: node.centre.x + offset.dx, y: node.centre.y + offset.dy)
+            movePointer(to: point, in: node.window)
             await settleInput()
-            return "pointer at \(describe(node.centre))"
+            return "pointer at \(describe(point))"
         case .unhover:
             guard let pointer else { return "the pointer wasn't over anything" }
             // Off the window's corner, so whatever it was over sees it leave.
@@ -366,13 +367,13 @@ final class SnapshotScript {
     /// app's queue as the window server's would, except to a view that doesn't take the first click
     /// in a window that isn't key: AppKit would only make the window key, and an inactive app's
     /// window never becomes key, so the click goes to the view as AppKit sends it once key.
-    private func click(_ node: AXNode, twice: Bool) async {
+    private func click(_ node: AXNode, twice: Bool, modifiers: NSEvent.ModifierFlags = []) async {
         movePointer(to: node.centre, in: node.window)
         let window = node.window
         guard let frame = window.contentView?.superview, let view = frame.hitTest(frame.convert(node.centre, from: nil)) else { return }
         for count in twice ? [1, 2] : [1] {
-            guard let down = mouseEvent(.leftMouseDown, at: node.centre, in: window, clickCount: count),
-                  let up = mouseEvent(.leftMouseUp, at: node.centre, in: window, clickCount: count)
+            guard let down = mouseEvent(.leftMouseDown, at: node.centre, in: window, clickCount: count, modifiers: modifiers),
+                  let up = mouseEvent(.leftMouseUp, at: node.centre, in: window, clickCount: count, modifiers: modifiers)
             else { return }
             if window.isKeyWindow && NSApp.isActive || view.acceptsFirstMouse(for: down) {
                 NSApp.postEvent(down, atStart: false)
@@ -388,13 +389,15 @@ final class SnapshotScript {
     }
 
 
-    private func drag(_ node: AXNode, by distance: CGFloat) async {
+    /// Drags by `distance`, in window coordinates, so up is positive y.
+    private func drag(_ node: AXNode, by distance: CGVector) async {
         movePointer(to: node.centre, in: node.window)
         let window = node.window
-        let end = NSPoint(x: node.centre.x + distance, y: node.centre.y)
+        let end = NSPoint(x: node.centre.x + distance.dx, y: node.centre.y + distance.dy)
         // In steps, as a hand would, so a gesture sees the drag start before it ends.
         let path = (1...Self.dragSteps).map { step in
-            NSPoint(x: node.centre.x + distance * CGFloat(step) / CGFloat(Self.dragSteps), y: node.centre.y)
+            let part = CGFloat(step) / CGFloat(Self.dragSteps)
+            return NSPoint(x: node.centre.x + distance.dx * part, y: node.centre.y + distance.dy * part)
         }
         guard let down = mouseEvent(.leftMouseDown, at: node.centre, in: window, clickCount: 1),
               let up = mouseEvent(.leftMouseUp, at: end, in: window, clickCount: 1)
@@ -426,9 +429,9 @@ final class SnapshotScript {
         return "menu: \(menu.items.map(\.title).filter { !$0.isEmpty }.joined(separator: ", "))"
     }
 
-    private func mouseEvent(_ type: NSEvent.EventType, at point: NSPoint, in window: NSWindow, clickCount: Int) -> NSEvent? {
+    private func mouseEvent(_ type: NSEvent.EventType, at point: NSPoint, in window: NSWindow, clickCount: Int, modifiers: NSEvent.ModifierFlags = []) -> NSEvent? {
         let isDown = [.leftMouseDown, .leftMouseDragged, .rightMouseDown].contains(type)
-        return NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: isDown ? 1 : 0)
+        return NSEvent.mouseEvent(with: type, location: point, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: isDown ? 1 : 0)
     }
 
     /// Queues the key's down and up for the window that has the keyboard: an open popover's, or
@@ -711,14 +714,15 @@ enum Step {
     case settle(Duration)
     case waitUntil(Query, Predicate, timeout: Duration)
     case click(Query, ClickKind)
-    case hover(Query)
+    /// Moves the pointer to the element's centre, offset in window coordinates.
+    case hover(Query, CGVector)
     case unhover
     /// Presses the keys in turn; with a condition, again and again until it holds.
     case press([Chord], until: (Query, Predicate)?)
     case type(String)
     case scroll(Query, CGFloat)
     /// Drags from the middle of what the query finds, this far right, or left if negative.
-    case drag(Query, CGFloat)
+    case drag(Query, CGVector)
     case expect(Query, Predicate)
     case expectRequest(String, attempted: Bool)
     case expectCopied(String)
@@ -754,8 +758,11 @@ enum Step {
             }
         case "click": self = .click(try Query(&tokens), .single)
         case "double-click": self = .click(try Query(&tokens), .double)
+        case "shift-click": self = .click(try Query(&tokens), .shift)
         case "right-click": self = .click(try Query(&tokens), .right)
-        case "hover": self = .hover(try Query(&tokens))
+        case "hover":
+            let query = try Query(&tokens)
+            self = .hover(query, tokens.isEmpty ? CGVector() : try Self.vector(&tokens, step: "hover"))
         case "unhover": self = .unhover
         case "press":
             var chords: [Chord] = []
@@ -771,10 +778,7 @@ enum Step {
             self = .scroll(query, direction == "down" ? distance : -distance)
         case "drag":
             let query = try Query(&tokens)
-            let direction = try tokens.word()
-            guard ["left", "right"].contains(direction) else { throw ScriptError("drag goes left or right, not \(direction)") }
-            let distance = CGFloat(try tokens.number())
-            self = .drag(query, direction == "right" ? distance : -distance)
+            self = .drag(query, try Self.vector(&tokens, step: "drag"))
         case "expect": self = .expect(try Query(&tokens), try Predicate(&tokens))
         case "expect-request": self = .expectRequest(try tokens.word(), attempted: true)
         case "expect-no-request": self = .expectRequest(try tokens.word(), attempted: false)
@@ -790,6 +794,20 @@ enum Step {
         }
         guard tokens.isEmpty else { throw ScriptError("didn't expect \(tokens.rest)") }
     }
+
+
+    /// `left|right|up|down <points>`, as a vector in window coordinates, where up is positive y.
+    private static func vector(_ tokens: inout Tokens, step: String) throws -> CGVector {
+        let direction = try tokens.word()
+        let distance = CGFloat(try tokens.number())
+        switch direction {
+        case "left": return CGVector(dx: -distance, dy: 0)
+        case "right": return CGVector(dx: distance, dy: 0)
+        case "up": return CGVector(dx: 0, dy: distance)
+        case "down": return CGVector(dx: 0, dy: -distance)
+        default: throw ScriptError("\(step) goes left, right, up or down, not \(direction)")
+        }
+    }
 }
 
 enum OpenTarget {
@@ -800,7 +818,7 @@ enum OpenTarget {
 }
 
 enum ClickKind {
-    case single, double, right
+    case single, double, right, shift
 }
 
 /// What to find: `[role] ["text" | ~"text"] [#identifier] [N | last]`, optionally `in` another
