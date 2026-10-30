@@ -265,16 +265,22 @@ extension PullRequestTab {
         return Set(file.hunks.flatMap(\.lines).map { $0.anchor(in: file.path) }.filter { target.takesDeletedLines || $0.side == .right })
     }
 
+    /// The lines a comment from `start` to `end` would be on, when GitHub can take them as one
+    /// range: both in one hunk of the diff as produced, `start` first.
+    public func commentRange(from start: DiffAnchor, to end: DiffAnchor) -> [DiffAnchor]? {
+        guard start != end, start.path == end.path else { return nil }
+        return producedFile(end.path)?.anchors(from: start, to: end)
+    }
+
     /// Opens a comment under a row, keeping one already being written there; one elsewhere
     /// with nothing typed is dropped, and one with text is kept, so it isn't lost. With `start`,
     /// a row before it in the same hunk of the diff as produced, it's on every line from there,
     /// as GitHub takes a comment on several lines; a range it can't take, such as one across
     /// hunks or onto revealed lines, starts a comment on `anchor` alone.
-    public func startComment(at anchor: DiffAnchor, from start: DiffAnchor? = nil) {
+public func startComment(at anchor: DiffAnchor, from start: DiffAnchor? = nil) {
         guard let target = commentTarget else { return }
         let start = start.flatMap { start -> DiffAnchor? in
-            guard start != anchor, let file = producedFile(anchor.path), file.anchors(from: start, to: anchor) != nil else { return nil }
-            return start
+            commentRange(from: start, to: anchor) == nil ? nil : start
         }
         if let current = threadActivity.newComment {
             guard current.anchor != anchor || current.start != start || current.target != target, !current.draft.hasText else { return }
