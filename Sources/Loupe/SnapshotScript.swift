@@ -22,6 +22,8 @@ final class SnapshotScript {
     private static var pointerOnScreen: NSPoint?
     /// The frame of what was last clicked, in the main window, which a popover it opened hangs from.
     private var anchor: NSRect?
+    /// The popovers and sheets `focusOpenedWindows` has given the keyboard.
+    private let focusedWindows = NSHashTable<NSWindow>.weakObjects()
     /// The menu the last right-click asked for, which `choose` picks from.
     private var menu: NSMenu?
     /// The tracking areas the pointer is in, which it tells when it leaves.
@@ -37,6 +39,15 @@ final class SnapshotScript {
         for attribute in ["AXEnhancedUserInterface", "AXManualAccessibility"] where NSApp.responds(to: set) {
             _ = NSApp.perform(set, with: NSNumber(value: true), with: attribute)
         }
+    }
+
+    /// Has the pointer count as shown whatever the screen's cursor does. SwiftUI drops hover while
+    /// the cursor is hidden, as typing hides it until the mouse next moves, in whichever app is
+    /// typed into, the script's own included; the script's pointer is its own and never hidden.
+    static func keepPointerShown() {
+        guard file != nil, let isHidden = class_getClassMethod(NSCursor.self, NSSelectorFromString("_isHidden")) else { return }
+        let shown: @convention(block) (AnyObject) -> Bool = { _ in false }
+        method_setImplementation(isHidden, imp_implementationWithBlock(shown))
     }
 
     private init(windows: WindowManager, directory: URL) {
@@ -100,6 +111,7 @@ final class SnapshotScript {
         case let .waitUntil(query, predicate, timeout):
             let deadline = Date.now + timeout.timeInterval
             while true {
+                focusOpenedWindows()
                 // Drawn first, as a screen would between polls, so updates made in drawing land.
                 for window in shownWindows() {
                     window.layoutIfNeeded()
@@ -261,6 +273,7 @@ final class SnapshotScript {
         let deadline = ContinuousClock.now + .milliseconds(250)
         // Twice, so what the first pass queued, such as SwiftUI's updates, has run too.
         for _ in 1...2 { await mainRunLoopIdle(until: deadline) }
+        focusOpenedWindows()
         for window in shownWindows() {
             window.layoutIfNeeded()
             window.displayIfNeeded()
@@ -378,13 +391,13 @@ final class SnapshotScript {
                   let up = mouseEvent(.leftMouseUp, at: node.centre, in: window, clickCount: count, modifiers: modifiers)
             else { return }
             if window.isKeyWindow && NSApp.isActive || view.acceptsFirstMouse(for: down) {
-                NSApp.postEvent(down, atStart: false)
-                NSApp.postEvent(up, atStart: false)
+                post([down, up])
             } else {
                 // Queued first, so a tracking loop the mouse-down starts finds it.
                 NSApp.postEvent(up, atStart: false)
                 if view.acceptsFirstResponder { window.makeFirstResponder(view) }
                 view.mouseDown(with: down)
+                deliverPostedEvents()
             }
             try? await Task.sleep(for: .milliseconds(50))
         }
@@ -443,14 +456,46 @@ final class SnapshotScript {
         // An active app's menus are brought up to date before a key equivalent is matched; a
         // never-activated one's aren't, so items enabled since launch would refuse their keys.
         NSApp.mainMenu.map(refresh)
-        for type in [NSEvent.EventType.keyDown, .keyUp] {
-            guard let event = NSEvent.keyEvent(
+        post([NSEvent.EventType.keyDown, .keyUp].compactMap { type in
+            NSEvent.keyEvent(
                 with: type, location: .zero, modifierFlags: chord.modifiers, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                 context: nil, characters: chord.characters, charactersIgnoringModifiers: chord.charactersIgnoringModifiers, isARepeat: false, keyCode: chord.keyCode
-            ) else { continue }
-            NSApp.postEvent(event, atStart: false)
-        }
+            )
+        })
     }
+
+    /// Queues the events as the window server's would arrive, and has them handed out.
+    private func post(_ events: [NSEvent]) {
+        for event in events { NSApp.postEvent(event, atStart: false) }
+        deliverPostedEvents()
+    }
+
+    /// Has what's queued handed out, through monitors, menus and the windows, as the app's event
+    /// loop would: waiting for events, that loop doesn't wake for those the app posts itself, so
+    /// they could wait a step or more for something else to wake it.
+    private func deliverPostedEvents() {
+        CFRunLoopSourceSignal(Self.postedEvents)
+        CFRunLoopWakeUp(CFRunLoopGetMain())
+    }
+
+    /// Hands out posted events when signalled. A run loop source rather than a main queue job, so
+    /// a handler that runs its own event loop, as a completion list does, can still run the
+    /// script, a main queue job, within that loop. There, firing only wakes the loop, which takes
+    /// the script's further events itself.
+    private static let postedEvents: CFRunLoopSource = {
+        var context = CFRunLoopSourceContext()
+        context.perform = { _ in
+            MainActor.assumeIsolated {
+                guard CFRunLoopCopyCurrentMode(CFRunLoopGetMain()) == .defaultMode else { return }
+                while let event = NSApp.nextEvent(matching: .any, until: .distantPast, inMode: .default, dequeue: true) {
+                    NSApp.sendEvent(event)
+                }
+            }
+        }
+        let source = CFRunLoopSourceCreate(nil, 0, &context)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        return source!
+    }()
 
     private func keyboardWindow() -> NSWindow? {
         // A dismissed alert can stay the key window, out of sight.
@@ -497,6 +542,19 @@ final class SnapshotScript {
     }
 
     // MARK: Windows
+
+    /// Has each popover or sheet that opens take the keyboard as it would in the active app: with
+    /// nothing in it focused, its first control is, as a popover's search field is. A never
+    /// activated app's windows don't become key, so AppKit doesn't do this for them.
+    private func focusOpenedWindows() {
+        guard let main = windows.mainWindow else { return }
+        for window in childWindows(of: main) where window.canBecomeKey && !focusedWindows.contains(window) {
+            focusedWindows.add(window)
+            guard let content = window.contentView, focusedView(in: window)?.isDescendant(of: content) != true else { continue }
+            window.makeFirstResponder(nil)
+            window.selectNextKeyView(nil)
+        }
+    }
 
     /// Moves each open popover back under what was last clicked or hovered, where it'd hang on
     /// screen.

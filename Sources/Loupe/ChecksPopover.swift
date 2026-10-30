@@ -74,7 +74,9 @@ struct HoverPopoverAnchor: NSViewRepresentable {
         /// How long the pointer may be off both glyph and popover, to cross the gap between them.
         static let grace = Duration.milliseconds(150)
         /// How long the popover fades in or out, in place of `NSPopover`'s much slower animation.
-        static let fade: TimeInterval = 0.08
+        /// None in a snapshot run, which shows nothing on screen: a fade finishes only as a display
+        /// refreshes, and with the displays asleep it never would, leaving the popover open.
+        static let fade: TimeInterval = SnapshotRun.directory == nil ? 0.08 : 0
 
         var content: any HoverPopoverContent {
             didSet { hosting?.rootView = reporting(content) }
@@ -119,7 +121,7 @@ struct HoverPopoverAnchor: NSViewRepresentable {
             let wasKey = window.isKeyWindow
             popover.show(relativeTo: bounds, of: self, preferredEdge: .minY)
             // Made clear before it's first drawn, then faded in.
-            if let shown = hosting.view.window {
+            if Self.fade > 0, let shown = hosting.view.window {
                 shown.alphaValue = 0
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = Self.fade
@@ -135,7 +137,7 @@ struct HoverPopoverAnchor: NSViewRepresentable {
         func closePopover() {
             waiting?.cancel()
             guard let popover else { return }
-            guard let shown = popover.contentViewController?.view.window else { return popover.close() }
+            guard Self.fade > 0, let shown = popover.contentViewController?.view.window else { return popover.close() }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = Self.fade
                 shown.animator().alphaValue = 0

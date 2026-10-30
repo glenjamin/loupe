@@ -67,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ReadOnlyGit.enable()
             keepWindowsInvisible()
             SnapshotScript.exposeAccessibility()
+            SnapshotScript.keepPointerShown()
         }
     }
 

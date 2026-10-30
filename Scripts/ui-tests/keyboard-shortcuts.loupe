@@ -42,9 +42,11 @@ wait until AXSheet missing
 expect-no-request addPullRequestReview
 expect-no-request submitPullRequestReview
 
-# Confirming sends the approval: the PR shows as approved as it is now.
+# Confirming sends the approval. A snapshot run refuses it at once, so the approval it shows
+# while sending is gone again too soon to check, and the refusal shows instead.
 expect button "Approve"
 press opt+cmd+a
 wait until button "Approve" in AXSheet
 click button "Approve" in AXSheet
-wait until button "Approved"
+wait until text ~"Couldn't submit your review"
+expect-request addPullRequestReview
