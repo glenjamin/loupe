@@ -1190,6 +1190,10 @@ A PR GitHub said conflicted showed "No conflicts with master as last fetched", a
 
 Loupe crashed the same way again after the screens woke: they woke onto the lock screen, refreshing started at once, a request failed on a connection dropped in sleep, and the window's layout went round until AppKit stopped the app. All three crashes so far came while the screen was locked, so refreshing and the open PRs' watches now also stop while it's locked, starting again, with a round at once, only when the screens are both awake and unlocked. Which view keeps asking for layout is still unknown.
 
+### A thread GitHub calls outdated but made on the head stays on its lines
+
+A comment on a line revealed around a hunk showed as outdated, in the conversation and after the diff's last row, as soon as it was sent. This settles the question "Lines revealed around a hunk take comments too" left open: GitHub's REST endpoint takes a `line` outside the diff's hunks, but can't place it, so it keeps the comment with an empty diff hunk, `position` 1 and `line: null`, and its thread is `isOutdated` from the start. Threads are now fetched with the PR's `headRefOid`, and a line thread GitHub calls outdated whose original commit is that head is taken as current, on its original lines, since nothing has moved them. Once the head moves, GitHub's word stands again, as Loupe can't tell whether the new commits moved those lines without diffing. With no diff hunk from GitHub, the conversation shows no code under it once GitHub's copy replaces the one being sent.
+
 ## Not yet decided
 
 Nothing is pending.

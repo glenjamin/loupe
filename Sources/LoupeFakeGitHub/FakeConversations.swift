@@ -329,10 +329,11 @@ actor FakeConversations {
     /// original line, as GitHub keeps it; `line: nil` without that is on the whole file.
     /// A thread in the viewer's pending review can't be resolved until it's submitted. It's
     /// made on `commit`, or the PR's head if known, its original commit as GitHub keeps it.
+    /// `diffHunk` replaces the made-up one, as GitHub gives none for lines outside the hunks.
     @discardableResult
     func startThread(
         on id: String, path: String, line: Int?, side: String = "RIGHT", startLine: Int? = nil, startSide: String? = nil, commit: String? = nil,
-        outdated: Bool = false, resolved: Bool = false, pending: Bool = false, body: String, by login: String = "octocat"
+        outdated: Bool = false, resolved: Bool = false, pending: Bool = false, diffHunk: String? = nil, body: String, by login: String = "octocat"
     ) throws -> String {
         var node = try require(nodes[id])
         var threads = ((node["reviewThreads"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
@@ -356,7 +357,7 @@ actor FakeConversations {
             "viewerCanUnresolve": resolved,
             "resolvedBy": resolved ? ["login": login] : NSNull(),
             "firstComment": ["nodes": [[
-                "diffHunk": "@@ -1,2 +1,2 @@\n-old \(path)\n+new \(path)",
+                "diffHunk": diffHunk ?? "@@ -1,2 +1,2 @@\n-old \(path)\n+new \(path)",
                 "originalCommit": (commit ?? heads[id]).map { ["oid": $0] as Any } ?? NSNull(),
             ]]],
             "comments": ["nodes": [threadComment(body, by: login, pending: pending)]],
@@ -510,11 +511,13 @@ actor FakeConversations {
         if query.contains("states: [PENDING]") {
             node["pendingReview"] = pendingReview(of: id, for: variables["viewer"])
         }
+        if query.contains("headRefOid") { node["headRefOid"] = heads[id] }
         if query.contains("reviewThreads"), !query.contains("timelineItems") {
             threadFetches += 1
             let threads = node["reviewThreads"] ?? ["nodes": []]
             var answer: [String: Any] = ["reviewThreads": threads]
             answer["pendingReview"] = node["pendingReview"]
+            answer["headRefOid"] = node["headRefOid"]
             let data = try JSONSerialization.data(withJSONObject: ["data": ["node": answer]])
             await pass(.threads)
             return (data, fakeResponse(url, status: 200))
@@ -611,7 +614,7 @@ actor FakeConversations {
         if failing { return (Data(), fakeResponse(url, status: 502)) }
         if let match = url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/comments/) {
             await pass(.comment)
-            return try newComment(content, repository: String(match.1), number: try require(Int(match.2)), url)
+            return try await newComment(content, repository: String(match.1), number: try require(Int(match.2)), url)
         }
         await pass(.reply)
         let match = try require(url.path().wholeMatch(of: /\/repos\/([^\/]+\/[^\/]+)\/pulls\/(\d+)\/comments\/(\d+)\/replies/), "Unexpected REST request: \(url.path())")
@@ -639,8 +642,10 @@ actor FakeConversations {
     /// viewer at once, answered as GitHub does with the comment, or refused as GitHub refuses
     /// it while the viewer has a pending review of the PR. It's made on `commit_id`; one
     /// on a commit older than the head is outdated on the whole PR's diff, as the fake doesn't
-    /// diff to tell whether GitHub could carry it onto the head's lines.
-    private func newComment(_ content: [String: Any], repository: String, number: Int, _ url: URL) throws -> (Data, HTTPURLResponse) {
+    /// diff to tell whether GitHub could carry it onto the head's lines. One on lines outside
+    /// the diff's hunks is taken but outdated from the start with no diff hunk, as GitHub can't
+    /// place it in the diff.
+    private func newComment(_ content: [String: Any], repository: String, number: Int, _ url: URL) async throws -> (Data, HTTPURLResponse) {
         let input = CommentInput(
             repository: repository, number: number, body: try require(content["body"] as? String), commitId: try require(content["commit_id"] as? String),
             path: try require(content["path"] as? String), line: try require(content["line"] as? Int), side: try require(content["side"] as? String),
@@ -657,14 +662,21 @@ actor FakeConversations {
             let refusal = #"{"message":"Validation Failed","errors":["user_id can only have one pending review per pull request"],"status":"422"}"#
             return (Data(refusal.utf8), fakeResponse(url, status: 422))
         }
+        var isInHunks = true
+        if diffRepository != nil, let base = bases[id] {
+            let rows = rowsOfHunks(try await patch(of: input.path, from: base, to: input.commitId))
+            isInHunks = [(input.line, input.side), (input.startLine, input.startSide ?? input.side)].allSatisfy { line, side in
+                line.map { rows.contains(DiffRow(line: $0, side: side)) } ?? true
+            }
+        }
         try startThread(
             on: id, path: input.path, line: input.line, side: input.side, startLine: input.startLine, startSide: input.startSide, commit: input.commitId,
-            outdated: heads[id].map { $0 != input.commitId } ?? false, body: input.body, by: FakeGitHub.viewer
+            outdated: !isInHunks || heads[id].map { $0 != input.commitId } ?? false, diffHunk: isInHunks ? nil : "", body: input.body, by: FakeGitHub.viewer
         )
         let comment = try require(threads(of: id).last.flatMap { (($0["comments"] as? [String: Any])?["nodes"] as? [[String: Any]])?.first })
         var rest = try restComment(comment, body: input.body)
         rest["path"] = input.path
-        rest["line"] = input.line
+        rest["line"] = isInHunks ? input.line : NSNull()
         rest["side"] = input.side
         rest["commit_id"] = input.commitId
         rest["in_reply_to_id"] = nil
@@ -1513,4 +1525,29 @@ private func row(atPosition position: Int, inPatch patch: String) -> (line: Int,
         if !isRemoved { new += 1 }
     }
     return nil
+}
+
+/// A line on one side of a diff, as GitHub anchors a review comment.
+private struct DiffRow: Hashable {
+    let line: Int
+    let side: String
+}
+
+/// Every line a patch's hunks show, on the side a comment would name: removed lines on the
+/// left, the rest on the right.
+private func rowsOfHunks(_ patch: String) -> Set<DiffRow> {
+    var (rows, old, new) = (Set<DiffRow>(), 0, 0)
+    for row in patch.split(separator: "\n") {
+        if let header = row.firstMatch(of: /^@@ -(\d+)(?:,\d+)? \+(\d+)/) {
+            (old, new) = (Int(header.1) ?? 0, Int(header.2) ?? 0)
+            continue
+        }
+        switch row.first {
+        case "-": rows.insert(DiffRow(line: old, side: "LEFT")); old += 1
+        case "+": rows.insert(DiffRow(line: new, side: "RIGHT")); new += 1
+        case " ": rows.insert(DiffRow(line: new, side: "RIGHT")); old += 1; new += 1
+        default: continue
+        }
+    }
+    return rows
 }

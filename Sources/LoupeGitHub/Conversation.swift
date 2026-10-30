@@ -24,7 +24,7 @@ extension GitHubClient {
             body: pullRequest.body,
             reactions: pullRequest.reactionGroups.shown,
             items: nodes.compactMap(\.timelineItem),
-            threads: pullRequest.reviewThreads.nodes.map(\.thread),
+            threads: pullRequest.reviewThreads.nodes.map { $0.thread(onHead: pullRequest.headRefOid) },
             checks: pullRequest.commits.nodes.first?.commit.statusCheckRollup?.contexts.nodes.compactMap(\.check) ?? [],
             reviewRequests: pullRequest.reviewRequests.nodes.compactMap { $0.requestedReviewer?.reviewer },
             latestReviews: pullRequest.latestReviews.nodes.compactMap(\.latestReview),
@@ -40,13 +40,14 @@ extension GitHubClient {
         guard let node = response.node, let threads = node.reviewThreads, let pending = node.pendingReview else {
             throw GitHubError.graphQL(["Pull request \(id) not found"])
         }
-        return ReviewThreads(threads: threads.nodes.map(\.thread), pendingReview: pending.nodes.first?.pendingReview)
+        return ReviewThreads(threads: threads.nodes.map { $0.thread(onHead: node.headRefOid) }, pendingReview: pending.nodes.first?.pendingReview)
     }
 
     static let reviewThreadsQuery = """
         query($id: ID!, $viewer: String) {
           node(id: $id) {
             ... on PullRequest {
+              headRefOid
               reviewThreads(first: 100) { nodes { ...ReviewThread } }
               \(pendingReviewField)
             }
@@ -66,6 +67,7 @@ extension GitHubClient {
               createdAt
               author { login avatarUrl }
               \(reactionGroupsField)
+              headRefOid
               timelineItems(first: 100, after: $after, itemTypes: \(timelineItemTypes)) { ...TimelinePage }
               reviewThreads(first: 100) { nodes { ...ReviewThread } }
               commits(last: 1) {
@@ -196,6 +198,8 @@ private struct ConversationResponse: Decodable {
         let createdAt: Date
         let author: Author?
         let reactionGroups: [ReactionGroupNode]?
+        /// Missing in captures that didn't ask for it.
+        let headRefOid: String?
         let timelineItems: Timeline
         let reviewThreads: Connection<ReviewThreadNode>
         let commits: Connection<CommitNode>
@@ -265,6 +269,7 @@ private struct ReviewThreadsResponse: Decodable {
 
     /// Both nil for a node that isn't a PR.
     struct Node: Decodable {
+        let headRefOid: String?
         let reviewThreads: Connection<ReviewThreadNode>?
         let pendingReview: Connection<PendingReviewNode>?
     }
@@ -316,9 +321,14 @@ private struct ReviewThreadNode: Decodable {
         let reactionGroups: [ReactionGroupNode]?
     }
 
-    var thread: ReviewThread {
-        ReviewThread(
-            id: id, isResolved: isResolved, isOutdated: isOutdated, path: path, line: line, startLine: startLine,
+    /// The thread, on its original lines if it was made on `head`. GitHub calls a comment on
+    /// lines outside the diff's hunks outdated from the start, as it can't place it in the diff,
+    /// though nothing has moved those lines since.
+    func thread(onHead head: String?) -> ReviewThread {
+        let isUnmoved = isOutdated && subjectType != "FILE" && originalLine != nil && head != nil && firstComment.nodes.first?.originalCommit?.oid == head
+        return ReviewThread(
+            id: id, isResolved: isResolved, isOutdated: isOutdated && !isUnmoved, path: path,
+            line: isUnmoved ? originalLine : line, startLine: isUnmoved ? originalStartLine : startLine,
             side: diffSide.flatMap(ReviewThread.Side.init) ?? .right, startSide: startDiffSide.flatMap(ReviewThread.Side.init),
             originalLine: originalLine, originalStartLine: originalStartLine, originalCommitOid: firstComment.nodes.first?.originalCommit?.oid,
             isOnFile: subjectType == "FILE", diffHunk: firstComment.nodes.first?.diffHunk ?? "", resolvedBy: resolvedBy?.login,

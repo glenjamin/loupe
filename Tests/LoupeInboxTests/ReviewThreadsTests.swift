@@ -230,6 +230,33 @@ struct NewCommentTests {
         #expect(threads.anchored.contains { $0.side == .right && $0.line == 30 }, "shown under the revealed line")
     }
 
+    @Test func aCommentOnARevealedLineIsntOutdatedThoughGitHubCantPlaceItInTheDiff() async throws {
+        let (app, tab, _) = try await ThreadsApp.withThread()
+        let file = try #require(tab.file("app.go"))
+        await tab.expandContext(of: file, ContextExpansion(hunk: 1, direction: .above))
+        tab.startComment(at: DiffAnchor(path: "app.go", side: .right, line: 30))
+        try #require(tab.threadActivity.newComment?.draft).text = "Should this move too?"
+
+        await tab.sendComment()
+
+        let posted = try #require(tab.conversation?.threads.last)
+        #expect(posted.comments.first?.author?.login == FakeGitHub.viewer)
+        #expect(!posted.isOutdated && posted.lines == 30...30, "still on the line it was made on, as the head hasn't moved")
+        let page = ConversationHTML.page(try #require(tab.conversation), template: "{{content}}", stylesheet: "")
+        let marker = try #require(page.range(of: #"data-thread-id="\#(posted.id)""#))
+        let opening = try #require(page.range(of: "<details", options: .backwards, range: page.startIndex..<marker.lowerBound))
+        let summary = try #require(page.range(of: "</summary>", range: marker.upperBound..<page.endIndex))
+        let heading = page[opening.lowerBound..<summary.upperBound]
+        #expect(!heading.contains("outdated") && heading.contains("app.go:30"), "no Outdated badge, at its line")
+
+        // As the whole conversation is fetched on the next launch.
+        let tabs = app.relaunch()
+        tabs.open(tab.pullRequest)
+        let reopened = try #require(tabs.tab(id: tab.id))
+        await reopened.load()
+        #expect(reopened.thread(posted.id).map { !$0.isOutdated && $0.lines == 30...30 } == true)
+    }
+
     @Test func aRefusedCommentKeepsTheDraftAndSaysWhy() async throws {
         let (app, tab, _) = try await ThreadsApp.withThread()
         await app.conversations.refuseThreadChanges()
