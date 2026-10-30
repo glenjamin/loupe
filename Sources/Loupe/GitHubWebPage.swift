@@ -40,9 +40,8 @@ class GitHubWebPage: NSObject {
         configuration.websiteDataStore = .nonPersistent()
         if let offline = FixtureRun.offline { configuration.userContentController.add(offline) }
         webView = Self.makeWebView(configuration: configuration)
-        // GitHub's light theme whatever the system appearance: WebKit takes the page's
-        // `prefers-color-scheme` from the view's appearance, and GitHub's HTML has dark variants.
-        webView.appearance = NSAppearance(named: .aqua)
+        // For scripts to find, scroll and snap, as the page's own content is out of process.
+        webView.setAccessibilityIdentifier("github-page")
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self

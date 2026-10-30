@@ -4,6 +4,7 @@ import LoupeGit
 import LoupeInbox
 import LoupeModel
 import os
+import WebKit
 
 /// `LOUPE_SNAPSHOT_SCRIPT=<file>` drives a snapshot run from a script, one step a line: it opens
 /// PRs, clicks, hovers, presses keys and types through the app's own event handling, finds what to
@@ -208,6 +209,10 @@ final class SnapshotScript {
             }
             print("app active \(NSApp.isActive), key window \(NSApp.keyWindow.map { "\(type(of: $0))" } ?? "none")")
             return nil
+        case let .appearance(name):
+            NSApp.appearance = NSAppearance(named: name)
+            await settleInput()
+            return try await waitForWebPages(in: name == .darkAqua ? "dark" : "light")
         case let .choose(title):
             guard let menu else { throw StepFailure(expected: "a menu from a right-click", found: "none open") }
             guard let index = menu.items.firstIndex(where: { $0.title == title }) else {
@@ -264,6 +269,25 @@ final class SnapshotScript {
         }
         await settleInput()
         return nil
+    }
+
+    /// Waits until every shown page of GitHub's HTML has taken the `scheme` the app's appearance
+    /// gives it, its diagrams drawn again in that theme.
+    private func waitForWebPages(in scheme: String) async throws -> String {
+        let check = """
+            const scheme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            return scheme === wanted && [...document.querySelectorAll('section[data-loupe-diagram="drawn"]')].every(section => section.dataset.loupeScheme === scheme);
+            """
+        let pages = GitHubWebPage.livePages.allObjects.filter { $0.webView.window != nil }
+        let deadline = Date.now + 10
+        for page in pages {
+            while try await page.webView.callAsyncJavaScript(check, arguments: ["wanted": scheme], in: nil, contentWorld: .defaultClient) as? Bool != true {
+                guard Date.now < deadline else { throw StepFailure(expected: "the web pages to turn \(scheme) within 10s", found: "a page still isn't") }
+                try? await Task.sleep(for: .milliseconds(25))
+            }
+        }
+        await settleInput()
+        return "\(pages.count) web page\(pages.count == 1 ? "" : "s") \(scheme)"
     }
 
     /// Lets an input's effects land, then lays them out and draws them, as the screen would ask:
@@ -506,8 +530,15 @@ final class SnapshotScript {
     /// down for positive.
     private func scroll(_ node: AXNode, by distance: CGFloat) async throws -> String {
         guard let content = node.window.contentView?.superview,
-              let view = content.hitTest(content.convert(node.centre, from: nil)),
-              let scrollView = view.enclosingScrollView ?? view as? NSScrollView
+              let view = content.hitTest(content.convert(node.centre, from: nil))
+        else { throw StepFailure(expected: "something to scroll under \(node.summary)", found: "nothing there") }
+        // A web page scrolls in WebKit's own process, so it's scrolled by the page itself.
+        if let webView = sequence(first: view, next: \.superview).lazy.compactMap({ $0 as? WKWebView }).first {
+            let top = try await webView.callAsyncJavaScript("window.scrollBy(0, distance); return window.scrollY", arguments: ["distance": distance], in: nil, contentWorld: .defaultClient)
+            await settleInput()
+            return "scrolled the page to \(top.map { "\($0)" } ?? "?")"
+        }
+        guard let scrollView = view.enclosingScrollView ?? view as? NSScrollView
         else { throw StepFailure(expected: "something to scroll under \(node.summary)", found: "no scroll view") }
         let before = scrollView.contentView.bounds.origin
         if let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(-distance.rounded()), wheel2: 0, wheel3: 0),
@@ -676,14 +707,16 @@ struct AXNode {
     func isFocused(given focused: NSView?) -> Bool {
         if element.isAccessibilityFocused?() ?? legacy("AXFocused") == true { return true }
         guard let focused else { return false }
-        if let view = element as? NSView { return view === focused || focused.isDescendant(of: view) && view.accessibilityChildren()?.isEmpty != false }
+        if let view = element as? NSView { return view === focused || focused.isDescendant(of: view) && (view is WKWebView || view.accessibilityChildren()?.isEmpty != false) }
         // A SwiftUI element stands over the AppKit view it wraps.
         let frame = focused.convert(focused.bounds, to: nil)
         return frame.width > 0 && self.frame.insetBy(dx: -2, dy: -2).contains(frame) && frame.width * frame.height > self.frame.width * self.frame.height * 0.5
     }
 
     var children: [AXNode] {
-        guard role != "AXWebArea" else { return [] }
+        // A page's content is WebKit's, out of process; asking for it would wake WebKit's
+        // accessibility, slowing the page, and scripts can't use it.
+        guard role != "AXWebArea", !(element is WKWebView) else { return [] }
         let children = element.accessibilityChildren?() ?? nil ?? legacy("AXChildren") ?? []
         return children.compactMap { child in
             let child = child as AnyObject
@@ -791,6 +824,7 @@ enum Step {
     case dump(Query?)
     case dumpWindows
     case choose(String)
+    case appearance(NSAppearance.Name)
 
     init(_ tokens: inout Tokens) throws {
         let verb = try tokens.word()
@@ -850,6 +884,12 @@ enum Step {
         case "expect-same": self = .compare(try tokens.word(), try tokens.word(), differ: false)
         case "dump": self = tokens.take("windows") ? .dumpWindows : .dump(tokens.isEmpty ? nil : try Query(&tokens))
         case "choose": self = .choose(try tokens.string())
+        case "appearance":
+            switch try tokens.word() {
+            case "dark": self = .appearance(.darkAqua)
+            case "light": self = .appearance(.aqua)
+            case let other: throw ScriptError("appearance is dark or light, not \(other)")
+            }
         default: throw ScriptError("no step \(verb)")
         }
         guard tokens.isEmpty else { throw ScriptError("didn't expect \(tokens.rest)") }

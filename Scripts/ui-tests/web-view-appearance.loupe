@@ -1,0 +1,78 @@
+# The web views follow the app's appearance, as the native diff does: GitHub's light or dark
+# theme, restyled in place when the appearance changes, diagrams drawn again. The pages' own
+# content isn't in the accessibility tree, so the colours are checked by the tests and seen in
+# the snaps; this proves each page changes as the appearance does, and changes back.
+appearance light
+wait settled
+open tamarinworks/atrium#2928
+wait settled
+snap window-light
+snap conversation-light #github-page
+appearance dark
+snap window-dark
+snap conversation-dark #github-page
+expect-different conversation-light conversation-dark
+appearance light
+snap conversation-light-again #github-page
+expect-same conversation-light conversation-light-again
+
+# Further down: the codecov comment's tables, reviews, then an open thread's code snippet and
+# the checks.
+scroll #github-page down 650
+snap codecov-light #github-page
+appearance dark
+snap codecov-dark #github-page
+appearance light
+scroll #github-page down 700
+snap reviews-light #github-page
+appearance dark
+snap reviews-dark #github-page
+appearance light
+scroll #github-page down 2000
+snap thread-light #github-page
+appearance dark
+snap thread-dark #github-page
+appearance light
+
+# A rendered markdown file.
+click ~"CHANGELOG.md"
+wait settled
+click radio "Rendered"
+wait until #github-page
+wait settled
+snap rendered-light #github-page
+appearance dark
+snap rendered-dark #github-page
+expect-different rendered-light rendered-dark
+appearance light
+
+# A comment's Preview, with a heading, a paragraph and a diagram.
+click radio "Source"
+click image #doc
+wait settled
+scroll scroll 2 down 300
+hover textarea up 11
+click button "Add a comment"
+wait until text ~"Comment on line"
+type "# Heading"
+press return
+press return
+type "A paragraph."
+press return
+press return
+type "```mermaid"
+press return
+type "flowchart TD"
+press return
+type "  Draft --> Preview"
+press return
+type "```"
+click radio "Preview"
+wait until radio "Preview" has value "1"
+wait until AXProgressIndicator missing
+wait until #github-page
+wait settled
+snap preview-light #github-page
+appearance dark
+snap preview-dark #github-page
+expect-different preview-light preview-dark

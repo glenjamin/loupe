@@ -49,6 +49,20 @@ struct MermaidDiagramsTests {
         #expect(fills[0] == "rgb(236, 236, 255)", "Mermaid's light theme, as github.com's light theme draws it")
     }
 
+    @Test func aDrawnDiagramTakesTheOtherThemeWhenTheAppearanceChanges() async throws {
+        let view = try await loadedPage(descriptionHTML(), appearance: .aqua)
+        #expect(await MermaidDiagrams.draw(in: view) == 1)
+        let light = try #require(try await state(of: view)["nodeFill"] as? String)
+
+        view.appearance = NSAppearance(named: .darkAqua)
+
+        let dark = try await eventually { try await state(of: view)["nodeFill"] as? String } until: { $0 != light }
+        #expect(dark != nil, "the diagram is drawn again in Mermaid's dark theme, not left light")
+        let shown = try await state(of: view)
+        #expect(shown["diagrams"] as? Int == 1, "the new drawing replaces the old")
+        #expect(shown["codeShown"] as? Bool == false)
+    }
+
     @Test func onlyAPageWithADiagramHasOneToDraw() async throws {
         let plain = #"<p dir="auto">No diagrams</p><div class="highlight highlight-source-yaml"><pre>mermaid: true</pre></div>"#
         #expect(!MermaidDiagrams.appear(in: plain))
@@ -87,7 +101,7 @@ private func state(of view: WKWebView) async throws -> [String: Any] {
 
 /// A web view that has loaded `html` in the app's draft template, as a preview is.
 @MainActor
-private func loadedPage(_ html: String, appearance: NSAppearance.Name = .aqua) async throws -> WKWebView {
+func loadedPage(_ html: String, appearance: NSAppearance.Name = .aqua) async throws -> WKWebView {
     let resources = projectRoot.appending(path: "Sources/Loupe/Resources")
     let template = try String(contentsOf: resources.appending(path: "conversation.html"), encoding: .utf8)
     let stylesheet = try String(contentsOf: resources.appending(path: "conversation.css"), encoding: .utf8)
@@ -109,4 +123,16 @@ private final class PageLoading: NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         finished()
     }
+}
+
+/// `value` once `done` says it's what was waited for, polling for up to five seconds; nil if
+/// it never was.
+@MainActor
+func eventually<Value>(_ value: @MainActor () async throws -> Value?, until done: (Value) -> Bool) async throws -> Value? {
+    let deadline = Date.now.addingTimeInterval(5)
+    while Date.now < deadline {
+        if let found = try await value(), done(found) { return found }
+        try await Task.sleep(for: .milliseconds(25))
+    }
+    return nil
 }

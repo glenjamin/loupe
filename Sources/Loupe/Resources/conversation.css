@@ -1,5 +1,5 @@
 /* The conversation tab: GitHub-like cards around GitHub's own rendered HTML. Colours are
-   Primer's light theme whatever the system appearance, as the user prefers reading it. */
+   Primer's, light and dark, following the system appearance as the native diff does. */
 
 :root {
   --fg: #1f2328;
@@ -23,6 +23,73 @@
   --del-num-bg: #ffcecb;
   --code-bg: #818b981f;
   --reacted-bg: #ddf4ff;
+  --fade-top: #ffffffd9;
+  --fade-bottom: #ffffff00;
+  --done-emphasis: #8250df;
+  --danger-emphasis: #d1242f;
+  --on-emphasis: #ffffff;
+  --overlay-shadow: #424a531f;
+  --suggested-del-num-bg: #ffd7d5;
+  --suggested-add-num-bg: #ccffd8;
+  --del-word-bg: #ff818266;
+  --add-word-bg: #abf2bc;
+  --syntax-keyword: #cf222e;
+  --syntax-string: #0a3069;
+  --syntax-comment: #6e7781;
+  --syntax-entity: #8250df;
+  --syntax-constant: #0550ae;
+  --syntax-variable: #953800;
+  --syntax-tag: #116329;
+  --pl-entity: #6639ba;
+  --pl-entity-tag: #0550ae;
+  --pl-inserted: #116329;
+  --pl-deleted: #82071e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #f0f6fc;
+    --muted: #9198a1;
+    --bg: #0d1117;
+    --subtle: #151b23;
+    --border: #3d444d;
+    --border-muted: #3d444db3;
+    --link: #4493f8;
+    --success: #3fb950;
+    --success-bg: #2ea04326;
+    --danger: #f85149;
+    --danger-bg: #f8514926;
+    --attention: #d29922;
+    --attention-bg: #bb800926;
+    --done: #ab7df8;
+    --neutral-bg: #212830;
+    --add-bg: #2ea04326;
+    --del-bg: #f8514926;
+    --add-num-bg: #3fb9504d;
+    --del-num-bg: #f851494d;
+    --code-bg: #656c7633;
+    --reacted-bg: #388bfd1a;
+    --fade-top: #0d1117d9;
+    --fade-bottom: #0d111700;
+    --done-emphasis: #8957e5;
+    --danger-emphasis: #da3633;
+    --overlay-shadow: #010409cc;
+    --suggested-del-num-bg: #f851494d;
+    --suggested-add-num-bg: #3fb9504d;
+    --del-word-bg: #f8514966;
+    --add-word-bg: #2ea04366;
+    --syntax-keyword: #ff7b72;
+    --syntax-string: #a5d6ff;
+    --syntax-comment: #8b949e;
+    --syntax-entity: #d2a8ff;
+    --syntax-constant: #79c0ff;
+    --syntax-variable: #ffa657;
+    --syntax-tag: #7ee787;
+    --pl-entity: #d2a8ff;
+    --pl-entity-tag: #7ee787;
+    --pl-inserted: #aff5b4;
+    --pl-deleted: #ffdcd7;
+  }
 }
 
 
@@ -206,17 +273,17 @@ time { color: var(--muted); }
   left: 0;
   right: 0;
   height: 44px;
-  background: linear-gradient(#ffffffd9, #ffffff00);
+  background: linear-gradient(var(--fade-top), var(--fade-bottom));
   pointer-events: none;
 }
 /* Primer's syntax palette, as the diff colours code. */
-.syntax-keyword { color: #cf222e; }
-.syntax-string { color: #0a3069; }
-.syntax-comment { color: #6e7781; }
-.syntax-entity { color: #8250df; }
-.syntax-constant { color: #0550ae; }
-.syntax-variable { color: #953800; }
-.syntax-tag { color: #116329; }
+.syntax-keyword { color: var(--syntax-keyword); }
+.syntax-string { color: var(--syntax-string); }
+.syntax-comment { color: var(--syntax-comment); }
+.syntax-entity { color: var(--syntax-entity); }
+.syntax-constant { color: var(--syntax-constant); }
+.syntax-variable { color: var(--syntax-variable); }
+.syntax-tag { color: var(--syntax-tag); }
 .thread-comment { display: flex; gap: 8px; padding: 10px 12px; }
 .thread-comment + .thread-comment { border-top: 1px solid var(--border-muted); }
 .thread-comment > div { flex: 1; min-width: 0; }
@@ -280,7 +347,7 @@ time { color: var(--muted); }
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
-  box-shadow: 0 8px 24px #424a531f;
+  box-shadow: 0 8px 24px var(--overlay-shadow);
 }
 .reaction-picker .choices a {
   display: inline-flex;
@@ -320,8 +387,8 @@ time { color: var(--muted); }
   border: 2px solid var(--bg);
   color: var(--muted);
 }
-.item.merged .icon { background: var(--done); color: #fff; }
-.item.closed .icon { background: var(--danger); color: #fff; }
+.item.merged .icon { background: var(--done-emphasis); color: var(--on-emphasis); }
+.item.closed .icon { background: var(--danger-emphasis); color: var(--on-emphasis); }
 .item.commits { align-items: flex-start; }
 .commits ul { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0; }
 .commits li { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
@@ -404,14 +471,14 @@ time { color: var(--muted); }
 .body .js-suggested-changes-blob .blob-num::before { content: attr(data-line-number); }
 .body .js-suggested-changes-blob .blob-code-inner { white-space: pre-wrap; word-break: break-word; tab-size: 4; }
 .body .js-suggested-changes-blob .blob-code-inner::before { display: inline-block; width: 1.5em; }
-.body .js-suggested-changes-blob .blob-num-deletion { background: #ffd7d5; }
-.body .js-suggested-changes-blob .blob-num-addition { background: #ccffd8; }
+.body .js-suggested-changes-blob .blob-num-deletion { background: var(--suggested-del-num-bg); }
+.body .js-suggested-changes-blob .blob-num-addition { background: var(--suggested-add-num-bg); }
 .body .js-suggested-changes-blob .blob-code-deletion { background: var(--del-bg); }
 .body .js-suggested-changes-blob .blob-code-addition { background: var(--add-bg); }
 .body .js-suggested-changes-blob .blob-code-deletion::before { content: "-"; }
 .body .js-suggested-changes-blob .blob-code-addition::before { content: "+"; }
-.body .js-suggested-changes-blob .blob-code-deletion .x { background: #ff818266; border-radius: 2px; }
-.body .js-suggested-changes-blob .blob-code-addition .x { background: #abf2bc; border-radius: 2px; }
+.body .js-suggested-changes-blob .blob-code-deletion .x { background: var(--del-word-bg); border-radius: 2px; }
+.body .js-suggested-changes-blob .blob-code-addition .x { background: var(--add-word-bg); border-radius: 2px; }
 
 /* A block GitHub leaves for github.com to draw, as a mermaid diagram is: its spinner waits on a
    frame that's never fetched here, so only the code shows, or the diagram the app draws for it. */
@@ -439,12 +506,20 @@ time { color: var(--muted); }
 
 /* Primer's syntax colours, for GitHub's highlighted code blocks. */
 .pl-c { color: var(--muted); }
-.pl-c1, .pl-s .pl-v { color: #0550ae; }
-.pl-e, .pl-en { color: #6639ba; }
+.pl-c1, .pl-s .pl-v { color: var(--syntax-constant); }
+.pl-e, .pl-en { color: var(--pl-entity); }
 .pl-smi, .pl-s .pl-s1 { color: var(--fg); }
-.pl-ent { color: #0550ae; }
-.pl-k { color: #cf222e; }
-.pl-s, .pl-pds, .pl-sr { color: #0a3069; }
-.pl-v, .pl-smw { color: #953800; }
-.pl-mi1 { color: #116329; background: var(--add-bg); }
-.pl-md { color: #82071e; background: var(--del-bg); }
+.pl-ent { color: var(--pl-entity-tag); }
+.pl-k { color: var(--syntax-keyword); }
+.pl-s, .pl-pds, .pl-sr { color: var(--syntax-string); }
+.pl-v, .pl-smw { color: var(--syntax-variable); }
+.pl-mi1 { color: var(--pl-inserted); background: var(--add-bg); }
+.pl-md { color: var(--pl-deleted); background: var(--del-bg); }
+
+/* Images GitHub's markdown marks for one theme only, as github.com shows them. */
+@media (prefers-color-scheme: light) {
+  .body img[src$="#gh-dark-mode-only"], .body img[data-canonical-src$="#gh-dark-mode-only"] { display: none; }
+}
+@media (prefers-color-scheme: dark) {
+  .body img[src$="#gh-light-mode-only"], .body img[data-canonical-src$="#gh-light-mode-only"] { display: none; }
+}
