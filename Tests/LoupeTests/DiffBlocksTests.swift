@@ -161,7 +161,7 @@ struct DiffBlocksTests {
     @Test func doubleClickingARowThatTakesACommentSelectsAWord() throws {
         let goMod = try fixtureFile("go.mod")
         let view = DiffTextView.make()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = ClickingWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         defer { window.close() }
         view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
@@ -211,18 +211,32 @@ private func middleClick(on range: NSRange, in view: DiffTextView) throws {
 }
 
 /// Clicks twice over the middle of a range of the text, as a double-click arrives. Each mouse-up
-/// is posted from inside the text view's selection tracking, which waits for it; posting wakes the
-/// running loop, and before tracking that's the one the test runner exits after.
+/// is handed to the text view's selection tracking by its window, which it waits on.
 @MainActor
 private func doubleClick(on range: NSRange, in view: DiffTextView) throws {
     let point = try point(over: range, in: view)
-    let windowNumber = try #require(view.window).windowNumber
+    let window = try #require(view.window as? ClickingWindow)
     for clickCount in 1...2 {
-        let up = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: 0))
-        let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: 1))
-        nonisolated(unsafe) let posted = up
-        RunLoop.main.perform(inModes: [.eventTracking]) { MainActor.assumeIsolated { NSApplication.shared.postEvent(posted, atStart: false) } }
+        let up = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: 0))
+        let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: 1))
+        window.pendingMouseUp = up
         view.mouseDown(with: down)
+        #expect(window.pendingMouseUp == nil, "the click was tracked to its mouse-up")
+    }
+}
+
+/// A window that hands selection tracking the mouse-up a test has ready, rather than it being
+/// posted to the app's event queue: Swift's main run loop, which the test runner exits after,
+/// can take a posted event instead and end the whole run.
+private final class ClickingWindow: NSWindow {
+    var pendingMouseUp: NSEvent?
+
+    override func nextEvent(matching mask: NSEvent.EventTypeMask, until expiration: Date?, inMode mode: RunLoop.Mode, dequeue deqFlag: Bool) -> NSEvent? {
+        guard let up = pendingMouseUp, mask.contains(.leftMouseUp) else {
+            return super.nextEvent(matching: mask, until: expiration, inMode: mode, dequeue: deqFlag)
+        }
+        if deqFlag { pendingMouseUp = nil }
+        return up
     }
 }
 
