@@ -38,8 +38,9 @@ expect ~"stage-platform" in row selected in #terraform-envs
 click button "Open in Terraform Cloud" in #terraform-pane
 expect-request app.terraform.io/app/tamarinworks/stage-platform/runs/run-fix8MJqSoTyhdSIM
 
-# ⌃1 and ⌃5 go between the conversation and the plans, which keep the env chosen. The View
-# menu's sections take a moment to follow what's shown, so each key is pressed until it acts.
-press ctrl+1 until #terraform-row is not selected
-press ctrl+5 until #terraform-row is selected
+# ⌃1 and ⌃5 go between the conversation and the plans, which keep the env chosen.
+press ctrl+1
+wait until #terraform-row is not selected
+press ctrl+5
+wait until #terraform-row is selected
 expect ~"stage-platform" in row selected in #terraform-envs
