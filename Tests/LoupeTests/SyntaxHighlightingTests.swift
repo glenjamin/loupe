@@ -19,6 +19,23 @@ struct SyntaxHighlightingTests {
         #expect(colors(of: "@@ -1,5", in: rendered) == [NSColor.secondaryLabelColor])
     }
 
+    @Test func theNoNewlineMarkKeepsItsOwnColourBesideHighlightedCode() throws {
+        let view = showing(try #require(Diff(parsing: """
+        diff --git a/greet.go b/greet.go
+        --- a/greet.go
+        +++ b/greet.go
+        @@ -1,2 +1,2 @@
+         package main
+        -// Greet says hi.
+        +// Greet says hello.
+        \\ No newline at end of file
+
+        """).files.first))
+
+        #expect(colors(of: "// Greet says hello.", in: view) == [DiffColors.syntaxComment])
+        #expect(colors(of: "⊖", in: view) == [NSColor.secondaryLabelColor])
+    }
+
     @Test func aLargeFileShowsPlainFirstThenTakesItsColours() async throws {
         let view = DiffTextView.make()
         view.inlineHighlightRows = 0

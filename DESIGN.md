@@ -1194,6 +1194,10 @@ Loupe crashed the same way again after the screens woke: they woke onto the lock
 
 A comment on a line revealed around a hunk showed as outdated, in the conversation and after the diff's last row, as soon as it was sent. This settles the question "Lines revealed around a hunk take comments too" left open: GitHub's REST endpoint takes a `line` outside the diff's hunks, but can't place it, so it keeps the comment with an empty diff hunk, `position` 1 and `line: null`, and its thread is `isOutdated` from the start. Threads are now fetched with the PR's `headRefOid`, and a line thread GitHub calls outdated whose original commit is that head is taken as current, on its original lines, since nothing has moved them. Once the head moves, GitHub's word stands again, as Loupe can't tell whether the new commits moved those lines without diffing. With no diff hunk from GitHub, the conversation shows no code under it once GitHub's copy replaces the one being sent.
 
+### A line with no newline after it ends in a ⊖, as on GitHub
+
+git's `\ No newline at end of file` was parsed onto the line before it but never shown, so a change that only added or removed a file's final newline looked like a line replaced by itself. Such a line now ends in a muted ⊖, a space after its code, whose help says which side lacks the newline and, when only one does, whether the change adds or removes it. Which row it's on says the rest: a deleted row's for the old file, an added row's for the new one, an unchanged row's for both. It's inline text tagged as gutter, as the line numbers are, so it's left out of copies and syntax colours, adds no row and moves nothing; it can be selected and found with ⌘F like the numbers can. A row of its own under the line, as `git diff` prints, would read most plainly but would be a row with no line to anchor or comment on among rows that all have one. The conversation's comment snippets still leave it out.
+
 ## Not yet decided
 
 Nothing is pending.

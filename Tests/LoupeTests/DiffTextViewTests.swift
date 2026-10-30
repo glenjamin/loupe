@@ -212,6 +212,85 @@ struct DiffTextViewTests {
         #expect(!emphasised("foo bar", after: "+\t"))
         #expect(emphasised("1", after: "-\t") && emphasised("2", after: "+\t"), "the real change still stands out")
     }
+
+    @Test func marksTheLinesWithNoNewlineAfterThemAndSaysWhichSideLacksIt() throws {
+        let removed = try noNewline("""
+        @@ -1,2 +1,2 @@
+         first
+        -last
+        +last
+        \\ No newline at end of file
+        """)
+        #expect(missingNewlineMarks(RenderedDiff(file: removed)) == ["+last": "No newline at end of file: this change removes it"])
+
+        let added = try noNewline("""
+        @@ -1,2 +1,2 @@
+         first
+        -last
+        \\ No newline at end of file
+        +last
+        """)
+        #expect(missingNewlineMarks(RenderedDiff(file: added)) == ["-last": "No newline at end of the old file: this change adds one"])
+
+        let unchanged = try noNewline("""
+        @@ -1,2 +1,3 @@
+        +zeroth
+         first
+         last
+        \\ No newline at end of file
+        """)
+        #expect(missingNewlineMarks(RenderedDiff(file: unchanged)) == [" last": "No newline at end of file"])
+
+        let neither = try noNewline("""
+        @@ -1,2 +1,2 @@
+         first
+        -last
+        \\ No newline at end of file
+        +final
+        \\ No newline at end of file
+        """)
+        #expect(missingNewlineMarks(RenderedDiff(file: neither)) == ["-last": "No newline at end of the old file", "+final": "No newline at end of file"])
+
+        let newFile = try #require(Diff(parsing: "diff --git a/notes.txt b/notes.txt\nnew file mode 100644\n--- /dev/null\n+++ b/notes.txt\n@@ -0,0 +1 @@\n+only\n\\ No newline at end of file\n").files.first)
+        #expect(missingNewlineMarks(RenderedDiff(file: newFile)) == ["+only": "No newline at end of file"])
+    }
+
+    @Test func copyingLeavesOutTheNoNewlineMark() throws {
+        let view = DiffTextView.make()
+        view.show(RenderedDiff(file: try noNewline("""
+        @@ -1,2 +1,2 @@
+         first
+        -last
+        \\ No newline at end of file
+        +last
+        """)))
+        view.setSelectedRange(NSRange(location: 0, length: (view.string as NSString).length))
+
+        let board = NSPasteboard(name: NSPasteboard.Name("LoupeTests-\(UUID())"))
+        defer { board.releaseGlobally() }
+        board.clearContents()
+        #expect(view.writeSelection(to: board, type: .string))
+        #expect(board.string(forType: .string) == "@@ -1,2 +1,2 @@\nfirst\nlast\nlast\n")
+    }
+}
+
+/// A one-file diff of notes.txt with the given hunks.
+private func noNewline(_ hunks: String) throws -> FileDiff {
+    try #require(Diff(parsing: "diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n" + hunks + "\n").files.first)
+}
+
+/// Each row carrying the no-newline mark, as its +/- marker and code, with the mark's help.
+private func missingNewlineMarks(_ rendered: RenderedDiff) -> [String: String] {
+    let text = rendered.text.string as NSString
+    var marks: [String: String] = [:]
+    rendered.text.enumerateAttribute(.toolTip, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+        guard let help = value as? String else { return }
+        #expect(text.substring(with: range) == " ⊖")
+        let row = text.lineRange(for: range)
+        let gutterAndCode = text.substring(with: NSRange(location: row.location, length: range.location - row.location)).split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+        marks[String(gutterAndCode[0].suffix(1)) + gutterAndCode[1]] = help
+    }
+    return marks
 }
 
 private func goMod() throws -> FileDiff {

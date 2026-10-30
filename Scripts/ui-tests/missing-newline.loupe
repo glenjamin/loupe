@@ -1,0 +1,16 @@
+# A line with no newline after it ends in a ⊖: on the added row of a new file without one, and
+# on the deleted row where a change gives a file the newline it lacked. Its help is a tooltip,
+# which scripts can't show; the tests check what it says.
+wait settled
+open tamarinworks/gazette#273
+wait settled
+
+click image #doc
+expect text "batch/status.go" in #file-header
+expect textarea has value ~"} ⊖"
+snap missing-newline-added textarea
+
+click text "main.go"
+wait until text "cmd/gazette/main.go" in #file-header
+expect textarea has value ~"} ⊖"
+snap missing-newline-restored textarea

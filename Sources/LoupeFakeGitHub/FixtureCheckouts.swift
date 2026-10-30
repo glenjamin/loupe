@@ -66,10 +66,11 @@ public enum FixtureCheckouts {
         return [try branch("tamarinworks/atrium", 2928, base: moved, commits: [added, shared, noted], conflicting: true)]
     }
 
+    /// #273 gives `main.go` the newline it lacked at its end, and adds a file without one.
     private static func buildGazette(in directory: URL) async throws -> [Branch] {
         let repo = try await repository("tamarinworks/gazette", in: directory, branch: "master", files: [
             "README.md": "# gazette\n\nServes panels from their cache.\n",
-            "cmd/gazette/main.go": "package main\n\nimport \"github.com/tamarinworks/gazette/panel\"\n\nfunc main() {\n\tpanel.Serve()\n}\n",
+            "cmd/gazette/main.go": "package main\n\nimport \"github.com/tamarinworks/gazette/panel\"\n\nfunc main() {\n\tpanel.Serve()\n}",
             "panel/cache.go": "package panel\n\n// Write stores the panel, every time it's asked to.\nfunc (c *Cache) Write(p Panel) error {\n\treturn c.store.Put(p.Key, p)\n}\n",
         ])
         let master = try await repo.git(["rev-parse", "HEAD"], in: repo.contributorDirectory)
@@ -80,7 +81,7 @@ public enum FixtureCheckouts {
         try await repo.push(asPullRequest: 272)
         try await repo.switchTo("serve-batchcachestatus-gazette", creatingFrom: "skip-panel-cache-writes")
         let status = try await repo.commit([
-            "batch/status.go": "package batch\n\n// Status says how much of a batch the cache holds.\ntype Status struct {\n\tHeld  int\n\tTotal int\n}\n",
+            "batch/status.go": "package batch\n\n// Status says how much of a batch the cache holds.\ntype Status struct {\n\tHeld  int\n\tTotal int\n}",
         ], message: "Add BatchCacheStatus")
         let served = try await repo.commit([
             "cmd/gazette/main.go": "package main\n\nimport (\n\t\"github.com/tamarinworks/gazette/batch\"\n\t\"github.com/tamarinworks/gazette/panel\"\n)\n\nfunc main() {\n\tbatch.ServeStatus()\n\tpanel.Serve()\n}\n",

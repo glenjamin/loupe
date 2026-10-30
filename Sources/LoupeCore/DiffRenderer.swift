@@ -87,7 +87,7 @@ public struct RenderedDiff {
         // Two right-aligned numbers and the marker, two spaces apart, then a tab out to the code.
         let style = Style(fontSize: fontSize, gutterColumns: width * 2 + 5)
         let out = NSMutableString()
-        var rows: [(start: Int, length: Int, gutter: Int, kind: RowKind)] = []
+        var rows: [(start: Int, length: Int, gutter: Int, trailer: Int, kind: RowKind)] = []
         var anchors: [DiffAnchor?] = []
         var hunkRows: [Int] = []
         var controls: [(range: NSRange, control: ExpansionControl)] = []
@@ -95,12 +95,13 @@ public struct RenderedDiff {
         rows.reserveCapacity(file.rowCount)
         anchors.reserveCapacity(file.rowCount)
 
-        func addRow(gutter: String, body: String, kind: RowKind, anchor: DiffAnchor?) {
+        func addRow(gutter: String, body: String, trailer: String = "", kind: RowKind, anchor: DiffAnchor?) {
             let start = out.length
             out.append(gutter)
             out.append(body)
+            out.append(trailer)
             out.append("\n")
-            rows.append((start, out.length - start, (gutter as NSString).length, kind))
+            rows.append((start, out.length - start, (gutter as NSString).length, (trailer as NSString).length, kind))
             anchors.append(anchor)
         }
 
@@ -122,12 +123,14 @@ public struct RenderedDiff {
             blockRows[block.id] = rows.count
             let start = out.length
             out.append(" \n")
-            rows.append((start, 2, 2, .block))
+            rows.append((start, 2, 2, 0, .block))
             anchors.append(nil)
             blockHeights.append((NSRange(location: start, length: 2), block.id, block.height))
         }
 
         var emphasis: [NSRange] = []
+        var missingNewlines: [(range: NSRange, help: String)] = []
+        let endings = MissingNewlines(file)
 
         for (index, hunk) in file.hunks.enumerated() {
             hunkRows.append(rows.count)
@@ -140,17 +143,21 @@ public struct RenderedDiff {
             for line in hunk.lines {
                 let numbers = pad(line.oldLine, width) + "  " + pad(line.newLine, width) + "  "
                 let body = displayText(line)
+                let trailer = line.missingNewline ? MissingNewlines.indicator : ""
                 switch line.kind {
                 case .context(_, let new):
-                    addRow(gutter: numbers + " \t", body: body, kind: .context, anchor: DiffAnchor(path: file.path, side: .right, line: new))
+                    addRow(gutter: numbers + " \t", body: body, trailer: trailer, kind: .context, anchor: DiffAnchor(path: file.path, side: .right, line: new))
                 case .addition(let new):
-                    addRow(gutter: numbers + "+\t", body: body, kind: .addition, anchor: DiffAnchor(path: file.path, side: .right, line: new))
+                    addRow(gutter: numbers + "+\t", body: body, trailer: trailer, kind: .addition, anchor: DiffAnchor(path: file.path, side: .right, line: new))
                 case .deletion(let old):
-                    addRow(gutter: numbers + "-\t", body: body, kind: .deletion, anchor: DiffAnchor(path: file.path, side: .left, line: old))
+                    addRow(gutter: numbers + "-\t", body: body, trailer: trailer, kind: .deletion, anchor: DiffAnchor(path: file.path, side: .left, line: old))
                 }
                 lineRows.append(rows.count - 1)
+                if let row = rows.last, row.trailer > 0 {
+                    missingNewlines.append((NSRange(location: row.start + row.length - 1 - row.trailer, length: row.trailer), endings.help(for: line)))
+                }
                 if syntax != nil, let row = rows.last {
-                    let code = (target: row.start + row.gutter, length: row.length - row.gutter - 1)
+                    let code = (target: row.start + row.gutter, length: row.length - row.gutter - row.trailer - 1)
                     if line.newLine != nil { newSide.append(line.text, mappedTo: code.target, length: code.length) }
                     if line.oldLine != nil { oldSide.append(line.text, mappedTo: line.isDeletion ? code.target : nil, length: code.length) }
                 }
@@ -193,6 +200,10 @@ public struct RenderedDiff {
         }
         for range in emphasis {
             attributed.addAttribute(.diffEmphasis, value: true, range: range)
+        }
+        for (range, help) in missingNewlines {
+            attributed.addAttributes(style.missingNewline, range: range)
+            attributed.addAttribute(.toolTip, value: help, range: range)
         }
         for (range, control) in controls {
             attributed.addAttributes(style.control, range: range)
@@ -285,6 +296,7 @@ private struct Style {
     let gutter: [NSAttributedString.Key: Any]
     let hunkHeader: [NSAttributedString.Key: Any]
     let control: [NSAttributedString.Key: Any]
+    let missingNewline: [NSAttributedString.Key: Any]
 
     init(fontSize: CGFloat, gutterColumns: Int) {
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
@@ -310,6 +322,8 @@ private struct Style {
         gutter = [.foregroundColor: NSColor.tertiaryLabelColor, .diffGutter: true]
         hunkHeader = [.foregroundColor: NSColor.secondaryLabelColor]
         control = [.foregroundColor: NSColor.linkColor, .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)]
+        // Tagged as gutter so a copy leaves it out, as it does the line numbers.
+        missingNewline = [.foregroundColor: NSColor.secondaryLabelColor, .diffGutter: true]
     }
 }
 
@@ -349,6 +363,34 @@ private struct ExpansionControl {
     static func belowLastHunk(of file: FileDiff, newLineCount: Int) -> ExpansionControl? {
         guard file.hiddenLinesAfterLastHunk(newLineCount: newLineCount) > 0 else { return nil }
         return ExpansionControl(glyph: "↓", expansion: ContextExpansion(hunk: file.hunks.count - 1, direction: .below), help: "Show \(ContextExpansion.step) more lines below")
+    }
+}
+
+/// The ⊖ after a line git said has no newline after it, as on GitHub, and what hovering it says:
+/// which side lacks the newline, and whether the change adds or removes it.
+private struct MissingNewlines {
+    static let indicator = " \u{2296}"
+
+    private let oldLacks: Bool
+    private let newLacks: Bool
+    private let change: FileDiff.Change
+
+    init(_ file: FileDiff) {
+        let lines = file.hunks.lazy.flatMap(\.lines).filter(\.missingNewline)
+        oldLacks = lines.contains { $0.oldLine != nil }
+        newLacks = lines.contains { $0.newLine != nil }
+        change = file.change
+    }
+
+    func help(for line: DiffLine) -> String {
+        switch line.kind {
+        case .context:
+            "No newline at end of file"
+        case .addition:
+            oldLacks || change == .added ? "No newline at end of file" : "No newline at end of file: this change removes it"
+        case .deletion:
+            if change == .deleted { "No newline at end of file" } else if newLacks { "No newline at end of the old file" } else { "No newline at end of the old file: this change adds one" }
+        }
     }
 }
 
