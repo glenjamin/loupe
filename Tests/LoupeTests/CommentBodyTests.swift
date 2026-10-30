@@ -75,6 +75,18 @@ struct CommentBodyTests {
         let blocks = CommentBlock.blocks(fromHTML: try #require(reply["bodyHTML"] as? String))
         #expect(blocks.first?.summary == "text 0: what's your thinking with this?")
     }
+
+    /// A card on the diff is native text, so a diagram there is its code, without the spinner
+    /// GitHub puts beside it for github.com to wait on.
+    @Test func aMermaidDiagramShowsAsItsCodeAlone() throws {
+        let probe = try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/conversation.json")))
+        let node = try #require(((probe as? [String: Any])?["data"] as? [String: Any])?["node"] as? [String: Any])
+        let blocks = CommentBlock.blocks(fromHTML: try #require(node["bodyHTML"] as? String))
+        #expect(blocks.suffix(2).map(\.summary) == [
+            "text 0: Each predicate feeds both sides of a report:",
+            #"code: flowchart LR\#n  Column["Recipe column"] -->|Equals, In, Between| Predicate\#n  Predicate -->|sqlb clause| Query["Report query"]\#n  Predicate -->|filter| DrillDown["Drill-down table"]"#,
+        ])
+    }
 }
 
 private extension CommentBlock {

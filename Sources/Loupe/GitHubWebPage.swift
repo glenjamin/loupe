@@ -21,10 +21,19 @@ class GitHubWebPage: NSObject {
     var openCommentLink: @MainActor (CommentLink) -> Void = { _ in }
     /// Shows the changes a force-push's "Show changes" names; set by whoever makes the page.
     var openChangesLink: @MainActor (ChangesLink) -> Void = { _ in }
-    /// Whether the latest page has finished loading, images included.
+    /// Whether the latest page has finished loading, images and diagrams included.
     private(set) var isLoaded = false
+    /// Whether the latest page has mermaid diagrams to draw once it's loaded.
+    private var hasDiagrams = false
+    /// Counts pages loaded, so a page's diagrams finishing after another has started are ignored.
+    private var loads = 0
     /// What relative links in the page are relative to.
     private var baseURL = URL(string: "https://github.com/")!
+    /// Every page there is, for a script run to wait on any still loading.
+    static let livePages = NSHashTable<GitHubWebPage>.weakObjects()
+
+    /// Whether a page has been asked for and isn't yet ready.
+    var isLoading: Bool { loads > 0 && !isLoaded }
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -37,10 +46,13 @@ class GitHubWebPage: NSObject {
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        Self.livePages.add(self)
     }
 
     func load(_ html: String, baseURL: URL) {
         isLoaded = false
+        hasDiagrams = MermaidDiagrams.appear(in: html)
+        loads += 1
         self.baseURL = baseURL
         webView.loadHTMLString(html, baseURL: baseURL)
     }
@@ -78,7 +90,18 @@ extension GitHubWebPage: WKNavigationDelegate, WKUIDelegate {
         return .cancel
     }
 
+    /// A page with diagrams counts as loaded once they're drawn, so it's never seen with their code.
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard hasDiagrams else { return finishLoading() }
+        let load = loads
+        Task {
+            await MermaidDiagrams.draw(in: webView)
+            guard load == loads else { return }
+            finishLoading()
+        }
+    }
+
+    private func finishLoading() {
         isLoaded = true
         didFinishLoading()
     }

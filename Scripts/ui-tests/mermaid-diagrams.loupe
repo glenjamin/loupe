@@ -1,0 +1,31 @@
+# A mermaid block draws as a diagram wherever GitHub's HTML is shown: here the description, which
+# ends in one, and a comment's Preview. The page's own content isn't in the accessibility tree,
+# so what's drawn is checked by the tests and seen in the snaps; this proves both pages settle
+# with their diagrams drawn, as `wait settled` waits for that.
+wait settled
+open tamarinworks/atrium#2928
+wait settled
+snap description
+
+click image #doc
+wait settled
+scroll scroll 2 down 300
+hover textarea up 11
+click button "Add a comment"
+wait until text ~"Comment on line"
+type "```mermaid"
+press return
+type "flowchart TD"
+press return
+type "  Draft --> Preview"
+press return
+type "```"
+click radio "Preview"
+wait until radio "Preview" has value "1"
+wait until AXProgressIndicator missing
+wait settled
+snap preview
+
+# Back on Write the draft is as it was typed.
+click radio "Write"
+wait until textarea ~"Draft --> Preview"

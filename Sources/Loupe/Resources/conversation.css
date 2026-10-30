@@ -413,6 +413,13 @@ time { color: var(--muted); }
 .body .js-suggested-changes-blob .blob-code-deletion .x { background: #ff818266; border-radius: 2px; }
 .body .js-suggested-changes-blob .blob-code-addition .x { background: #abf2bc; border-radius: 2px; }
 
+/* A block GitHub leaves for github.com to draw, as a mermaid diagram is: its spinner waits on a
+   frame that's never fetched here, so only the code shows, or the diagram the app draws for it. */
+.body .render-needs-enrichment { margin-bottom: 12px; }
+.body section.render-needs-enrichment pre { margin: 0; }
+.body .js-render-enrichment-loader { display: none; }
+.body .mermaid-diagram svg { display: block; margin: 0 auto; height: auto; }
+
 /* A markdown file rendered by GitHub, laid out as its file view on github.com. */
 .file {
   max-width: 1012px;
@@ -420,7 +427,7 @@ time { color: var(--muted); }
   padding: 32px 32px 48px;
 }
 .file .body { font-size: 16px; }
-.file .body p, .file .body ul, .file .body ol, .file .body blockquote, .file .body pre, .file .body table { margin-bottom: 16px; }
+.file .body p, .file .body ul, .file .body ol, .file .body blockquote, .file .body pre, .file .body table, .file .body .render-needs-enrichment { margin-bottom: 16px; }
 .file .body h1, .file .body h2, .file .body h3, .file .body h4 { margin: 24px 0 16px; font-weight: 600; }
 .file .body > :first-child { margin-top: 0; }
 .file .body h1 { font-size: 2em; } .file .body h2 { font-size: 1.5em; } .file .body h3 { font-size: 1.25em; }

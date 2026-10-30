@@ -139,7 +139,7 @@ private struct BlockBuilder {
             let node = nodeCount
             nodeCount += 1
             textNode = nil
-            if skipping > 0 || Self.skipped.contains(name) {
+            if skipping > 0 || Self.skipped.contains(name) || Self.isSpinner(attributes) {
                 if !selfClosing && !Self.void.contains(name) { skipping += 1 }
                 return
             }
@@ -397,6 +397,11 @@ private struct BlockBuilder {
 
     /// Elements whose content is never shown.
     static let skipped: Set<String> = ["svg", "style", "script", "template", "head"]
+    /// Whether an element is the spinner GitHub puts beside a block, such as a mermaid diagram,
+    /// for github.com to draw; nothing here waits on it.
+    static func isSpinner(_ attributes: [String: String]) -> Bool {
+        attributes["class"]?.split(separator: " ").contains("js-render-enrichment-loader") == true
+    }
     /// Elements with no closing tag.
     static let void: Set<String> = ["br", "hr", "img", "input", "meta", "link", "source", "wbr", "col", "area", "base", "embed", "param", "track"]
 

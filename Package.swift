@@ -24,7 +24,7 @@ let package = Package(
                 "TreeSitterGoTemplate",
                 "TreeSitterGlimmer",
             ],
-            resources: [.copy("Resources/linguist"), .copy("Resources/quote-selection.js"), .copy("Resources/quote-reply.js"), .copy("Resources/relative-times.js")],
+            resources: [.copy("Resources/linguist"), .copy("Resources/mermaid"), .copy("Resources/mermaid-diagrams.js"), .copy("Resources/quote-selection.js"), .copy("Resources/quote-reply.js"), .copy("Resources/relative-times.js")],
             swiftSettings: strictSwift()
         ),
         // Protocol Buffers, which CodeEditLanguages lacks, vendored by Scripts/update-tree-sitter-proto.sh.

@@ -2,7 +2,8 @@ import Foundation
 
 /// GitHub's REST markdown renderer. Like `POST /markdown` it takes JSON with the text, a mode
 /// and the repo references resolve against, refuses a bad token, and answers with bare HTML: a
-/// `#` line as a heading and anything else as paragraphs, escaped. Tests can make it fail.
+/// `#` line as a heading, a mermaid fence as GitHub's markup for github.com to draw, and anything
+/// else as paragraphs, escaped. Tests can make it fail.
 actor FakeMarkdown {
     struct Request: Equatable, Decodable {
         let text: String
@@ -33,10 +34,36 @@ actor FakeMarkdown {
 
 private func render(_ text: String) -> String {
     text.split(separator: "\n\n").map { block in
-        let escaped = block.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
+        let trimmed = block.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let diagram = trimmed.wholeMatch(of: /```mermaid\n(?<source>(?s:.*)\n)```/) {
+            return mermaidSection(String(diagram.source))
+        }
+        let escaped = escaped(trimmed)
         return escaped.hasPrefix("# ") ? "<h1>\(escaped.dropFirst(2))</h1>" : "<p>\(escaped)</p>"
     }.joined(separator: "\n")
+}
+
+/// A mermaid diagram as GitHub sends it: its source, marked for github.com to draw in a frame
+/// from its own host, with a spinner while it does.
+private func mermaidSection(_ source: String) -> String {
+    let source = escaped(source)
+    let attribute = source.replacingOccurrences(of: "\"", with: "&quot;")
+    return """
+        <section class="js-render-needs-enrichment render-needs-enrichment position-relative" data-identity="00000000-0000-0000-0000-000000000000" data-host="https://viewscreen.githubusercontent.com" data-src="https://viewscreen.githubusercontent.com/markdown/mermaid?docs_host=https%3A%2F%2Fdocs.github.com" data-type="mermaid" aria-label="mermaid rendered output container">
+          <div class="js-render-enrichment-target" data-plain="\(attribute)" dir="auto">
+            <div class="render-plaintext-hidden" dir="auto">
+              <pre lang="mermaid" aria-label="Raw mermaid code" class="notranslate">\(source)</pre>
+            </div>
+          </div>
+          <span class="js-render-enrichment-loader d-flex flex-justify-center flex-items-center width-full" style="min-height:100px" role="presentation">
+            <span data-view-component="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" class="octospinner mx-auto anim-rotate"></svg><span class="sr-only">Loading</span></span>
+          </span>
+        </section>
+        """
+}
+
+private func escaped(_ text: String) -> String {
+    text.replacingOccurrences(of: "&", with: "&amp;")
+        .replacingOccurrences(of: "<", with: "&lt;")
+        .replacingOccurrences(of: ">", with: "&gt;")
 }
