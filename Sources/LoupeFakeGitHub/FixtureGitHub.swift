@@ -3,7 +3,7 @@ import LoupeGitHub
 
 /// GitHub as the fixtures under `probe/` have it, in-process, for a snapshot run with
 /// `LOUPE_FIXTURES` set: the lists, lookups and checks from `FakeGitHub`, each PR's conversation,
-/// reviewers and edits from `FakeConversations`, viewed files and rendered markdown. PRs that a
+/// reviewers and edits from `FakeConversations`, viewed files, rendered markdown and emoji. PRs that a
 /// fixture checkout holds (`FixtureCheckouts`) have that checkout's commits. Nothing goes over
 /// the network: a request none of the fakes can answer throws a `FakeGitHubMismatch`, kept in
 /// `FakeGitHubMismatch.recorded`.
@@ -66,6 +66,7 @@ private struct Fakes: Sendable {
         switch url.path() {
         case "/notifications": return try await github.send(request)
         case "/markdown": return try await markdown.send(request)
+        case "/emojis": return try FakeEmojis().send(request)
         case let path where path.contains("/merge-async"): return try await github.send(request)
         case let path where path.hasPrefix("/repos/"): return try await conversations.sendREST(request)
         case "/graphql": break

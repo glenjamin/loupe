@@ -26,6 +26,8 @@ public final class TabsModel {
     private let client: GitHubClient
     /// Who could review in each repo, fetched once a run and shared by the tabs.
     private let candidates: ReviewerCandidates
+    /// GitHub's emoji, fetched once for every tab.
+    private let emojis: EmojiCatalog
     private let notifications: GitHubNotifications
     private let fallbackInterval: Duration
     /// From the last notifications poll that found changes, to ask only for newer ones.
@@ -61,6 +63,7 @@ public final class TabsModel {
         self.differ = differ
         self.client = client
         candidates = ReviewerCandidates(client: client)
+        emojis = EmojiCatalog(client: client)
         self.notifications = notifications
         self.fallbackInterval = fallbackInterval
         self.sleep = sleep
@@ -338,7 +341,7 @@ public final class TabsModel {
     }
 
     private func makeTab(_ pullRequest: PullRequestSummary) -> PullRequestTab {
-        let tab = PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ, client: client, candidates: candidates, sleep: sleep)
+        let tab = PullRequestTab(opened: pullRequest, lists: lists, store: store, differ: differ, client: client, candidates: candidates, emojis: emojis, sleep: sleep)
         tab.linkOpener = { [weak self] link in await self?.open(link)?.value }
         return tab
     }

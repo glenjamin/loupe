@@ -49,7 +49,7 @@ struct MarkdownEditor: View {
                 toggle
             }
             ZStack {
-                MarkdownTextView(text: $text, isEditable: isEditable, save: save, alternateSave: alternateSave, cancel: cancel, font: font, isPreviewing: isPreviewing, togglePreview: { isPreviewing.toggle() }, focusRequests: focusRequests, contentHeightChanged: minHeight == nil ? nil : { writtenHeight = $0 }, suggestion: suggestion)
+                MarkdownTextView(text: $text, isEditable: isEditable, save: save, alternateSave: alternateSave, cancel: cancel, font: font, isPreviewing: isPreviewing, togglePreview: { isPreviewing.toggle() }, focusRequests: focusRequests, contentHeightChanged: minHeight == nil ? nil : { writtenHeight = $0 }, suggestion: suggestion, emojis: { tab.emojis })
                 if isPreviewing {
                     DraftPreview(text: text, tab: tab, page: { page.page(for: tab) }, contentHeightChanged: { previewedHeight = $0 })
                         // Inside the field's border.
@@ -66,6 +66,7 @@ struct MarkdownEditor: View {
         }
         .onChange(of: focusRequests, initial: true) { if focusRequests > 0 { isPreviewing = false } }
         .onChange(of: suggestion?.count) { isPreviewing = false }
+        .task { await tab.fetchEmojis() }
     }
 
     /// A framed box's height: the mode's content within its least height and `maxHeight`, a

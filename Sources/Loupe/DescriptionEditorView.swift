@@ -1,6 +1,7 @@
 import AppKit
 import LoupeCore
 import LoupeInbox
+import LoupeModel
 import SwiftUI
 
 /// Edits the PR's description in place of the conversation: the description as it is on GitHub
@@ -124,6 +125,8 @@ struct MarkdownTextView: NSViewRepresentable {
     var contentHeightChanged: ((CGFloat) -> Void)?
     /// The suggestion it offers, if any, put in at the cursor on each request and on ⌘G.
     var suggestion: SuggestionRequests?
+    /// The emoji a `:` and part of a name completes to.
+    var emojis: () -> [Emoji] = { [] }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -170,6 +173,7 @@ struct MarkdownTextView: NSViewRepresentable {
             textView.focusAtEnd()
         }
         textView.onSuggest = suggestion?.request
+        textView.emojis = emojis
         // A request made over the preview waits for Write, as the text takes no typing there.
         if let suggestion, suggestion.count != context.coordinator.suggestionRequests, !isPreviewing {
             context.coordinator.suggestionRequests = suggestion.count
@@ -212,6 +216,12 @@ final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
     var onContentHeight: ((CGFloat) -> Void)?
     /// What ⌘G does, as on github.com, if anything.
     var onSuggest: (() -> Void)?
+    /// The emoji a `:` and part of a name completes to; none offered while it's empty.
+    var emojis: () -> [Emoji] = { [] }
+    /// The emoji in the completion list, by the line shown for each.
+    private var offeredEmoji: [String: Emoji] = [:]
+    /// Set while completing changes the text, so that change doesn't complete again.
+    private var isCompletingEmoji = false
     var isPreviewing = false
     private var reportedHeight: CGFloat?
     /// The fixed end of a selection made by code words, so the other end moves on the next one.
@@ -245,6 +255,67 @@ final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
     override func didChangeText() {
         super.didChangeText()
         reportContentHeight()
+        // Offered as the name's typed, as on github.com; inserting one changes the text too.
+        if !isCompletingEmoji, emojiNameRange() != nil {
+            isCompletingEmoji = true
+            complete(nil)
+            isCompletingEmoji = false
+        }
+    }
+
+    override var rangeForUserCompletion: NSRange {
+        emojiNameRange() ?? super.rangeForUserCompletion
+    }
+
+    /// For a `:` and part of a name, the emoji named so, each shown with its character.
+    override func completions(forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String]? {
+        guard charRange == emojiNameRange() else { return super.completions(forPartialWordRange: charRange, indexOfSelectedItem: index) }
+        let typed = (string as NSString).substring(with: charRange).dropFirst()
+        let matches = Emoji.matches(emojis(), for: String(typed))
+        offeredEmoji = Dictionary(matches.map { (Self.offer($0), $0) }, uniquingKeysWith: { first, _ in first })
+        index.pointee = 0
+        return matches.isEmpty ? nil : matches.map(Self.offer)
+    }
+
+    /// Puts the chosen emoji's character in place of the `:` and name on ↩ or Tab, and nothing
+    /// while moving through the list, so what's typed stays as it was until one is chosen.
+    override func insertCompletion(_ word: String, forPartialWordRange charRange: NSRange, movement: Int, isFinal flag: Bool) {
+        guard let emoji = offeredEmoji[word] else {
+            return super.insertCompletion(word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
+        }
+        guard flag, [NSTextMovement.return.rawValue, NSTextMovement.tab.rawValue].contains(movement) else { return }
+        offeredEmoji = [:]
+        guard shouldChangeText(in: charRange, replacementString: emoji.insertion) else { return }
+        isCompletingEmoji = true
+        replaceCharacters(in: charRange, with: emoji.insertion)
+        didChangeText()
+        isCompletingEmoji = false
+        setSelectedRange(NSRange(location: charRange.location + (emoji.insertion as NSString).length, length: 0))
+    }
+
+    /// The `:` and the two or more name characters before the cursor, when that's how the
+    /// word being typed starts: after a space, a bracket or the start of a line, as GitHub
+    /// takes `:name:`, so a URL's `:` or a time's isn't one.
+    private func emojiNameRange() -> NSRange? {
+        let cursor = selectedRange()
+        guard cursor.length == 0, cursor.location > 0 else { return nil }
+        let text = string as NSString
+        var start = cursor.location
+        while start > 0, let scalar = Unicode.Scalar(text.character(at: start - 1)), Self.emojiNameCharacters.contains(scalar) {
+            start -= 1
+        }
+        guard start > 0, text.character(at: start - 1) == UInt16(UInt8(ascii: ":")), cursor.location - start >= 2 else { return nil }
+        let colon = start - 1
+        if colon > 0, let before = Unicode.Scalar(text.character(at: colon - 1)), !CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "([{")).contains(before) {
+            return nil
+        }
+        return NSRange(location: colon, length: cursor.location - colon)
+    }
+
+    private static let emojiNameCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+-")
+
+    private static func offer(_ emoji: Emoji) -> String {
+        "\(emoji.character ?? "·") :\(emoji.name):"
     }
 
     override func setFrameSize(_ newSize: NSSize) {
