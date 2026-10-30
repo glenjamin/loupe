@@ -33,7 +33,7 @@ public final class DiffTextView: NSTextView {
         didSet { commentButton.isHidden = hoveredAnchor == nil }
     }
     /// The lines being picked by a press in the gutter, until it's let go.
-    private var lineDrag: LineDrag?
+    private var gutterDrag: GutterDrag?
 
     /// Soft-wraps long rows at the view's width; off, rows run on and the view scrolls sideways.
     public var wrapsLines = true {
@@ -84,7 +84,7 @@ public final class DiffTextView: NSTextView {
 
     /// The gutter picks lines rather than text, so it keeps the arrow, as on github.com.
     public override func cursorUpdate(with event: NSEvent) {
-        guard lineDrag != nil || isInGutter(convert(event.locationInWindow, from: nil)) else { return super.cursorUpdate(with: event) }
+        guard gutterDrag != nil || isInGutter(convert(event.locationInWindow, from: nil)) else { return super.cursorUpdate(with: event) }
         NSCursor.arrow.set()
     }
 
@@ -284,7 +284,7 @@ public final class DiffTextView: NSTextView {
             return
         }
         if let (row, _) = commentableRow(at: point), isInGutter(point, row: row) {
-            return beginLineDrag(at: row, extending: event.modifierFlags.contains(.shift))
+            return beginGutterDrag(at: row, extending: event.modifierFlags.contains(.shift))
         }
         super.mouseDown(with: event)
         // super runs the selection-tracking loop, so a drag has finished by here; only a plain click reports.
@@ -297,7 +297,7 @@ public final class DiffTextView: NSTextView {
 
 
     public override func mouseDragged(with event: NSEvent) {
-        guard lineDrag != nil else { return super.mouseDragged(with: event) }
+        guard gutterDrag != nil else { return super.mouseDragged(with: event) }
         NSCursor.arrow.set()
         autoscroll(with: event)
         guard let rendered, let textStorage, textStorage.length > 0,
@@ -308,8 +308,8 @@ public final class DiffTextView: NSTextView {
 
     /// Letting go of a press in the gutter starts a comment on the lines it picked.
     public override func mouseUp(with event: NSEvent) {
-        guard let drag = lineDrag else { return super.mouseUp(with: event) }
-        lineDrag = nil
+        guard let drag = gutterDrag else { return super.mouseUp(with: event) }
+        gutterDrag = nil
         showCommentButton(at: convert(event.locationInWindow, from: nil))
         // The tint becomes the comment's once it's started; until then it's what it was.
         commentedAnchors = drag.kept
@@ -321,7 +321,7 @@ public final class DiffTextView: NSTextView {
     /// A press in the gutter of a row that takes comments picks lines, as on github.com,
     /// rather than text: from that row, or with Shift from the far end of the lines a comment
     /// being written is on.
-    private func beginLineDrag(at row: Int, extending: Bool) {
+    private func beginGutterDrag(at row: Int, extending: Bool) {
         guard let rendered, let anchor = rendered.rowAnchors[row] else { return }
         var origin = (row: row, anchor: anchor)
         let commented = rendered.rowAnchors.indices.filter { rendered.rowAnchors[$0].map(commentedAnchors.contains) == true }
@@ -331,14 +331,14 @@ public final class DiffTextView: NSTextView {
         }
         // The "+" stays shown: a press on it goes on getting the drag only while it is.
         setSelectedRange(NSRange(location: selectedRange().location, length: 0))
-        lineDrag = LineDrag(originRow: origin.row, origin: origin.anchor, end: origin.anchor, kept: commentedAnchors)
+        gutterDrag = GutterDrag(originRow: origin.row, origin: origin.anchor, end: origin.anchor, kept: commentedAnchors)
         dragLines(to: row)
     }
 
     /// Picks the lines from the drag's first row towards `target`, as far as a range can go
     /// in that direction, and tints them.
     private func dragLines(to target: Int) {
-        guard var drag = lineDrag, let rendered, let commentableAnchors else { return }
+        guard var drag = gutterDrag, let rendered, let commentableAnchors else { return }
         let step = target >= drag.originRow ? 1 : -1
         var end = drag.origin
         var row = drag.originRow
@@ -352,7 +352,7 @@ public final class DiffTextView: NSTextView {
         }
         drag.end = end
         drag.endsAfter = step > 0
-        lineDrag = drag
+        gutterDrag = drag
         let (start, last) = drag.ordered
         commentedAnchors = Set(start == last ? [start] : commentRange?(start, last) ?? [drag.origin])
     }
@@ -616,7 +616,7 @@ private func withoutGutter(_ storage: NSTextStorage, in range: NSRange) -> Strin
 
 /// The lines picked by a press in the gutter: from the row pressed, or the far end of the lines
 /// being extended, to as far as the drag has reached.
-private struct LineDrag {
+private struct GutterDrag {
     let originRow: Int
     let origin: DiffAnchor
     var end: DiffAnchor
