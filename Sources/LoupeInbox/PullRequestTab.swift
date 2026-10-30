@@ -1083,14 +1083,27 @@ public final class PullRequestTab: Identifiable {
         pullRequest.checkContexts.failedCircleCIChecks + pullRequest.mergeCommitCheckContexts.failedCircleCIChecks
     }
 
+    /// The workspaces Terraform Cloud planned the head commit in, whose plans the Terraform
+    /// section shows. A merge commit's runs are applies, which aren't reviewed here.
+    public var terraformPlans: [TerraformPlanCheck] {
+        pullRequest.checkContexts.terraformPlans
+    }
+
     /// What's shown beside the sidebar: the section chosen, or the conversation in place of a
-    /// visual review the conversation no longer has, or of failed jobs that have since passed.
+    /// visual review the conversation no longer has, of failed jobs that have since passed, or
+    /// of plans the checks no longer report.
     public var shownSection: ReviewSection {
         switch section {
         case .visualReview where visualReview == nil: .conversation
         case .circleCI where failedCircleCIChecks.isEmpty: .conversation
+        case .terraform where terraformPlans.isEmpty: .conversation
         default: section
         }
+    }
+
+    /// Shows Terraform Cloud's plans in place of the diff or conversation, if there are any.
+    public func showTerraform() {
+        if !terraformPlans.isEmpty { section = .terraform }
     }
 
     /// Shows the failed CircleCI jobs in place of the diff or conversation, if there are any.
@@ -1439,12 +1452,13 @@ public enum PendingChange: Sendable, Equatable {
 }
 
 /// What the PR view shows beside its sidebar: the conversation, the files, CI's visual review
-/// report, or its failed CircleCI jobs.
+/// report, its failed CircleCI jobs, or Terraform Cloud's plans.
 public enum ReviewSection: Sendable, Hashable {
     case conversation
     case files
     case visualReview
     case circleCI
+    case terraform
 }
 
 /// Where a tab's diff has got to.

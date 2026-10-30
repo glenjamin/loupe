@@ -377,7 +377,7 @@ private struct FailureView: View {
 /// Text printed to a terminal, coloured as it was, read-only and searchable with ⌘F. It's set
 /// afresh only when `identity` changes, so a selection or scroll isn't lost to an update; set,
 /// it shows its end, where a failure's error is, when `scrollsToEnd`.
-private struct TerminalTextView: NSViewRepresentable {
+struct TerminalTextView: NSViewRepresentable {
     let text: String
     let identity: String
     let scrollsToEnd: Bool

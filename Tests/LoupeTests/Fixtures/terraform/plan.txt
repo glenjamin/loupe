@@ -1,0 +1,114 @@
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+  ~ update in-place
+  - destroy
+-/+ destroy and then create replacement
+
+Terraform will perform the following actions:
+
+  # terraform_data.dns must be replaced
+-/+ resource "terraform_data" "dns" {
+      ~ id               = "3856f236-fd5d-380a-7545-60ea900b7f95" -> (known after apply)
+      ~ output           = "gazette.internal" -> (known after apply)
+      ~ triggers_replace = 1 -> 2
+        # (1 unchanged attribute hidden)
+    }
+
+  # terraform_data.listener[0] will be created
+  + resource "terraform_data" "listener" {
+      + id     = (known after apply)
+      + input  = {
+          + port     = 9090
+          + protocol = "GRPC"
+        }
+      + output = (known after apply)
+    }
+
+  # terraform_data.old_queue[0] will be destroyed
+  # (because index [0] is out of range for count)
+  - resource "terraform_data" "old_queue" {
+      - id     = "021bbb68-c143-14ae-1377-f2fb67997e58" -> null
+      - input  = {
+          - name      = "relay-queue"
+          - retention = 4
+        } -> null
+      - output = {
+          - name      = "relay-queue"
+          - retention = 4
+        } -> null
+    }
+
+  # terraform_data.service will be updated in-place
+  ~ resource "terraform_data" "service" {
+        id     = "9adb193d-50cf-16bd-537f-9c9631c2cdde"
+      ~ input  = {
+          ~ command  = [
+                "serve",
+              ~ "--http" -> "--grpc",
+            ]
+            name     = "gazette"
+          ~ policy   = jsonencode(
+              ~ {
+                  ~ Statement = [
+                      ~ {
+                          ~ Action = "s3:GetObject" -> [
+                              + "s3:GetObject",
+                              + "s3:PutObject",
+                            ]
+                            # (1 unchanged attribute hidden)
+                        },
+                    ]
+                    # (1 unchanged attribute hidden)
+                }
+            )
+          ~ port     = 8080 -> 9090
+          ~ script   = <<-EOT
+                #!/bin/sh
+                echo start
+              - exec gazette
+              + exec gazette --grpc
+            EOT
+          ~ tags     = {
+                Env   = "stage"
+              + Owner = "relay"
+                Team  = "platform"
+            }
+            # (1 unchanged attribute hidden)
+        }
+      ~ output = {
+          - command  = [
+              - "serve",
+              - "--http",
+            ]
+          - name     = "gazette"
+          - policy   = jsonencode(
+                {
+                  - Statement = [
+                      - {
+                          - Action = "s3:GetObject"
+                          - Effect = "Allow"
+                        },
+                    ]
+                  - Version   = "2012-10-17"
+                }
+            )
+          - port     = 8080
+          - replicas = 2
+          - script   = <<-EOT
+                #!/bin/sh
+                echo start
+                exec gazette
+            EOT
+          - tags     = {
+              - Env  = "stage"
+              - Team = "platform"
+            }
+        } -> (known after apply)
+    }
+
+Plan: 2 to add, 1 to change, 2 to destroy.
+
+Changes to Outputs:
+  ~ endpoint = "http://gazette:8080" -> "grpc://gazette:9090"

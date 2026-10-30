@@ -1,0 +1,45 @@
+# A PR whose checks report Terraform Cloud runs offers them under Conversation: what the plans
+# add, destroy and change across its envs, each env's counts, and the chosen env's plan as
+# Terraform prints it, read from Terraform Cloud.
+wait settled
+open tamarinworks/bedrock#2193
+wait settled
+expect button ~"Terraform" #terraform-row has label "Terraform, +16 -2 ~2, across 2 envs"
+expect #terraform-pane missing
+
+# The envs, each with its counts; nothing is chosen until one is clicked.
+click #terraform-row
+expect #terraform-row is selected
+wait until #terraform-envs
+expect ~"prod-platform" in #terraform-envs
+expect ~"stage-platform" in #terraform-envs
+expect row in #terraform-envs count 2
+expect ~"+8 -1 ~1" in #terraform-envs
+expect ~"Choose an environment" in #terraform-pane
+expect #terraform-plan missing
+snap terraform-envs
+
+# An env's plan, as Terraform prints it.
+click ~"prod-platform" in #terraform-envs
+wait until #terraform-plan
+expect ~"Plan: 8 to add, 1 to change, 1 to destroy." in #terraform-pane
+expect ~"# module.gazette.aws_service_discovery_service.gazette must be replaced" in #terraform-plan
+expect ~"~ name = \"gazette\" -> \"gazette-http\" # forces replacement" in #terraform-plan
+expect ~"+ desired_count   = 3" in #terraform-plan
+snap terraform-plan
+
+# Another env's plan in its place.
+click ~"stage-platform" in #terraform-envs
+wait until ~"gazette-grpc.stage.internal" in #terraform-plan
+expect ~"+ desired_count   = 1" in #terraform-plan
+expect ~"stage-platform" in row selected in #terraform-envs
+
+# The run opens in the browser.
+click button "Open in Terraform Cloud" in #terraform-pane
+expect-request app.terraform.io/app/tamarinworks/stage-platform/runs/run-fix8MJqSoTyhdSIM
+
+# ⌃1 and ⌃5 go between the conversation and the plans, which keep the env chosen. The View
+# menu's sections take a moment to follow what's shown, so each key is pressed until it acts.
+press ctrl+1 until #terraform-row is not selected
+press ctrl+5 until #terraform-row is selected
+expect ~"stage-platform" in row selected in #terraform-envs

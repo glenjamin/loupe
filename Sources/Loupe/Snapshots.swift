@@ -2396,6 +2396,7 @@ private extension ReviewSection {
         case "files": self = .files
         case "visual": self = .visualReview
         case "circleci": self = .circleCI
+        case "terraform": self = .terraform
         default: return nil
         }
     }

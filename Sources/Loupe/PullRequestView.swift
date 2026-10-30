@@ -52,6 +52,13 @@ struct PullRequestView: View {
                             .allowsHitTesting(showsCircleCI)
                             .accessibilityHidden(!showsCircleCI)
                     }
+                    let showsTerraform = section == .terraform
+                    if let plans = showsTerraform ? TerraformPages.plans(for: tab) : TerraformPages.existingPlans(for: tab) {
+                        TerraformPane(plans: plans, checks: tab.terraformPlans, isShown: showsTerraform)
+                            .opacity(showsTerraform ? 1 : 0)
+                            .allowsHitTesting(showsTerraform)
+                            .accessibilityHidden(!showsTerraform)
+                    }
                     let showsVisualReview = section == .visualReview
                     if let review = tab.visualReview, let page = showsVisualReview ? VisualReviewPage.page(for: tab) : VisualReviewPage.existingPage(for: tab) {
                         VisualReviewPane(page: page, review: review, isShown: showsVisualReview)
@@ -195,9 +202,9 @@ struct NoCheckoutActions: View {
     }
 }
 
-/// The PR's navigation: its conversation at the top, with its failed CircleCI jobs and CI's
-/// visual review under it when there are any, then once the diff is ready the commit picker and
-/// the files of the shown changes.
+/// The PR's navigation: its conversation at the top, with its failed CircleCI jobs, CI's visual
+/// review and Terraform Cloud's plans under it when there are any, then once the diff is ready
+/// the commit picker and the files of the shown changes.
 struct ReviewSidebar: View {
     @Bindable var tab: PullRequestTab
 
@@ -209,6 +216,9 @@ struct ReviewSidebar: View {
             }
             if let review = tab.visualReview {
                 VisualReviewRow(tab: tab, review: review)
+            }
+            if !tab.terraformPlans.isEmpty {
+                TerraformRow(tab: tab)
             }
             switch tab.phase {
             case let .ready(diff):

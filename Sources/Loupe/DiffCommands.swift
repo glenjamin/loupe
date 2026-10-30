@@ -52,6 +52,9 @@ struct DiffCommands: Commands {
             Button("CircleCI Failures") { tab?.showCircleCI() }
                 .keyboardShortcut(.circleCI)
                 .disabled(tab?.failedCircleCIChecks.isEmpty != false)
+            Button("Terraform Plans") { tab?.showTerraform() }
+                .keyboardShortcut(.terraform)
+                .disabled(tab?.terraformPlans.isEmpty != false)
             Divider()
             Button(listMode == .todo ? "Show Lists" : "Show TODO") { listMode = listMode == .todo ? .lists : .todo }
                 .keyboardShortcut(.toggleTodo)
