@@ -66,6 +66,8 @@ struct PullRequestView: View {
         // Showing the tab produces the diff if it isn't already in memory. New commits after
         // that are offered by the banner rather than replacing what's being read.
         .task { await tab.load() }
+        // Before any comment box opens, so a `:` and name typed as soon as one does is offered.
+        .task { await tab.fetchEmojis() }
     }
 
     @ViewBuilder

@@ -1210,6 +1210,10 @@ This revises "Selecting text across rows and then clicking the "+" …", which m
 
 GitHub sends a Unicode emoji in a comment's HTML as a `<g-emoji>` around its character, which already showed; its own emoji (`:shipit:`, `:octocat:`, 23 of them) come as an `<img class="emoji">` with the name as its `alt`, and showed as nothing. They now show as their `:name:`, rather than fetching an image for one emoji. In the comment and reply boxes, typing `:` and two or more letters of a name, at the start or after a space or bracket, offers the emoji whose names start with them (shortest first), then those that contain them, as github.com does. ↩ or Tab puts the character in place of what was typed (`:name:` for GitHub's own), ↑↓ move, and Esc closes the list and leaves the text. The list is `NSTextView`'s own completion window (`complete(_:)`) rather than a popover of ours, which gives the keys and placement for free. The names come from `GET /emojis`, which maps each name to an image whose file name under `unicode/` is the code points; it's fetched once per launch when a box first opens and kept in memory only, not in the store, as a launch that can't fetch it just offers nothing.
 
+### GitHub's emoji are fetched as a PR first shows
+
+The emoji names for `:name:` completion are fetched when a PR's view first shows, rather than when a comment box first opens, so a name typed as soon as a box opens is offered; the box still asks, so one that couldn't be fetched is tried again then. Offering the list late, when the names arrive mid-name, was tried: `complete(_:)` outside a key press runs AppKit's own event loop for the list, which hung the UI scripts.
+
 ## Not yet decided
 
 Nothing is pending.
