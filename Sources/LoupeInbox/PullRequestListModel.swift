@@ -4,6 +4,7 @@ import LoupeGitHub
 import LoupeModel
 import LoupeStore
 import Observation
+import os
 
 /// The start screen's state: the two PR columns, shown from the local store straight away and
 /// kept in step with GitHub by `keepRefreshed`.
@@ -437,8 +438,16 @@ public final class PullRequestListModel {
             }
         }
         // Stopped part way, as when the screens sleep, it says nothing about GitHub.
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else {
+            logger.notice("Lists refresh stopped part way")
+            return
+        }
         error = failures.isEmpty ? nil : failures.joined(separator: "\n")
+        if failures.isEmpty {
+            logger.notice("Lists refreshed")
+        } else {
+            logger.notice("Lists refresh failed: \(failures.joined(separator: "; "), privacy: .public)")
+        }
     }
 
     /// A PR stops matching `review-requested:@me` once reviewed, and `reviewed-by:@me is:open`
@@ -722,3 +731,5 @@ private extension Duration {
         return TimeInterval(seconds) + TimeInterval(attoseconds) / 1e18
     }
 }
+
+private let logger = Logger(subsystem: "com.glenmailer.Loupe", category: "lists")

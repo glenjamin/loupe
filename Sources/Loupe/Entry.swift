@@ -29,10 +29,15 @@ enum Entry {
             // app's settings beneath them, to look the same, without ever writing to them. A run
             // against the fixtures doesn't, so it starts the same whatever they are.
             if FixtureRun.directory == nil { UserDefaults.standard.addSuite(named: "com.glenmailer.Loupe") }
-            // Shown in TODO mode for this run only, as the argument domain is never saved.
+            // For this run only, as the argument domain is never saved. Windows aren't restored,
+            // so a run after one that crashed isn't held up by AppKit's offer to reopen them.
+            var arguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+            arguments["ApplePersistenceIgnoreState"] = true
+            // Shown in TODO mode.
             if ProcessInfo.processInfo.environment["LOUPE_SNAPSHOT_TODO"] == "1" {
-                UserDefaults.standard.setVolatileDomain([ListMode.key: ListMode.todo.rawValue], forName: UserDefaults.argumentDomain)
+                arguments[ListMode.key] = ListMode.todo.rawValue
             }
+            UserDefaults.standard.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
         }
         if let path = args.first {
             LaunchOptions.diffPath = path

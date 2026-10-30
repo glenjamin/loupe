@@ -157,6 +157,16 @@ A link to part of a PR lands there (see "Links to a comment, thread, file or com
 
 A router such as Finicky can send Slack's and mail's PR links here, either by rewriting `https://github.com/*/pull/*` to the same URL with the scheme `loupe`, or by opening those URLs with the app `com.glenmailer.Loupe`. The PR opens in its tab at once: a stored PR as it's stored, any other as a tab made from the link alone, `repo #number` with a spinner, while it's looked up on GitHub, which becomes the PR's tab in place once found. A PR GitHub won't show, or a failed lookup, leaves that tab saying why, with Retry, Open on GitHub and Close. Any other https link Loupe is given goes to the browser. A `loupe:` URL that names no PR is logged and dropped. Links Loupe sends to the browser carry `via=loupe` when they're on github.com, so the router's PR rule should skip URLs with that parameter, or it sends Loupe's own "Open on GitHub" straight back.
 
+### After a crash
+
+macOS writes a report to `~/Library/Logs/DiagnosticReports/Loupe-<date>.ips`; its first line is a JSON header and the rest a JSON object, whose `asiBacktraces` hold the backtrace of an exception AppKit crashed on. Loupe logs to the unified log under the subsystem `com.glenmailer.Loupe`, which keeps notices for a few days, so what it was doing beforehand reads with:
+
+```sh
+/usr/bin/log show --start '2026-10-30 10:00' --end '2026-10-30 10:07' --predicate 'subsystem == "com.glenmailer.Loupe"' --style compact
+```
+
+Each list refresh logs how it went (`lists`), and refreshing pausing and resuming with the screens' sleep and lock logs why (`window`). When the window's layout goes round far more often than it should without the run loop waiting, as before AppKit stops the app with "more Update Constraints in Window passes than there are views in the window", the views still asking for constraints or layout are logged (`window`) with their path from the window's frame view and accessibility ids. `pmset -g log` shows sleeps, wakes and dark wakes, and `loginwindow`'s log the screen locking.
+
 ## Snapshots
 
 The app can draw its window to PNGs, title bar, toolbar and tab strip included, without screen-recording permission. The Debug menu has "Save Snapshot of Window…" (⌥⌘S) and "Snapshot All Tabs to Desktop".

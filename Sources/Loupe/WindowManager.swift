@@ -1,4 +1,5 @@
 import AppKit
+import os
 import LoupeInbox
 import LoupeModel
 import SwiftUI
@@ -275,6 +276,7 @@ final class WindowManager {
     /// again once there's none.
     private func pauseRefreshing(_ reason: RefreshPause, _ paused: Bool) {
         if paused { refreshPauses.insert(reason) } else { refreshPauses.remove(reason) }
+        windowLogger.notice("\(String(describing: reason), privacy: .public): \(paused, privacy: .public); refreshing \(self.refreshPauses.isEmpty ? "on" : "paused", privacy: .public)")
         if refreshPauses.isEmpty {
             keepRefreshing()
         } else {
@@ -306,6 +308,46 @@ final class LoupeWindow: NSWindow, NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         styleMask.contains(.closable)
+    }
+
+    /// Layout passes since the run loop last waited. AppKit gives up on a window, stopping the
+    /// app, once one display cycle has run more passes than the window has views; well before
+    /// that, the views still asking for another are logged, as the crash report can't say.
+    private var layoutPasses = 0
+    private var layoutPassesReset: CFRunLoopObserver?
+
+    override func layoutIfNeeded() {
+        countLayoutPass()
+        super.layoutIfNeeded()
+    }
+
+    override func updateConstraintsIfNeeded() {
+        countLayoutPass()
+        super.updateConstraintsIfNeeded()
+    }
+
+    private func countLayoutPass() {
+        if layoutPassesReset == nil {
+            let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.layoutPasses = 0 }
+            }
+            CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+            layoutPassesReset = observer
+        }
+        layoutPasses += 1
+        if layoutPasses == layoutLoopThreshold { logLayoutLoop() }
+    }
+
+    private func logLayoutLoop() {
+        let views = contentView?.superview.map(viewsAskingForLayout) ?? []
+        windowLogger.error("""
+            Window layout has gone round \(self.layoutPasses, privacy: .public) times without the run loop waiting. \
+            Visible: \(self.occlusionState.contains(.visible), privacy: .public), \
+            screen: \(self.screen?.localizedName ?? "none", privacy: .public), \
+            app active: \(NSApp.isActive, privacy: .public), \
+            views asking for constraints or layout:
+            \(views.joined(separator: "\n"), privacy: .public)
+            """)
     }
 }
 
@@ -520,3 +562,28 @@ func copyText(_ text: String) {
 enum RefreshPause {
     case screensAsleep, screenLocked
 }
+
+/// Layout passes in one display cycle after which the views causing them are logged.
+private let layoutLoopThreshold = 100
+
+private let windowLogger = Logger(subsystem: "com.glenmailer.Loupe", category: "window")
+
+/// Each view under `root` that wants its constraints updated or its layout done, as the path to
+/// it from `root`: each view's kind, SwiftUI's hosting views naming the view they host, and
+/// accessibility id where it has one.
+@MainActor
+private func viewsAskingForLayout(under root: NSView) -> [String] {
+    var lines: [String] = []
+    func visit(_ view: NSView, path: [String]) {
+        let id = view.accessibilityIdentifier()
+        let path = path + [String(String(describing: type(of: view)).prefix(160)) + (id.isEmpty ? "" : " #\(id)")]
+        if view.needsUpdateConstraints || view.needsLayout {
+            let wants = [view.needsUpdateConstraints ? "constraints" : nil, view.needsLayout ? "layout" : nil].compactMap(\.self)
+            lines.append("\(path.joined(separator: " > ")) wants \(wants.joined(separator: " and "))")
+        }
+        for subview in view.subviews { visit(subview, path: path) }
+    }
+    visit(root, path: [])
+    return lines
+}
+
