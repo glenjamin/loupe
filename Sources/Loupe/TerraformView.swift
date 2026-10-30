@@ -234,10 +234,12 @@ private struct PlanView: View {
                 }
             case let .loaded(.planned(plan)):
                 VStack(spacing: 0) {
-                    header(Text(verbatim: "Plan: \(TerraformPlanText.summary(plan.counts))."))
+                    header(Text(verbatim: "Plan: \(TerraformPlanText.summary(plan.counts))."), expandsAll: plans.outline(of: check)?.resources.isEmpty == false)
                     Divider()
-                    TerminalTextView(text: TerraformPlanText.render(plan), identity: check.runId, scrollsToEnd: false)
-                        .accessibilityIdentifier("terraform-plan")
+                    if let outline = plans.outline(of: check) {
+                        PlanOutlineView(plans: plans, check: check, outline: outline, expanded: plans.expanded(in: check), current: plans.current(in: check))
+                            .accessibilityIdentifier("terraform-plan")
+                    }
                 }
             case let .loaded(.errored(log)):
                 VStack(spacing: 0) {
@@ -258,11 +260,19 @@ private struct PlanView: View {
         }
     }
 
-    private func header(_ summary: Text) -> some View {
+    private func header(_ summary: Text, expandsAll: Bool = false) -> some View {
         HStack(spacing: 8) {
             Text(verbatim: check.workspace).font(.headline).lineLimit(1)
             summary.foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 0)
+            if expandsAll {
+                let isAllExpanded = plans.isAllExpanded(in: check)
+                Button(isAllExpanded ? "Collapse All" : "Expand All") { plans.setAllExpanded(!isAllExpanded, in: check) }
+                    .buttonStyle(.borderless)
+                    .font(.callout)
+                    .help(isAllExpanded ? "Collapse every resource (⌥⌘←)" : "Expand every resource to show its changes (⌥⌘→)")
+                    .accessibilityIdentifier("terraform-expand-all")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)

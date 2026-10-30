@@ -458,8 +458,9 @@ struct FindCommands: Commands {
 
 /// The sender of a find action, which AppKit's text views read from its tag as they would a
 /// menu item's.
-private final class TextFinderSender: NSObject {
+private final class TextFinderSender: NSObject, NSValidatedUserInterfaceItem {
     @objc let tag: Int
+    var action: Selector? { #selector(NSResponder.performTextFinderAction(_:)) }
 
     init(tag: Int) {
         self.tag = tag

@@ -55,6 +55,15 @@ struct DiffCommands: Commands {
             Button("Terraform Plans") { tab?.showTerraform() }
                 .keyboardShortcut(.terraform)
                 .disabled(tab?.terraformPlans.isEmpty != false)
+            // While a plan is shown, as its header's Expand All button does.
+            let plans = tab.flatMap { $0.shownSection == .terraform ? TerraformPages.existingPlans(for: $0) : nil }
+            let plan = plans?.selected.flatMap { check in plans?.outline(of: check)?.resources.isEmpty == false ? check : nil }
+            Button("Expand All Resources") { if let plan { plans?.setAllExpanded(true, in: plan) } }
+                .keyboardShortcut(.expandAllResources)
+                .disabled(plan == nil)
+            Button("Collapse All Resources") { if let plan { plans?.setAllExpanded(false, in: plan) } }
+                .keyboardShortcut(.collapseAllResources)
+                .disabled(plan == nil)
             Divider()
             Button(listMode == .todo ? "Show Lists" : "Show TODO") { listMode = listMode == .todo ? .lists : .todo }
                 .keyboardShortcut(.toggleTodo)

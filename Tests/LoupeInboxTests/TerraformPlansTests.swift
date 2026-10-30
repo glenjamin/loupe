@@ -59,6 +59,41 @@ struct TerraformPlansTests {
         #expect(tab.shownSection == .conversation)
     }
 
+    @Test func aPlansResourcesStartCollapsedAndEachEnvKeepsWhatWasExpanded() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = try #require(app.mine.first { $0.repository == "tamarinworks/bedrock" && $0.number == 2193 })
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        let plans = TerraformPlans(client: client(FakeTerraformCloud.fixture()))
+        await plans.show(tab.terraformPlans)
+
+        await plans.select("tamarinworks/prod-platform")
+        let prod = try #require(plans.selected)
+        let outline = try #require(plans.outline(of: prod))
+        #expect(outline.resources.count == 9)
+        #expect(plans.expanded(in: prod).isEmpty)
+        let shown = outline.shown(expanded: plans.expanded(in: prod)).text.string
+        #expect(shown.contains("-/+ module.gazette.aws_service_discovery_service.gazette must be replaced\n    # forces replacement: name"))
+        #expect(!shown.contains("desired_count"))
+
+        plans.toggle("module.gazette.aws_ecs_service.grpc", in: prod)
+        plans.setCurrent("module.gazette.aws_ecs_service.grpc", in: prod)
+        #expect(outline.shown(expanded: plans.expanded(in: prod)).text.string.contains("+ desired_count   = 3"))
+
+        // Another env starts collapsed; going back finds prod as it was left.
+        await plans.select("tamarinworks/stage-platform")
+        let stage = try #require(plans.selected)
+        #expect(plans.expanded(in: stage).isEmpty)
+        plans.setAllExpanded(true, in: stage)
+        #expect(plans.isAllExpanded(in: stage))
+        await plans.select("tamarinworks/prod-platform")
+        #expect(plans.expanded(in: prod) == ["module.gazette.aws_ecs_service.grpc"])
+        #expect(plans.current(in: prod) == "module.gazette.aws_ecs_service.grpc")
+        #expect(!plans.isAllExpanded(in: prod))
+        plans.setAllExpanded(false, in: stage)
+        #expect(plans.expanded(in: stage).isEmpty)
+    }
+
     @Test func eachEnvSaysWhereItsPlanHasGot() async throws {
         let app = try await ConversationApp()
         let terraform = FakeTerraformCloud()

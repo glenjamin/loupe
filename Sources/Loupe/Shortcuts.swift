@@ -12,6 +12,7 @@ enum Shortcut: CaseIterable {
     case summary, approve, requestChanges, submitReview
     case nextFile, previousFile, markReviewedAndNext, toggleReviewed, nextCommit, previousCommit
     case toggleRendered, hideRevealedLines, hideWhitespace, wrapLines, quoteReply
+    case moveBetweenResources, toggleResource, expandAllResources, collapseAllResources
     case send, sendSecond, cancel, togglePreview, suggestChange, moveByCodeWord
 
     enum Group: String, CaseIterable {
@@ -20,6 +21,7 @@ enum Shortcut: CaseIterable {
         case pullRequest = "Pull request"
         case review = "Review"
         case files = "Files"
+        case terraform = "Terraform plans"
         case comments = "Comment boxes"
     }
 
@@ -30,6 +32,7 @@ enum Shortcut: CaseIterable {
         case .conversation, .files, .visualReview, .circleCI, .terraform, .openOnGitHub, .copyLink, .openInEditor, .editDescription, .reviewers, .merge: .pullRequest
         case .summary, .approve, .requestChanges, .submitReview: .review
         case .nextFile, .previousFile, .markReviewedAndNext, .toggleReviewed, .nextCommit, .previousCommit, .toggleRendered, .hideRevealedLines, .hideWhitespace, .wrapLines, .quoteReply: .files
+        case .moveBetweenResources, .toggleResource, .expandAllResources, .collapseAllResources: .terraform
         case .send, .sendSecond, .cancel, .togglePreview, .suggestChange, .moveByCodeWord: .comments
         }
     }
@@ -84,6 +87,10 @@ enum Shortcut: CaseIterable {
         case .togglePreview: "Switch between Write and Preview"
         case .suggestChange: "Suggest a change to the lines"
         case .moveByCodeWord: "Move by code words"
+        case .moveBetweenResources: "Move between resources"
+        case .toggleResource: "Expand or collapse the resource"
+        case .expandAllResources: "Expand all resources"
+        case .collapseAllResources: "Collapse all resources"
         }
     }
 
@@ -122,6 +129,8 @@ enum Shortcut: CaseIterable {
         case .toggleRendered: KeyboardShortcut("r", modifiers: [.command, .control])
         case .hideRevealedLines: KeyboardShortcut("e", modifiers: [.command, .control])
         case .hideWhitespace: KeyboardShortcut("h", modifiers: [.command, .control])
+        case .expandAllResources: KeyboardShortcut(.rightArrow, modifiers: [.command, .option])
+        case .collapseAllResources: KeyboardShortcut(.leftArrow, modifiers: [.command, .option])
         case .wrapLines: KeyboardShortcut("l", modifiers: [.command, .option])
         default: nil
         }
@@ -156,6 +165,8 @@ enum Shortcut: CaseIterable {
         case .togglePreview: ["⇧⌘P"]
         case .suggestChange: ["⌘G"]
         case .moveByCodeWord: ["⌥←", "⌥→"]
+        case .moveBetweenResources: ["↑", "↓"]
+        case .toggleResource: ["→", "←"]
         default: [plainKey.map(Self.symbol(forPlainKey:)), menuKey.map(Self.symbol(for:))].compactMap { $0 }
         }
     }
@@ -177,6 +188,8 @@ enum Shortcut: CaseIterable {
         case .return: "↩"
         case .downArrow: "↓"
         case .upArrow: "↑"
+        case .leftArrow: "←"
+        case .rightArrow: "→"
         default: String(shortcut.key.character).uppercased()
         }
         return symbols.filter { modifiers.contains($0.0) }.map(\.1).joined() + key
@@ -214,7 +227,7 @@ private struct ShortcutsList: View {
         VStack(alignment: .trailing, spacing: 16) {
             HStack(alignment: .top, spacing: 32) {
                 column([.anywhere, .lists, .pullRequest])
-                column([.review, .files, .comments])
+                column([.review, .files, .comments, .terraform])
             }
             Button("Done", action: close)
                 .keyboardShortcut(.defaultAction)

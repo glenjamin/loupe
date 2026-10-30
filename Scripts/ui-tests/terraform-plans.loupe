@@ -1,6 +1,6 @@
 # A PR whose checks report Terraform Cloud runs offers them under Conversation: what the plans
-# add, destroy and change across its envs, each env's counts, and the chosen env's plan as
-# Terraform prints it, read from Terraform Cloud.
+# add, destroy and change across its envs, each env's counts, and the chosen env's plan as a row
+# for each resource, collapsed until expanded, read from Terraform Cloud.
 wait settled
 open tamarinworks/bedrock#2193
 wait settled
@@ -19,20 +19,66 @@ expect ~"Choose an environment" in #terraform-pane
 expect #terraform-plan missing
 snap terraform-envs
 
-# An env's plan, as Terraform prints it.
+# An env's plan: a row for each resource, saying what will happen to it and, for a replacement,
+# what forces it, each collapsed.
 click ~"prod-platform" in #terraform-envs
 wait until #terraform-plan
 expect ~"Plan: 8 to add, 1 to change, 1 to destroy." in #terraform-pane
-expect ~"# module.gazette.aws_service_discovery_service.gazette must be replaced" in #terraform-plan
-expect ~"~ name = \"gazette\" -> \"gazette-http\" # forces replacement" in #terraform-plan
-expect ~"+ desired_count   = 3" in #terraform-plan
+expect disclosure in #terraform-plan count 9
+expect disclosure ~"module.gazette.aws_service_discovery_service.gazette must be replaced, # forces replacement: name" in #terraform-plan has value "0"
+expect disclosure ~"aws_ecs_service.grpc will be created" in #terraform-plan has value "0"
+expect ~"desired_count" in #terraform-plan missing
 snap terraform-plan
 
-# Another env's plan in its place.
+# Clicking a row's disclosure shows its changes.
+click disclosure ~"aws_ecs_service.grpc" in #terraform-plan
+wait until disclosure ~"aws_ecs_service.grpc" in #terraform-plan has value "1"
+expect ~"+ desired_count   = 3" in #terraform-plan
+expect ~"name = \"gazette\" -> \"gazette-http\"" in #terraform-plan missing
+snap terraform-expanded
+
+# ↓ moves to the next row, → expands it and ← collapses it again.
+press down right
+wait until disclosure ~"aws_ecs_task_definition.grpc" in #terraform-plan has value "1"
+press left
+wait until disclosure ~"aws_ecs_task_definition.grpc" in #terraform-plan has value "0"
+
+# Expand All shows every resource's changes, and ⌥⌘← collapses them.
+click #terraform-expand-all
+wait until disclosure ~"aws_service_discovery_service.gazette" in #terraform-plan has value "1"
+expect ~"~ name = \"gazette\" -> \"gazette-http\" # forces replacement" in #terraform-plan
+expect #terraform-expand-all has label "Collapse All"
+snap terraform-all
+scroll #terraform-plan down 3000
+snap terraform-all-end
+press cmd+opt+left
+wait until disclosure ~"aws_service_discovery_service.gazette" in #terraform-plan has value "0"
+expect disclosure ~"aws_ecs_service.grpc" in #terraform-plan has value "0"
+
+# ⌘F finds text inside a collapsed resource, expanding it to show the match.
+expect ~"DiscoverInstances" in #terraform-plan missing
+press cmd+f
+type "DiscoverInstances"
+press return
+wait until disclosure ~"aws_iam_role_policy.task" in #terraform-plan has value "1"
+expect ~"servicediscovery:DiscoverInstances" in #terraform-plan
+expect disclosure ~"aws_ecs_service.grpc" in #terraform-plan has value "0"
+snap terraform-found
+press esc
+
+# Another env's plan in its place, its own resources collapsed.
 click ~"stage-platform" in #terraform-envs
-wait until ~"gazette-grpc.stage.internal" in #terraform-plan
-expect ~"+ desired_count   = 1" in #terraform-plan
+wait until disclosure ~"aws_route53_record.grpc" in #terraform-plan
+expect disclosure ~"aws_iam_role_policy.task" in #terraform-plan has value "0"
 expect ~"stage-platform" in row selected in #terraform-envs
+click disclosure ~"aws_route53_record.grpc" in #terraform-plan
+wait until ~"gazette-grpc.stage.internal" in #terraform-plan
+
+# Going back to an env finds it as it was left.
+click ~"prod-platform" in #terraform-envs
+wait until disclosure ~"aws_iam_role_policy.task" in #terraform-plan has value "1"
+click ~"stage-platform" in #terraform-envs
+wait until disclosure ~"aws_route53_record.grpc" in #terraform-plan has value "1"
 
 # The run opens in the browser.
 click button "Open in Terraform Cloud" in #terraform-pane

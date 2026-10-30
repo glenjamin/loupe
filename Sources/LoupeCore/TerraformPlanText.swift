@@ -1,43 +1,24 @@
 import Foundation
 import LoupeModel
 
-/// A plan as `terraform plan` and `terraform show` print it, written from its JSON plan, with
-/// the CLI's colours as SGR escapes for `TerminalText`: each resource's change under a comment
-/// saying what will happen to it, then the "Plan:" line and the outputs' changes.
+/// A plan as `terraform plan` and `terraform show` print it, written from its JSON plan: each
+/// resource's change under a comment saying what will happen to it, then the "Plan:" line and
+/// the outputs' changes. `render` writes it with the CLI's colours as SGR escapes;
+/// `TerraformPlanOutline` lays the same changes out as rows to expand, coloured by kind.
 ///
 /// The JSON plan carries no provider schemas, so nested blocks read as attributes holding
 /// objects or lists of them, and a map's keys as bare names where they can be.
 public enum TerraformPlanText {
     public static func render(_ plan: TerraformPlan) -> String {
-        var lines: [String] = []
-        // Unchanged objects are left out, unless they moved or are imported.
-        let resources = plan.resourceChanges
-            .filter { $0.change.actions != ["no-op"] || $0.previousAddress != nil || $0.change.importing != nil }
-            .sorted { ($0.address, $0.deposed ?? "") < ($1.address, $1.deposed ?? "") }
+        var lines: [[Run]] = []
+        let resources = shownResources(plan)
         for resource in resources {
             lines += header(resource)
-            lines += body(resource).map(\.text)
-            lines.append("")
+            lines += block(resource)
+            lines.append([])
         }
-        let outputs = plan.outputChanges.filter { $0.value.actions != ["no-op"] }.sorted { $0.key < $1.key }
-        if resources.isEmpty && outputs.isEmpty {
-            lines.append(bold(color("No changes.", .green)) + bold(" Your infrastructure matches the configuration."))
-            return lines.joined(separator: "\n") + "\n"
-        }
-        if !resources.isEmpty {
-            lines.append(bold("Plan:") + " " + summary(plan.counts) + ".")
-        }
-        if !outputs.isEmpty {
-            if !resources.isEmpty { lines.append("") }
-            lines.append("Changes to Outputs:")
-            let width = outputs.map(\.key.count).max() ?? 0
-            for (name, change) in outputs {
-                let symbol = Symbol(actions: change.actions)
-                let value = Values(change: change)
-                lines += Renderer().attribute(key: name.padding(toLength: width, withPad: " ", startingAt: 0), value.before, value.after, symbol: symbol, isTopLevel: true).map(\.text)
-            }
-        }
-        return lines.joined(separator: "\n") + "\n"
+        lines += trailer(plan)
+        return lines.map(sgr).joined(separator: "\n") + "\n"
     }
 
     /// "8 to add, 1 to change, 1 to destroy", with "1 to import, " first when there are imports.
@@ -45,41 +26,122 @@ public enum TerraformPlanText {
         (counts.import > 0 ? "\(counts.import) to import, " : "") + "\(counts.add) to add, \(counts.change) to change, \(counts.destroy) to destroy"
     }
 
-    private static func header(_ resource: TerraformPlan.ResourceChange) -> [String] {
-        let change = resource.change
-        let address = bold("  # \(resource.address)" + (resource.deposed.map { " (deposed object \($0))" } ?? ""))
-        var lines: [String]
-        switch Symbol(actions: change.actions) {
-        case .create:
-            lines = ["\(address) will be created"]
-        case .delete:
-            lines = ["\(address) will be \(bold(color("destroyed", .red)))"]
-            if let reason = deleteReason(resource) { lines.append("  # (\(reason))") }
-        case .update:
-            lines = ["\(address) will be updated in-place"]
-        case .replace:
-            let how = switch resource.actionReason {
-            case "replace_because_tainted": "is tainted, so must be \(bold(color("replaced", .red)))"
-            case "replace_by_request": "will be \(bold(color("replaced", .red))), as requested"
-            default: "must be \(bold(color("replaced", .red)))"
+    /// The resources with something to show, in address order: unchanged objects are left out,
+    /// unless they moved or are imported.
+    static func shownResources(_ plan: TerraformPlan) -> [TerraformPlan.ResourceChange] {
+        plan.resourceChanges
+            .filter { $0.change.actions != ["no-op"] || $0.previousAddress != nil || $0.change.importing != nil }
+            .sorted { ($0.address, $0.deposed ?? "") < ($1.address, $1.deposed ?? "") }
+    }
+
+    /// What follows the resources: the "Plan:" line and the outputs' changes, or that there's
+    /// nothing to do.
+    static func trailer(_ plan: TerraformPlan) -> [[Run]] {
+        let hasResources = !shownResources(plan).isEmpty
+        let outputs = plan.outputChanges.filter { $0.value.actions != ["no-op"] }.sorted { $0.key < $1.key }
+        if !hasResources && outputs.isEmpty {
+            return [[Run("No changes.", .noChanges), Run(" Your infrastructure matches the configuration.", .heading)]]
+        }
+        var lines: [[Run]] = []
+        if hasResources {
+            lines.append([Run("Plan:", .heading), Run(" " + summary(plan.counts) + ".")])
+        }
+        if !outputs.isEmpty {
+            if hasResources { lines.append([]) }
+            lines.append([Run("Changes to Outputs:", .heading)])
+            let width = outputs.map(\.key.count).max() ?? 0
+            for (name, change) in outputs {
+                let symbol = Symbol(actions: change.actions)
+                let value = Values(change: change)
+                lines += Renderer().attribute(key: name.padding(toLength: width, withPad: " ", startingAt: 0), value.before, value.after, symbol: symbol, isTopLevel: true).map(\.styled)
             }
-            lines = ["\(address) \(how)"]
-        case .read:
-            lines = ["\(address) will be read during apply"]
+        }
+        return lines
+    }
+
+    /// The comment over a resource's block, as the CLI prints it.
+    private static func header(_ resource: TerraformPlan.ResourceChange) -> [[Run]] {
+        let address = Run("  # \(resource.address)" + (resource.deposed.map { " (deposed object \($0))" } ?? ""), .address)
+        if case let .moved(from)? = what(resource) {
+            return [[Run("  # \(from)", .address), Run(" has moved to "), Run(resource.address, .address)]]
+        }
+        let phrase = phrase(resource)
+        let action = Symbol(actions: resource.change.actions).action
+        var first = [address, Run(" " + phrase.before)]
+        if !phrase.word.isEmpty { first.append(Run(phrase.word, .action(action))) }
+        if !phrase.after.isEmpty { first.append(Run(phrase.after)) }
+        return [first] + reasons(resource).map { [Run("  # (\($0))")] }
+    }
+
+    /// The row for a resource in `TerraformPlanOutline`: its symbol and address and what will
+    /// happen to it, in the action's colour, then why, and what forces a replacement.
+    static func row(_ resource: TerraformPlan.ResourceChange) -> [[Run]] {
+        let symbol = Symbol(actions: resource.change.actions)
+        let address = Run(resource.address + (resource.deposed.map { " (deposed object \($0))" } ?? ""), .address)
+        var first = symbol.runs + [Run(" ")]
+        if case let .moved(from)? = what(resource) {
+            first += [Run(from, .address), Run(" has moved to ", .action(.none)), address]
+        } else {
+            let phrase = phrase(resource)
+            first += [address, Run(" " + phrase.before + phrase.word + phrase.after, .action(symbol.action))]
+        }
+        var lines = [first]
+        lines += reasons(resource).map { [Run("    "), Run("(\($0))", .comment)] }
+        let forcing = resource.change.replacePaths.map(pathText)
+        if !forcing.isEmpty {
+            lines.append([Run("    "), Run("# forces replacement: " + forcing.joined(separator: ", "), .forcesReplacement)])
+        }
+        return lines
+    }
+
+    static func action(_ resource: TerraformPlan.ResourceChange) -> TerraformPlanOutline.Action {
+        Symbol(actions: resource.change.actions).action
+    }
+
+    private enum What { case moved(from: String) }
+
+    private static func what(_ resource: TerraformPlan.ResourceChange) -> What? {
+        if Symbol(actions: resource.change.actions) == .none, let previous = resource.previousAddress { return .moved(from: previous) }
+        return nil
+    }
+
+    /// What will happen, around the word the CLI emphasises.
+    private static func phrase(_ resource: TerraformPlan.ResourceChange) -> (before: String, word: String, after: String) {
+        switch Symbol(actions: resource.change.actions) {
+        case .create: ("will be created", "", "")
+        case .delete: ("will be ", "destroyed", "")
+        case .update: ("will be updated in-place", "", "")
+        case .replace:
             switch resource.actionReason {
-            case "read_because_config_unknown": lines.append("  # (config refers to values not yet known)")
-            case "read_because_dependency_pending": lines.append("  # (depends on a resource or a module with changes pending)")
+            case "replace_because_tainted": ("is tainted, so must be ", "replaced", "")
+            case "replace_by_request": ("will be ", "replaced", ", as requested")
+            default: ("must be ", "replaced", "")
+            }
+        case .read: ("will be read during apply", "", "")
+        case .none: ("will be imported", "", "")
+        }
+    }
+
+    /// The comments the CLI adds under a resource's first line, saying why.
+    private static func reasons(_ resource: TerraformPlan.ResourceChange) -> [String] {
+        var reasons: [String] = []
+        switch Symbol(actions: resource.change.actions) {
+        case .delete:
+            if let reason = deleteReason(resource) { reasons.append(reason) }
+        case .read:
+            switch resource.actionReason {
+            case "read_because_config_unknown": reasons.append("config refers to values not yet known")
+            case "read_because_dependency_pending": reasons.append("depends on a resource or a module with changes pending")
             default: break
             }
         case .none:
-            if let previous = resource.previousAddress {
-                return [bold("  # \(previous)") + " has moved to " + bold(resource.address)]
-            }
-            return ["\(address) will be imported"]
+            if resource.previousAddress != nil { return [] }
+        default:
+            break
         }
-        if let previous = resource.previousAddress { lines.append("  # (moved from \(previous))") }
-        if case let .string(id)? = change.importing?["id"] { lines.append("  # (imported from \"\(id)\")") }
-        return lines
+        if let previous = resource.previousAddress { reasons.append("moved from \(previous)") }
+        if case let .string(id)? = resource.change.importing?["id"] { reasons.append("imported from \"\(id)\"") }
+        return reasons
     }
 
     private static func deleteReason(_ resource: TerraformPlan.ResourceChange) -> String? {
@@ -97,12 +159,12 @@ public enum TerraformPlanText {
     }
 
     /// The resource's block: `resource "type" "name" {`, its attributes' changes, `}`.
-    private static func body(_ resource: TerraformPlan.ResourceChange) -> [Line] {
+    static func block(_ resource: TerraformPlan.ResourceChange) -> [[Run]] {
         let symbol = Symbol(actions: resource.change.actions)
         let values = Values(change: resource.change)
         let renderer = Renderer(replacePaths: resource.change.replacePaths)
         let keyword = resource.mode == "data" ? "data" : "resource"
-        let open = "\(keyword) \"\(resource.type)\" \"\(resource.name)\" {"
+        let open = [Run(keyword, .keyword), Run(" "), Run("\"\(resource.type)\"", .string), Run(" "), Run("\"\(resource.name)\"", .string), Run(" {")]
         var children: [Line]
         switch symbol {
         case .create, .read:
@@ -112,7 +174,37 @@ public enum TerraformPlanText {
         case .update, .replace, .none:
             children = renderer.objectChildren(values.before, values.after, symbol: .update, path: [], topLevel: true)
         }
-        return [Line(depth: 0, symbol: symbol, runs: [Run(open)])] + children + [Line(depth: 0, symbol: .none, runs: [Run("}")])]
+        return ([Line(depth: 0, symbol: symbol, runs: open)] + children + [Line(depth: 0, symbol: .none, runs: [Run("}")])]).map(\.styled)
+    }
+
+    /// `name`, `rule[0].port`: a path into the resource, as the forced replacement names it.
+    private static func pathText(_ path: [JSONValue]) -> String {
+        path.enumerated().map { index, step in
+            switch step {
+            case let .string(key): index == 0 ? key : ".\(key)"
+            case let .number(number): "[\(number)]"
+            default: ""
+            }
+        }.joined()
+    }
+}
+
+/// A piece of the plan's text and what it is, which says how it's coloured.
+struct Run {
+    enum Role: Equatable {
+        case plain, heading, noChanges, address, comment, forcesReplacement, unchanged
+        case attribute, string, constant, placeholder, arrow, keyword, function
+        /// The words saying what will happen to a resource.
+        case action(TerraformPlanOutline.Action)
+        case symbol(TerraformPlanOutline.Action)
+    }
+
+    var text: String
+    var role: Role
+
+    init(_ text: String, _ role: Role = .plain) {
+        self.text = text
+        self.role = role
     }
 }
 
@@ -171,42 +263,50 @@ private enum Symbol: Equatable {
     }
 
     /// Right-aligned in three columns, as Terraform's gutter has it.
-    var text: String {
+    var runs: [Run] {
         switch self {
-        case .none: "   "
-        case .create: "  " + color("+", .green)
-        case .delete: "  " + color("-", .red)
-        case .update: "  " + color("~", .yellow)
-        case .read: " " + color("<=", .cyan)
-        case .replace(createFirst: false): color("-", .red) + "/" + color("+", .green)
-        case .replace(createFirst: true): color("+", .green) + "/" + color("-", .red)
+        case .none: [Run("   ")]
+        case .create: [Run("  "), Run("+", .symbol(.create))]
+        case .delete: [Run("  "), Run("-", .symbol(.delete))]
+        case .update: [Run("  "), Run("~", .symbol(.update))]
+        case .read: [Run(" "), Run("<=", .symbol(.read))]
+        case .replace(createFirst: false): [Run("-", .symbol(.delete)), Run("/"), Run("+", .symbol(.create))]
+        case .replace(createFirst: true): [Run("+", .symbol(.create)), Run("/"), Run("-", .symbol(.delete))]
+        }
+    }
+
+    var action: TerraformPlanOutline.Action {
+        switch self {
+        case .none: .none
+        case .create: .create
+        case .delete: .delete
+        case .update: .update
+        case .read: .read
+        case .replace: .replace
         }
     }
 }
 
-private struct Run {
-    var text: String
-    var style: SGR?
-
-    init(_ text: String, _ style: SGR? = nil) {
-        self.text = text
-        self.style = style
-    }
-}
-
 /// A line of the plan: four columns for each level it's nested, the symbol's gutter, and its
-/// text.
+/// text. Unchanged lines within a change are dimmed, as a diff's context is set apart from its
+/// changes.
 private struct Line {
     var depth: Int
     var symbol: Symbol
     var runs: [Run]
+    var isDimmed = false
 
-    var text: String {
-        String(repeating: " ", count: depth * 4) + symbol.text + " " + runs.map { run in run.style.map { color(run.text, $0) } ?? run.text }.joined()
+    var styled: [Run] {
+        let line = [Run(String(repeating: " ", count: depth * 4))] + symbol.runs + [Run(" ")] + runs
+        return isDimmed ? line.map { Run($0.text, .unchanged) } : line
     }
 
     func nested(by levels: Int) -> Line {
-        Line(depth: depth + levels, symbol: symbol, runs: runs)
+        Line(depth: depth + levels, symbol: symbol, runs: runs, isDimmed: isDimmed)
+    }
+
+    func dimmed() -> Line {
+        Line(depth: depth, symbol: symbol, runs: runs, isDimmed: true)
     }
 }
 
@@ -229,20 +329,20 @@ private struct Renderer {
         case let (before?, nil):
             lines = deleted(before)
             shownSymbol = .delete
-            if isTopLevel || symbol != .delete { lines[lines.count - 1].runs.append(Run(" -> null", .darkGray)) }
+            if isTopLevel || symbol != .delete { lines[lines.count - 1].runs.append(Run(" -> null", .comment)) }
         case let (before?, after?):
             if before.same(as: after) {
-                lines = unchanged(before)
+                lines = unchanged(before).map { $0.dimmed() }
                 shownSymbol = .none
             } else {
                 lines = changed(before, after, path: path, showsUnchanged: showsUnchanged)
                 shownSymbol = .update
             }
         }
-        lines[0].runs.insert(Run("\(key) = "), at: 0)
+        lines[0].runs.insert(contentsOf: [Run(key, .attribute), Run(" = ")], at: 0)
         lines[0].symbol = shownSymbol
         if shownSymbol == .update, replacePaths.contains(path) {
-            lines[lines.count - 1].runs.append(Run(" # forces replacement", .red))
+            lines[lines.count - 1].runs.append(Run(" # forces replacement", .forcesReplacement))
         }
         return lines
     }
@@ -269,7 +369,7 @@ private struct Renderer {
             lines += attribute(key: name, old, new, symbol: symbol, isTopLevel: topLevel, path: path + [.string(key)], showsUnchanged: showsAll).map { $0.nested(by: 1) }
         }
         if hidden > 0 {
-            lines.append(Line(depth: 1, symbol: .none, runs: [Run("# (\(hidden) unchanged \(hidden == 1 ? "attribute" : "attributes") hidden)", .darkGray)]))
+            lines.append(Line(depth: 1, symbol: .none, runs: [Run("# (\(hidden) unchanged \(hidden == 1 ? "attribute" : "attributes") hidden)", .comment)]))
         }
         return lines
     }
@@ -290,8 +390,8 @@ private struct Renderer {
 
     /// A value all of whose parts are created, deleted or unchanged alike.
     private func whole(_ side: Side, symbol: Symbol) -> [Line] {
-        if side.isSensitive { return [Line(depth: 0, symbol: .none, runs: [Run("(sensitive value)")])] }
-        if side.isUnknown { return [Line(depth: 0, symbol: .none, runs: [Run("(known after apply)")])] }
+        if side.isSensitive { return [Line(depth: 0, symbol: .none, runs: [Run("(sensitive value)", .placeholder)])] }
+        if side.isUnknown { return [Line(depth: 0, symbol: .none, runs: [Run("(known after apply)", .placeholder)])] }
         switch side.value {
         case .object:
             let children = switch symbol {
@@ -326,12 +426,12 @@ private struct Renderer {
 
     private func changed(_ before: Side, _ after: Side, path: [JSONValue], showsUnchanged: Bool = false) -> [Line] {
         if before.isSensitive || after.isSensitive {
-            return [Line(depth: 0, symbol: .none, runs: [Run("(sensitive value)")])]
+            return [Line(depth: 0, symbol: .none, runs: [Run("(sensitive value)", .placeholder)])]
         }
         if after.isUnknown {
             var lines = whole(before, symbol: .delete)
-            lines[lines.count - 1].runs.append(Run(" -> "))
-            lines[lines.count - 1].runs.append(Run("(known after apply)"))
+            lines[lines.count - 1].runs.append(Run(" -> ", .arrow))
+            lines[lines.count - 1].runs.append(Run("(known after apply)", .placeholder))
             return lines
         }
         switch (before.value, after.value) {
@@ -346,13 +446,13 @@ private struct Renderer {
                 return jsonencode(inner, symbol: .update)
             }
             if isMultiline(old) || isMultiline(new) {
-                return heredoc(lineChanges(lines(of: old), lines(of: new)))
+                return heredoc(lineChanges(lines(of: old), lines(of: new)), dimsUnchanged: true)
             }
         default:
             break
         }
         var lines = whole(before, symbol: .delete)
-        lines[lines.count - 1].runs.append(Run(" -> ", .yellow))
+        lines[lines.count - 1].runs.append(Run(" -> ", .arrow))
         let replacement = whole(after, symbol: .create)
         lines[lines.count - 1].runs += replacement[0].runs
         return lines + replacement.dropFirst()
@@ -384,7 +484,7 @@ private struct Renderer {
         var hidden = 0
         func countHidden() {
             guard hidden > 0 else { return }
-            lines.append(Line(depth: 1, symbol: .none, runs: [Run("# (\(hidden) unchanged \(hidden == 1 ? "element" : "elements") hidden)", .darkGray)]))
+            lines.append(Line(depth: 1, symbol: .none, runs: [Run("# (\(hidden) unchanged \(hidden == 1 ? "element" : "elements") hidden)", .comment)]))
             hidden = 0
         }
         for (index, step) in steps.enumerated() {
@@ -396,7 +496,7 @@ private struct Renderer {
             countHidden()
             switch step {
             case let .same(i, _):
-                lines += element(unchanged(before.element(i)), symbol: .none)
+                lines += element(unchanged(before.element(i)), symbol: .none).map { $0.dimmed() }
             case let .removed(i):
                 lines += element(deleted(before.element(i)), symbol: .delete)
             case let .inserted(j):
@@ -459,23 +559,24 @@ private struct Renderer {
     private func jsonencode(_ inner: [Line], symbol: Symbol) -> [Line] {
         var inner = inner.map { $0.nested(by: 1) }
         inner[0].symbol = symbol == .update ? inner[0].symbol : .none
-        return [Line(depth: 0, symbol: .none, runs: [Run("jsonencode(")])] + inner + [Line(depth: 0, symbol: .none, runs: [Run(")")])]
+        return [Line(depth: 0, symbol: .none, runs: [Run("jsonencode", .function), Run("(")])] + inner + [Line(depth: 0, symbol: .none, runs: [Run(")")])]
     }
 
     /// `<<-EOT`, each line one level in, `EOT`. A line starting with NUL counts hidden lines.
-    private func heredoc(_ lines: [(Symbol, String)]) -> [Line] {
+    private func heredoc(_ lines: [(Symbol, String)], dimsUnchanged: Bool = false) -> [Line] {
         let body = lines.map { symbol, text in
             if text.hasPrefix("\u{0}") {
                 let count = Int(text.dropFirst()) ?? 0
-                return Line(depth: 1, symbol: .none, runs: [Run("# (\(count) unchanged \(count == 1 ? "line" : "lines") hidden)", .darkGray)])
+                return Line(depth: 1, symbol: .none, runs: [Run("# (\(count) unchanged \(count == 1 ? "line" : "lines") hidden)", .comment)])
             }
-            return Line(depth: 1, symbol: symbol, runs: [Run(text)])
+            return Line(depth: 1, symbol: symbol, runs: [Run(text, .string)], isDimmed: dimsUnchanged && symbol == .none)
         }
-        return [Line(depth: 0, symbol: .none, runs: [Run("<<-EOT")])] + body + [Line(depth: 0, symbol: .none, runs: [Run("EOT")])]
+        return [Line(depth: 0, symbol: .none, runs: [Run("<<-EOT", .keyword)])] + body + [Line(depth: 0, symbol: .none, runs: [Run("EOT", .keyword)])]
     }
 
     private func primitive(_ value: JSONValue) -> Line {
-        Line(depth: 0, symbol: .none, runs: [Run(literal(value))])
+        let role: Run.Role = if case .string = value { .string } else { .constant }
+        return Line(depth: 0, symbol: .none, runs: [Run(literal(value), role)])
     }
 }
 
@@ -575,14 +676,22 @@ private func embeddedJSON(_ string: String) -> JSONValue? {
     return value
 }
 
-private enum SGR: String {
-    case red = "31", green = "32", yellow = "33", cyan = "36", darkGray = "90"
-}
-
-private func color(_ text: String, _ style: SGR) -> String {
-    "\u{1B}[\(style.rawValue)m\(text)\u{1B}[0m"
-}
-
-private func bold(_ text: String) -> String {
-    "\u{1B}[1m\(text)\u{1B}[0m"
+/// A line as the CLI colours it, with SGR escapes.
+private func sgr(_ line: [Run]) -> String {
+    line.map { run in
+        let codes: String? = switch run.role {
+        case .symbol(.create): "32"
+        case .symbol(.delete), .symbol(.replace): "31"
+        case .symbol(.update): "33"
+        case .symbol(.read): "36"
+        case .address, .heading: "1"
+        case .noChanges: "1;32"
+        case .action(.delete), .action(.replace): "1;31"
+        case .comment: "90"
+        case .forcesReplacement: "31"
+        case .arrow: "33"
+        default: nil
+        }
+        return codes.map { "\u{1B}[\($0)m\(run.text)\u{1B}[0m" } ?? run.text
+    }.joined()
 }
