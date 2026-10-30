@@ -117,6 +117,25 @@ extension PullRequestTab {
         guard let range = shownRange else { return }
         contextExpansions.collapse(file, in: range)
     }
+
+    /// Gives each line thread GitHub keeps no diff hunk for, as for a comment on lines outside
+    /// the diff's hunks, its lines and a few above, read from the checkout at the commit it was
+    /// made on, so the conversation shows its code as it does any other thread's.
+    func fillMissingHunks() async {
+        guard let checkout, let threads = conversation?.threads else { return }
+        var built: [String: String] = [:]
+        for thread in threads where thread.diffHunk.isEmpty && !thread.isOnFile && thread.side == .right {
+            guard let oid = thread.originalCommitOid, let last = thread.originalLine,
+                  let lines = await contextExpansions.lines(of: thread.path, at: oid, in: checkout)
+            else { continue }
+            built[thread.id] = unchangedHunk(of: lines, from: thread.originalStartLine ?? last, to: last)
+        }
+        guard !built.isEmpty, var updated = conversation else { return }
+        for index in updated.threads.indices where updated.threads[index].diffHunk.isEmpty {
+            if let hunk = built[updated.threads[index].id] { updated.threads[index].diffHunk = hunk }
+        }
+        if updated != conversation { conversation = updated }
+    }
 }
 
 private struct FileVersion: Hashable {
@@ -135,4 +154,14 @@ private struct ExpandedFile: Hashable {
         path = file.path
         ignoresWhitespace = file.ignoresWhitespace
     }
+}
+
+/// Lines `first` to `last` of a file as a hunk of unchanged lines, with up to three above them,
+/// as GitHub's snippet of a thread shows; nil when the file doesn't have them. Its old side is
+/// numbered as its new side, which a thread on the new side's snippet doesn't show.
+private func unchangedHunk(of lines: [String], from first: Int, to last: Int) -> String? {
+    guard first >= 1, first <= last, last <= lines.count else { return nil }
+    let start = max(1, first - 3)
+    let shown = lines[(start - 1)..<last]
+    return "@@ -\(start),\(shown.count) +\(start),\(shown.count) @@\n" + shown.map { " " + $0 }.joined(separator: "\n")
 }

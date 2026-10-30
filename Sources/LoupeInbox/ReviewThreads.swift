@@ -440,6 +440,7 @@ extension PullRequestTab {
         }
         placeThreads(actedOn)
         await storeOwnChanges()
+        await fillMissingHunks()
     }
 
     /// Puts the conversation's threads, as just fetched, on the diff shown: all of them while

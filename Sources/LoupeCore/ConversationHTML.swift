@@ -188,7 +188,9 @@ public enum ConversationHTML {
     /// several lines, under which lines they are (the last six until "Show all"), or else the last four. Rows are numbered on the
     /// thread's side and highlighted as the diff is, parsing the whole hunk for context.
     private static func hunk(_ comment: ReviewComment, in thread: ReviewThread?) -> String {
-        guard let parsed = DiffParser.parseHunks(comment.diffHunk).first, !parsed.lines.isEmpty else { return "" }
+        // The thread's own hunk where the comment has none, as for one Loupe built from the file.
+        let diffHunk = comment.diffHunk.isEmpty ? thread?.diffHunk ?? "" : comment.diffHunk
+        guard let parsed = DiffParser.parseHunks(diffHunk).first, !parsed.lines.isEmpty else { return "" }
         let side = thread?.side ?? .right
         let startSide = thread?.startSide ?? side
         let end = thread?.originalLine ?? comment.originalLine

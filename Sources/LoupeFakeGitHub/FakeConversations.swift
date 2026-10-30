@@ -644,7 +644,8 @@ actor FakeConversations {
     /// on a commit older than the head is outdated on the whole PR's diff, as the fake doesn't
     /// diff to tell whether GitHub could carry it onto the head's lines. One on lines outside
     /// the diff's hunks is taken but outdated from the start with no diff hunk, as GitHub can't
-    /// place it in the diff.
+    /// place it in the diff. Like GitHub, it adds a review by the viewer holding the comment to
+    /// the PR's timeline.
     private func newComment(_ content: [String: Any], repository: String, number: Int, _ url: URL) async throws -> (Data, HTTPURLResponse) {
         let input = CommentInput(
             repository: repository, number: number, body: try require(content["body"] as? String), commitId: try require(content["commit_id"] as? String),
@@ -673,7 +674,24 @@ actor FakeConversations {
             on: id, path: input.path, line: input.line, side: input.side, startLine: input.startLine, startSide: input.startSide, commit: input.commitId,
             outdated: !isInHunks || heads[id].map { $0 != input.commitId } ?? false, diffHunk: isInHunks ? nil : "", body: input.body, by: FakeGitHub.viewer
         )
-        let comment = try require(threads(of: id).last.flatMap { (($0["comments"] as? [String: Any])?["nodes"] as? [[String: Any]])?.first })
+        let thread = try require(threads(of: id).last)
+        let comment = try require(comments(of: thread).first)
+        let hunk = ((thread["firstComment"] as? [String: Any])?["nodes"] as? [[String: Any]])?.first?["diffHunk"] ?? ""
+        timelines[id, default: []].append([
+            "__typename": "PullRequestReview",
+            "id": "PRR_fake_timeline_\(timelines[id, default: []].count)",
+            "state": "COMMENTED",
+            "bodyHTML": "",
+            "createdAt": Date.now.formatted(.iso8601),
+            "submittedAt": Date.now.formatted(.iso8601),
+            "viewerCanUpdate": true,
+            "author": ["login": FakeGitHub.viewer, "avatarUrl": "https://avatars.githubusercontent.com/u/151272?v=4"],
+            "comments": ["nodes": [[
+                "id": comment["id"] ?? NSNull(), "bodyHTML": comment["bodyHTML"] ?? "", "path": input.path, "line": thread["line"] ?? NSNull(),
+                "originalLine": input.line, "diffHunk": hunk, "outdated": thread["isOutdated"] ?? false, "isMinimized": false, "replyTo": NSNull(),
+            ]]],
+            "reactionGroups": noReactions,
+        ])
         var rest = try restComment(comment, body: input.body)
         rest["path"] = input.path
         rest["line"] = isInHunks ? input.line : NSNull()

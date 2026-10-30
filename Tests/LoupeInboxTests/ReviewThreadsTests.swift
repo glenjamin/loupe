@@ -230,7 +230,7 @@ struct NewCommentTests {
         #expect(threads.anchored.contains { $0.side == .right && $0.line == 30 }, "shown under the revealed line")
     }
 
-    @Test func aCommentOnARevealedLineIsntOutdatedThoughGitHubCantPlaceItInTheDiff() async throws {
+    @Test func aCommentOnARevealedLineIsntOutdatedAndShowsItsCodeThoughGitHubCantPlaceItInTheDiff() async throws {
         let (app, tab, _) = try await ThreadsApp.withThread()
         let file = try #require(tab.file("app.go"))
         await tab.expandContext(of: file, ContextExpansion(hunk: 1, direction: .above))
@@ -243,11 +243,9 @@ struct NewCommentTests {
         #expect(posted.comments.first?.author?.login == FakeGitHub.viewer)
         #expect(!posted.isOutdated && posted.lines == 30...30, "still on the line it was made on, as the head hasn't moved")
         let page = ConversationHTML.page(try #require(tab.conversation), template: "{{content}}", stylesheet: "")
-        let marker = try #require(page.range(of: #"data-thread-id="\#(posted.id)""#))
-        let opening = try #require(page.range(of: "<details", options: .backwards, range: page.startIndex..<marker.lowerBound))
-        let summary = try #require(page.range(of: "</summary>", range: marker.upperBound..<page.endIndex))
-        let heading = page[opening.lowerBound..<summary.upperBound]
+        let (heading, snippet) = try threadCard(posted.id, in: page)
         #expect(!heading.contains("outdated") && heading.contains("app.go:30"), "no Outdated badge, at its line")
+        #expect(snippet.contains("28 line"), "its code, as sent")
 
         // As the whole conversation is fetched on the next launch.
         let tabs = app.relaunch()
@@ -255,6 +253,11 @@ struct NewCommentTests {
         let reopened = try #require(tabs.tab(id: tab.id))
         await reopened.load()
         #expect(reopened.thread(posted.id).map { !$0.isOutdated && $0.lines == 30...30 } == true)
+        // GitHub's copy has no diff hunk, so its lines and those above are read from the checkout.
+        let reopenedPage = ConversationHTML.page(try #require(reopened.conversation), template: "{{content}}", stylesheet: "")
+        let reopenedSnippet = try threadCard(posted.id, in: reopenedPage).snippet
+        #expect(reopenedSnippet.contains("25 line") && reopenedSnippet.contains("28 line") && !reopenedSnippet.contains("29 line"))
+        #expect(reopenedSnippet.contains("30"), "numbered as on the head")
     }
 
     @Test func aRefusedCommentKeepsTheDraftAndSaysWhy() async throws {
@@ -278,6 +281,16 @@ struct NewCommentTests {
         #expect(tab.threadActivity.newComment == nil && tab.threadActivity.newCommentError == nil)
         tab.startComment(at: DiffAnchor(path: "app.go", side: .right, line: 12))
         #expect(tab.threadActivity.newComment?.anchor.line == 12)
+    }
+
+    /// A thread's card in the conversation page: its heading, and the text of the rest.
+    private func threadCard(_ id: String, in page: String) throws -> (heading: Substring, snippet: String) {
+        let marker = try #require(page.range(of: #"data-thread-id="\#(id)""#))
+        let opening = try #require(page.range(of: "<details", options: .backwards, range: page.startIndex..<marker.lowerBound))
+        let summary = try #require(page.range(of: "</summary>", range: marker.upperBound..<page.endIndex))
+        let end = page.range(of: "</details>", range: summary.upperBound..<page.endIndex)?.lowerBound ?? page.endIndex
+        let rest = page[summary.upperBound..<end].replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        return (page[opening.lowerBound..<summary.upperBound], rest)
     }
 }
 

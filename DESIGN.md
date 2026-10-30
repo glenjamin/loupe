@@ -1198,6 +1198,10 @@ A comment on a line revealed around a hunk showed as outdated, in the conversati
 
 git's `\ No newline at end of file` was parsed onto the line before it but never shown, so a change that only added or removed a file's final newline looked like a line replaced by itself. Such a line now ends in a muted ⊖, a space after its code, whose help says which side lacks the newline and, when only one does, whether the change adds or removes it. Which row it's on says the rest: a deleted row's for the old file, an added row's for the new one, an unchanged row's for both. It's inline text tagged as gutter, as the line numbers are, so it's left out of copies and syntax colours, adds no row and moves nothing; it can be selected and found with ⌘F like the numbers can. A row of its own under the line, as `git diff` prints, would read most plainly but would be a row with no line to anchor or comment on among rows that all have one. The conversation's comment snippets still leave it out.
 
+### Loupe builds the code under a thread GitHub keeps no diff hunk for
+
+This revises the end of "A thread GitHub calls outdated but made on the head stays on its lines": the code is there to show, so the thread's snippet no longer goes missing. A line thread on the new side that comes from GitHub with an empty diff hunk gets one made from the file at the commit it was made on: its lines and up to three above, as unchanged lines, read from the checkout with `git show` through the same per-file-and-commit cache that revealed lines use. It's built whenever the conversation or its threads are fetched and once the checkout is known, so it's there after a relaunch too, and the page draws and highlights it like any other, taking the thread's hunk where the comment has none. It's built rather than stored, as the next fetch brings the empty hunk back and reading it again is cheap. There's no network fallback: revealed lines have none either, so without a checkout, or with the commit missing from it, as for a head force-pushed away before it was fetched, there's still no snippet.
+
 ## Not yet decided
 
 Nothing is pending.

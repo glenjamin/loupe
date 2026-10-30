@@ -275,6 +275,8 @@ public final class PullRequestTab: Identifiable {
             await viewed
             await conversation
             await viewer
+            // Once there's both a checkout and a conversation, which arrive in either order.
+            await fillMissingHunks()
             loading = nil
             followStoredChanges()
             // Only once there's a diff, as a load without a checkout is made again when asked.
@@ -1179,6 +1181,7 @@ public final class PullRequestTab: Identifiable {
         } catch {
             log("Couldn't store the conversation of \(title): \(error)")
         }
+        await fillMissingHunks()
     }
 
     /// Follows each new copy of the PR the lists store, for as long as the tab lives.
