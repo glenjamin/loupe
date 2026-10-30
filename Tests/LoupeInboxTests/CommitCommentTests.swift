@@ -202,6 +202,23 @@ struct CommitCommentTests {
         #expect(tab.commentedAnchors(of: tab.expandedFile(file)) == [end])
     }
 
+    @Test func aDragOverTheGutterAsksWhichLinesARangeCanTake() async throws {
+        let (app, tab, _) = try await ThreadsApp.withThread()
+        defer { withExtendedLifetime(app) {} }
+        let start = DiffAnchor(path: "app.go", side: .right, line: 9)
+        let end = DiffAnchor(path: "app.go", side: .right, line: 12)
+
+        let lines = try #require(tab.commentRange(from: start, to: end))
+        #expect(lines.first == start && lines.last == end)
+        #expect(lines.contains(DiffAnchor(path: "app.go", side: .left, line: 10)), "the deleted line between")
+        #expect(tab.commentRange(from: end, to: start) == nil, "ending before it starts")
+        #expect(tab.commentRange(from: end, to: DiffAnchor(path: "app.go", side: .right, line: 49)) == nil, "across two hunks")
+
+        let file = try #require(tab.file("app.go"))
+        await tab.expandContext(of: file, ContextExpansion(hunk: 0, direction: .above))
+        #expect(tab.commentRange(from: DiffAnchor(path: "app.go", side: .right, line: 3), to: end) == nil, "from a revealed line")
+    }
+
     @Test func aRangeOnACommitGoesIntoNoReviewAndARangeOnTheWholeDiffCanStartOne() async throws {
         let (app, tab, _) = try await ThreadsApp.withThread()
         tab.startComment(at: DiffAnchor(path: "app.go", side: .right, line: 11), from: DiffAnchor(path: "app.go", side: .right, line: 9))

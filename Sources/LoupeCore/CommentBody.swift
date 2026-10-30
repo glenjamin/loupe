@@ -226,6 +226,10 @@ private struct BlockBuilder {
         case "a":
             links.append(attributes["href"].flatMap(Self.absoluteURL))
             emptyLink = node
+        case "img" where attributes["class"]?.split(separator: " ").contains("emoji") == true:
+            // GitHub's own emoji, such as :shipit:, have no character; their name reads as on github.com
+            // with images off, and isn't a link to the image.
+            appendMade(attributes["alt"] ?? "", standingFor: element)
         case "img":
             let source = attributes["src"].flatMap(Self.absoluteURL)
             let alt = attributes["alt"].flatMap { $0.isEmpty ? nil : $0 } ?? "image"

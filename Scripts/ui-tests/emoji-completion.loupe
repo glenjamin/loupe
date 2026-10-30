@@ -1,0 +1,27 @@
+# Typing ":" and part of a name in a comment box offers GitHub's emoji, as github.com does:
+# ↩ puts the first one's character in place of what was typed, ↓ moves down the list, and
+# Esc closes the list and leaves the comment open with what was typed. The list is a window
+# of AppKit's own, so it's what lands in the box that's checked.
+wait settled
+open tamarinworks/atrium#2928
+wait settled
+click image #doc
+wait settled
+scroll scroll 2 down 300
+hover textarea
+click button "Add a comment"
+wait until text "Comment on line 22"
+
+type ":ta"
+wait until textarea 2 has value ":ta"
+press return
+wait until textarea 2 has value "🌮"
+
+type " :ta"
+press down return
+wait until textarea 2 has value "🌮 🎉"
+
+type " :ship"
+press esc
+wait until textarea 2 has value "🌮 🎉 :ship"
+wait until text "Comment on line 22"

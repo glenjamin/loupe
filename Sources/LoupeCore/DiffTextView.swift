@@ -20,6 +20,9 @@ public final class DiffTextView: NSTextView {
     /// Called when a row's "+" is clicked, or the row middle-clicked: with its anchor, or, when
     /// the selection spans several rows including it, the last row's anchor and the first's.
     public var onComment: ((_ anchor: DiffAnchor, _ start: DiffAnchor?) -> Void)?
+    /// The lines a comment from the first anchor to the second would be on, when GitHub can
+    /// take them as one range; a drag over the gutter stops where it can't.
+    public var commentRange: ((DiffAnchor, DiffAnchor) -> [DiffAnchor]?)?
     /// The rows a comment being written is on, tinted as github.com marks them.
     public var commentedAnchors: Set<DiffAnchor> = [] {
         didSet { if commentedAnchors != oldValue { markCommentedRows() } }
@@ -29,6 +32,8 @@ public final class DiffTextView: NSTextView {
     private var hoveredAnchor: DiffAnchor? {
         didSet { commentButton.isHidden = hoveredAnchor == nil }
     }
+    /// The lines being picked by a press in the gutter, until it's let go.
+    private var gutterDrag: GutterDrag?
 
     /// Soft-wraps long rows at the view's width; off, rows run on and the view scrolls sideways.
     public var wrapsLines = true {
@@ -72,12 +77,30 @@ public final class DiffTextView: NSTextView {
     /// Shows the "+" on the row under the pointer when a comment can be started there.
     public override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
-        showCommentButton(at: convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        showCommentButton(at: point)
+        if isInGutter(point) { NSCursor.arrow.set() }
+    }
+
+    /// The gutter picks lines rather than text, so it keeps the arrow, as on github.com.
+    public override func cursorUpdate(with event: NSEvent) {
+        guard gutterDrag != nil || isInGutter(convert(event.locationInWindow, from: nil)) else { return super.cursorUpdate(with: event) }
+        NSCursor.arrow.set()
     }
 
     public override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
         hoveredAnchor = nil
+    }
+
+
+    /// The threads and comment cards laid over the rows, and the "+" while it's shown, which a
+    /// text view's own children leave out.
+    public override func accessibilityChildren() -> [Any]? {
+        let children = super.accessibilityChildren() ?? []
+        let laid: [NSView] = blockViews.values.sorted { $0.frame.minY < $1.frame.minY } + [commentButton]
+        let missing = laid.filter { view in !view.isHidden && !children.contains { ($0 as AnyObject) === view } }
+        return children + missing
     }
 
     @objc private func commentClicked() {
@@ -134,7 +157,7 @@ public final class DiffTextView: NSTextView {
         hoveredAnchor = anchor
         let range = selectedCommentableRows(including: row)
         commentButton.toolTip = range.map { "Comment on lines \($0.start.line)–\($0.end.line), as selected (or middle-click the row)" }
-            ?? "Comment on line \(anchor.line) (or middle-click the row; select several rows first to comment on them all)"
+            ?? "Comment on line \(anchor.line); drag down or up the gutter to comment on several, or shift-click to extend"
     }
 
     /// The row under a point, gutter or code, and its anchor, when a comment can be started there.
@@ -260,6 +283,9 @@ public final class DiffTextView: NSTextView {
             onExpand?(expansion)
             return
         }
+        if let (row, _) = commentableRow(at: point), isInGutter(point, row: row) {
+            return beginGutterDrag(at: row, extending: event.modifierFlags.contains(.shift))
+        }
         super.mouseDown(with: event)
         // super runs the selection-tracking loop, so a drag has finished by here; only a plain click reports.
         guard selectedRange().length == 0, event.clickCount == 1, let rendered else { return }
@@ -267,6 +293,83 @@ public final class DiffTextView: NSTextView {
         if let anchor = rendered.anchor(at: min(index, rendered.text.length - 1)) {
             onAnchorClick?(anchor)
         }
+    }
+
+
+    public override func mouseDragged(with event: NSEvent) {
+        guard gutterDrag != nil else { return super.mouseDragged(with: event) }
+        NSCursor.arrow.set()
+        autoscroll(with: event)
+        guard let rendered, let textStorage, textStorage.length > 0,
+              let row = rendered.row(at: min(characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)), textStorage.length - 1))
+        else { return }
+        dragLines(to: row)
+    }
+
+    /// Letting go of a press in the gutter starts a comment on the lines it picked.
+    public override func mouseUp(with event: NSEvent) {
+        guard let drag = gutterDrag else { return super.mouseUp(with: event) }
+        gutterDrag = nil
+        showCommentButton(at: convert(event.locationInWindow, from: nil))
+        // The tint becomes the comment's once it's started; until then it's what it was.
+        commentedAnchors = drag.kept
+        guard drag.end != drag.origin else { return onComment?(drag.origin, nil) ?? () }
+        let (start, end) = drag.ordered
+        onComment?(end, start)
+    }
+
+    /// A press in the gutter of a row that takes comments picks lines, as on github.com,
+    /// rather than text: from that row, or with Shift from the far end of the lines a comment
+    /// being written is on.
+    private func beginGutterDrag(at row: Int, extending: Bool) {
+        guard let rendered, let anchor = rendered.rowAnchors[row] else { return }
+        var origin = (row: row, anchor: anchor)
+        let commented = rendered.rowAnchors.indices.filter { rendered.rowAnchors[$0].map(commentedAnchors.contains) == true }
+        if extending, let first = commented.first, let last = commented.last {
+            let far = row < first ? last : first
+            if let farAnchor = rendered.rowAnchors[far] { origin = (far, farAnchor) }
+        }
+        // The "+" stays shown: a press on it goes on getting the drag only while it is.
+        setSelectedRange(NSRange(location: selectedRange().location, length: 0))
+        gutterDrag = GutterDrag(originRow: origin.row, origin: origin.anchor, end: origin.anchor, kept: commentedAnchors)
+        dragLines(to: row)
+    }
+
+    /// Picks the lines from the drag's first row towards `target`, as far as a range can go
+    /// in that direction, and tints them.
+    private func dragLines(to target: Int) {
+        guard var drag = gutterDrag, let rendered, let commentableAnchors else { return }
+        let step = target >= drag.originRow ? 1 : -1
+        var end = drag.origin
+        var row = drag.originRow
+        while row != target, rendered.rowAnchors.indices.contains(row + step) {
+            row += step
+            // Rows held for threads have no anchor and are passed over.
+            guard let anchor = rendered.rowAnchors[row] else { continue }
+            let (start, last) = step > 0 ? (drag.origin, anchor) : (anchor, drag.origin)
+            guard commentableAnchors.contains(anchor), commentRange?(start, last) != nil else { break }
+            end = anchor
+        }
+        drag.end = end
+        drag.endsAfter = step > 0
+        gutterDrag = drag
+        let (start, last) = drag.ordered
+        commentedAnchors = Set(start == last ? [start] : commentRange?(start, last) ?? [drag.origin])
+    }
+
+    /// Whether the point is over the gutter of whichever row it's on.
+    private func isInGutter(_ point: NSPoint) -> Bool {
+        guard let rendered, let textStorage, textStorage.length > 0,
+              let row = rendered.row(at: min(characterIndexForInsertion(at: point), textStorage.length - 1))
+        else { return false }
+        return isInGutter(point, row: row)
+    }
+
+    private func isInGutter(_ point: NSPoint, row: Int) -> Bool {
+        guard let rendered, let textStorage, let textContainer,
+              let width = textStorage.attribute(.diffGutterWidth, at: rendered.rowStarts[row], effectiveRange: nil) as? CGFloat
+        else { return false }
+        return point.x < textContainerOrigin.x + textContainer.lineFragmentPadding + width
     }
 
     /// A middle click on a row that takes comments starts one, as its "+" does, so a reviewer
@@ -407,6 +510,22 @@ public final class CommentButton: NSButton {
 
     /// Acts on the first click, as the expand arrows do, even in a window not yet active.
     public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // A press on the "+" is one in its row's gutter, so it can be dragged to pick lines.
+    public override func mouseDown(with event: NSEvent) {
+        guard let diff = superview as? DiffTextView else { return super.mouseDown(with: event) }
+        diff.mouseDown(with: event)
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        guard let diff = superview as? DiffTextView else { return super.mouseDragged(with: event) }
+        diff.mouseDragged(with: event)
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        guard let diff = superview as? DiffTextView else { return super.mouseUp(with: event) }
+        diff.mouseUp(with: event)
+    }
 }
 
 /// Paints each row's background across the whole visible width, with its gutter a shade darker.
@@ -492,4 +611,18 @@ private func withoutGutter(_ storage: NSTextStorage, in range: NSRange) -> Strin
         if value == nil { pieces += storage.attributedSubstring(from: sub).string }
     }
     return pieces
+}
+
+
+/// The lines picked by a press in the gutter: from the row pressed, or the far end of the lines
+/// being extended, to as far as the drag has reached.
+private struct GutterDrag {
+    let originRow: Int
+    let origin: DiffAnchor
+    var end: DiffAnchor
+    var endsAfter = true
+    /// The rows tinted before the press, tinted again when it's let go.
+    let kept: Set<DiffAnchor>
+
+    var ordered: (start: DiffAnchor, end: DiffAnchor) { endsAfter ? (origin, end) : (end, origin) }
 }

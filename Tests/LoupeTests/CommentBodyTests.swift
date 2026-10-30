@@ -48,6 +48,18 @@ struct CommentBodyTests {
         #expect(image.runs(of: "[screenshot]").allSatisfy { $0.link == URL(string: "https://github.com/user-attachments/assets/abc") }, "a link, not fetched")
     }
 
+
+    @Test func emojiReadAsTheirCharacterOrForGitHubsOwnTheirName() throws {
+        let html = """
+        <p dir="auto">Ship it <g-emoji class="g-emoji" alias="tada" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/1f389.png">🎉</g-emoji> \
+        <g-emoji class="g-emoji" alias="+1">👍</g-emoji> <img class="emoji" title=":shipit:" alt=":shipit:" src="https://github.githubassets.com/images/icons/emoji/shipit.png" height="20" width="20" align="absmiddle"></p>
+        """
+        let blocks = CommentBlock.blocks(fromHTML: html)
+        #expect(blocks.map(\.summary) == ["text 0: Ship it 🎉 👍 :shipit:"])
+        guard case let .text(text, _) = blocks.first else { return }
+        #expect(text.runs(of: ":shipit:").allSatisfy { $0.link == nil }, "an emoji, not a link to its image")
+    }
+
     @Test func readsTheProbesComments() throws {
         let probe = try JSONSerialization.jsonObject(with: Data(contentsOf: projectRoot.appending(path: "probe/conversation.json")))
         let node = try #require(((probe as? [String: Any])?["data"] as? [String: Any])?["node"] as? [String: Any])

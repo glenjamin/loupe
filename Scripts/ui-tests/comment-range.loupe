@@ -1,0 +1,30 @@
+# Pressing a row's "+" and dragging down the gutter picks lines, as on github.com: the rows are
+# tinted and letting go opens one comment on them all. Shift-clicking another row's "+" while
+# an empty comment is open stretches it to that row, here from above it.
+wait settled
+open tamarinworks/atrium#2928
+wait settled
+click image #doc
+wait settled
+# The diff's middle, where the pointer goes, is then line 22 of filter.go.
+scroll scroll 2 down 300
+hover textarea
+snap before
+drag button "Add a comment" down 60
+wait until text "Comment on lines 22–25"
+snap dragged
+expect-different before dragged
+press esc
+wait until text ~"Comment on line" missing
+
+# The card closed leaves the diff's middle a row higher, on line 21.
+hover textarea
+click button "Add a comment"
+wait until text "Comment on line 21"
+snap single
+# The card under line 21 has moved the diff's middle onto it, so a little above that is line 18.
+hover textarea up 170
+shift-click button "Add a comment"
+wait until text "Comment on lines 18–21"
+snap extended
+expect-different single extended

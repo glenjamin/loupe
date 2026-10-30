@@ -128,6 +128,8 @@ public final class PullRequestTab: Identifiable {
     let client: GitHubClient
     /// Who could review in each repo, shared with the other tabs.
     private let candidates: ReviewerCandidates
+    /// GitHub's emoji, shared with the other tabs.
+    private let emojiCatalog: EmojiCatalog
     /// Who GitHub suggests should review this PR, or nil until it has said.
     private var suggestedReviewers: [Reviewer]?
     /// The fetch of suggested reviewers on its way, shared by everyone asking meanwhile.
@@ -189,7 +191,7 @@ public final class PullRequestTab: Identifiable {
     /// The npm lockfiles shown as their diff rather than their package changes.
     private var rawPackageLocks: Set<String> = []
 
-    init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer, client: GitHubClient, candidates: ReviewerCandidates, sleep: @escaping @Sendable (Duration) async throws -> Void) {
+    init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer, client: GitHubClient, candidates: ReviewerCandidates, emojis: EmojiCatalog, sleep: @escaping @Sendable (Duration) async throws -> Void) {
         id = opened.id
         self.sleep = sleep
         self.opened = opened
@@ -198,6 +200,7 @@ public final class PullRequestTab: Identifiable {
         self.differ = differ
         self.client = client
         self.candidates = candidates
+        emojiCatalog = emojis
         markdown = MarkdownPreviews(client: client, differ: differ)
         images = ImagePreviews(differ: differ)
         contextExpansions = ContextExpansions(differ: differ)
@@ -859,6 +862,14 @@ public final class PullRequestTab: Identifiable {
     /// nil on anyone else's.
     public var reviewers: [ReviewerStatus]? {
         Conversation.reviewers(of: conversation, author: pullRequest.author, viewer: viewerLogin)
+    }
+
+    /// The emoji a comment box completes, none until fetched.
+    public var emojis: [Emoji] { emojiCatalog.emojis }
+
+    /// Fetches GitHub's emoji unless they have been this run.
+    public func fetchEmojis() async {
+        await emojiCatalog.fetch()
     }
 
     /// Fetches who could be asked to review in the PR's repo, unless they have been this run,

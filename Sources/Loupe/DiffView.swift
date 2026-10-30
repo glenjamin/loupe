@@ -27,6 +27,8 @@ struct DiffView: View {
     var commentable: Set<DiffAnchor>?
     /// Starts a comment on a row, or on the selected rows from the second anchor to the first.
     var onComment: (DiffAnchor, DiffAnchor?) -> Void = { _, _ in }
+    /// The lines a comment from the first anchor to the second can be on, when it can.
+    var commentRange: (DiffAnchor, DiffAnchor) -> [DiffAnchor]? = { _, _ in nil }
     /// The rows the comment being written is on.
     var commented: Set<DiffAnchor> = []
     /// Whether whitespace changes are hidden, offered in a PR's file header.
@@ -61,7 +63,7 @@ struct DiffView: View {
             ZStack {
                 DiffTextScrollView(
                     file: file, onAnchorClick: onAnchorClick, review: review, expandable: expandable, onExpand: onExpand, blocks: (image?.block).map { [$0] + blocks } ?? blocks,
-                    commentable: commentable, onComment: onComment, commented: commented
+                    commentable: commentable, onComment: onComment, commentRange: commentRange, commented: commented
                 )
                 if let markdown, markdown.isRendered {
                     RenderedMarkdownView(preview: markdown)
@@ -224,6 +226,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
     let blocks: [DiffBlockContent]
     let commentable: Set<DiffAnchor>?
     let onComment: (DiffAnchor, DiffAnchor?) -> Void
+    let commentRange: (DiffAnchor, DiffAnchor) -> [DiffAnchor]?
     let commented: Set<DiffAnchor>
     @AppStorage(DiffSettings.wrapLinesKey) var wrapLines = DiffSettings.wrapLinesDefault
 
@@ -259,6 +262,7 @@ private struct DiffTextScrollView: NSViewRepresentable {
         coordinator.textView.onExpand = onExpand
         coordinator.textView.commentableAnchors = commentable
         coordinator.textView.onComment = onComment
+        coordinator.textView.commentRange = commentRange
         scroll.hasHorizontalScroller = !wrapLines
         // A PR's diff moves past its end only as far as the pull reveals its strip, which the
         // rubber band would add to; a plain diff keeps the rubber band.
