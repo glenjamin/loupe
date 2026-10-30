@@ -268,7 +268,7 @@ final class WindowManager {
         refreshing = [Task { await tabs.lists.keepRefreshed() }]
         if SnapshotRun.directory == nil {
             refreshing.append(Task { await tabs.keepWatchingForChanges() })
-            refreshing.append(Task { await tabs.keepWatchingMergeCommits() })
+            refreshing.append(Task { await tabs.keepWatchingRunningChecks() })
         }
     }
 

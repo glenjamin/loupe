@@ -226,29 +226,32 @@ public final class TabsModel {
         }
     }
 
-    /// Follows the checks on the merge commits of the open PRs merged lately until they finish,
-    /// sooner than the lists' refresh would, until the calling task is cancelled.
-    public func keepWatchingMergeCommits() async {
+    /// Follows the checks still running on the open PRs, on their heads or on the merge commits
+    /// of those merged lately, sooner than the lists' refresh would, until the calling task is
+    /// cancelled.
+    public func keepWatchingRunningChecks() async {
         while !Task.isCancelled {
-            await watchMergeCommits()
-            try? await Task.sleep(for: Self.mergeCommitPollInterval)
+            await watchRunningChecks()
+            try? await Task.sleep(for: Self.runningChecksPollInterval)
         }
     }
 
-    /// One round of following merge commits' checks: looks up the open PRs whose merge
-    /// commit's checks haven't finished, if any.
-    public func watchMergeCommits() async {
-        let ids = tabs.map(\.pullRequest).filter(lists.awaitsMergeCommitChecks).map(\.id)
+    /// One round of following running checks: looks up the open PRs whose head's checks are
+    /// pending or whose merge commit's checks haven't finished, if any.
+    public func watchRunningChecks() async {
+        let ids = tabs.map(\.pullRequest).filter { pullRequest in
+            pullRequest.state == .open && pullRequest.checks == .pending || lists.awaitsMergeCommitChecks(pullRequest)
+        }.map(\.id)
         do {
             try await lists.checkStatuses(of: ids)
         } catch {
-            log("Couldn't look up the merge commits' checks of open PRs: \(error.localizedDescription)")
+            log("Couldn't look up the running checks of open PRs: \(error.localizedDescription)")
         }
     }
 
-    /// How often the open PRs' merge commits' checks are looked up while they run: often enough
-    /// that a job finishing shows soon after, as it does on GitHub.
-    static let mergeCommitPollInterval = Duration.seconds(15)
+    /// How often the open PRs' running checks are looked up: often enough that a job finishing
+    /// shows soon after, as it does on GitHub.
+    static let runningChecksPollInterval = Duration.seconds(15)
 
     /// Looks up the PRs, then their checks and merge state, which the lookup leaves out and
     /// which an approval or a push can change, so the merge box doesn't wait for the lists.

@@ -1214,6 +1214,10 @@ GitHub sends a Unicode emoji in a comment's HTML as a `<g-emoji>` around its cha
 
 The emoji names for `:name:` completion are fetched when a PR's view first shows, rather than when a comment box first opens, so a name typed as soon as a box opens is offered; the box still asks, so one that couldn't be fetched is tried again then. Offering the list late, when the names arrive mid-name, was tried: `complete(_:)` outside a key press runs AppKit's own event loop for the list, which hung the UI scripts.
 
+### An open PR's pending checks are followed every 15 seconds
+
+This extends "A merged PR shows the checks on its merge commit, under "Merged"". A check finishing isn't an update to the PR and brings no notification, so a run finishing on the PR being looked at took until the lists' next refresh, up to three minutes, to show. Now, while an open PR whose head checks are pending is open in a tab, its checks and merge state are looked up every 15 seconds, in the same round and batch as merge commits' running checks, until they pass or fail. Only `PENDING` is followed, not `EXPECTED`, which a required check that never reports can leave for ever.
+
 ## Not yet decided
 
 Nothing is pending.

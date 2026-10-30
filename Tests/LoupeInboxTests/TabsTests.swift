@@ -89,6 +89,26 @@ struct TabsTests {
         #expect(tab.pullRequest.mergeStateStatus == .unstable)
     }
 
+    @Test func anOpenTabFollowsItsPendingChecksUntilTheyFinish() async throws {
+        let app = try await App()
+        let created = try await app.github.openPullRequest(number: 9001, by: "rowan-ashby")
+        try await app.github.setChecks(of: created.id, state: "PENDING", [.status("ci/circleci: test", "PENDING")])
+        await app.tabs.open(PullRequestLink(repository: created.repository.nameWithOwner, number: created.number))?.value
+        let tab = try #require(app.tabs.tab(id: created.id))
+        await app.tabs.lists.refresh()
+        #expect(tab.pullRequest.checks == .pending)
+
+        try await app.github.setChecks(of: created.id, state: "FAILURE", [.status("ci/circleci: test", "FAILURE")])
+        await app.tabs.watchRunningChecks()
+        #expect(tab.pullRequest.checks == .failure)
+        #expect(tab.pullRequest.checkContexts.failedCheckNames == ["test"])
+
+        // Finished, they're not asked about again.
+        let asked = await app.github.statusLookups.count
+        await app.tabs.watchRunningChecks()
+        #expect(await app.github.statusLookups.count == asked)
+    }
+
     @Test func aLinkToTheViewersNewPullRequestPutsItInMineAtOnce() async throws {
         let app = try await App()
         let created = try await app.github.openPullRequest(number: 2001, by: FakeGitHub.viewer)

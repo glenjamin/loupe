@@ -236,17 +236,17 @@ struct MergeTests {
         await tab.merge()
 
         try await app.github.setMergeCommitChecks(of: pullRequest.id, state: "PENDING", [.status("ci/circleci: test", "PENDING")])
-        await app.tabs.watchMergeCommits()
+        await app.tabs.watchRunningChecks()
         #expect(tab.pullRequest.mergeCommitChecks == .pending)
 
         try await app.github.setMergeCommitChecks(of: pullRequest.id, state: "FAILURE", [.status("ci/circleci: test", "FAILURE")])
-        await app.tabs.watchMergeCommits()
+        await app.tabs.watchRunningChecks()
         #expect(tab.pullRequest.mergeCommitChecks == .failure)
         #expect(tab.pullRequest.mergeCommitCheckContexts.failedCheckNames == ["test"])
 
         // Finished, they're not asked about again.
         let asked = await app.github.statusLookups.count
-        await app.tabs.watchMergeCommits()
+        await app.tabs.watchRunningChecks()
         #expect(await app.github.statusLookups.count == asked)
     }
 
@@ -260,7 +260,7 @@ struct MergeTests {
         app.tabs.close(pullRequest.id)
 
         let asked = await app.github.statusLookups.count
-        await app.tabs.watchMergeCommits()
+        await app.tabs.watchRunningChecks()
         #expect(await app.github.statusLookups.count == asked)
     }
 
