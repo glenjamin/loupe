@@ -77,7 +77,15 @@ public final class DiffTextView: NSTextView {
     /// Shows the "+" on the row under the pointer when a comment can be started there.
     public override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
-        showCommentButton(at: convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        showCommentButton(at: point)
+        if isInGutter(point) { NSCursor.arrow.set() }
+    }
+
+    /// The gutter picks lines rather than text, so it keeps the arrow, as on github.com.
+    public override func cursorUpdate(with event: NSEvent) {
+        guard lineDrag != nil || isInGutter(convert(event.locationInWindow, from: nil)) else { return super.cursorUpdate(with: event) }
+        NSCursor.arrow.set()
     }
 
     public override func mouseExited(with event: NSEvent) {
@@ -290,6 +298,7 @@ public final class DiffTextView: NSTextView {
 
     public override func mouseDragged(with event: NSEvent) {
         guard lineDrag != nil else { return super.mouseDragged(with: event) }
+        NSCursor.arrow.set()
         autoscroll(with: event)
         guard let rendered, let textStorage, textStorage.length > 0,
               let row = rendered.row(at: min(characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)), textStorage.length - 1))
@@ -346,6 +355,14 @@ public final class DiffTextView: NSTextView {
         lineDrag = drag
         let (start, last) = drag.ordered
         commentedAnchors = Set(start == last ? [start] : commentRange?(start, last) ?? [drag.origin])
+    }
+
+    /// Whether the point is over the gutter of whichever row it's on.
+    private func isInGutter(_ point: NSPoint) -> Bool {
+        guard let rendered, let textStorage, textStorage.length > 0,
+              let row = rendered.row(at: min(characterIndexForInsertion(at: point), textStorage.length - 1))
+        else { return false }
+        return isInGutter(point, row: row)
     }
 
     private func isInGutter(_ point: NSPoint, row: Int) -> Bool {
