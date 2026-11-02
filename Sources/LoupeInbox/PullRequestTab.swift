@@ -1154,6 +1154,21 @@ public final class PullRequestTab: Identifiable {
         !isFetchingConversation && (conversation != nil || conversationError != nil)
     }
 
+    /// Whether the conversation opens at its end rather than its top: the PR is open and
+    /// approved, and nothing has been pushed since its latest approval, so what's left to read
+    /// is the end, where it was approved.
+    public var opensConversationAtEnd: Bool {
+        guard pullRequest.state == .open, pullRequest.reviewDecision == .approved, let items = conversation?.items,
+              let approval = items.lastIndex(where: { if case .review(.approved, _, _) = $0.event { true } else { false } })
+        else { return false }
+        return !items[approval...].contains { item in
+            switch item.event {
+            case .commit, .forcePushed: true
+            default: false
+            }
+        }
+    }
+
     /// Fetches the conversation again after it failed, leaving the diff as it is.
     public func retryConversation() async {
         guard !isFetchingConversation else { return }

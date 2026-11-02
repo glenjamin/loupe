@@ -9,6 +9,31 @@ import Testing
 
 @MainActor
 struct ConversationTests {
+    @Test func anApprovedPullRequestOpensAtTheConversationsEndUntilSomethingIsPushedSince() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = app.toReview[0]
+        try await app.github.edit(pullRequest.id) { $0.reviewDecision = "APPROVED" }
+        await app.tabs.lists.refresh()
+        // Its timeline ends with an approval.
+        try await app.conversations.add(pullRequest.id)
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        await tab.load()
+        #expect(tab.opensConversationAtEnd)
+
+        await app.conversations.forcePush(from: "aaaaaaa", to: "bbbbbbb", on: pullRequest.id)
+        try await app.followActivity(on: pullRequest, in: tab)
+        #expect(!tab.opensConversationAtEnd, "pushed since it was approved")
+
+        try await app.conversations.review("APPROVED", by: "tam-fairweather", on: pullRequest.id)
+        try await app.followActivity(on: pullRequest, in: tab)
+        #expect(tab.opensConversationAtEnd, "approved again since")
+
+        try await app.github.edit(pullRequest.id) { $0.reviewDecision = "CHANGES_REQUESTED" }
+        await app.tabs.lists.refresh()
+        #expect(!tab.opensConversationAtEnd, "an approval no longer stands")
+    }
+
     @Test func openingAPullRequestFetchesItsWholeTimelineAndStoresIt() async throws {
         let app = try await ConversationApp()
         let pullRequest = app.toReview[0]
@@ -167,6 +192,16 @@ struct ConversationApp {
     }
 
     /// Fresh models over the same store, as on the next launch.
+    /// Has the tab fetch the conversation again, as it does once GitHub shows the PR's activity.
+    func followActivity(on pullRequest: PullRequestSummary, in tab: PullRequestTab) async throws {
+        let before = tab.conversation
+        try await github.edit(pullRequest.id) { $0.comments.totalCount += 1 }
+        _ = await tabs.watchForChanges()
+        try await delay.untilWaiting()
+        delay.elapse()
+        try await until { tab.conversation != before && tab.isConversationSettled }
+    }
+
     func relaunch() throws -> TabsModel {
         Self.tabs(github, details, store, delay, showDelay)
     }

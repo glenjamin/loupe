@@ -268,10 +268,12 @@ final class ConversationPage: GitHubWebPage {
     /// its top nor images still arriving are seen first.
     override func didFinishLoading() {
         let offset = restoredOffset ?? -1
+        // Only as the tab first shows it; a page replacing one keeps the reader's place.
+        let toEnd = restoredOffset == nil && !hasLoadedConversation && tab?.opensConversationAtEnd == true
         restoredOffset = nil
         let request = requested
         Task {
-            _ = try? await webView.callAsyncJavaScript(Self.settleScript, arguments: ["offset": offset], in: nil, contentWorld: .defaultClient)
+            _ = try? await webView.callAsyncJavaScript(Self.settleScript, arguments: ["offset": offset, "toEnd": toEnd], in: nil, contentWorld: .defaultClient)
             // A newer page on its way uncovers itself once it's ready.
             guard request == requested, isLoaded else { return }
             hasLoadedConversation = true
@@ -472,7 +474,8 @@ final class ConversationPage: GitHubWebPage {
     /// Scrolls to `offset` unless it's negative, then waits for a frame to be drawn, or a moment
     /// where frames are held back, as in a window off screen.
     private static let settleScript = """
-        if (offset >= 0) window.scrollTo(0, offset);
+        if (toEnd) window.scrollTo(0, document.documentElement.scrollHeight);
+        else if (offset >= 0) window.scrollTo(0, offset);
         await Promise.race([
           new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))),
           new Promise(done => setTimeout(done, 250)),

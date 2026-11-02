@@ -1056,6 +1056,10 @@ A finished plan never changes, so it's kept in memory once read, but a run can b
 
 Reading a plan only when its env was chosen meant waiting on Terraform Cloud at each click, one env after another, while the plans were all wanted anyway. Now every env's plan is read as soon as the PR is shown, all at once, and again whenever its checks change; the env list and plan pane update as each arrives, so a click usually finds its plan already there. The read is tied to the PR's view rather than the Terraform pane, so it starts without opening the pane and stops with the view; a read cut short is left unread rather than failed, and read again next time. Tabs in the background read nothing, as their checks aren't watched either.
 
+### An approved PR with nothing pushed since opens at the end of its conversation
+
+On an open PR whose review decision is Approved, with no commit or force-push in the timeline after its latest approval, the conversation opens scrolled to its end rather than its top, whoever's PR it is. What's left to read on such a PR is how it ended up approved, and the checks and comment box below it, so starting at the description meant scrolling past what's already been read. "Since the review" is read off the timeline's order rather than an approval's commit, as the conversation already holds it and needs nothing more stored. It's only as a tab first shows the conversation: a page replacing it in the background keeps the reader's place, and a link to a comment still lands on the comment. A merged or closed PR opens at the top as before.
+
 ## Not yet decided
 
 Nothing is pending.

@@ -372,8 +372,8 @@ actor FakeConversations {
         ((nodes[id]?["reviewThreads"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
     }
 
-    /// Submits a review of the PR by the user with `login`, which becomes their latest and
-    /// answers any request of them, as on GitHub. The viewer's is also the PR's
+    /// Submits a review of the PR by the user with `login`, which ends its timeline, becomes
+    /// their latest and answers any request of them, as on GitHub. The viewer's is also the PR's
     /// `viewerLatestReview`, made against the PR's head `commit`.
     func review(_ state: String, by login: String, on id: String, commit: String? = nil) throws {
         let user = try self.user(login)
@@ -388,6 +388,20 @@ actor FakeConversations {
         let requests = ((node["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
         node["reviewRequests"] = ["nodes": requests.filter { ($0["requestedReviewer"] as? [String: Any])?["login"] as? String != login }]
         nodes[id] = node
+        let index = timelines[id, default: []].count
+        timelines[id, default: []].append([
+            "__typename": "PullRequestReview",
+            "id": "PRR_fake_\(index)",
+            "databaseId": 900_000 + index,
+            "state": state,
+            "bodyHTML": "",
+            "createdAt": Date.now.formatted(.iso8601),
+            "submittedAt": Date.now.formatted(.iso8601),
+            "viewerCanUpdate": login == FakeGitHub.viewer,
+            "author": user,
+            "comments": ["nodes": [] as [Any]],
+            "reactionGroups": noReactions,
+        ])
     }
 
     /// Asks the user with `login` to review, as from github.com.
