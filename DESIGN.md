@@ -1060,6 +1060,10 @@ Reading a plan only when its env was chosen meant waiting on Terraform Cloud at 
 
 On an open PR whose review decision is Approved, with no commit or force-push in the timeline after its latest approval, the conversation opens scrolled to its end rather than its top, whoever's PR it is. What's left to read on such a PR is how it ended up approved, and the checks and comment box below it, so starting at the description meant scrolling past what's already been read. "Since the review" is read off the timeline's order rather than an approval's commit, as the conversation already holds it and needs nothing more stored. It's only as a tab first shows the conversation: a page replacing it in the background keeps the reader's place, and a link to a comment still lands on the comment. A merged or closed PR opens at the top as before.
 
+### A pending Terraform plan says when it started
+
+Choosing an env whose plan is still pending says when its run started and whether it's planning yet: "Started 6 minutes ago (16:13), planning since 16:16", or "…, still queued", above the line saying the plan shows once finished, kept current each minute. Terraform Cloud often queues a run for minutes before it plans, so the time the check went pending alone doesn't say whether it's stuck. The times are the run's own `status-timestamps` (`plan-queued-at`, falling back to `created-at`, and `planning-at`), read with one GET of the run when the env is chosen and again each time it's shown, as it moves from queued to planning; nothing is read for pending envs not chosen. If the run can't be read, the pane says it's planning as before.
+
 ## Not yet decided
 
 Nothing is pending.

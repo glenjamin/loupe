@@ -164,14 +164,24 @@ struct TerraformPlansTests {
         #expect(summary.planning == 1)
         #expect(summary.failed == 1)
 
-        // A run still planning has nothing to read yet.
+        // A run still planning has no plan to read yet; once chosen, its run says when it was
+        // queued and, after a wait, started planning.
+        let queued = Date(timeIntervalSince1970: 1_793_635_000)
         await terraform.add(FakeTerraformCloud.Run(id: "run-BrokenD4", organization: "tamarinworks", workspace: "broken", status: "errored", planStatus: "errored", log: erroredLog))
+        await terraform.add(FakeTerraformCloud.Run(id: "run-BusyC3", organization: "tamarinworks", workspace: "busy", status: "plan_queued", planStatus: "pending", queuedAt: queued))
         let plans = TerraformPlans(client: client(terraform))
         await plans.show(tab.terraformPlans)
+        #expect(await !terraform.requests.contains { $0.contains("BusyC3") }, "nothing read until it's chosen")
         await plans.select("tamarinworks/busy")
-        #expect(plans.plan(of: try #require(plans.selected)) == nil)
-        #expect(await !terraform.requests.contains { $0.contains("BusyC3") })
+        let busy = try #require(plans.selected)
+        #expect(plans.plan(of: busy) == nil)
+        #expect(plans.times(of: busy) == TerraformRunTimes(queuedAt: queued, planningAt: nil))
+        #expect(await terraform.requests.filter { $0.contains("BusyC3") } == ["/api/v2/runs/run-BusyC3"], "the run alone")
         #expect(await terraform.requests.contains("/api/v2/runs/run-BrokenD4"))
+
+        await terraform.add(FakeTerraformCloud.Run(id: "run-BusyC3", organization: "tamarinworks", workspace: "busy", status: "planning", planStatus: "running", queuedAt: queued, planningAt: queued.addingTimeInterval(150)))
+        await plans.select("tamarinworks/busy")
+        #expect(plans.times(of: busy) == TerraformRunTimes(queuedAt: queued, planningAt: queued.addingTimeInterval(150)), "read again as it's shown again")
 
         // An errored plan shows its log's errors as Terraform prints them.
         await plans.select("tamarinworks/broken")
@@ -186,6 +196,19 @@ struct TerraformPlansTests {
         #expect(shown.contains("│   12:   acceleration = true"))
         #expect(shown.contains("│ An argument named \"acceleration\" is not expected here."))
         #expect(!shown.contains("Refreshing state"))
+    }
+
+    @Test func aPendingPlanSaysWhenItStartedAndWhetherItsPlanningYet() {
+        let london = TimeZone(identifier: "Europe/London")!
+        let locale = Locale(identifier: "en_GB")
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = london
+        let queued = calendar.date(from: DateComponents(year: 2026, month: 11, day: 2, hour: 16, minute: 13))!
+        let now = queued.addingTimeInterval(6 * 60)
+
+        #expect(TerraformRunTimes(queuedAt: queued, planningAt: nil).summary(now: now, locale: locale, timeZone: london) == "Started 6 minutes ago (16:13), still queued")
+        #expect(TerraformRunTimes(queuedAt: queued, planningAt: queued.addingTimeInterval(150)).summary(now: now, locale: locale, timeZone: london) == "Started 6 minutes ago (16:13), planning since 16:15")
+        #expect(TerraformRunTimes(queuedAt: queued, planningAt: nil).summary(now: queued.addingTimeInterval(86_400), locale: locale, timeZone: london) == "Started yesterday (2 Nov 2026 at 16:13), still queued", "another day's time says which day")
     }
 
     @Test func withoutATokenItSaysToRunTerraformLogin() async throws {

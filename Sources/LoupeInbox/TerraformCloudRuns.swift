@@ -96,6 +96,19 @@ public struct TerraformCloudRuns: Sendable {
         return result
     }
 
+    /// When the run was queued and started planning, for one whose plan isn't finished.
+    public func times(of check: TerraformPlanCheck) async throws(Failure) -> TerraformRunTimes {
+        let host = check.host
+        guard let token = token(host) else { throw .signedOut(host: host) }
+        let run: Document<RunTimesWire> = try await decode(get(api(host, "runs/\(check.runId)"), token: token, host: host))
+        let attributes = run.data.attributes
+        let stamps = attributes.statusTimestamps ?? [:]
+        guard let queuedAt = (stamps["plan-queued-at"] ?? attributes.createdAt).flatMap(terraformDate) else {
+            throw .failed("Terraform Cloud didn't say when the run started.")
+        }
+        return TerraformRunTimes(queuedAt: queuedAt, planningAt: stamps["planning-at"].flatMap(terraformDate))
+    }
+
     private func api(_ host: String, _ path: String, query: [URLQueryItem] = []) -> URL {
         var url = URL(string: "https://\(host)/api/v2/")!.appending(path: path)
         if !query.isEmpty { url.append(queryItems: query) }
@@ -321,6 +334,28 @@ private struct IncludedWire: Decodable {
             case logReadURL = "log-read-url"
         }
     }
+}
+
+private struct RunTimesWire: Decodable {
+    let attributes: Attributes
+
+    struct Attributes: Decodable {
+        let createdAt: String?
+        let statusTimestamps: [String: String]?
+
+        enum CodingKeys: String, CodingKey {
+            case createdAt = "created-at"
+            case statusTimestamps = "status-timestamps"
+        }
+    }
+}
+
+/// Terraform Cloud's timestamps, which come with and without fractions of a second.
+private func terraformDate(_ text: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    if let date = formatter.date(from: text) { return date }
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.date(from: text)
 }
 
 private struct ErrorsWire: Decodable {

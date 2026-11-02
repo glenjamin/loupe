@@ -23,8 +23,11 @@ public actor FakeTerraformCloud {
         /// The JSON plan, once finished.
         public var plan: Data?
         public var log: String
+        /// When it was queued to plan, and started planning, if it has.
+        public var queuedAt: Date
+        public var planningAt: Date?
 
-        public init(id: String, organization: String, workspace: String, status: String = "planned_and_finished", planStatus: String = "finished", plan: Data? = nil, log: String = "") {
+        public init(id: String, organization: String, workspace: String, status: String = "planned_and_finished", planStatus: String = "finished", plan: Data? = nil, log: String = "", queuedAt: Date = Date(timeIntervalSince1970: 1_793_000_000), planningAt: Date? = nil) {
             self.id = id
             self.organization = organization
             self.workspace = workspace
@@ -32,6 +35,8 @@ public actor FakeTerraformCloud {
             self.planStatus = planStatus
             self.plan = plan
             self.log = log
+            self.queuedAt = queuedAt
+            self.planningAt = planningAt
         }
 
         var planId: String { "plan-" + id.dropFirst("run-".count) }
@@ -99,11 +104,25 @@ public actor FakeTerraformCloud {
         return [
             "data": [
                 "id": run.id, "type": "runs",
-                "attributes": ["status": run.status, "plan-only": true, "message": "Triggered via GitHub"] as [String: Any],
+                "attributes": [
+                    "status": run.status, "plan-only": true, "message": "Triggered via GitHub",
+                    // As Terraform Cloud writes them: milliseconds on the run, whole seconds and an offset on its steps.
+                    "created-at": stamp(run.queuedAt, fractional: true),
+                    "status-timestamps": [
+                        "plan-queueable-at": stamp(run.queuedAt), "plan-queued-at": stamp(run.queuedAt), "planning-at": run.planningAt.map { stamp($0) },
+                    ].compactMapValues { $0 },
+                ] as [String: Any],
                 "relationships": ["plan": ["data": ["id": run.planId, "type": "plans"]]],
             ] as [String: Any],
             "included": [plan],
         ]
+    }
+
+    private func stamp(_ date: Date, fractional: Bool = false) -> String {
+        let formatter = ISO8601DateFormatter()
+        if fractional { formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds] }
+        let text = formatter.string(from: date)
+        return fractional ? text : text.replacingOccurrences(of: "Z", with: "+00:00")
     }
 
     private func json(_ object: Any, _ url: URL, status: Int = 200) -> (Data, HTTPURLResponse) {

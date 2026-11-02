@@ -212,7 +212,14 @@ private struct PlanView: View {
             ContentUnavailableView {
                 Label("Terraform Cloud is still planning", systemImage: "clock")
             } description: {
-                Text(verbatim: "\(check.workspace)'s plan shows here once it has finished.")
+                VStack(spacing: 4) {
+                    if let times = plans.times(of: check) {
+                        EveryMinute { now in
+                            Text(verbatim: "\(times.summary(now: now)).")
+                        }
+                    }
+                    Text(verbatim: "\(check.workspace)'s plan shows here once it has finished.")
+                }
             } actions: {
                 Button("Open in Terraform Cloud") { openInBrowser(check.url) }
             }

@@ -24,6 +24,8 @@ public final class TerraformPlans {
     private var plans: [String: Loading] = [:]
     /// The runs whose plans are being read again, still showing what was read before.
     private var refreshing: Set<String> = []
+    /// When each run still planning was queued and started planning, by run, as last read.
+    private var times: [String: TerraformRunTimes] = [:]
     /// Each finished plan's rows, by run, made once it's read.
     private var outlines: [String: TerraformPlanOutline] = [:]
     /// Which resources of each run's plan are expanded and which row the keys act on, kept while
@@ -47,6 +49,11 @@ public final class TerraformPlans {
 
     public func plan(of check: TerraformPlanCheck) -> Loading? {
         plans[check.runId]
+    }
+
+    /// When a run still planning was queued and started planning, once read.
+    public func times(of check: TerraformPlanCheck) -> TerraformRunTimes? {
+        times[check.runId]
     }
 
     /// The plan as rows of resources, once it's read and if it planned.
@@ -136,15 +143,24 @@ public final class TerraformPlans {
     }
 
     private func load(_ check: TerraformPlanCheck) async {
-        // A run still planning has nothing to read; its check says when it's done. One read
-        // before it had finished is read again.
-        guard check.state != .planning else { return }
+        // A run still planning has no plan to read; its check says when it's done. The chosen
+        // one's times are read each time it's shown, as it moves from queued to planning. One
+        // read before it had finished is read again.
+        guard check.state != .planning else {
+            if check.id == selectedId { await readTimes(check) }
+            return
+        }
         switch plans[check.runId] {
         case nil, .loaded(.unfinished)?: break
         default: return
         }
         plans[check.runId] = .loading
         await read(check, fresh: false)
+    }
+
+    /// Left unsaid if they can't be read; the pane says it's planning either way.
+    private func readTimes(_ check: TerraformPlanCheck) async {
+        if let read = try? await client.times(of: check) { times[check.runId] = read }
     }
 
     private func read(_ check: TerraformPlanCheck, fresh: Bool) async {

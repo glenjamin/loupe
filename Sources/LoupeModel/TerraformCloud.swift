@@ -38,6 +38,33 @@ public struct TerraformPlanCheck: Sendable, Hashable, Identifiable {
     }
 }
 
+/// When a run still under way began, as Terraform Cloud records it.
+public struct TerraformRunTimes: Sendable, Equatable {
+    /// When it was queued to plan, as its check went pending.
+    public var queuedAt: Date
+    /// When it started planning; nil while it's still queued.
+    public var planningAt: Date?
+
+    public init(queuedAt: Date, planningAt: Date?) {
+        self.queuedAt = queuedAt
+        self.planningAt = planningAt
+    }
+
+    /// "Started 6 minutes ago (16:13), planning since 16:16", or "…, still queued" before it
+    /// plans. Clock times give the day too when it isn't `now`'s.
+    public func summary(now: Date = .now, locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        func clock(_ date: Date) -> String {
+            let sameDay = calendar.isDate(date, inSameDayAs: now)
+            return date.formatted(Date.FormatStyle(date: sameDay ? .omitted : .abbreviated, time: .shortened, locale: locale, timeZone: timeZone))
+        }
+        let ago = queuedAt.recentOrDated(now: now, locale: locale, timeZone: timeZone)
+        let started = ago == clock(queuedAt) ? "Started \(ago)" : "Started \(ago) (\(clock(queuedAt)))"
+        return "\(started), " + (planningAt.map { "planning since \(clock($0))" } ?? "still queued")
+    }
+}
+
 /// How many resources a plan adds, changes, destroys and imports, as Terraform's "Plan:" line
 /// counts them: a replacement is one to add and one to destroy.
 public struct TerraformPlanCounts: Sendable, Hashable {
