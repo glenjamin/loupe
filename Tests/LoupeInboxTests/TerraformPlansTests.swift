@@ -22,13 +22,22 @@ struct TerraformPlansTests {
         tab.showTerraform()
         #expect(tab.shownSection == .terraform)
 
-        // The envs are listed from the checks; nothing is read until one is chosen.
+        // The envs are listed from the checks, and every env's plan is read without waiting
+        // for one to be chosen.
         let plans = TerraformPlans(client: client(terraform))
         await plans.show(tab.terraformPlans)
         #expect(plans.selected == nil)
-        #expect(await terraform.requests.isEmpty)
+        #expect(await terraform.requests.count == 6)
+        for check in tab.terraformPlans {
+            guard case .loaded(.planned)? = plans.plan(of: check) else {
+                Issue.record("expected \(check.workspace)'s plan read, got \(String(describing: plans.plan(of: check)))")
+                return
+            }
+        }
 
+        // Choosing an env shows the plan already read.
         await plans.select("tamarinworks/prod-platform")
+        #expect(await terraform.requests.count == 6)
         let prod = try #require(plans.selected)
         guard case let .loaded(.planned(plan))? = plans.plan(of: prod) else {
             Issue.record("expected prod-platform's plan, got \(String(describing: plans.plan(of: prod)))")
@@ -42,7 +51,8 @@ struct TerraformPlansTests {
         #expect(shown.contains("Plan: 8 to add, 1 to change, 1 to destroy."))
         // The JSON plan is fetched from where the API redirects, without the token, which the
         // fake would refuse.
-        #expect(await terraform.requests == ["/api/v2/runs/run-6G6GOK8hrFoqYv2m", "/api/v2/plans/plan-6G6GOK8hrFoqYv2m/json-output", "/json/run-6G6GOK8hrFoqYv2m"])
+        let requests = await terraform.requests
+        #expect(requests.filter { $0.contains("6G6GOK8hrFoqYv2m") } == ["/api/v2/runs/run-6G6GOK8hrFoqYv2m", "/api/v2/plans/plan-6G6GOK8hrFoqYv2m/json-output", "/json/run-6G6GOK8hrFoqYv2m"])
 
         // A finished plan doesn't change, so going back reads nothing again, and the env chosen
         // stays chosen as the checks are listed again.
@@ -155,14 +165,15 @@ struct TerraformPlansTests {
         #expect(summary.failed == 1)
 
         // A run still planning has nothing to read yet.
+        await terraform.add(FakeTerraformCloud.Run(id: "run-BrokenD4", organization: "tamarinworks", workspace: "broken", status: "errored", planStatus: "errored", log: erroredLog))
         let plans = TerraformPlans(client: client(terraform))
         await plans.show(tab.terraformPlans)
         await plans.select("tamarinworks/busy")
         #expect(plans.plan(of: try #require(plans.selected)) == nil)
-        #expect(await terraform.requests.isEmpty)
+        #expect(await !terraform.requests.contains { $0.contains("BusyC3") })
+        #expect(await terraform.requests.contains("/api/v2/runs/run-BrokenD4"))
 
         // An errored plan shows its log's errors as Terraform prints them.
-        await terraform.add(FakeTerraformCloud.Run(id: "run-BrokenD4", organization: "tamarinworks", workspace: "broken", status: "errored", planStatus: "errored", log: erroredLog))
         await plans.select("tamarinworks/broken")
         let broken = try #require(plans.selected)
         guard case let .loaded(.errored(log))? = plans.plan(of: broken) else {

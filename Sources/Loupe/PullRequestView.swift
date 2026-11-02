@@ -54,7 +54,7 @@ struct PullRequestView: View {
                     }
                     let showsTerraform = section == .terraform
                     if let plans = showsTerraform ? TerraformPages.plans(for: tab) : TerraformPages.existingPlans(for: tab) {
-                        TerraformPane(plans: plans, checks: tab.terraformPlans, isShown: showsTerraform)
+                        TerraformPane(plans: plans, checks: tab.terraformPlans)
                             .opacity(showsTerraform ? 1 : 0)
                             .allowsHitTesting(showsTerraform)
                             .accessibilityHidden(!showsTerraform)
@@ -73,6 +73,11 @@ struct PullRequestView: View {
         // Showing the tab produces the diff if it isn't already in memory. New commits after
         // that are offered by the banner rather than replacing what's being read.
         .task { await tab.load() }
+        // Terraform Cloud's plans are read as soon as the PR is shown, and again whenever its
+        // checks change, as when a plan finishes or after a push, so they're ready when chosen.
+        .task(id: tab.terraformPlans) {
+            if !tab.terraformPlans.isEmpty { await TerraformPages.plans(for: tab).show(tab.terraformPlans) }
+        }
         // Before any comment box opens, so a `:` and name typed as soon as one does is offered.
         .task { await tab.fetchEmojis() }
     }

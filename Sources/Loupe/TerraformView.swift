@@ -94,11 +94,11 @@ private struct CountsText: View {
 }
 
 /// Terraform Cloud's plans beside the sidebar: the envs it planned in, each with its counts, and
-/// the chosen one's plan as Terraform prints it. Plans are read when first chosen.
+/// the chosen one's plan as Terraform prints it. The plans are read by the PR's view, in the
+/// background, each shown here as it arrives.
 struct TerraformPane: View {
     @Bindable var plans: TerraformPlans
     let checks: [TerraformPlanCheck]
-    let isShown: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -119,10 +119,6 @@ struct TerraformPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("terraform-pane")
-        // Listed again whenever the checks change, as when a plan finishes or after a push.
-        .task(id: isShown ? checks : nil) {
-            if isShown { await plans.show(checks) }
-        }
     }
 
     private var bar: some View {

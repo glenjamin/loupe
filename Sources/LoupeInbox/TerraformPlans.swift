@@ -93,12 +93,16 @@ public final class TerraformPlans {
     }
 
     /// Lists the envs `checks` report, keeping the one chosen if it's still among them, and
-    /// reads its plan if its run is new.
+    /// reads every env's plan whose run is new, all at once, each shown as it arrives.
     public func show(_ checks: [TerraformPlanCheck]) async {
         self.checks = checks
         signedOutHosts = Array(Set(checks.map(\.host))).sorted().filter { !client.hasToken(for: $0) }
         if selected == nil { selectedId = nil }
-        if let selected { await load(selected) }
+        await withTaskGroup(of: Void.self) { group in
+            for check in checks {
+                group.addTask { await self.load(check) }
+            }
+        }
     }
 
     /// Whether the plan is being read again, while what was read before stays shown.
@@ -149,7 +153,12 @@ public final class TerraformPlans {
             outlines[check.runId] = if case let .planned(planned) = plan { TerraformPlanOutline(planned) } else { nil }
             plans[check.runId] = .loaded(plan)
         } catch {
-            plans[check.runId] = .failed(error)
+            // A read given up on, as when the PR's tab is left, is read again when next shown.
+            if Task.isCancelled {
+                if case .loading? = plans[check.runId] { plans[check.runId] = nil }
+            } else {
+                plans[check.runId] = .failed(error)
+            }
         }
     }
 }

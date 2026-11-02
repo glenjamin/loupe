@@ -1048,6 +1048,10 @@ This revises "A Terraform plan is a row per resource, collapsed, coloured by kin
 
 A finished plan never changes, so it's kept in memory once read, but a run can be re-planned in place or the read can go wrong. A ↻ button over the plan reads it again past that cache, keeping the old plan and its expanded rows on screen until the new one arrives. ⌘R, which reloads a PR anywhere, also refreshes the shown plan when the Terraform pane is up (the menu item reads "Reload PR and Plan"); it still reloads the PR, as that's what notices a push's new runs. Only the shown env is refreshed.
 
+### Terraform plans are read in the background
+
+Reading a plan only when its env was chosen meant waiting on Terraform Cloud at each click, one env after another, while the plans were all wanted anyway. Now every env's plan is read as soon as the PR is shown, all at once, and again whenever its checks change; the env list and plan pane update as each arrives, so a click usually finds its plan already there. The read is tied to the PR's view rather than the Terraform pane, so it starts without opening the pane and stops with the view; a read cut short is left unread rather than failed, and read again next time. Tabs in the background read nothing, as their checks aren't watched either.
+
 ## Not yet decided
 
 Nothing is pending.
