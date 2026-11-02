@@ -13,6 +13,8 @@ struct LoupeApp: App {
     private let windows: WindowManager
 
     init() {
+        // Before the app's own key monitors, so it's asked after them.
+        SnapshotScript.sendKeysToActingKeyWindow()
         let windows = WindowManager(tabs: makeTabs())
         self.windows = windows
         let links = IncomingLinks(bringForward: { windows.comeForward() }, openInBrowser: { openInBrowser($0) })
