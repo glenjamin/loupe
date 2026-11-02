@@ -80,6 +80,15 @@ wait until disclosure ~"aws_iam_role_policy.task" in #terraform-plan has value "
 click ~"stage-platform" in #terraform-envs
 wait until disclosure ~"aws_route53_record.grpc" in #terraform-plan has value "1"
 
+# Refresh reads the plan again, keeping what's expanded, and so does ⌘R.
+click #terraform-refresh
+wait until #terraform-refresh
+expect disclosure ~"aws_route53_record.grpc" in #terraform-plan has value "1"
+press cmd+r
+wait settled
+wait until #terraform-refresh
+expect disclosure ~"aws_route53_record.grpc" in #terraform-plan has value "1"
+
 # The run opens in the browser.
 click button "Open in Terraform Cloud" in #terraform-pane
 expect-request app.terraform.io/app/tamarinworks/stage-platform/runs/run-fix8MJqSoTyhdSIM

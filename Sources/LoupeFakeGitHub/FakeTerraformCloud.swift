@@ -53,7 +53,9 @@ public actor FakeTerraformCloud {
         ])
     }
 
+    /// Adds `run`, or replaces the one with its id, as when a plan is read again.
     public func add(_ run: Run) {
+        runs.removeAll { $0.id == run.id }
         runs.append(run)
     }
 

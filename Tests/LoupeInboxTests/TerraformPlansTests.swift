@@ -94,6 +94,37 @@ struct TerraformPlansTests {
         #expect(plans.expanded(in: stage).isEmpty)
     }
 
+    @Test func refreshingAPlanReadsItAgainKeepingWhatWasExpanded() async throws {
+        let app = try await ConversationApp()
+        let terraform = FakeTerraformCloud.fixture()
+        let pullRequest = try #require(app.mine.first { $0.repository == "tamarinworks/bedrock" && $0.number == 2193 })
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        let plans = TerraformPlans(client: client(terraform))
+        await plans.show(tab.terraformPlans)
+        await plans.select("tamarinworks/prod-platform")
+        let prod = try #require(plans.selected)
+        plans.toggle("module.gazette.aws_ecs_service.grpc", in: prod)
+        #expect(!plans.isRefreshing(prod))
+        let before = await terraform.requests.count
+
+        // Terraform Cloud has the run's plan otherwise now; refreshing reads it afresh rather
+        // than from what was kept, and only for the env refreshed.
+        await terraform.add(FakeTerraformCloud.Run(id: prod.runId, organization: "tamarinworks", workspace: "prod-platform", plan: FakeTerraformCloud.plan([
+            FakeTerraformCloud.ResourceChange("module.gazette.aws_ecs_service.grpc", ["delete"], before: ["name": "gazette-grpc"]),
+        ])))
+        await plans.refresh(prod)
+        #expect(!plans.isRefreshing(prod))
+        #expect(await terraform.requests.count == before + 3)
+        guard case let .loaded(.planned(plan))? = plans.plan(of: prod) else {
+            Issue.record("expected the refreshed plan, got \(String(describing: plans.plan(of: prod)))")
+            return
+        }
+        #expect(plan.counts == TerraformPlanCounts(add: 0, change: 0, destroy: 1))
+        #expect(plans.outline(of: prod)?.resources.map(\.id) == ["module.gazette.aws_ecs_service.grpc"])
+        #expect(plans.expanded(in: prod) == ["module.gazette.aws_ecs_service.grpc"])
+    }
+
     @Test func eachEnvSaysWhereItsPlanHasGot() async throws {
         let app = try await ConversationApp()
         let terraform = FakeTerraformCloud()

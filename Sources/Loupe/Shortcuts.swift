@@ -51,7 +51,7 @@ enum Shortcut: CaseIterable {
         case .find: "Search the lists, or find in a PR"
         case .findNext: "Find next"
         case .findPrevious: "Find previous"
-        case .refresh: "Refresh the lists, or reload the PR"
+        case .refresh: "Refresh the lists, or reload the PR or plan"
         case .openSelected: "Open the selected PR"
         case .toggleTodo: "Switch between the lists and TODO"
         case .showClosed: "Show closed and merged"

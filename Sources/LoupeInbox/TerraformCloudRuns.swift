@@ -65,8 +65,8 @@ public struct TerraformCloudRuns: Sendable {
 
     /// The run's plan: what it would change once planned, what went wrong if it errored, or
     /// where it has got to if it hasn't finished.
-    public func plan(of check: TerraformPlanCheck) async throws(Failure) -> TerraformRunPlan {
-        if let plan = await kept.plan(check.runId) { return plan }
+    public func plan(of check: TerraformPlanCheck, fresh: Bool = false) async throws(Failure) -> TerraformRunPlan {
+        if !fresh, let plan = await kept.plan(check.runId) { return plan }
         let host = check.host
         guard let token = token(host) else { throw .signedOut(host: host) }
         let run: Document<RunWire> = try await decode(get(api(host, "runs/\(check.runId)", query: [URLQueryItem(name: "include", value: "plan")]), token: token, host: host))
