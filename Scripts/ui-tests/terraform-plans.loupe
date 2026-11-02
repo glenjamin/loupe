@@ -20,9 +20,10 @@ expect #terraform-plan missing
 snap terraform-envs
 
 # An env's plan: a row for each resource, saying what will happen to it and, for a replacement,
-# what forces it, each collapsed.
+# what forces it, each collapsed. The plans were read in the background once the PR was shown,
+# so it's there as soon as the env is clicked.
 click ~"prod-platform" in #terraform-envs
-wait until #terraform-plan
+expect #terraform-plan
 expect ~"Plan: 8 to add, 1 to change, 1 to destroy." in #terraform-pane
 expect disclosure in #terraform-plan count 9
 expect disclosure ~"module.gazette.aws_service_discovery_service.gazette must be replaced, # forces replacement: name" in #terraform-plan has value "0"
