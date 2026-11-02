@@ -73,7 +73,7 @@ struct TabsTests {
         #expect(nextRun.tabs[1].pullRequest.title == "Read gauge cache status from gazette")
     }
 
-    @Test func linkedPullRequestsTitlesComeFromTheListsOrFromGitHubOnce() async throws {
+    @Test func linkedPullRequestsTooltipsAreTheirTitlesMarkedWhenMergedFromTheListsOrGitHubOnce() async throws {
         let app = try await App()
         let (from, listed) = (app.toReview[0], app.toReview[1])
         app.tabs.open(from)
@@ -82,17 +82,17 @@ struct TabsTests {
         let merged = PullRequestLink(repository: "tamarinworks/porter", number: 1522)
         let missing = PullRequestLink(repository: "tamarinworks/porter", number: 999999)
 
-        let titles = await tab.titles(of: [toListed, merged, missing])
-        #expect(titles == [toListed: listed.title, merged: "Read gauge cache status from gazette"])
+        let tooltips = await tab.tooltips(of: [toListed, merged, missing])
+        #expect(tooltips == [toListed: listed.title, merged: "[merged] Read gauge cache status from gazette"])
         #expect(await app.github.titleLookups == [["https://github.com/tamarinworks/porter/pull/1522", "https://github.com/tamarinworks/porter/pull/999999"]], "only what the lists don't hold, in one request")
 
         let sameInAnotherCase = PullRequestLink(repository: "TamarinWorks/Porter", number: 1522)
-        #expect(await tab.titles(of: [sameInAnotherCase, missing]) == [sameInAnotherCase: "Read gauge cache status from gazette"])
+        #expect(await tab.tooltips(of: [sameInAnotherCase, missing]) == [sameInAnotherCase: "[merged] Read gauge cache status from gazette"])
         #expect(await app.github.titleLookups.count == 1, "each asked about once, found or not")
 
         try await app.github.edit(listed.id) { $0.title = "Renamed" }
         await app.tabs.lists.refresh()
-        #expect(await tab.titles(of: [toListed]) == [toListed: "Renamed"], "a listed PR's as it is now")
+        #expect(await tab.tooltips(of: [toListed]) == [toListed: "Renamed"], "a listed PR's as it is now")
     }
 
     @Test func checksFinishingOnAPullRequestOpenOnlyInItsTabAreFoundOnTheNextRefresh() async throws {

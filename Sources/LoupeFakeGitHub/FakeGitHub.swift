@@ -53,7 +53,7 @@ actor FakeGitHub: HTTPTransport {
     private var slowStatuses: Set<String> = []
     /// Every lookup of a PR by repo and number, as `owner/name#number`, in order.
     private(set) var numberLookups: [String] = []
-    /// The URLs of every lookup of PRs' titles, in order.
+    /// The URLs of every lookup of linked PRs' titles and states, in order.
     private(set) var titleLookups: [[String]] = []
     /// When each PR's notification was last updated, by PR id.
     private var notified: [String: Date] = [:]
@@ -550,8 +550,8 @@ actor FakeGitHub: HTTPTransport {
 
     /// As GitHub answers: a null repo when it has no PRs here, a null PR when none has that
     /// number, each with a `NOT_FOUND` error.
-    /// Each aliased `resource` lookup's PR title. An issue's URL answers with no fields and one
-    /// GitHub doesn't have with null, both without an error, as GitHub's do.
+    /// Each aliased `resource` lookup's PR title and state. An issue's URL answers with no
+    /// fields and one GitHub doesn't have with null, both without an error, as GitHub's do.
     private func titles(_ body: Data) throws -> Envelope<[String: [String: String]?]> {
         let variables = try JSONDecoder().decode(TitlesRequest.self, from: body).variables
         titleLookups.append(variables.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.compactMap { variables[$0] })
@@ -559,7 +559,7 @@ actor FakeGitHub: HTTPTransport {
             guard let link = URL(string: url).flatMap(PullRequestLink.init(url:)) else {
                 return url.contains("/issues/") ? [:] : nil
             }
-            return pullRequests.first { $0.repository.nameWithOwner.caseInsensitiveCompare(link.repository) == .orderedSame && $0.number == link.number }.map { ["title": $0.title] }
+            return pullRequests.first { $0.repository.nameWithOwner.caseInsensitiveCompare(link.repository) == .orderedSame && $0.number == link.number }.map { ["title": $0.title, "state": $0.state] }
         })
     }
 

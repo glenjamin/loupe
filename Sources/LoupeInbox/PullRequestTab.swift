@@ -236,9 +236,10 @@ public final class PullRequestTab: Identifiable {
         await linkOpener(link)
     }
 
-    /// The titles of the PRs `links` name, for their tooltips, keyed by the links as given.
-    public func titles(of links: [PullRequestLink]) async -> [PullRequestLink: String] {
-        await lists.titles(of: links)
+    /// The tooltips of links to PRs, keyed by the links as given: the PR's title, marked
+    /// "[merged]" once it's merged.
+    public func tooltips(of links: [PullRequestLink]) async -> [PullRequestLink: String] {
+        await lists.linkedPullRequests(links).mapValues { $0.state == .merged ? "[merged] \($0.title)" : $0.title }
     }
 
     /// `repo #number`.
