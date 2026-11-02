@@ -267,15 +267,26 @@ private struct PlanView: View {
             Spacer(minLength: 0)
             if expandsAll {
                 let isAllExpanded = plans.isAllExpanded(in: check)
-                Button(isAllExpanded ? "Collapse All" : "Expand All") { plans.setAllExpanded(!isAllExpanded, in: check) }
-                    .buttonStyle(.borderless)
-                    .font(.callout)
-                    .help(isAllExpanded ? "Collapse every resource (⌥⌘←)" : "Expand every resource to show its changes (⌥⌘→)")
-                    .accessibilityIdentifier("terraform-expand-all")
+                Button { plans.setAllExpanded(!isAllExpanded, in: check) } label: {
+                    Text(isAllExpanded ? "Collapse All" : "Expand All")
+                        .font(.callout)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(.quaternary))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.borderless)
+                .help(isAllExpanded ? "Collapse every resource (⌥⌘←)" : "Expand every resource to show its changes (⌥⌘→)")
+                .accessibilityIdentifier("terraform-expand-all")
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        // The plan's text view leaves the I-beam set when the pointer moves up out of it, and
+        // nothing here would set it back.
+        .onContinuousHover { phase in
+            if case .active = phase { NSCursor.arrow.set() }
+        }
     }
 }
 
