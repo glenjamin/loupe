@@ -41,6 +41,11 @@ public final class PullRequestListModel {
     private var reviewProgress: [String: ReviewProgress] = [:]
     /// The signed-in user's login, once stored by the lists or a tab.
     private var viewer: String?
+    /// The titles of PRs stored nowhere, by repo in lower case and number, once looked up.
+    @ObservationIgnored private var linkedTitles: [PullRequestLink: String] = [:]
+    /// The PRs stored nowhere whose titles have been looked up, found or not, so each is asked
+    /// for once a run.
+    @ObservationIgnored private var lookedUpTitles: Set<PullRequestLink> = []
     private let client: GitHubClient
     private var checkoutResolver: CheckoutResolver
     /// False until the folders to search for checkouts have been chosen, as on first launch.
@@ -214,6 +219,28 @@ public final class PullRequestListModel {
             if let found = snapshot[list].first(where: matches) { return found }
         }
         return snapshot.unlisted.first(where: matches) ?? unlisted.values.first(where: matches)
+    }
+
+    /// The titles of the PRs `links` name, keyed by the links as given: a stored PR's as it is
+    /// now, and others' as GitHub had them when first asked. Left out when GitHub can't say.
+    public func titles(of links: [PullRequestLink]) async -> [PullRequestLink: String] {
+        var unknown: [PullRequestLink] = []
+        for key in links.map(\.titleKey) where !unknown.contains(key) && !lookedUpTitles.contains(key) && pullRequest(repository: key.repository, number: key.number) == nil {
+            unknown.append(key)
+        }
+        if !unknown.isEmpty {
+            do {
+                linkedTitles.merge(try await client.pullRequestTitles(unknown)) { _, new in new }
+                lookedUpTitles.formUnion(unknown)
+            } catch {
+                logger.notice("Couldn't look up the titles of linked PRs: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        var titles: [PullRequestLink: String] = [:]
+        for link in links {
+            titles[link] = pullRequest(repository: link.repository, number: link.number)?.title ?? linkedTitles[link.titleKey]
+        }
+        return titles
     }
 
     /// Whether GitHub is being asked for anything that updates the stored PR with `id`: a
@@ -733,3 +760,10 @@ private extension Duration {
 }
 
 private let logger = Logger(subsystem: "com.glenmailer.Loupe", category: "lists")
+
+private extension PullRequestLink {
+    /// The PR alone, named as GitHub matches repos, whatever the case.
+    var titleKey: PullRequestLink {
+        PullRequestLink(repository: repository.lowercased(), number: number)
+    }
+}

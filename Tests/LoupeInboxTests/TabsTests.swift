@@ -73,6 +73,28 @@ struct TabsTests {
         #expect(nextRun.tabs[1].pullRequest.title == "Read gauge cache status from gazette")
     }
 
+    @Test func linkedPullRequestsTitlesComeFromTheListsOrFromGitHubOnce() async throws {
+        let app = try await App()
+        let (from, listed) = (app.toReview[0], app.toReview[1])
+        app.tabs.open(from)
+        let tab = try #require(app.tabs.tab(id: from.id))
+        let toListed = try link(to: listed, after: "#issuecomment-1")
+        let merged = PullRequestLink(repository: "tamarinworks/porter", number: 1522)
+        let missing = PullRequestLink(repository: "tamarinworks/porter", number: 999999)
+
+        let titles = await tab.titles(of: [toListed, merged, missing])
+        #expect(titles == [toListed: listed.title, merged: "Read gauge cache status from gazette"])
+        #expect(await app.github.titleLookups == [["https://github.com/tamarinworks/porter/pull/1522", "https://github.com/tamarinworks/porter/pull/999999"]], "only what the lists don't hold, in one request")
+
+        let sameInAnotherCase = PullRequestLink(repository: "TamarinWorks/Porter", number: 1522)
+        #expect(await tab.titles(of: [sameInAnotherCase, missing]) == [sameInAnotherCase: "Read gauge cache status from gazette"])
+        #expect(await app.github.titleLookups.count == 1, "each asked about once, found or not")
+
+        try await app.github.edit(listed.id) { $0.title = "Renamed" }
+        await app.tabs.lists.refresh()
+        #expect(await tab.titles(of: [toListed]) == [toListed: "Renamed"], "a listed PR's as it is now")
+    }
+
     @Test func checksFinishingOnAPullRequestOpenOnlyInItsTabAreFoundOnTheNextRefresh() async throws {
         let app = try await App()
         let created = try await app.github.openPullRequest(number: 9001, by: "rowan-ashby")

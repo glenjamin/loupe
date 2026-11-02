@@ -236,6 +236,11 @@ public final class PullRequestTab: Identifiable {
         await linkOpener(link)
     }
 
+    /// The titles of the PRs `links` name, for their tooltips, keyed by the links as given.
+    public func titles(of links: [PullRequestLink]) async -> [PullRequestLink: String] {
+        await lists.titles(of: links)
+    }
+
     /// `repo #number`.
     public var title: String {
         let pullRequest = pullRequest

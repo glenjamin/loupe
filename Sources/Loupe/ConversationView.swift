@@ -214,6 +214,7 @@ final class ConversationPage: GitHubWebPage {
         page.openReactionLink = { [weak tab] link in Task { await tab?.react(link) } }
         page.openCommentLink = { [weak tab] link in Task { await tab?.follow(link) } }
         page.openChangesLink = { [weak tab] link in Task { await tab?.showForcePush(from: link.before, to: link.after) } }
+        page.lookUpPullRequestTitles = { [weak tab] in await tab?.titles(of: $0) ?? [:] }
         pages.setObject(page, forKey: tab)
         return page
     }

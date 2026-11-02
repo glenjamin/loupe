@@ -21,6 +21,8 @@ class GitHubWebPage: NSObject {
     var openCommentLink: @MainActor (CommentLink) -> Void = { _ in }
     /// Shows the changes a force-push's "Show changes" names; set by whoever makes the page.
     var openChangesLink: @MainActor (ChangesLink) -> Void = { _ in }
+    /// Finds the titles of the PRs the page links to, for their tooltips; nil for none.
+    var lookUpPullRequestTitles: (@MainActor ([PullRequestLink]) async -> [PullRequestLink: String])?
     /// Whether the latest page has finished loading, images and diagrams included.
     private(set) var isLoaded = false
     /// Whether the latest page has mermaid diagrams to draw once it's loaded.
@@ -103,6 +105,9 @@ extension GitHubWebPage: WKNavigationDelegate, WKUIDelegate {
     private func finishLoading() {
         isLoaded = true
         didFinishLoading()
+        if let lookUpPullRequestTitles {
+            Task { await PullRequestTitles.add(to: webView, lookingUp: lookUpPullRequestTitles) }
+        }
     }
 
     /// A link that asks for a new window.

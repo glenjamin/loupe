@@ -76,7 +76,7 @@ private struct Fakes: Sendable {
         let query = try require(body["query"] as? String, "a GraphQL request without a query")
         let variables = body["variables"] as? [String: Any] ?? [:]
         let isList = variables["ids"] != nil || variables["number"] != nil || query.contains("search(query:")
-            || query.contains("mergePullRequest(") || query.contains("markPullRequestReadyForReview(") || query.contains("viewer { login }")
+            || query.contains("mergePullRequest(") || query.contains("markPullRequestReadyForReview(") || query.contains("viewer { login }") || query.contains("resource(url:")
         if isList { return try await github.send(request) }
         if query.contains("viewerViewedState") || query.contains("FileAsViewed(") { return try await viewed.send(request) }
         return try await conversations.send(request)
