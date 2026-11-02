@@ -4,7 +4,7 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 
 ## Environment
 
-- No Xcode on this machine, only Command Line Tools: Swift 6.1, SwiftPM, macOS 14 platform. There is no `.xcodeproj`; don't create one.
+- Builds use Xcode's toolchain through SwiftPM (`xcode-select` points at Xcode), macOS 14 platform. The Command Line Tools alone can't build the app: from the macOS 27.2 SDK, SwiftUI's `@State` is a macro whose plugin ships only with Xcode. There is no `.xcodeproj`; don't create one.
 - `swift build`, `swift test`, `swift run` and `swift package resolve` fail inside the sandbox with an xcrun cache error. Run them with the sandbox off. The same goes for `gh` and anything else needing network.
 - The GUI can't be launched or screenshotted from the sandbox. Verify with tests and the build, and tell the user the `swift run Loupe` command to see it themselves.
 - To see the UI yourself, run `Scripts/snapshot.sh <dir>` with the sandbox off, then view the PNGs it prints with the Read tool. Snapshot runs are invisible and off-screen, and never write to GitHub or the checkouts. Set `LOUPE_DATABASE` to a copy of the database to keep the real one untouched; see "Snapshots" in `NOTES.md`.

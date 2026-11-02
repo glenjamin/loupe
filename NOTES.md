@@ -4,7 +4,7 @@ A spike for a native macOS PR-review app. It checks the GitHub GraphQL data shap
 
 ## Build and run
 
-Needs Swift 6 (Command Line Tools are enough; no Xcode). All commands run from the project root.
+Needs Swift 6 and Xcode, whose toolchain SwiftPM uses: from the macOS 27.2 SDK SwiftUI needs a macro plugin the Command Line Tools lack. All commands run from the project root.
 
 ```sh
 swift build                 # debug build

@@ -376,7 +376,7 @@ public final class PullRequestListModel {
                 await beforeClone(repository)
                 try Task.checkCancellation()
                 return try await resolver.clone(repository) { output in
-                    Task { @MainActor [weak self] in self?.cloneProgressed(repository, output) }
+                    Task { @MainActor [weak self = self] in self?.cloneProgressed(repository, output) }
                 }
             }
             cloneTasks[repository] = task
