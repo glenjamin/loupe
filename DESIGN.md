@@ -1044,6 +1044,14 @@ It's still one read-only text view, not a list of views, so text selects and cop
 
 GitHub renders a reference as `#123` or `owner/repo#123` and leaves github.com's hovercards to say what it is, which a page with no script of its own and no session can't show. Once the conversation has loaded, the app gives every link to a PR that has no tooltip of its own a native one: the PR's title, as the link and its number already say which PR. A PR the lists or a tab hold uses its stored title, as it is now; the rest are looked up in one GraphQL request of aliased `resource(url:)` lookups, which answers an issue with no title and a PR GitHub won't show with null, and each is asked for once a run, found or not. Links to issues get nothing, as only PRs were asked for. The titles arrive after the page shows, so a pointer resting on a link at once may see its tooltip only once it moves.
 
+### A Terraform plan's rows are clicked, not selected
+
+This revises "A Terraform plan is a row per resource, collapsed, coloured by kind", where a drag across a row selected its text and only a plain click toggled it. A row reads as a control, and the I-beam over it said otherwise, so a mouse-down anywhere on a row now toggles it and starts no selection, and the pointer is the arrow over rows and the gutter. The expanded blocks between rows stay selectable text under the I-beam, and a selection started there still runs across rows, so an address can still be copied that way or with ⌘F. The text view lays out its own cursor rects to match, and sets the cursor only while the pointer is over what it shows, as mouse-moved events reach it as first responder wherever the pointer is.
+
+### A Terraform plan can be refreshed
+
+A finished plan never changes, so it's kept in memory once read, but a run can be re-planned in place or the read can go wrong. A ↻ button over the plan reads it again past that cache, keeping the old plan and its expanded rows on screen until the new one arrives. ⌘R, which reloads a PR anywhere, also refreshes the shown plan when the Terraform pane is up (the menu item reads "Reload PR and Plan"); it still reloads the PR, as that's what notices a push's new runs. Only the shown env is refreshed.
+
 ## Not yet decided
 
 Nothing is pending.

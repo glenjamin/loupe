@@ -55,8 +55,8 @@ struct PlanOutlineView: NSViewRepresentable {
 }
 
 /// The plan's text, with each resource's row drawn as a band with a disclosure chevron in the
-/// gutter. A click on a row (but not a drag across it) expands or collapses it, ⌥ doing every
-/// row. ↑ and ↓ move between rows, → and ← expand and collapse, space and return toggle.
+/// gutter. A row is clicked, not selected: a click anywhere on it expands or collapses it, ⌥
+/// doing every row. ↑ and ↓ move between rows, → and ← expand and collapse, space and return toggle.
 final class PlanTextView: NSTextView {
     static let gutter: CGFloat = 22
 
@@ -142,6 +142,7 @@ final class PlanTextView: NSTextView {
             (row.id, disclosures[row.id] ?? RowDisclosure(textView: self, id: row.id))
         })
         NSAccessibility.post(element: self, notification: .layoutChanged)
+        window?.invalidateCursorRects(for: self)
         needsDisplay = true
     }
 
@@ -165,11 +166,9 @@ final class PlanTextView: NSTextView {
 
     /// Where a row's chevron is drawn and clicked.
     func chevronRect(_ range: NSRange) -> NSRect {
-        guard let layoutManager, range.length > 0 else { return .zero }
-        let glyph = layoutManager.glyphIndexForCharacter(at: range.location)
-        let line = layoutManager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
-        let midY = line.midY + textContainerOrigin.y
-        return NSRect(x: 4, y: midY - 8, width: 16, height: 16)
+        let band = rowRect(range)
+        guard band.height > 0 else { return .zero }
+        return NSRect(x: 4, y: band.midY - 8, width: 16, height: 16)
     }
 
     private func row(at point: NSPoint) -> (id: String, range: NSRange)? {
@@ -210,19 +209,44 @@ final class PlanTextView: NSTextView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         guard let row = row(at: point) else { return super.mouseDown(with: event) }
-        let all = event.modifierFlags.contains(.option)
-        if point.x < textContainerOrigin.x {
-            window?.makeFirstResponder(self)
-            toggle(row.id, all: all)
-            return
+        window?.makeFirstResponder(self)
+        toggle(row.id, all: event.modifierFlags.contains(.option))
+    }
+
+
+    /// Mouse-moved events go to the first responder wherever the pointer is, so the text view
+    /// only sets the cursor over what it shows: the arrow over rows and the gutter, which are
+    /// clicked rather than selected, and the I-beam over the text between them.
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard visibleRect.contains(point) else { return }
+        guard isOverText(point) else { return NSCursor.arrow.set() }
+        super.mouseMoved(with: event)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        guard isOverText(convert(event.locationInWindow, from: nil)) else { return NSCursor.arrow.set() }
+        super.cursorUpdate(with: event)
+    }
+
+    /// The I-beam only over the text between rows, in place of NSTextView's over all it shows.
+    override func resetCursorRects() {
+        let visible = visibleRect
+        let left = max(visible.minX, textContainerOrigin.x)
+        let bands = (shown?.rows ?? []).map { rowRect($0.range) }.filter { $0.intersects(visible) }
+        var top = visible.minY
+        for band in bands + [NSRect(x: 0, y: visible.maxY, width: 0, height: 0)] {
+            if band.minY > top, visible.maxX > left {
+                addCursorRect(NSRect(x: left, y: top, width: visible.maxX - left, height: band.minY - top), cursor: .iBeam)
+            }
+            top = max(top, band.maxY)
         }
-        super.mouseDown(with: event)
-        // A click toggles; a drag selects, and a double-click selects a word.
-        if event.clickCount == 1, selectedRange().length == 0 {
-            toggle(row.id, all: all)
-        } else {
-            setCurrent(row.id)
-        }
+    }
+
+    /// Whether the point is over selectable text, rather than a row, the gutter or outside what's
+    /// shown.
+    private func isOverText(_ point: NSPoint) -> Bool {
+        visibleRect.contains(point) && point.x >= textContainerOrigin.x && row(at: point) == nil
     }
 
     override func keyDown(with event: NSEvent) {

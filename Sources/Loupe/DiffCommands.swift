@@ -19,8 +19,17 @@ struct DiffCommands: Commands {
         // Only while the files are shown, where there's a file to act on.
         let filesTab = tab.flatMap { $0.section == .files ? $0 : nil }
         CommandGroup(after: .toolbar) {
-            Button(tab == nil ? "Refresh" : "Reload") {
-                if let tab { Task { await tab.reload() } } else { Task { await windows.tabs.lists.refresh() } }
+            // While a plan is shown its PR is reloaded, which notices new runs, and the plan is
+            // read again, as its Refresh button does.
+            let shownPlans = tab.flatMap { $0.shownSection == .terraform ? TerraformPages.existingPlans(for: $0) : nil }
+            let shownPlan = shownPlans?.selected
+            Button(tab == nil ? "Refresh" : shownPlan == nil ? "Reload" : "Reload PR and Plan") {
+                if let tab {
+                    Task { await tab.reload() }
+                    if let shownPlans, let shownPlan { Task { await shownPlans.refresh(shownPlan) } }
+                } else {
+                    Task { await windows.tabs.lists.refresh() }
+                }
             }
             .keyboardShortcut(.refresh)
             .disabled(tab == nil && windows.tabs.lists.isLoading)

@@ -265,17 +265,37 @@ private struct PlanView: View {
             Text(verbatim: check.workspace).font(.headline).lineLimit(1)
             summary.foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 0)
+            if plans.isRefreshing(check) {
+                ProgressView().controlSize(.small)
+            } else {
+                Button("Refresh", systemImage: "arrow.clockwise") { Task { await plans.refresh(check) } }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .help("Read the plan again from Terraform Cloud (⌘R)")
+                    .accessibilityIdentifier("terraform-refresh")
+            }
             if expandsAll {
                 let isAllExpanded = plans.isAllExpanded(in: check)
-                Button(isAllExpanded ? "Collapse All" : "Expand All") { plans.setAllExpanded(!isAllExpanded, in: check) }
-                    .buttonStyle(.borderless)
-                    .font(.callout)
-                    .help(isAllExpanded ? "Collapse every resource (⌥⌘←)" : "Expand every resource to show its changes (⌥⌘→)")
-                    .accessibilityIdentifier("terraform-expand-all")
+                Button { plans.setAllExpanded(!isAllExpanded, in: check) } label: {
+                    Text(isAllExpanded ? "Collapse All" : "Expand All")
+                        .font(.callout)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(.quaternary))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.borderless)
+                .help(isAllExpanded ? "Collapse every resource (⌥⌘←)" : "Expand every resource to show its changes (⌥⌘→)")
+                .accessibilityIdentifier("terraform-expand-all")
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        // The plan's text view leaves the I-beam set when the pointer moves up out of it, and
+        // nothing here would set it back.
+        .onContinuousHover { phase in
+            if case .active = phase { NSCursor.arrow.set() }
+        }
     }
 }
 

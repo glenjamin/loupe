@@ -22,6 +22,8 @@ public final class TerraformPlans {
     public private(set) var signedOutHosts: [String] = []
     /// By run.
     private var plans: [String: Loading] = [:]
+    /// The runs whose plans are being read again, still showing what was read before.
+    private var refreshing: Set<String> = []
     /// Each finished plan's rows, by run, made once it's read.
     private var outlines: [String: TerraformPlanOutline] = [:]
     /// Which resources of each run's plan are expanded and which row the keys act on, kept while
@@ -99,6 +101,25 @@ public final class TerraformPlans {
         if let selected { await load(selected) }
     }
 
+    /// Whether the plan is being read again, while what was read before stays shown.
+    public func isRefreshing(_ check: TerraformPlanCheck) -> Bool {
+        refreshing.contains(check.runId)
+    }
+
+    /// Reads the plan again from Terraform Cloud, rather than from what was kept of it, keeping
+    /// what was read before and what's expanded until the new one arrives.
+    public func refresh(_ check: TerraformPlanCheck) async {
+        guard check.state != .planning, !refreshing.contains(check.runId) else { return }
+        guard case .loaded? = plans[check.runId] else {
+            plans[check.runId] = nil
+            await load(check)
+            return
+        }
+        refreshing.insert(check.runId)
+        defer { refreshing.remove(check.runId) }
+        await read(check, fresh: true)
+    }
+
     public func select(_ id: TerraformPlanCheck.ID?) async {
         selectedId = id
         if let selected { await load(selected) }
@@ -119,9 +140,13 @@ public final class TerraformPlans {
         default: return
         }
         plans[check.runId] = .loading
+        await read(check, fresh: false)
+    }
+
+    private func read(_ check: TerraformPlanCheck, fresh: Bool) async {
         do {
-            let plan = try await client.plan(of: check)
-            if case let .planned(planned) = plan { outlines[check.runId] = TerraformPlanOutline(planned) }
+            let plan = try await client.plan(of: check, fresh: fresh)
+            outlines[check.runId] = if case let .planned(planned) = plan { TerraformPlanOutline(planned) } else { nil }
             plans[check.runId] = .loaded(plan)
         } catch {
             plans[check.runId] = .failed(error)
