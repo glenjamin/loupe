@@ -30,6 +30,7 @@ struct LoupeApp: App {
     var body: some Scene {
         // A scene that opens no window, to hang the menus on.
         Settings { EmptyView() }
+            .suppressedAtLaunch()
             .commands {
                 CommandGroup(replacing: .appSettings) {
                     Button("Checkout Folders…") { windows.askForCheckoutFolders() }
@@ -301,5 +302,16 @@ extension BackgroundProminence {
     /// background) the selection's foreground, a touch faded so it still reads as secondary.
     func rowStyle(_ color: Color) -> AnyShapeStyle {
         self == .increased ? AnyShapeStyle(.primary.opacity(0.85)) : AnyShapeStyle(color)
+    }
+}
+
+extension Scene {
+    /// From macOS 15, SwiftUI shows a lone Settings scene at launch.
+    func suppressedAtLaunch() -> some Scene {
+        if #available(macOS 15, *) {
+            return defaultLaunchBehavior(.suppressed)
+        } else {
+            return self
+        }
     }
 }
