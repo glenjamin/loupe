@@ -700,12 +700,12 @@ public final class PullRequestListModel {
     }
 
     /// Whether `pullRequest` has sat in `list` longer than `staleAge`: in To review, since the
-    /// viewer was asked to review it or, once they've given a verdict and it waits on its author
-    /// or a merge, since its last activity; in Mine, since its last activity, whatever its
+    /// viewer was asked to review it or, once they've reviewed it and it waits on its author or
+    /// a merge, since its last activity; in Mine, since its last activity, whatever its
     /// reviews say. GitHub records a request or review as an update, so the PR's update time also
     /// stands in when no request of the viewer is known.
     public func isStale(_ pullRequest: PullRequestSummary, in list: PullRequestList) -> Bool {
-        let requestedAt = list == .toReview && verdict(on: pullRequest, in: list) == nil ? pullRequest.reviewRequestedAt : nil
+        let requestedAt = list == .toReview && reviewMark(on: pullRequest, in: list) == nil ? pullRequest.reviewRequestedAt : nil
         return now().timeIntervalSince(requestedAt ?? pullRequest.updatedAt) > Self.staleAge
     }
 

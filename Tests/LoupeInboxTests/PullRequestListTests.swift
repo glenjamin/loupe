@@ -440,7 +440,7 @@ struct PullRequestListTests {
         #expect(model.pullRequests(in: .toReview).count == 12)
     }
 
-    @Test func askingForChangesKeepsAPullRequestInToReviewButACommentDoesNotCount() async throws {
+    @Test func askingForChangesOrCommentingWhenAskedKeepsAPullRequestInToReview() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
         await model.refresh()
@@ -455,8 +455,9 @@ struct PullRequestListTests {
         let listed = model.pullRequests(in: .toReview)
         let changes = try #require(listed.first { $0.id == changesAsked.id })
         #expect(model.verdict(on: changes, in: .toReview) == .changesRequested)
-        let stillAsked = try #require(listed.first { $0.id == commented.id }, "GitHub keeps the request after a comment")
-        #expect(model.verdict(on: stillAsked, in: .toReview) == nil)
+        let stillListed = try #require(listed.first { $0.id == commented.id }, "though GitHub drops the request after a comment")
+        #expect(model.verdict(on: stillListed, in: .toReview) == nil)
+        #expect(model.reviewStage(of: stillListed) == .reviewing)
     }
 
     @Test func pullRequestsTheViewerReviewedButIsNoLongerAskedAboutAreListed() async throws {
@@ -472,7 +473,7 @@ struct PullRequestListTests {
         #expect(model.error == nil)
         let found = try #require(model.pullRequests(in: .toReview).first { $0.id == earlier.id }, "found by the first load")
         #expect(model.verdict(on: found, in: .toReview) == .approved)
-        #expect(!model.pullRequests(in: .toReview).contains { $0.id == commentedOnly.id }, "a comment isn't a verdict")
+        #expect(!model.pullRequests(in: .toReview).contains { $0.id == commentedOnly.id }, "a comment without being asked isn't a verdict")
 
         let later = try await github.openPullRequest(number: 9003, by: "rowan-ashby")
         try await github.review(later.id, "CHANGES_REQUESTED")
@@ -829,21 +830,21 @@ struct PullRequestListTests {
         #expect(requests["PR_kwDOB75F5s7-Gq3V"]?.viewerLatestReview == nil, "not reviewed")
     }
 
-    @Test func aReviewDoesNotChangeWhenARequestIsHiddenAsStale() async throws {
+    @Test func commentingOnAStaleRequestListsItAgainAsItWaitsOnTheAuthor() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try listModel(github)
         await model.refresh()
         let commented = try #require(model.pullRequests(in: .toReview).first)
         try await github.setRequestEvents(of: commented.id, [.init(reviewer: .user(FakeGitHub.viewer), createdAt: .now - days(100))])
+        await model.refresh()
+        #expect(!model.pullRequests(in: .toReview).contains { $0.id == commented.id }, "the request's age decides")
+
         try await github.review(commented.id, "COMMENTED")
         await model.refresh()
 
-        let shown = try #require(model.pullRequest(id: commented.id))
-        #expect(model.isStale(shown, in: .toReview), "the request's age decides, as before")
-        #expect(model.staleCount(in: .toReview) == 1)
-        #expect(!model.pullRequests(in: .toReview).contains { $0.id == commented.id })
-        #expect(model.pullRequests(in: .toReview, includingStale: true).last?.id == commented.id)
-        #expect(model.reviewMark(on: shown, in: .toReview)?.kind == .commented, "labelled once shown")
+        let shown = try #require(model.pullRequests(in: .toReview).first { $0.id == commented.id }, "its last activity decides, as for a verdict")
+        #expect(model.reviewMark(on: shown, in: .toReview)?.kind == .commented)
+        #expect(model.reviewStage(of: shown) == .reviewing)
     }
 
     @Test func eachPullRequestSaysWhoItsReviewWaitsOn() async throws {

@@ -193,14 +193,13 @@ actor FakeGitHub: HTTPTransport {
         }
     }
 
-    /// Submits a review of the PR with `id` by `login`, as GitHub does: an approval or request
-    /// for changes answers their request for review, while a comment leaves it pending. It's on
-    /// `commit`, or the PR's head.
+    /// Submits a review of the PR with `id` by `login`, as GitHub does: any review, a comment
+    /// included, answers their request for review. It's on `commit`, or the PR's head.
     func review(_ id: String, by login: String = viewer, _ state: String, commit: String? = nil) throws {
         let submittedAt = Date.now + timePassed
         try edit(id) { pullRequest in
             pullRequest.reviews.append(.init(login: login, state: state, submittedAt: submittedAt, commit: commit ?? pullRequest.headRefOid))
-            if state != "COMMENTED" { pullRequest.requestedReviewers.removeAll { $0 == .user(login) } }
+            pullRequest.requestedReviewers.removeAll { $0 == .user(login) }
         }
     }
 

@@ -1064,6 +1064,10 @@ On an open PR whose review decision is Approved, with no commit or force-push in
 
 Choosing an env whose plan is still pending says when its run started and whether it's planning yet: "Started 6 minutes ago (16:13), planning since 16:16", or "…, still queued", above the line saying the plan shows once finished, kept current each minute. Terraform Cloud often queues a run for minutes before it plans, so the time the check went pending alone doesn't say whether it's stuck. The times are the run's own `status-timestamps` (`plan-queued-at`, falling back to `created-at`, and `planning-at`), read with one GET of the run when the env is chosen and again each time it's shown, as it moves from queued to planning; nothing is read for pending envs not chosen. If the run can't be read, the pane says it's planning as before.
 
+### A comment-only review keeps a requested PR in To review
+
+To review used to drop a PR the viewer had only commented on, on the belief that GitHub keeps the request pending after a comment. It doesn't: on a PR requested of Glen by name, his comment-only review removed the request, and the PR vanished from the list. It's now kept while open if the viewer's latest review is a comment and they were asked to review it at some point, a team's request included, and sits under Reviewing with its "You commented" chip, which marks any push since as before. A comment on a PR nobody asked them about still doesn't list it, so drive-by comments stay out. Once commented on, it goes stale by its last activity, as a verdict's row does, rather than by the request's age, as it now waits on the author.
+
 ## Not yet decided
 
 Nothing is pending.

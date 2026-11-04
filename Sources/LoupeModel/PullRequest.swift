@@ -192,8 +192,8 @@ public struct PullRequestStatus: Sendable, Equatable {
 public enum PullRequestList: String, Sendable, CaseIterable {
     /// The signed-in user's PRs, drafts included.
     case mine
-    /// PRs awaiting the signed-in user's review, and those they've approved or asked changes of
-    /// until merged or closed.
+    /// PRs awaiting the signed-in user's review, and those they've commented on once asked, or
+    /// approved or asked changes of, until merged or closed.
     case toReview
 }
 
@@ -236,10 +236,13 @@ public struct ReviewRequests: Sendable, Equatable {
         verdicts.last { $0.login.caseInsensitiveCompare(login) == .orderedSame }
     }
 
-    /// Whether the PR belongs in `login`'s To review: open, and either waiting on their review
-    /// or holding their approval or request for changes, so they can see it through to merge.
+    /// Whether the PR belongs in `login`'s To review: open, and either waiting on their review,
+    /// holding their approval or request for changes, or commented on by them once asked, so
+    /// they can see it through to merge. GitHub drops the request once they've only commented.
     public func belongsInToReview(of login: String) -> Bool {
-        awaitReview(from: login) || (state == .open && latestVerdict(by: login)?.isVerdict == true)
+        guard !awaitReview(from: login) else { return true }
+        guard state == .open else { return false }
+        return latestVerdict(by: login)?.isVerdict == true || (viewerLatestReview?.state == .commented && firstRequested(of: login) != nil)
     }
 
     /// When `login` was last asked to review, as far as the latest requests go back. A request
