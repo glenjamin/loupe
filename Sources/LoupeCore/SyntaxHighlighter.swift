@@ -187,6 +187,8 @@ private struct Grammar: Sendable {
     /// Where several patterns capture one node, tree-sitter's highlighter takes the last, and the
     /// queries list generic patterns first. Go's still lists them last, for the older first-wins rule.
     let laterPatternsWin: Bool
+    /// The text as it's parsed, each character where it was, to step around the grammar's gaps.
+    var parsed: @Sendable (String) -> String = { $0 }
 
     /// Loaded grammars, and nil for those that couldn't be, so a failure is logged once.
     private static let cache = OSAllocatedUnfairLock<[SyntaxLanguage: Grammar?]>(initialState: [:])
@@ -204,7 +206,9 @@ private struct Grammar: Sendable {
 
     private static func compile(_ syntax: SyntaxLanguage) -> Grammar? {
         if let vendored = VendoredGrammar(rawValue: syntax.rawValue) {
-            return compile(vendored.tsLanguage, queries: vendored.highlightQueries, laterPatternsWin: true)
+            var grammar = compile(vendored.tsLanguage, queries: vendored.highlightQueries, laterPatternsWin: true)
+            if vendored == .scss { grammar?.parsed = includingModulesAsPlainMixins }
+            return grammar
         }
         guard let id = TreeSitterLanguage(rawValue: syntax.rawValue) else { return nil }
         let urls = highlightQueries(id).map { codeEditLanguagesQuery(folder: $0.folder, file: $0.file) }
@@ -395,6 +399,7 @@ private func coverage(of runs: [SyntaxRun]) -> Int {
 private extension SyntaxPlan.Side {
     /// The colours for this side's lines from parsing `text`, which ends with the side's own.
     func highlight(_ text: String, parsedBy parser: Parser, grammar: Grammar) -> [SyntaxRun] {
+        let text = grammar.parsed(text)
         guard let tree = parser.parse(text) else { return [] }
         let codeStart = text.utf16.count - utf16Count
         var runs: [SyntaxRun] = []
@@ -421,4 +426,11 @@ private extension SyntaxPlan.Side {
 
 private func codeEditLanguagesQuery(folder: String, file: String) -> URL? {
     bundledResource("Resources/tree-sitter-\(folder)/\(file).scm", in: "CodeEditLanguages_CodeEditLanguages")
+}
+
+/// SCSS with `@include module.mixin` read as `@include module-mixin`, the same length: the
+/// grammar misreads the rest of a rule after a mixin included from a module.
+private func includingModulesAsPlainMixins(_ text: String) -> String {
+    guard text.contains("@include") else { return text }
+    return text.replacing(/(@include\s+[A-Za-z_][\w-]*)\.(?=[A-Za-z_])/) { "\($0.1)-" }
 }

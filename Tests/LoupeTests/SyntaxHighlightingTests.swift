@@ -281,6 +281,29 @@ struct SyntaxHighlightingTests {
         #expect(colors(of: "hover", in: rendered) == [DiffColors.syntaxConstant])
     }
 
+    @Test func aMixinIncludedFromAModuleLeavesTheRestOfItsRuleColoured() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/banner.scss b/banner.scss
+        --- a/banner.scss
+        +++ b/banner.scss
+        @@ -0,0 +1,6 @@
+        +.title {
+        +  @include typography.small;
+        +  color: white;
+        +  // Whole pixels, so it rounds the same way everywhere.
+        +  line-height: 1.125rem;
+        +}
+
+        """).files.first)
+        let rendered = showing(file)
+
+        #expect(colors(of: "@include", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "typography.small", in: rendered) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "color", in: rendered) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "// Whole pixels, so it rounds the same way everywhere.", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: "line-height", in: rendered) == [DiffColors.syntaxConstant])
+    }
+
     @Test func colorsAMakefile() throws {
         let file = try #require(Diff(parsing: """
         diff --git a/Makefile b/Makefile

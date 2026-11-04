@@ -1072,6 +1072,10 @@ To review used to drop a PR the viewer had only commented on, on the belief that
 
 AppKit asks local key monitors in no order it promises, and it varied between runs: a snapshot run's delivery of plain keys to the window sometimes went ahead of the review keys' monitor and took `?` from it, so a UI script failed now and then. The text-editing keys, ⌃Tab, the review keys and a snapshot run's delivery now go through one monitor, `KeyMonitors`, which asks them in a set order: the text-editing keys first, as they always meant to be, the app's own after, and the snapshot run's last.
 
+### SCSS is parsed with a module's mixins read as plain ones
+
+The SCSS grammar misreads the rest of a rule after `@include module.mixin;`, the form `@use` gives, with or without arguments: properties were split mid-word, as "col" and a keyword "or", and a `//` comment was taken for selectors. A plain `@include mixin;` and the same include outside a rule parse fine, and upstream's latest commit has the same fault. Rather than edit the vendored grammar, its text is parsed with that dot read as a hyphen, which keeps every character where it was, so the colours still land on the code shown. The include's module and mixin are then coloured alike, as one name.
+
 ## Not yet decided
 
 Nothing is pending.
