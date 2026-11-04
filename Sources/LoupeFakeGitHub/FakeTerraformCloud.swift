@@ -3,8 +3,8 @@ import Foundation
 /// Terraform Cloud's API as Loupe reads it, over runs held in memory: a run with its plan
 /// included, the plan's JSON output, which it answers by redirecting to a signed link on another
 /// host as Terraform Cloud does, and the plan's log at its own signed link. It refuses any token
-/// but `token` on the API, and fails the request if the token is sent to the signed links or
-/// anything but a GET is sent. Each path asked for is recorded, so tests can see what was read
+/// but `token` on the API, refuses the API's media type on the log as Terraform Cloud does, and
+/// fails the request if the token is sent to the signed links or anything but a GET is sent. Each path asked for is recorded, so tests can see what was read
 /// again.
 public actor FakeTerraformCloud {
     public static let token = "fake-terraform-token"
@@ -74,7 +74,11 @@ public actor FakeTerraformCloud {
             guard parts.count == 2, let run = runs.first(where: { $0.id == parts[1] }) else { return notFound(url) }
             switch parts[0] {
             case "json": return (run.plan ?? Data(), response(url, status: 200, type: "application/octet-stream"))
-            case "log": return (Data(run.log.utf8), response(url, status: 200, type: "text/plain"))
+            case "log":
+                guard request.value(forHTTPHeaderField: "Accept") != "application/vnd.api+json" else {
+                    return (Data("Unsupported framing type\n".utf8), response(url, status: 400, type: "text/plain"))
+                }
+                return (Data(run.log.utf8), response(url, status: 200, type: "text/plain"))
             default: return notFound(url)
             }
         }

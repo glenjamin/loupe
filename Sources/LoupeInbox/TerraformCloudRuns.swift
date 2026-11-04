@@ -115,14 +115,14 @@ public struct TerraformCloudRuns: Sendable {
         return url
     }
 
-    /// GETs `url`, with the token only when it's the host's API, following redirects over https
-    /// without it.
+    /// GETs `url`, with the token and the API's media type only when it's the host's API,
+    /// following redirects over https without the token. The signed links refuse that media type.
     private func get(_ url: URL, token: String?, host: String) async throws(Failure) -> Data {
         var url = url
         var token = token
         for _ in 0..<5 {
             var request = URLRequest(url: url)
-            request.setValue("application/vnd.api+json", forHTTPHeaderField: "Accept")
+            if url.host() == host { request.setValue("application/vnd.api+json", forHTTPHeaderField: "Accept") }
             if let token, url.host() == host { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
             let data: Data
             let response: HTTPURLResponse
