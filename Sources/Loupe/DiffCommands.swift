@@ -181,12 +181,7 @@ final class ReviewWindows {
     @ObservationIgnored private weak var window: NSWindow?
 
     private init() {
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            // Local monitors run on the main thread, where the event came from.
-            nonisolated(unsafe) let event = event
-            let handled = MainActor.assumeIsolated { self?.handle(event) == true }
-            return handled ? nil : event
-        }
+        KeyMonitors.add { [weak self] in self?.handle($0) == true }
     }
 
     /// Records that `window` now shows `tab`, or the lists for nil.

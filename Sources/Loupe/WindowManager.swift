@@ -1,5 +1,6 @@
 import AppKit
 import os
+import LoupeCore
 import LoupeInbox
 import LoupeModel
 import SwiftUI
@@ -32,12 +33,7 @@ final class WindowManager {
         }
         content.strip.onSelect = { [weak self] in self?.select($0) }
         content.strip.onClose = { [weak self] in self?.close($0) }
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            // Local monitors run on the main thread, where the event came from.
-            nonisolated(unsafe) let event = event
-            let handled = MainActor.assumeIsolated { self?.handleControlTab(event) == true }
-            return handled ? nil : event
-        }
+        KeyMonitors.add { [weak self] in self?.handleControlTab($0) == true }
     }
 
     /// Asks for the folders to search for checkouts, starting at the first of the current ones.

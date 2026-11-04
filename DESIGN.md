@@ -1068,6 +1068,10 @@ Choosing an env whose plan is still pending says when its run started and whethe
 
 To review used to drop a PR the viewer had only commented on, on the belief that GitHub keeps the request pending after a comment. It doesn't: on a PR requested of Glen by name, his comment-only review removed the request, and the PR vanished from the list. It's now kept while open if the viewer's latest review is a comment and they were asked to review it at some point, a team's request included, and sits under Reviewing with its "You commented" chip, which marks any push since as before. A comment on a PR nobody asked them about still doesn't list it, so drive-by comments stay out. Once commented on, it goes stale by its last activity, as a verdict's row does, rather than by the request's age, as it now waits on the author.
 
+### The app's key monitors are asked in a set order
+
+AppKit asks local key monitors in no order it promises, and it varied between runs: a snapshot run's delivery of plain keys to the window sometimes went ahead of the review keys' monitor and took `?` from it, so a UI script failed now and then. The text-editing keys, ⌃Tab, the review keys and a snapshot run's delivery now go through one monitor, `KeyMonitors`, which asks them in a set order: the text-editing keys first, as they always meant to be, the app's own after, and the snapshot run's last.
+
 ## Not yet decided
 
 Nothing is pending.

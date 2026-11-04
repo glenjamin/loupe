@@ -1,4 +1,5 @@
 import AppKit
+import LoupeCore
 import LoupeFakeGitHub
 import LoupeGit
 import LoupeInbox
@@ -54,20 +55,15 @@ final class SnapshotScript {
     /// Has a plain key the app's own monitors leave reach the window acting as key, as it would
     /// the user's key window. The app is never activated, which would take the user's keyboard,
     /// and AppKit then gives such a key to no view: typing in a field or Esc on a list did
-    /// nothing. ⌘ and ⌃ keys are left to the menus. Called before the app's monitors are added,
-    /// as AppKit asks the newest first.
+    /// nothing. ⌘ and ⌃ keys are left to the menus.
     static func sendKeysToActingKeyWindow() {
         guard file != nil else { return }
-        NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
-            nonisolated(unsafe) let event = event
-            let sent = MainActor.assumeIsolated {
-                guard NSApp.keyWindow == nil, event.modifierFlags.isDisjoint(with: [.command, .control]),
-                      let window = event.window, window.isKeyWindow
-                else { return false }
-                window.sendEvent(event)
-                return true
-            }
-            return sent ? nil : event
+        KeyMonitors.add(.last, keyUps: true) { event in
+            guard NSApp.keyWindow == nil, event.modifierFlags.isDisjoint(with: [.command, .control]),
+                  let window = event.window, window.isKeyWindow
+            else { return false }
+            window.sendEvent(event)
+            return true
         }
     }
 

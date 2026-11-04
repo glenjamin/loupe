@@ -8,16 +8,13 @@ import AppKit
 /// shortcuts still take those.
 @MainActor
 public enum TextEditingKeys {
-    private static var monitor: Any?
+    private static var isStarted = false
 
     /// Starts routing the keys for every window of the app; calling it again does nothing.
     public static func start() {
-        guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            // Local monitors run on the main thread, where the event came from.
-            nonisolated(unsafe) let event = event
-            return MainActor.assumeIsolated { route(event) } ? nil : event
-        }
+        guard !isStarted else { return }
+        isStarted = true
+        KeyMonitors.add(.first) { route($0) }
     }
 
     /// Whether the focus in `window` is somewhere text is typed: an editable text view or a
