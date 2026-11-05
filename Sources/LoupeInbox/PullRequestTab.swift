@@ -1426,7 +1426,7 @@ public final class PullRequestTab: Identifiable {
                 return
             }
             await start(.fetching)
-            let fetched = try await differ.fetch(number: pullRequest.number, of: pullRequest.repository, baseRefName: pullRequest.baseRefName, baseRefOid: pullRequest.baseRefOid, in: checkout)
+            let fetched = try await differ.fetch(number: pullRequest.number, of: pullRequest.repository, baseRefName: pullRequest.baseRefName, baseRefOid: pullRequest.baseRefOid, headRefOid: pullRequest.headRefOid, in: checkout)
             await start(.diffing)
             let diff = try await differ.diff(fetched, in: checkout)
             let files = await Task.detached { DiffParser.parse(diff.text) }.value

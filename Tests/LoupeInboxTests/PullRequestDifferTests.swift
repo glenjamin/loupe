@@ -49,6 +49,23 @@ struct PullRequestDifferTests {
         #expect(try await repo.checkoutState() == before)
     }
 
+    @Test func fetchesAPullRequestGitHubMadeNoRefForByItsHead() async throws {
+        let repo = try await FakeRepository()
+        try await repo.switchTo("feature", creatingFrom: "main")
+        let head = try await repo.commit(["app.go": "package app // changed\n"], message: "Change the app")
+        try await repo.push()
+
+        let differ = PullRequestDiffer()
+        await #expect(throws: GitError.self) {
+            try await differ.fetch(number: 9, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, in: repo.checkout)
+        }
+        let fetched = try await differ.fetch(number: 9, of: "tamarinworks/app", baseRefName: "main", baseRefOid: nil, headRefOid: head, in: repo.checkout)
+        let diff = try await differ.diff(fetched, in: repo.checkout)
+
+        #expect(fetched.headOid == head)
+        #expect(diff.text.contains("+package app // changed"))
+    }
+
     @Test func listsThePullRequestsCommitsOldestFirstAndDiffsEachOnItsOwn() async throws {
         let repo = try await FakeRepository()
         try await repo.switchTo("feature", creatingFrom: "main")

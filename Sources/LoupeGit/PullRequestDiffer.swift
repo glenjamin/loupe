@@ -32,10 +32,18 @@ public struct PullRequestDiffer: Sendable {
     /// Fetches PR `number` of `repository` (`owner/name`) into `refs/loupe/pull/<number>/head`,
     /// and makes sure its base is present: `baseRefOid` when known, fetching `baseRefName` if it's
     /// missing. Both come from the checkout's remote for that repo, or `origin` if none matches.
-    public func fetch(number: Int, of repository: String, baseRefName: String, baseRefOid: String?, in checkout: URL) async throws -> FetchedPullRequest {
+    /// GitHub occasionally never makes a PR's `refs/pull/<number>/head`, so `headRefOid`, when
+    /// known, is fetched by oid in its place.
+    public func fetch(number: Int, of repository: String, baseRefName: String, baseRefOid: String?, headRefOid: String? = nil, in checkout: URL) async throws -> FetchedPullRequest {
         let remote = await Git.remotes(of: checkout).matching(repository)?.name ?? "origin"
         let head = "refs/loupe/pull/\(number)/head"
-        try await fetch([remote, "+refs/pull/\(number)/head:\(head)"], in: checkout)
+        do {
+            try await fetch([remote, "+refs/pull/\(number)/head:\(head)"], in: checkout)
+        } catch let missing as GitError where missing.status != nil {
+            guard let headRefOid else { throw missing }
+            // Failing that too, what's said is why the PR's own ref couldn't be fetched.
+            do { try await fetch([remote, "+\(headRefOid):\(head)"], in: checkout) } catch { throw missing }
+        }
         let headOid = try await git(["rev-parse", "--verify", "\(head)^{commit}"], in: checkout).trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Without a known oid, the remote-tracking branch the fetch updates stands in.

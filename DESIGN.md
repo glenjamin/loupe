@@ -1076,6 +1076,10 @@ AppKit asks local key monitors in no order it promises, and it varied between ru
 
 The SCSS grammar misreads the rest of a rule after `@include module.mixin;`, the form `@use` gives, with or without arguments: properties were split mid-word, as "col" and a keyword "or", and a `//` comment was taken for selectors. A plain `@include mixin;` and the same include outside a rule parse fine, and upstream's latest commit has the same fault. Rather than edit the vendored grammar, its text is parsed with that dot read as a hyphen, which keeps every character where it was, so the colours still land on the code shown. The include's module and mixin are then coloured alike, as one name.
 
+### A PR GitHub made no ref for is fetched by its head
+
+GitHub occasionally never makes a PR's `refs/pull/<N>/head`, leaving the PR's diff unfetchable though its branch is there. When that fetch fails, the head commit the PR list has for it is fetched by oid instead, which GitHub serves; the branch isn't used, as a fork's lives in another repo. Failing that too, the error shown is the PR ref's, as that's what's wrong. "Open in" still needs the ref, to tell a fork from the repo's own branch.
+
 ## Not yet decided
 
 Nothing is pending.
