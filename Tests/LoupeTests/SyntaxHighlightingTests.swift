@@ -298,9 +298,31 @@ struct SyntaxHighlightingTests {
         let rendered = showing(file)
 
         #expect(colors(of: "@include", in: rendered) == [DiffColors.syntaxKeyword])
-        #expect(colors(of: "typography.small", in: rendered) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "small", in: rendered) == [DiffColors.syntaxEntity])
         #expect(colors(of: "color", in: rendered) == [DiffColors.syntaxConstant])
         #expect(colors(of: "// Whole pixels, so it rounds the same way everywhere.", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: "line-height", in: rendered) == [DiffColors.syntaxConstant])
+    }
+
+    @Test func anSCSSHunkStartingInsideARuleColoursItsDeclarations() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/banner.scss b/banner.scss
+        --- a/banner.scss
+        +++ b/banner.scss
+        @@ -10,6 +10,6 @@
+           border-radius: 4px;
+           color: colors.$black;
+        -  font-size: 0.6rem;
+        +  font-size: 0.625rem;
+         }
+
+         .badge { line-height: 1; }
+
+        """).files.first)
+        let rendered = showing(file)
+
+        #expect(colors(of: "border-radius", in: rendered) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "font-size", in: rendered) == [DiffColors.syntaxConstant])
         #expect(colors(of: "line-height", in: rendered) == [DiffColors.syntaxConstant])
     }
 

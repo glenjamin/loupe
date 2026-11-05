@@ -104,7 +104,7 @@ public struct SyntaxPlan: Sendable {
         guard (try? parser.setLanguage(grammar.language)) != nil else { return [] }
         var runs: [SyntaxRun] = []
         for side in sides where !side.lines.isEmpty {
-            guard let context = side.context else {
+            guard let context = side.context ?? grammar.lead else {
                 runs += side.highlight(side.text, parsedBy: parser, grammar: grammar)
                 continue
             }
@@ -187,8 +187,9 @@ private struct Grammar: Sendable {
     /// Where several patterns capture one node, tree-sitter's highlighter takes the last, and the
     /// queries list generic patterns first. Go's still lists them last, for the older first-wins rule.
     let laterPatternsWin: Bool
-    /// The text as it's parsed, each character where it was, to step around the grammar's gaps.
-    var parsed: @Sendable (String) -> String = { $0 }
+    /// What a side is tried led by when git names no enclosing line, for a grammar that reads
+    /// the inside of a block as something else at the top level.
+    var lead: String?
 
     /// Loaded grammars, and nil for those that couldn't be, so a failure is logged once.
     private static let cache = OSAllocatedUnfairLock<[SyntaxLanguage: Grammar?]>(initialState: [:])
@@ -207,7 +208,8 @@ private struct Grammar: Sendable {
     private static func compile(_ syntax: SyntaxLanguage) -> Grammar? {
         if let vendored = VendoredGrammar(rawValue: syntax.rawValue) {
             var grammar = compile(vendored.tsLanguage, queries: vendored.highlightQueries, laterPatternsWin: true)
-            if vendored == .scss { grammar?.parsed = includingModulesAsPlainMixins }
+            // SCSS reads declarations outside a rule as selectors; a hunk often starts inside one.
+            if vendored == .scss { grammar?.lead = "&{" }
             return grammar
         }
         guard let id = TreeSitterLanguage(rawValue: syntax.rawValue) else { return nil }
@@ -339,14 +341,8 @@ private enum VendoredGrammar: String {
         }
     }
 
-    /// The grammar's highlights query, with that of the grammar it extends beneath it: SCSS's
-    /// query covers only what SCSS adds to CSS, as editors compose it.
     var highlightQueries: [URL?] {
-        let own = bundledResource("queries/highlights.scm", in: bundle)
-        return switch self {
-        case .scss: [codeEditLanguagesQuery(folder: "css", file: "highlights"), own]
-        case .proto, .hcl, .graphql, .make, .goTemplate, .glimmer: [own]
-        }
+        [bundledResource("queries/highlights.scm", in: bundle)]
     }
 }
 
@@ -399,7 +395,6 @@ private func coverage(of runs: [SyntaxRun]) -> Int {
 private extension SyntaxPlan.Side {
     /// The colours for this side's lines from parsing `text`, which ends with the side's own.
     func highlight(_ text: String, parsedBy parser: Parser, grammar: Grammar) -> [SyntaxRun] {
-        let text = grammar.parsed(text)
         guard let tree = parser.parse(text) else { return [] }
         let codeStart = text.utf16.count - utf16Count
         var runs: [SyntaxRun] = []
@@ -426,11 +421,4 @@ private extension SyntaxPlan.Side {
 
 private func codeEditLanguagesQuery(folder: String, file: String) -> URL? {
     bundledResource("Resources/tree-sitter-\(folder)/\(file).scm", in: "CodeEditLanguages_CodeEditLanguages")
-}
-
-/// SCSS with `@include module.mixin` read as `@include module-mixin`, the same length: the
-/// grammar misreads the rest of a rule after a mixin included from a module.
-private func includingModulesAsPlainMixins(_ text: String) -> String {
-    guard text.contains("@include") else { return text }
-    return text.replacing(/(@include\s+[A-Za-z_][\w-]*)\.(?=[A-Za-z_])/) { "\($0.1)-" }
 }

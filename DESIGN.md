@@ -1080,6 +1080,10 @@ The SCSS grammar misreads the rest of a rule after `@include module.mixin;`, the
 
 GitHub occasionally never makes a PR's `refs/pull/<N>/head`, leaving the PR's diff unfetchable though its branch is there. When that fetch fails, the head commit the PR list has for it is fetched by oid instead, which GitHub serves; the branch isn't used, as a fork's lives in another repo. Failing that too, the error shown is the PR ref's, as that's what's wrong. "Open in" still needs the ref, to tell a fork from the repo's own branch.
 
+### SCSS is parsed by P233/tree-sitter-scss, with no CSS query beneath it
+
+The workaround for `@include module.mixin` covered one of several faults: tree-sitter-grammars' grammar also fails on `!default`, `@use … as`, maps and `$args...`. P233/tree-sitter-scss, written from scratch rather than on tree-sitter-css, parses all of those and is maintained, so it replaces it, vendored the same way and pinned to a commit. Its query covers CSS as well as SCSS, so CodeEditLanguages' CSS query, written for the other schema, is no longer put beneath it, and the text is parsed as it is. It reads declarations outside a rule as selectors, as CSS does, where tree-sitter-css took them as declarations, and a hunk often starts inside a rule with no enclosing line from git; such a side is also tried led by `&{`, kept when it colours at least as much, as an enclosing line is. A module's name in an include is now plain, as the query captures it as `@module`, which Loupe leaves uncoloured, and keyword values (`white`, `nowrap`) take the constant colour. Its generated parser is about five times the size of the old one.
+
 ## Not yet decided
 
 Nothing is pending.

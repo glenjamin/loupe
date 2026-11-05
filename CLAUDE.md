@@ -20,7 +20,7 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 - `TreeSitterProto`: the vendored Protocol Buffers grammar (C) and its highlights query; refreshed by `Scripts/update-tree-sitter-proto.sh`, never edited by hand.
 - `TreeSitterHCL`: the vendored HCL grammar (C), for Terraform, with nvim-treesitter's highlights query; refreshed by `Scripts/update-tree-sitter-hcl.sh`, never edited by hand.
 - `TreeSitterGraphQL`: the vendored GraphQL grammar (C) and its highlights query; refreshed by `Scripts/update-tree-sitter-graphql.sh`, never edited by hand.
-- `TreeSitterSCSS`: the vendored SCSS grammar (C) and its highlights query, which the highlighter puts CodeEditLanguages' CSS query beneath; refreshed by `Scripts/update-tree-sitter-scss.sh`, never edited by hand.
+- `TreeSitterSCSS`: the vendored SCSS grammar (C), P233's, and its highlights query, which covers CSS too; refreshed by `Scripts/update-tree-sitter-scss.sh`, never edited by hand.
 - `TreeSitterMake`: the vendored Makefile grammar (C) and its highlights query; refreshed by `Scripts/update-tree-sitter-make.sh`, never edited by hand.
 - `TreeSitterGoTemplate`: the vendored Go template grammar (C) and its highlights query; refreshed by `Scripts/update-tree-sitter-go-template.sh`, never edited by hand.
 - `TreeSitterGlimmer`: the vendored Glimmer grammar (C), Ember's Handlebars, for Handlebars templates, and its highlights query; refreshed by `Scripts/update-tree-sitter-glimmer.sh`, never edited by hand.
