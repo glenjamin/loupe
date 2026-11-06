@@ -29,7 +29,8 @@ extension GitHubClient {
             reviewRequests: pullRequest.reviewRequests.nodes.compactMap { $0.requestedReviewer?.reviewer },
             latestReviews: pullRequest.latestReviews.nodes.compactMap(\.latestReview),
             pendingReview: pullRequest.pendingReview.nodes.first?.pendingReview,
-            viewerReview: pullRequest.viewerLatestReview?.viewerReview
+            viewerReview: pullRequest.viewerLatestReview?.viewerReview,
+            deployments: pullRequest.deployments?.nodes.latestPerEnvironment ?? []
         )
     }
 
@@ -77,6 +78,7 @@ extension GitHubClient {
               latestReviews(first: 50) { nodes { state submittedAt author { ...Reviewer } } }
               viewerLatestReview { state submittedAt commit { oid } }
               \(pendingReviewField)
+              \(deploymentsField)
             }
           }
         }
@@ -96,6 +98,10 @@ extension GitHubClient {
           comments(first: 100) { nodes { id databaseId bodyHTML createdAt isMinimized minimizedReason state viewerCanUpdate viewerCanDelete author { login avatarUrl } \(reactionGroupsField) } }
         }
         """
+
+    /// Enough of the latest deployments to find each environment's, as a branch preview is
+    /// deployed again on every push.
+    static let deploymentsField = "deployments: timelineItems(last: 30, itemTypes: [DEPLOYED_EVENT]) { nodes { ... on DeployedEvent { createdAt deployment { environment commit { oid } latestStatus { state environmentUrl } } } } }"
 
     static let timelinePageQuery = """
         query($id: ID!, $after: String) {
@@ -207,6 +213,8 @@ private struct ConversationResponse: Decodable {
         let latestReviews: Connection<Review>
         let pendingReview: Connection<PendingReviewNode>
         let viewerLatestReview: ViewerLatestReview?
+        /// Missing in captures that didn't ask for it.
+        let deployments: Connection<DeployedEvent>?
     }
 
     struct Request: Decodable {
@@ -500,6 +508,41 @@ struct ReviewerNode: Decodable {
             combinedSlug.map { Reviewer(kind: .team, nodeId: id, login: $0, name: teamName) }
         default:
             nil
+        }
+    }
+}
+
+/// A commit of the PR's deployed, as the timeline records it.
+private struct DeployedEvent: Decodable {
+    let createdAt: Date?
+    let deployment: Deployment?
+
+    struct Deployment: Decodable {
+        let environment: String?
+        let commit: Commit?
+        let latestStatus: Status?
+    }
+
+    struct Commit: Decodable { let oid: String }
+
+    struct Status: Decodable {
+        let state: String
+        let environmentUrl: String?
+    }
+}
+
+private extension [DeployedEvent] {
+    /// Each environment's latest deployment that succeeded with somewhere to see it, the most
+    /// recent first; one that failed or is still going leaves the one before it standing.
+    var latestPerEnvironment: [LoupeModel.Deployment] {
+        var seen: Set<String> = []
+        return reversed().compactMap { event in
+            guard let deployedAt = event.createdAt, let deployment = event.deployment, let environment = deployment.environment,
+                  let commit = deployment.commit, let status = deployment.latestStatus, status.state == "SUCCESS",
+                  let url = status.environmentUrl.flatMap(URL.init(string:)), url.scheme == "https" || url.scheme == "http",
+                  !seen.contains(environment) else { return nil }
+            seen.insert(environment)
+            return LoupeModel.Deployment(environment: environment, url: url, commitOid: commit.oid, deployedAt: deployedAt)
         }
     }
 }

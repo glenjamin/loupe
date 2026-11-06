@@ -30,7 +30,8 @@ import LoupeGitHub
 /// taken out), and the viewer's are edited with `updatePullRequestReviewComment`,
 /// `updateIssueComment` and `updatePullRequestReview`, which render them afresh, or refused.
 /// Each comment says whether the viewer may delete it, as only their own may be; the viewer's
-/// comments on a PR go with `deleteIssueComment`, or are refused.
+/// comments on a PR go with `deleteIssueComment`, or are refused. Tests can deploy a PR's
+/// commits, which the conversation lists as GitHub's timeline records them.
 actor FakeConversations {
     /// Each PR's conversation, less its timeline, in GitHub's JSON shape.
     private var nodes: [String: [String: Any]] = [:]
@@ -127,6 +128,8 @@ actor FakeConversations {
     private(set) var commentsReceived: [CommentInput] = []
     /// Each PR's head, by id, for those given one, which threads are made on unless said.
     private var heads: [String: String] = [:]
+    /// Each PR's deployed events, oldest first, by id.
+    private var deployments: [String: [[String: Any]]] = [:]
 
     struct CommentInput: Equatable {
         let repository: String
@@ -286,6 +289,19 @@ actor FakeConversations {
             "actor": ["login": "octocat", "avatarUrl": "https://avatars.githubusercontent.com/u/583231?v=4"],
             "beforeCommit": ["oid": before],
             "afterCommit": ["oid": after],
+        ])
+    }
+
+    /// Records a deployment of the PR's `commit` to `environment`, as a deploy job reports one,
+    /// with its status; `url` is where it says to see it.
+    func deploy(_ commit: String, of id: String, to environment: String, url: String?, state: String = "SUCCESS", at date: Date = .now) {
+        deployments[id, default: []].append([
+            "createdAt": date.formatted(.iso8601),
+            "deployment": [
+                "environment": environment,
+                "commit": ["oid": commit],
+                "latestStatus": ["state": state, "environmentUrl": url.map { $0 as Any } ?? NSNull()],
+            ],
         ])
     }
 
@@ -551,6 +567,9 @@ actor FakeConversations {
         ]
         if query.contains("reviewThreads") {
             node["timelineItems"] = page
+            if let last = query.firstMatch(of: /deployments: timelineItems\(last: (\d+), itemTypes: \[DEPLOYED_EVENT\]\)/).flatMap({ Int($0.1) }) {
+                node["deployments"] = ["nodes": Array(deployments[id, default: []].suffix(last))]
+            }
         } else {
             node = ["timelineItems": page]
         }

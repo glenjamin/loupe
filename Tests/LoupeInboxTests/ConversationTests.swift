@@ -75,6 +75,30 @@ struct ConversationTests {
         #expect(nextRun.isConversationSettled)
     }
 
+    @Test func eachEnvironmentsLatestDeploymentIsOfferedSayingWhetherItsOfTheHead() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = app.toReview[0]
+        let head = try #require(pullRequest.headRefOid)
+        let earlier = String(repeating: "1", count: 40)
+        try await app.conversations.add(pullRequest.id)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        await app.conversations.deploy(earlier, of: pullRequest.id, to: "preview", url: "https://preview.example.com/?sha=earlier", at: start)
+        await app.conversations.deploy(earlier, of: pullRequest.id, to: "staging", url: "https://staging.example.com/", at: start + 60)
+        await app.conversations.deploy(head, of: pullRequest.id, to: "preview", url: "https://preview.example.com/?sha=head", at: start + 120)
+        // A later deploy that failed leaves the one before it standing.
+        await app.conversations.deploy(head, of: pullRequest.id, to: "staging", url: nil, state: "FAILURE", at: start + 180)
+
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        #expect(tab.deployments.isEmpty, "nothing stored yet")
+        await tab.load()
+
+        #expect(tab.deployments.map(\.deployment.environment) == ["preview", "staging"])
+        #expect(tab.deployments.map(\.deployment.url.absoluteString) == ["https://preview.example.com/?sha=head", "https://staging.example.com/"])
+        #expect(tab.deployments.map(\.isAtHead) == [true, false])
+        #expect(try app.store.conversation(of: pullRequest.id)?.deployments == tab.conversation?.deployments)
+    }
+
     @Test func aConversationThatFailedWithNoneStoredCanBeFetchedAgain() async throws {
         let app = try await ConversationApp()
         let pullRequest = app.toReview[0]

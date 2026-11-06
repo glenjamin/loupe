@@ -1084,6 +1084,10 @@ GitHub occasionally never makes a PR's `refs/pull/<N>/head`, leaving the PR's di
 
 The workaround for `@include module.mixin` covered one of several faults: tree-sitter-grammars' grammar also fails on `!default`, `@use … as`, maps and `$args...`. P233/tree-sitter-scss, written from scratch rather than on tree-sitter-css, parses all of those and is maintained, so it replaces it, vendored the same way and pinned to a commit. Its query covers CSS as well as SCSS, so CodeEditLanguages' CSS query, written for the other schema, is no longer put beneath it, and the text is parsed as it is. It reads declarations outside a rule as selectors, as CSS does, where tree-sitter-css took them as declarations, and a hunk often starts inside a rule with no enclosing line from git; such a side is also tried led by `&{`, kept when it colours at least as much, as an enclosing line is. A module's name in an include is now plain, as the query captures it as `@module`, which Loupe leaves uncoloured, and keyword values (`white`, `nowrap`) take the constant colour. Its generated parser is about five times the size of the old one.
 
+### A PR's deployments open from its header
+
+A PR whose commits are deployed, such as a preview of its branch deployed on every push (Geckoboard's hot-branch deploys), gets a button in the header's second line beside "Open in", which opens the deployment in the browser. The deployments come from the timeline's deployed events, fetched with the conversation and stored with it: the latest few, of which each environment's most recent that succeeded with a URL is kept, so a deploy that failed or is still going leaves the one before it standing. One environment is a button naming it; several are a menu. One of a commit pushed over since says "(earlier commit)", as it isn't what's being reviewed.
+
 ## Not yet decided
 
 Nothing is pending.

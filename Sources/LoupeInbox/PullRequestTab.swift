@@ -1083,6 +1083,12 @@ public final class PullRequestTab: Identifiable {
         conversation.flatMap { VisualReview.latest(in: $0.items) }
     }
 
+    /// Where the PR is deployed, each environment's latest the most recent first, with whether
+    /// that's the head commit or one pushed over since.
+    public var deployments: [(deployment: Deployment, isAtHead: Bool)] {
+        (conversation?.deployments ?? []).map { ($0, $0.commitOid == pullRequest.headRefOid) }
+    }
+
     /// The failed checks CircleCI ran, whose jobs the CircleCI section shows: the head's, then
     /// once merged the merge commit's.
     public var failedCircleCIChecks: [FailedCircleCICheck] {

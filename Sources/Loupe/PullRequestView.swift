@@ -349,6 +349,9 @@ struct PullRequestHeader: View {
                     }
                     .font(.caption.monospaced())
                     OpenInEditorButton(pullRequest: pullRequest, tab: tab)
+                    if !tab.deployments.isEmpty {
+                        DeploymentButton(deployments: tab.deployments)
+                    }
                     if let checks = pullRequest.checks {
                         ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
                         FailedCheckNames(state: checks, contexts: pullRequest.checkContexts)
@@ -487,6 +490,49 @@ struct OpenInEditorButton: View {
         }
         if tab.editorLaunch.isSwitching { return "Checking out \(pullRequest.headRefName)…" }
         return "Check out \(pullRequest.headRefName) in \(tildePath(checkout)) and open it in \(editor.name)"
+    }
+}
+
+/// Opens where the PR is deployed in the browser: its one environment's latest deployment, or
+/// a menu of each environment's. One of a commit pushed over since says so, as it's not what's
+/// being reviewed.
+struct DeploymentButton: View {
+    let deployments: [(deployment: Deployment, isAtHead: Bool)]
+
+    var body: some View {
+        if deployments.count == 1, let only = deployments.first {
+            Button { openInBrowser(only.deployment.url) } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "globe")
+                    Text(verbatim: title(only))
+                }
+            }
+            .buttonStyle(.borderless)
+            .help(help(only))
+            .accessibilityIdentifier("open-deployment")
+        } else {
+            Menu {
+                ForEach(deployments, id: \.deployment.environment) { item in
+                    Button(title(item)) { openInBrowser(item.deployment.url) }
+                        .help(help(item))
+                }
+            } label: {
+                Label("Deployments", systemImage: "globe")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Open one of the PR's deployments")
+            .accessibilityIdentifier("open-deployment")
+        }
+    }
+
+    private func title(_ item: (deployment: Deployment, isAtHead: Bool)) -> String {
+        "Open \(item.deployment.environment)" + (item.isAtHead ? "" : " (earlier commit)")
+    }
+
+    private func help(_ item: (deployment: Deployment, isAtHead: Bool)) -> String {
+        let commit = item.isAtHead ? "the head commit" : "\(item.deployment.commitOid.prefix(7)), since pushed over"
+        return "Open \(item.deployment.url.absoluteString), deployed \(item.deployment.deployedAt.ago(now: .now)) from \(commit)"
     }
 }
 

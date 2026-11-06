@@ -27,8 +27,11 @@ public struct Conversation: Sendable, Equatable {
     /// The viewer's latest submitted review, if any. `latestReviews` leaves a reviewer out once
     /// they're asked to review again, which is when what's changed since matters most.
     public var viewerReview: ViewerReview?
+    /// Where the PR's commits are deployed: each environment's latest successful deployment, the
+    /// most recent first.
+    public var deployments: [Deployment]
 
-    public init(id: String, author: Participant?, createdAt: Date, bodyHTML: String, body: String = "", reactions: [ReactionGroup] = [], items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext], reviewRequests: [Reviewer] = [], latestReviews: [LatestReview] = [], pendingReview: PendingReview? = nil, viewerReview: ViewerReview? = nil) {
+    public init(id: String, author: Participant?, createdAt: Date, bodyHTML: String, body: String = "", reactions: [ReactionGroup] = [], items: [TimelineItem], threads: [ReviewThread], checks: [CheckContext], reviewRequests: [Reviewer] = [], latestReviews: [LatestReview] = [], pendingReview: PendingReview? = nil, viewerReview: ViewerReview? = nil, deployments: [Deployment] = []) {
         self.id = id
         self.author = author
         self.createdAt = createdAt
@@ -42,6 +45,23 @@ public struct Conversation: Sendable, Equatable {
         self.latestReviews = latestReviews
         self.pendingReview = pendingReview
         self.viewerReview = viewerReview
+        self.deployments = deployments
+    }
+}
+
+/// One of the PR's commits deployed to an environment, such as a preview of its branch, and
+/// where to see it.
+public struct Deployment: Sendable, Equatable {
+    public var environment: String
+    public var url: URL
+    public var commitOid: String
+    public var deployedAt: Date
+
+    public init(environment: String, url: URL, commitOid: String, deployedAt: Date) {
+        self.environment = environment
+        self.url = url
+        self.commitOid = commitOid
+        self.deployedAt = deployedAt
     }
 }
 

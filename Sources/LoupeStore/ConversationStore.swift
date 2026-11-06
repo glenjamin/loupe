@@ -39,7 +39,8 @@ extension PullRequestStore {
                 reviewRequests: reviewers.filter { $0.role == ReviewerRow.request }.compactMap(\.reviewer),
                 latestReviews: reviewers.filter { $0.role == ReviewerRow.review }.compactMap(\.latestReview),
                 pendingReview: row.pendingReview,
-                viewerReview: row.viewerReview
+                viewerReview: row.viewerReview,
+                deployments: try DeploymentRow.filter(byPR).order(Column("position")).fetchAll(db).compactMap(\.deployment)
             )
         }
     }
@@ -47,7 +48,7 @@ extension PullRequestStore {
     /// Makes the PR's stored conversation exactly `conversation`, as GitHub returned it.
     public func replaceConversation(of pullRequestId: String, with conversation: Conversation, fetchedAt: Date) async throws {
         try await database.write { db in
-            for table in ["timelineItem", "reviewComment", "reviewThread", "threadComment", "checkContext", "conversationReviewer", "reaction"] {
+            for table in ["timelineItem", "reviewComment", "reviewThread", "threadComment", "checkContext", "conversationReviewer", "reaction", "deployment"] {
                 try db.execute(sql: "DELETE FROM \(table) WHERE pullRequestId = ?", arguments: [pullRequestId])
             }
             try ConversationRow(
@@ -70,6 +71,9 @@ extension PullRequestStore {
             try insertThreads(conversation.threads, of: pullRequestId, in: db)
             for (position, check) in conversation.checks.enumerated() {
                 try CheckContextRow(pullRequestId: pullRequestId, position: position, name: check.name, status: check.status.rawValue, description: check.description, url: check.url).insert(db)
+            }
+            for (position, deployment) in conversation.deployments.enumerated() {
+                try DeploymentRow(pullRequestId: pullRequestId, position: position, environment: deployment.environment, url: deployment.url.absoluteString, commitOid: deployment.commitOid, deployedAt: deployment.deployedAt).insert(db)
             }
             for (position, reviewer) in conversation.reviewRequests.enumerated() {
                 try ReviewerRow(reviewer, role: ReviewerRow.request, pullRequestId: pullRequestId, position: position).insert(db)
@@ -455,6 +459,21 @@ private struct CheckContextRow: Codable, FetchableRecord, PersistableRecord {
     let status: String
     let description: String?
     let url: String?
+}
+
+private struct DeploymentRow: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "deployment"
+
+    let pullRequestId: String
+    let position: Int
+    let environment: String
+    let url: String
+    let commitOid: String
+    let deployedAt: Date
+
+    var deployment: Deployment? {
+        URL(string: url).map { Deployment(environment: environment, url: $0, commitOid: commitOid, deployedAt: deployedAt) }
+    }
 }
 
 /// A reviewer asked, or one who has reviewed with their latest review's state.

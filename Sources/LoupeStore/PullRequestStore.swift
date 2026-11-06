@@ -685,6 +685,19 @@ public struct PullRequestStore: Sendable {
                 t.primaryKey(["pullRequestId", "position"])
             }
         }
+        // Each environment's latest deployment of the PR, from its conversation: none in one
+        // stored before until it's next fetched.
+        migrator.registerMigration("Deployments") { db in
+            try db.create(table: "deployment") { t in
+                t.column("pullRequestId", .text).notNull().references("pullRequest", onDelete: .cascade)
+                t.column("position", .integer).notNull()
+                t.column("environment", .text).notNull()
+                t.column("url", .text).notNull()
+                t.column("commitOid", .text).notNull()
+                t.column("deployedAt", .datetime).notNull()
+                t.primaryKey(["pullRequestId", "position"])
+            }
+        }
         return migrator
     }
 
