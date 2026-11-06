@@ -304,6 +304,34 @@ struct SyntaxHighlightingTests {
         #expect(colors(of: "line-height", in: rendered) == [DiffColors.syntaxConstant])
     }
 
+    @Test func aHunkStartingWithTheEndsOfBlocksAboveItColoursTheRest() throws {
+        let file = try #require(Diff(parsing: """
+        diff --git a/main.tf b/main.tf
+        --- a/main.tf
+        +++ b/main.tf
+        @@ -46,6 +46,12 @@ locals {
+               }
+             }
+
+        +  // Services that sign in with a password.
+        +  password_users = {
+        +    relay = {
+        +      store = "cache"
+        +    }
+        +  }
+        +
+           user_roles = merge([
+             for name, roles in var.user_roles : {
+
+        """).files.first)
+        let rendered = showing(file)
+
+        #expect(colors(of: "// Services", in: rendered) == [DiffColors.syntaxComment])
+        #expect(colors(of: "\"cache\"", in: rendered) == [DiffColors.syntaxString])
+        #expect(colors(of: "merge", in: rendered) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "for name", in: rendered, length: 3) == [DiffColors.syntaxKeyword])
+    }
+
     @Test func anSCSSHunkStartingInsideARuleColoursItsDeclarations() throws {
         let file = try #require(Diff(parsing: """
         diff --git a/banner.scss b/banner.scss

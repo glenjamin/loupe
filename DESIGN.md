@@ -1088,6 +1088,10 @@ The workaround for `@include module.mixin` covered one of several faults: tree-s
 
 A PR whose commits are deployed, such as a preview of its branch deployed on every push (Geckoboard's hot-branch deploys), gets a button in the header's second line beside "Open in", which opens the deployment in the browser. The deployments come from the timeline's deployed events, fetched with the conversation and stored with it: the latest few, of which each environment's most recent that succeeded with a URL is kept, so a deploy that failed or is still going leaves the one before it standing. One environment is a button naming it; several are a menu. One of a commit pushed over since says "(earlier commit)", as it isn't what's being reviewed.
 
+### A hunk is parsed with its brackets balanced
+
+A hunk often starts with the ends of blocks opened above it, and ends inside ones that close below it. Unmatched, those brackets threw the code around them into the parser's error recovery: a Terraform hunk starting with two `}` closing blocks inside `locals` lost the colours of its comments, keys and functions. Each side is now parsed with the lines it opens with that only close brackets made spaces, the same length so colours still land where they belong, and with closers for the brackets it leaves open parsed after it but not shown. Brackets are matched outside strings only, without knowing each language's comments, so a stray one in a comment can add a closer, which costs little.
+
 ## Not yet decided
 
 Nothing is pending.

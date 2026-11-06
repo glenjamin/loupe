@@ -77,6 +77,8 @@ public struct SyntaxPlan: Sendable {
         var utf16Count = 0
         /// Lines to colour from this side, ascending by source offset.
         var lines: [Line] = []
+        /// Parsed after the side but not shown, such as closers for brackets it leaves open.
+        var trailer = ""
 
         mutating func append(_ code: String, mappedTo target: Int?, length: Int) {
             if let target { lines.append(Line(source: utf16Count, target: target, length: length)) }
@@ -98,12 +100,15 @@ public struct SyntaxPlan: Sendable {
     /// A side with an enclosing line is parsed led by it, which puts a hunk that starts inside a
     /// declaration back in it, if that colours at least as much of the side's first lines as
     /// parsing them alone: the line misleads when the declaration closed before the hunk.
+    /// Lines that only close blocks opened above the hunk are parsed as blank, and brackets
+    /// left open at its end are closed after it, as unmatched they'd throw the code around them
+    /// into error recovery.
     public func runs() -> [SyntaxRun] {
         guard let grammar = Grammar.load(language) else { return [] }
         let parser = Parser()
         guard (try? parser.setLanguage(grammar.language)) != nil else { return [] }
         var runs: [SyntaxRun] = []
-        for side in sides where !side.lines.isEmpty {
+        for side in sides.map(\.balanced) where !side.lines.isEmpty {
             guard let context = side.context ?? grammar.lead else {
                 runs += side.highlight(side.text, parsedBy: parser, grammar: grammar)
                 continue
@@ -395,14 +400,48 @@ private func coverage(of runs: [SyntaxRun]) -> Int {
 private extension SyntaxPlan.Side {
     /// The colours for this side's lines from parsing `text`, which ends with the side's own.
     func highlight(_ text: String, parsedBy parser: Parser, grammar: Grammar) -> [SyntaxRun] {
-        guard let tree = parser.parse(text) else { return [] }
         let codeStart = text.utf16.count - utf16Count
+        let text = text + trailer
+        guard let tree = parser.parse(text) else { return [] }
         var runs: [SyntaxRun] = []
         for capture in highlightCaptures(grammar.query, in: tree, text: text, laterPatternsWin: grammar.laterPatternsWin) {
             let range = NSRange(location: capture.range.location - codeStart, length: capture.range.length)
             map(range, through: lines) { runs.append(SyntaxRun(range: $0, style: capture.style)) }
         }
         return runs
+    }
+
+    /// The side with the lines it opens with that only close brackets, and end statements
+    /// after them, made spaces, the same length so its colours still land where they belong;
+    /// and with closers for the brackets it leaves open, outside strings, trailing it.
+    var balanced: Self {
+        var balanced = self
+        var end = text.startIndex
+        while let newline = text[end...].firstIndex(of: "\n") {
+            let line = text[end..<newline]
+            guard line.contains(where: { "})]".contains($0) }), line.allSatisfy({ " \t})];,".contains($0) }) else { break }
+            end = text.index(after: newline)
+        }
+        if end > text.startIndex {
+            balanced.text = String(text[..<end].map { $0 == "\n" ? "\n" : " " }) + text[end...]
+        }
+        let pairs: [Character: Character] = ["{": "}", "[": "]", "(": ")"]
+        var open: [Character] = []
+        var quote: Character?
+        var escaped = false
+        for character in balanced.text {
+            if let current = quote {
+                if escaped { escaped = false } else if character == "\\" { escaped = true } else if character == current || character == "\n" { quote = nil }
+            } else if character == "\"" || character == "'" || character == "`" {
+                quote = character
+            } else if let closer = pairs[character] {
+                open.append(closer)
+            } else if character == open.last {
+                open.removeLast()
+            }
+        }
+        balanced.trailer = open.reversed().map { "\n\($0)" }.joined()
+        return balanced
     }
 
     /// The side's first lines, enough to tell whether its enclosing line helps, so a long
