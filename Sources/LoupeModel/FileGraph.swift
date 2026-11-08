@@ -14,7 +14,8 @@ public enum FileOrder: Sendable, Hashable, CaseIterable {
 /// The changed files and which of them use which, for listing them in dependency order. Files
 /// joined by use, however indirectly, are grouped, largest group first; those using and used by
 /// none of the others come last, as one standalone group. A test named for a file in its group
-/// comes straight after that file, either way up, so each is read with what it tests. Ties, and
+/// comes straight after that file, either way up, so each is read with what it tests; bottom
+/// up, after whatever else it uses too. Ties, and
 /// files that use each other
 /// in a cycle, keep the order the directory tree lists them in, so files with no dependencies
 /// between them list as the tree does.
@@ -59,7 +60,7 @@ public struct FileGraph: Sendable, Equatable {
         let components = graph.components()
         let joined = components.filter { $0.count > 1 }
             .sorted { $0.count != $1.count ? $0.count > $1.count : $0[0] < $1[0] }
-            .map { Group(files: placingTests(graph.ordered($0, usersFirst: order == .topDown).map { files[$0] }), isStandalone: false) }
+            .map { Group(files: placingTests(graph.ordered($0, usersFirst: order == .topDown).map { files[$0] }, afterAllUsed: order == .bottomUp), isStandalone: false) }
         let standalone = components.filter { $0.count == 1 }.map { files[$0[0]] }.sorted { position[$0]! < position[$1]! }
         return joined + (standalone.isEmpty ? [] : [Group(files: standalone, isStandalone: true)])
     }
@@ -69,15 +70,20 @@ public struct FileGraph: Sendable, Equatable {
         groups(order).flatMap(\.files)
     }
 
-    /// `ordered` with each test that's named for one of its other files moved to straight after it.
-    private func placingTests(_ ordered: [String]) -> [String] {
+    /// `ordered` with each test that's named for one of its other files moved to straight after
+    /// it, or with `afterAllUsed`, after the last of it and the others the test uses.
+    private func placingTests(_ ordered: [String], afterAllUsed: Bool) -> [String] {
         let present = Set(ordered)
+        let subjects = Dictionary(uniqueKeysWithValues: ordered.compactMap { path in testSubject(of: path, among: present).map { (path, $0) } })
+        let place = Dictionary(uniqueKeysWithValues: ordered.enumerated().map { ($1, $0) })
         var tests: [String: [String]] = [:]
         for path in ordered {
-            if let subject = testSubject(of: path, among: present) { tests[subject, default: []].append(path) }
+            guard let subject = subjects[path] else { continue }
+            let used = afterAllUsed ? (dependencies[path] ?? []).filter { subjects[$0] == nil } : []
+            let anchor = ([subject] + used).max { place[$0]! < place[$1]! }!
+            tests[anchor, default: []].append(path)
         }
-        let moved = Set(tests.values.joined())
-        return ordered.filter { !moved.contains($0) }.flatMap { [$0] + (tests[$0] ?? []) }
+        return ordered.filter { subjects[$0] == nil }.flatMap { [$0] + (tests[$0] ?? []) }
     }
 
     private var position: [String: Int] {

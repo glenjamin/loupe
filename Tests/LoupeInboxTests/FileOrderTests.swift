@@ -187,6 +187,50 @@ struct FileOrderTests {
             "  Package.swift",
         ])
     }
+
+    @Test func stylesheetsUseThePartialsTheyUseForwardOrImport() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "styles/_colors.scss": "$brand: #36c;\n",
+            "styles/mixins/_index.scss": "@forward 'buttons';\n",
+            "styles/mixins/_buttons.scss": "@use '../colors';\n\n@mixin button { color: colors.$brand; }\n",
+            "styles/app.scss": "@use 'sass:math';\n@use 'mixins';\n@import \"vendor/reset\";\n\n.app { @include mixins.button; }\n",
+            "styles/vendor/reset.css": "* { margin: 0; }\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == [
+            "group",
+            "  styles/vendor/reset.css",
+            "  styles/_colors.scss",
+            "  styles/mixins/_buttons.scss",
+            "  styles/mixins/_index.scss",
+            "  styles/app.scss",
+        ])
+    }
+
+    @Test func rubyFilesUseWhatTheyRequireRelativeAndTheConstantsTheyNameByRailsConvention() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "app/models/billing/line_item.rb": "module Billing\n  class LineItem < ApplicationRecord\n  end\nend\n",
+            "app/models/invoice.rb": "class Invoice < ApplicationRecord\n  has_many :items, class_name: Billing::LineItem.name\nend\n",
+            "app/services/http_client.rb": "class HTTPClient\nend\n",
+            "app/controllers/invoices_controller.rb": "class InvoicesController < ApplicationController\n  def show\n    @invoice = Invoice.find(params[:id])\n    HTTPClient.new\n  end\nend\n",
+            "spec/models/invoice_spec.rb": "require_relative '../support/factories'\n\nRSpec.describe Invoice do\nend\n",
+            "spec/support/factories.rb": "FACTORIES = {}\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == [
+            "group",
+            "  app/models/billing/line_item.rb",
+            "  app/models/invoice.rb",
+            "  app/services/http_client.rb",
+            "  app/controllers/invoices_controller.rb",
+            "  spec/support/factories.rb",
+            "  spec/models/invoice_spec.rb",
+        ], "a spec comes after its subject and the support it requires")
+    }
 }
 
 /// The shown changes' groups, each as a line saying what kind it is, then its files indented.

@@ -33,7 +33,7 @@ public enum FileDependencies {
         return dependencies
     }
 
-    private static let languages: [any DependencyLanguage] = [GoDependencies(), ScriptDependencies(), TerraformDependencies(), SwiftDependencies()]
+    private static let languages: [any DependencyLanguage] = [GoDependencies(), ScriptDependencies(), TerraformDependencies(), SwiftDependencies(), StylesheetDependencies(), RubyDependencies()]
 }
 
 /// One language's imports: which files are needed to read them, and which changed files they name.
