@@ -73,6 +73,58 @@ struct FileOrderTests {
         await tab.setFileOrder(.bottomUp)
         #expect(outline(tab) == ["group", "  services/billing/invoice/invoice.go", "  services/billing/cmd/billing/main.go"])
     }
+
+    @Test func scriptsUseTheFilesTheyImportRequireOrReExportByRelativePath() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "src/api/client.ts": "export const get = (url: string) => fetch(url)\n",
+            "src/api/index.ts": "export * from './client'\n",
+            "src/hooks/useUser.ts": "import { get } from '../api'\nimport type { User } from '../types/user.js'\n\nexport const useUser = () => get('/user') as Promise<User>\n",
+            "src/types/user.ts": "export interface User { name: string }\n",
+            "src/components/Profile.tsx": "import React from 'react'\nimport { useUser } from '../hooks/useUser'\nimport './Profile.scss'\n\nexport const Profile = () => <div />\n",
+            "src/components/Profile.scss": ".profile { color: red; }\n",
+            "scripts/build.js": "const lazy = () => import('../src/api/client')\nconst fs = require('fs')\n",
+        ])
+        let tab = try await app.open(pullRequest)
+
+        await tab.setFileOrder(.bottomUp)
+
+        #expect(outline(tab) == [
+            "group",
+            "  src/api/client.ts",
+            "  scripts/build.js",
+            "  src/api/index.ts",
+            "  src/components/Profile.scss",
+            "  src/types/user.ts",
+            "  src/hooks/useUser.ts",
+            "  src/components/Profile.tsx",
+        ])
+    }
+
+    @Test func bareSpecifiersResolveThroughTheTsconfigsPathsAndBaseUrl() async throws {
+        let app = try await ThreadsApp()
+        let tsconfig = """
+            {
+              // Aliases for the app's own code.
+              "compilerOptions": {
+                "baseUrl": "web",
+                "paths": {
+                  "@/*": ["src/*"], /* the app */
+                  "~config": ["config/index.ts"],
+                },
+              },
+            }
+            """
+        let pullRequest = try await app.pushPullRequest(startingWith: ["tsconfig.json": tsconfig], changing: [
+            "web/src/store.ts": "export const store = {}\n",
+            "web/config/index.ts": "export default {}\n",
+            "web/lib/format.ts": "export const format = String\n",
+            "web/src/App.tsx": "import { store } from '@/store'\nimport config from '~config'\nimport { format } from 'lib/format'\nimport lodash from 'lodash'\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.topDown)
+        #expect(outline(tab) == ["group", "  web/src/App.tsx", "  web/config/index.ts", "  web/lib/format.ts", "  web/src/store.ts"])
+    }
 }
 
 /// The shown changes' groups, each as a line saying what kind it is, then its files indented.

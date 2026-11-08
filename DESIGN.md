@@ -1102,6 +1102,10 @@ The dependencies are found from the changed files' imports, read at the changes'
 
 A Go import path names a package, which is a directory under the module whose `go.mod` is nearest above the importing file, so an import resolves to that directory's changed files, tests aside; the `go.mod` files above the changed Go files are read alongside them, and a repo holding several modules resolves each from its own. Files of one package don't import each other, so they're only joined through other packages for now. A `_test.go` file uses its own directory's other files, whether it's in the package or its external test package, so tests follow what they test bottom up.
 
+### Scripts use the files they import, by path or tsconfig alias
+
+A JavaScript or TypeScript file's imports, re-exports, `require` calls and `import()` calls name files: a relative specifier from the importing file, and a bare one through the `paths` and `baseUrl` of the `tsconfig.json` or `jsconfig.json` nearest above it, read alongside the changed files with their comments and trailing commas allowed. Each names a changed file as written, with a script's extension, or as its directory's `index`, as bundlers and TypeScript resolve; a `.js` name tries the `.ts` file it compiles from first, as TypeScript's ES modules are written. An import of a stylesheet or other non-script file joins it too. Bare specifiers nothing maps are npm packages, never changed files, and are passed over; a tsconfig's `extends`, and a monorepo's packages imported by their package names, aren't followed yet.
+
 ## Not yet decided
 
 Nothing is pending.
