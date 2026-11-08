@@ -70,6 +70,7 @@ public enum FixtureCheckouts {
     private static func buildGazette(in directory: URL) async throws -> [Branch] {
         let repo = try await repository("tamarinworks/gazette", in: directory, branch: "master", files: [
             "README.md": "# gazette\n\nServes panels from their cache.\n",
+            "go.mod": "module github.com/tamarinworks/gazette\n\ngo 1.22\n",
             "cmd/gazette/main.go": "package main\n\nimport \"github.com/tamarinworks/gazette/panel\"\n\nfunc main() {\n\tpanel.Serve()\n}",
             "panel/cache.go": "package panel\n\n// Write stores the panel, every time it's asked to.\nfunc (c *Cache) Write(p Panel) error {\n\treturn c.store.Put(p.Key, p)\n}\n",
         ])

@@ -24,3 +24,16 @@ expect "kiln/models/recipe"
 press ctrl+cmd+o
 expect radio "Top down" in #file-order has value "1"
 wait until ~"Standalone (3)"
+
+# gazette #273's main.go imports the batch package it adds, so they're grouped, bottom up the
+# package first; its doc uses nothing.
+open tamarinworks/gazette#273
+wait settled
+click image #doc
+wait settled
+expect radio "Folders" in #file-order has value "1"
+click radio "Bottom up" in #file-order
+wait until ~"Group 1 (2)"
+expect ~"Standalone (1)"
+expect text "status.go" 1
+snap gazette-bottom-up list 1

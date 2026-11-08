@@ -24,6 +24,61 @@ struct FileOrderTests {
         await tab.setFileOrder(.directories)
         #expect(tab.fileGroups == nil)
     }
+
+    @Test func goFilesUseThePackagesTheyImportAndTestsTheirOwnPackage() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(startingWith: ["go.mod": "module example.com/shop\n\ngo 1.22\n"], changing: [
+            "model/user.go": "package model\n\ntype User struct{ Name string }\n",
+            "store/users.go": "package store\n\nimport \"example.com/shop/model\"\n\nfunc Find() model.User { return model.User{} }\n",
+            "store/users_test.go": "package store\n\nimport \"testing\"\n\nfunc TestFind(t *testing.T) { Find() }\n",
+            "api/server.go": "package api\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/shop/store\"\n)\n\nfunc Serve() { fmt.Println(store.Find()) }\n",
+            "README.md": "# shop\n",
+        ])
+        let tab = try await app.open(pullRequest)
+
+        await tab.setFileOrder(.bottomUp)
+
+        #expect(outline(tab) == [
+            "group",
+            "  model/user.go",
+            "  store/users.go",
+            "  api/server.go",
+            "  store/users_test.go",
+            "standalone",
+            "  README.md",
+        ])
+        await tab.setFileOrder(.topDown)
+        #expect(outline(tab) == [
+            "group",
+            "  api/server.go",
+            "  store/users_test.go",
+            "  store/users.go",
+            "  model/user.go",
+            "standalone",
+            "  README.md",
+        ])
+        #expect(tab.selectedFile == "api/server.go", "the file the PR opened on stays shown")
+        tab.selectAdjacentFile(1)
+        #expect(tab.selectedFile == "store/users_test.go", "moving on follows the list")
+        #expect(tab.nextUnviewedFile(after: "store/users_test.go") == "store/users.go")
+    }
+
+    @Test func goModulesNestedInTheRepoResolveFromTheirOwnGoMod() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(startingWith: ["services/billing/go.mod": "module github.com/acme/billing\n"], changing: [
+            "services/billing/invoice/invoice.go": "package invoice\n\ntype Invoice struct{}\n",
+            "services/billing/cmd/billing/main.go": "package main\n\nimport `github.com/acme/billing/invoice`\n\nvar _ invoice.Invoice\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == ["group", "  services/billing/invoice/invoice.go", "  services/billing/cmd/billing/main.go"])
+    }
+}
+
+/// The shown changes' groups, each as a line saying what kind it is, then its files indented.
+@MainActor
+private func outline(_ tab: PullRequestTab) -> [String] {
+    (tab.fileGroups ?? []).flatMap { [$0.isStandalone ? "standalone" : "group"] + $0.files.map { "  \($0)" } }
 }
 
 extension ThreadsApp {

@@ -1098,6 +1098,10 @@ Reviewing a change that runs through several layers reads best in the order its 
 
 The dependencies are found from the changed files' imports, read at the changes' head with one `git cat-file --batch`, and only resolved to other changed files, so no other file is read beyond the few that say how imports resolve (such as `go.mod`). They're found off the main thread once per range of changes, and kept in memory, as they follow from the commits; until they're found the list stays by folder. A language server would resolve names exactly but needs a checkout of the PR's head and its dependencies installed, and seconds to index; matching names a file declares against words in other files joined nearly every pair through common member names, so imports are the backbone. Deleted files aren't read, so they're standalone.
 
+### Go files use the packages they import, and tests their own directory
+
+A Go import path names a package, which is a directory under the module whose `go.mod` is nearest above the importing file, so an import resolves to that directory's changed files, tests aside; the `go.mod` files above the changed Go files are read alongside them, and a repo holding several modules resolves each from its own. Files of one package don't import each other, so they're only joined through other packages for now. A `_test.go` file uses its own directory's other files, whether it's in the package or its external test package, so tests follow what they test bottom up.
+
 ## Not yet decided
 
 Nothing is pending.

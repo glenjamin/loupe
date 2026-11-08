@@ -1,4 +1,6 @@
 import Foundation
+import os
+import SwiftTreeSitter
 
 /// Which changed files use which, read from their imports, for listing them in dependency order.
 /// Only the changed files are read, with the few files that say how their imports resolve, so
@@ -31,7 +33,7 @@ public enum FileDependencies {
         return dependencies
     }
 
-    private static let languages: [any DependencyLanguage] = []
+    private static let languages: [any DependencyLanguage] = [GoDependencies()]
 }
 
 /// One language's imports: which files are needed to read them, and which changed files they name.
@@ -39,3 +41,53 @@ protocol DependencyLanguage: Sendable {
     func filesToRead(among paths: [String]) -> [String]
     func dependencies(among paths: [String], contents: [String: String]) -> [String: Set<String>]
 }
+
+/// A query over one grammar, compiled once, that reads what a file's text names, such as the
+/// paths it imports.
+struct ImportQuery: Sendable {
+    private let language: Language
+    private let query: Query
+
+    init?(_ parser: OpaquePointer?, _ source: String) {
+        guard let parser else { return nil }
+        language = Language(language: parser)
+        guard let query = try? Query(language: language, data: Data(source.utf8)) else {
+            logger.error("Couldn't compile a dependency query: \(source, privacy: .public)")
+            return nil
+        }
+        self.query = query
+    }
+
+    /// The text of each capture in `text`, by capture name, in the order they come.
+    func captures(in text: String) -> [(name: String, text: String)] {
+        let parser = Parser()
+        guard (try? parser.setLanguage(language)) != nil, let tree = parser.parse(text) else { return [] }
+        let string = text as NSString
+        return query.execute(in: tree).resolve(with: Predicate.Context(string: text)).flatMap { match in
+            match.captures.compactMap { capture in capture.name.map { ($0, string.substring(with: capture.range)) } }
+        }
+    }
+}
+
+/// `path`'s directory, empty for one at the top.
+func directory(of path: String) -> String {
+    (path as NSString).deletingLastPathComponent
+}
+
+/// The directories `path` is in, innermost first, ending with the top, as "".
+func ancestors(of path: String) -> [String] {
+    var directories: [String] = []
+    var current = directory(of: path)
+    while !current.isEmpty {
+        directories.append(current)
+        current = directory(of: current)
+    }
+    return directories + [""]
+}
+
+/// `name` in `directory`, as a path from the top.
+func joined(_ directory: String, _ name: String) -> String {
+    directory.isEmpty ? name : "\(directory)/\(name)"
+}
+
+private let logger = Logger(subsystem: "com.glenmailer.Loupe", category: "FileDependencies")

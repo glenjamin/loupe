@@ -249,7 +249,7 @@ private struct Grammar: Sendable {
     }
 }
 
-private extension TreeSitterLanguage {
+extension TreeSitterLanguage {
     /// The parser from CodeEditLanguages' prebuilt framework.
     var tsLanguage: OpaquePointer? {
         switch self {
@@ -300,7 +300,7 @@ private extension TreeSitterLanguage {
 
 /// Grammars CodeEditLanguages lacks, each vendored as a target of its own with a highlights
 /// query in its resource bundle.
-private enum VendoredGrammar: String {
+enum VendoredGrammar: String {
     case proto
     case hcl
     case graphql
