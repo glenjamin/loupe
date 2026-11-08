@@ -125,6 +125,33 @@ struct FileOrderTests {
         await tab.setFileOrder(.topDown)
         #expect(outline(tab) == ["group", "  web/src/App.tsx", "  web/config/index.ts", "  web/lib/format.ts", "  web/src/store.ts"])
     }
+
+    @Test func terraformFilesUseWhatTheirModuleDefinesElsewhereAndTheLocalModulesTheyCall() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "modules/cache/variables.tf": "variable \"name\" {\n  type = string\n}\n",
+            "modules/cache/main.tf": "resource \"aws_elasticache_cluster\" \"this\" {\n  cluster_id = var.name\n}\n",
+            "modules/cache/outputs.tf": "output \"endpoint\" {\n  value = aws_elasticache_cluster.this.cache_nodes[0].address\n}\n",
+            "envs/prod/locals.tf": "locals {\n  # Services\n  services = { cache = \"cache\" }\n}\n",
+            "envs/prod/main.tf": "module \"cache\" {\n  source = \"../../modules/cache\"\n  name   = \"${local.services.cache}-prod\"\n}\n\nmodule \"vpc\" {\n  source = \"terraform-aws-modules/vpc/aws\"\n}\n",
+            "envs/prod/outputs.tf": "output \"cache\" {\n  value = module.cache.endpoint\n}\n\ndata \"aws_region\" \"current\" {}\n",
+            "envs/prod/region.tf": "output \"region\" {\n  value = data.aws_region.current.name\n}\n",
+        ])
+        let tab = try await app.open(pullRequest)
+
+        await tab.setFileOrder(.bottomUp)
+
+        #expect(outline(tab) == [
+            "group",
+            "  envs/prod/locals.tf",
+            "  modules/cache/variables.tf",
+            "  modules/cache/main.tf",
+            "  modules/cache/outputs.tf",
+            "  envs/prod/main.tf",
+            "  envs/prod/outputs.tf",
+            "  envs/prod/region.tf",
+        ])
+    }
 }
 
 /// The shown changes' groups, each as a line saying what kind it is, then its files indented.

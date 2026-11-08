@@ -70,10 +70,10 @@ struct ScriptDependencies: DependencyLanguage {
     /// The paths, without resolving extensions, that `specifier` may name from `path`.
     private func bases(of specifier: String, from path: String, config: Config?) -> [String] {
         if specifier.hasPrefix("./") || specifier.hasPrefix("../") || specifier == "." || specifier == ".." {
-            return [normalised(joined(directory(of: path), specifier))].compactMap { $0 }
+            return [normalisedPath(joined(directory(of: path), specifier))].compactMap { $0 }
         }
         guard let config else { return [] }
-        return config.bases(of: specifier).compactMap(normalised)
+        return config.bases(of: specifier).compactMap(normalisedPath)
     }
 
     /// The changed file `base` names: itself, with a script's extension, or its directory's index.
@@ -127,21 +127,6 @@ private struct Config {
         }
         return hasBaseUrl ? [joined(base, specifier)] : []
     }
-}
-
-/// `path` with its `.` and `..` components resolved, nil if it climbs out of the repo.
-private func normalised(_ path: String) -> String? {
-    var components: [Substring] = []
-    for component in path.split(separator: "/") {
-        switch component {
-        case ".": continue
-        case "..":
-            guard !components.isEmpty else { return nil }
-            components.removeLast()
-        default: components.append(component)
-        }
-    }
-    return components.joined(separator: "/")
 }
 
 /// JSON with the comments and trailing commas `tsconfig.json` allows taken out.

@@ -33,7 +33,7 @@ public enum FileDependencies {
         return dependencies
     }
 
-    private static let languages: [any DependencyLanguage] = [GoDependencies(), ScriptDependencies()]
+    private static let languages: [any DependencyLanguage] = [GoDependencies(), ScriptDependencies(), TerraformDependencies()]
 }
 
 /// One language's imports: which files are needed to read them, and which changed files they name.
@@ -60,11 +60,18 @@ struct ImportQuery: Sendable {
 
     /// The text of each capture in `text`, by capture name, in the order they come.
     func captures(in text: String) -> [(name: String, text: String)] {
+        matches(in: text).flatMap { $0 }
+    }
+
+    /// Each match's captures in `text`, by capture name, in the order they come.
+    func matches(in text: String) -> [[(name: String, text: String)]] {
         let parser = Parser()
         guard (try? parser.setLanguage(language)) != nil, let tree = parser.parse(text) else { return [] }
         let string = text as NSString
-        return query.execute(in: tree).resolve(with: Predicate.Context(string: text)).flatMap { match in
-            match.captures.compactMap { capture in capture.name.map { ($0, string.substring(with: capture.range)) } }
+        return query.execute(in: tree).resolve(with: Predicate.Context(string: text)).map { match in
+            match.captures.sorted { $0.range.location < $1.range.location }.compactMap { capture in
+                capture.name.map { ($0, string.substring(with: capture.range)) }
+            }
         }
     }
 }
@@ -88,6 +95,21 @@ func ancestors(of path: String) -> [String] {
 /// `name` in `directory`, as a path from the top.
 func joined(_ directory: String, _ name: String) -> String {
     directory.isEmpty ? name : "\(directory)/\(name)"
+}
+
+/// `path` with its `.` and `..` components resolved, nil if it climbs out of the repo.
+func normalisedPath(_ path: String) -> String? {
+    var components: [Substring] = []
+    for component in path.split(separator: "/") {
+        switch component {
+        case ".": continue
+        case "..":
+            guard !components.isEmpty else { return nil }
+            components.removeLast()
+        default: components.append(component)
+        }
+    }
+    return components.joined(separator: "/")
 }
 
 private let logger = Logger(subsystem: "com.glenmailer.Loupe", category: "FileDependencies")

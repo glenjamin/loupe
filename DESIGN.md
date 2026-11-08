@@ -1106,6 +1106,10 @@ A Go import path names a package, which is a directory under the module whose `g
 
 A JavaScript or TypeScript file's imports, re-exports, `require` calls and `import()` calls name files: a relative specifier from the importing file, and a bare one through the `paths` and `baseUrl` of the `tsconfig.json` or `jsconfig.json` nearest above it, read alongside the changed files with their comments and trailing commas allowed. Each names a changed file as written, with a script's extension, or as its directory's `index`, as bundlers and TypeScript resolve; a `.js` name tries the `.ts` file it compiles from first, as TypeScript's ES modules are written. An import of a stylesheet or other non-script file joins it too. Bare specifiers nothing maps are npm packages, never changed files, and are passed over; a tsconfig's `extends`, and a monorepo's packages imported by their package names, aren't followed yet.
 
+### Terraform files use what their module defines elsewhere, and the local modules they call
+
+A directory's `.tf` files are one module sharing one scope, with no imports between them, so a file uses the file in its directory that defines what it refers to: `var.x` a variable, `local.x` a local, `module.x` a module call, `data.t.x` a data source and `t.x` a resource, read from each file's top-level blocks and its expressions, interpolations included. A `module` block whose source is a local path uses the changed files of the directory it names, so a module's files come before the environments calling it bottom up. Registry and git sources aren't changed files and are passed over. Outputs aren't referred to within their module, so a module's `outputs.tf` joins through what it refers to.
+
 ## Not yet decided
 
 Nothing is pending.
