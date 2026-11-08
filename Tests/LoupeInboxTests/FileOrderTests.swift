@@ -63,6 +63,19 @@ struct FileOrderTests {
         #expect(tab.nextUnviewedFile(after: "store/users_test.go") == "store/users.go")
     }
 
+    @Test func goFilesInOnePackageUseThoseDefiningTheTopLevelNamesTheyReferTo() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "report/filter.go": "package report\n\n// Filter narrows a report's rows.\ntype Filter struct{ Field string }\n\nfunc (f Filter) Apply() {}\n",
+            "report/report.go": "package report\n\ntype Report struct{ filters []Filter }\n\nfunc New() *Report { return &Report{} }\n",
+            "report/copy.go": "package report\n\nfunc Copy(r *Report) *Report {\n\tclone := New()\n\tclone.filters = r.filters\n\treturn clone\n}\n",
+            "report/limits.go": "package report\n\nconst maxRows = 100\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == ["group", "  report/filter.go", "  report/report.go", "  report/copy.go", "standalone", "  report/limits.go"])
+    }
+
     @Test func goModulesNestedInTheRepoResolveFromTheirOwnGoMod() async throws {
         let app = try await ThreadsApp()
         let pullRequest = try await app.pushPullRequest(startingWith: ["services/billing/go.mod": "module github.com/acme/billing\n"], changing: [

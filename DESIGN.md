@@ -1100,7 +1100,7 @@ The dependencies are found from the changed files' imports, read at the changes'
 
 ### Go files use the packages they import, and tests their own directory
 
-A Go import path names a package, which is a directory under the module whose `go.mod` is nearest above the importing file, so an import resolves to that directory's changed files, tests aside; the `go.mod` files above the changed Go files are read alongside them, and a repo holding several modules resolves each from its own. Files of one package don't import each other, so they're only joined through other packages for now. A `_test.go` file uses its own directory's other files, whether it's in the package or its external test package, so tests follow what they test bottom up.
+A Go import path names a package, which is a directory under the module whose `go.mod` is nearest above the importing file, so an import resolves to that directory's changed files, tests aside; the `go.mod` files above the changed Go files are read alongside them, and a repo holding several modules resolves each from its own. Files of one package don't import each other, so within a package a file uses the files defining the top-level types, functions, constants and variables it names; methods and fields aren't counted, as their names are too common across files to say much. Every top-level name counts, changed or not, as a file using an unchanged helper beside it still reads best after it. A `_test.go` file uses its own directory's other files, whether it's in the package or its external test package, so tests follow what they test bottom up.
 
 ### Scripts use the files they import, by path or tsconfig alias
 
