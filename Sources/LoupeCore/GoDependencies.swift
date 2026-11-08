@@ -30,26 +30,25 @@ struct GoDependencies: DependencyLanguage {
             byDirectory[directory(of: path), default: []].append(path)
             if let importPath = importPath(of: directory(of: path), modules: modules) { packages[importPath, default: []].append(path) }
         }
+        let parsed = Dictionary(uniqueKeysWithValues: zip(sources, concurrentMap(sources) { path in
+            Self.names?.captures(in: contents[path] ?? "") ?? []
+        }))
         // What each directory's files define at the top level, by name.
         var definers: [String: [String: Set<String>]] = [:]
-        var referred: [String: Set<String>] = [:]
         for path in sources where !isTest(path) {
-            guard let text = contents[path] else { continue }
-            var defined = Set<String>()
-            var names = Set<String>()
-            for capture in Self.names?.captures(in: text) ?? [] {
-                if capture.name == "definition" { defined.insert(capture.text) } else { names.insert(capture.text) }
+            for capture in parsed[path] ?? [] where capture.name == "definition" && !["_", "init", "main"].contains(capture.text) {
+                definers[directory(of: path), default: [:]][capture.text, default: []].insert(path)
             }
-            for name in defined.subtracting(["_", "init", "main"]) { definers[directory(of: path), default: [:]][name, default: []].insert(path) }
-            referred[path] = names
         }
         var dependencies: [String: Set<String>] = [:]
         for path in sources {
-            guard let text = contents[path] else { continue }
             var used = Set<String>()
-            for name in referred[path] ?? [] { used.formUnion(definers[directory(of: path)]?[name] ?? []) }
-            for capture in Self.imports?.captures(in: text) ?? [] {
-                used.formUnion(packages[unquoted(capture.text)] ?? [])
+            for capture in parsed[path] ?? [] {
+                switch capture.name {
+                case "path": used.formUnion(packages[unquoted(capture.text)] ?? [])
+                case "reference": used.formUnion(definers[directory(of: path)]?[capture.text] ?? [])
+                default: break
+                }
             }
             if isTest(path) { used.formUnion(byDirectory[directory(of: path)] ?? []) }
             used.remove(path)
@@ -58,11 +57,8 @@ struct GoDependencies: DependencyLanguage {
         return dependencies
     }
 
-    private static let imports = ImportQuery(TreeSitterLanguage.go.tsLanguage, """
-        (import_spec path: (_) @path)
-        """)
-
     private static let names = ImportQuery(TreeSitterLanguage.go.tsLanguage, """
+        (import_spec path: (_) @path)
         (source_file (function_declaration name: (identifier) @definition))
         (source_file (type_declaration (type_spec name: (type_identifier) @definition)))
         (source_file (const_declaration (const_spec name: (identifier) @definition)))

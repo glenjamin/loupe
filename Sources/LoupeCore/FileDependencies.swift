@@ -76,6 +76,30 @@ struct ImportQuery: Sendable {
     }
 }
 
+/// `transform` of each of `items`, run across the cores, in order: each file's parse is its own.
+func concurrentMap<Item: Sendable, Result: Sendable>(_ items: [Item], _ transform: @Sendable (Item) -> Result) -> [Result] {
+    let results = Results<Result>(count: items.count)
+    DispatchQueue.concurrentPerform(iterations: items.count) { index in results[index] = transform(items[index]) }
+    return results.values
+}
+
+/// Slots filled from several threads at once, each by one of them.
+private final class Results<Value: Sendable>: @unchecked Sendable {
+    private var slots: [Value?]
+    private let lock = NSLock()
+
+    init(count: Int) {
+        slots = Array(repeating: nil, count: count)
+    }
+
+    subscript(index: Int) -> Value? {
+        get { lock.withLock { slots[index] } }
+        set { lock.withLock { slots[index] = newValue } }
+    }
+
+    var values: [Value] { lock.withLock { slots.compactMap { $0 } } }
+}
+
 /// `path`'s directory, empty for one at the top.
 func directory(of path: String) -> String {
     (path as NSString).deletingLastPathComponent

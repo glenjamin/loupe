@@ -15,11 +15,11 @@ struct RubyDependencies: DependencyLanguage {
         guard !sources.isEmpty else { return [:] }
         let changed = Set(paths)
         let loadable = sources.filter { !isSpec($0) }
+        let parsed = concurrentMap(sources) { path in Self.names?.captures(in: contents[path] ?? "") ?? [] }
         var dependencies: [String: Set<String>] = [:]
-        for path in sources {
-            guard let text = contents[path] else { continue }
+        for (path, captures) in zip(sources, parsed) {
             var used = Set<String>()
-            for capture in Self.names?.captures(in: text) ?? [] {
+            for capture in captures {
                 switch capture.name {
                 case "required":
                     let required = capture.text.hasSuffix(".rb") ? capture.text : capture.text + ".rb"

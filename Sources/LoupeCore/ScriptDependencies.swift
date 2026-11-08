@@ -25,12 +25,15 @@ struct ScriptDependencies: DependencyLanguage {
         for (path, text) in contents where Self.configNames.contains((path as NSString).lastPathComponent) {
             if let config = Config(text, at: directory(of: path)) { configs[directory(of: path)] = config }
         }
+        let scripts = paths.filter { Self.grammar(of: $0) != nil && contents[$0] != nil }
+        let parsed = Dictionary(uniqueKeysWithValues: zip(scripts, concurrentMap(scripts) { path in
+            Self.grammar(of: path)?.captures(in: contents[path] ?? "") ?? []
+        }))
         var dependencies: [String: Set<String>] = [:]
-        for path in paths {
-            guard let query = Self.grammar(of: path), let text = contents[path] else { continue }
+        for path in scripts {
             let config = ([directory(of: path)] + ancestors(of: path)).lazy.compactMap { configs[$0] }.first
             var used = Set<String>()
-            for capture in query.captures(in: text) where capture.name == "source" {
+            for capture in parsed[path] ?? [] where capture.name == "source" {
                 let specifier = capture.text.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
                 for base in bases(of: specifier, from: path, config: config) {
                     if let file = resolve(base, among: changed) {

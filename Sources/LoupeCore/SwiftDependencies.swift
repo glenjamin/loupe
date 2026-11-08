@@ -14,12 +14,14 @@ struct SwiftDependencies: DependencyLanguage {
         var targets: [Target: [String]] = [:]
         var definers: [Target: [String: Set<String>]] = [:]
         var parsed: [String: (modules: Set<String>, references: Set<String>)] = [:]
-        for path in paths {
-            guard let target = target(of: path), let text = contents[path] else { continue }
+        let sources = paths.filter { target(of: $0) != nil && contents[$0] != nil }
+        let captures = concurrentMap(sources) { path in Self.names?.captures(in: contents[path] ?? "") ?? [] }
+        for (path, found) in zip(sources, captures) {
+            guard let target = target(of: path) else { continue }
             targets[target, default: []].append(path)
             var modules = Set<String>()
             var references = Set<String>()
-            for capture in Self.names?.captures(in: text) ?? [] {
+            for capture in found {
                 switch capture.name {
                 case "module": modules.insert(String(capture.text.prefix { $0 != "." }))
                 case "definition": definers[target, default: [:]][capture.text, default: []].insert(path)

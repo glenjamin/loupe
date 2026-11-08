@@ -1122,6 +1122,10 @@ SCSS's `@use`, `@forward` and `@import` name a file from the importing one as wr
 
 `Process.waitUntilExit()` waits by running the current thread's run loop in slices, and on the threads git runs from, which have none, it returned tens of milliseconds after git had exited: a `cat-file` git answered in 5ms took about 75ms from Loupe, most of the time. Each run now waits on a semaphore its termination handler signals, which every git Loupe runs gains from.
 
+### The dependency pass parses files in parallel, each once
+
+Timed in a release build on real PRs (git read, then parse and resolve, then grouping): a 25-file Go PR takes 50ms, a 54-file TypeScript one 38ms, 173 and 261 Terraform files 78ms and 93ms, 335 Swift files of Loupe's own history 255ms, and a 568-file TypeScript PR deleting 552 files, which reads both sides, 215ms. Each file is parsed once, by one query per language, with the files spread across the cores, which made parsing four to seven times faster than one at a time; grouping a large PR is a few milliseconds, once its test matching stopped comparing every pair of files.
+
 ## Not yet decided
 
 Nothing is pending.

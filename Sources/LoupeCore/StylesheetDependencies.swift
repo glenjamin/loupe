@@ -10,11 +10,12 @@ struct StylesheetDependencies: DependencyLanguage {
 
     func dependencies(among paths: [String], contents: [String: String]) -> [String: Set<String>] {
         let changed = Set(paths)
+        let sources = paths.filter { isSCSS($0) && contents[$0] != nil }
+        let parsed = concurrentMap(sources) { path in Self.imports?.captures(in: contents[path] ?? "") ?? [] }
         var dependencies: [String: Set<String>] = [:]
-        for path in paths where isSCSS(path) {
-            guard let text = contents[path] else { continue }
+        for (path, captures) in zip(sources, parsed) {
             var used = Set<String>()
-            for capture in Self.imports?.captures(in: text) ?? [] where capture.name == "source" {
+            for capture in captures where capture.name == "source" {
                 let specifier = capture.text.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
                 guard !specifier.contains(":"), let base = normalisedPath(joined(directory(of: path), specifier)) else { continue }
                 if let file = candidates(of: base).first(where: changed.contains) { used.insert(file) }

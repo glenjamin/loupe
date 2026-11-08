@@ -61,7 +61,7 @@ public struct FileGraph: Sendable, Equatable {
         let joined = components.filter { $0.count > 1 }
             .sorted { $0.count != $1.count ? $0.count > $1.count : $0[0] < $1[0] }
             .map { Group(files: placingTests(graph.ordered($0, usersFirst: order == .topDown).map { files[$0] }, afterAllUsed: order == .bottomUp), isStandalone: false) }
-        let standalone = components.filter { $0.count == 1 }.map { files[$0[0]] }.sorted { position[$0]! < position[$1]! }
+        let standalone = components.filter { $0.count == 1 }.map(\.[0]).sorted().map { files[$0] }
         return joined + (standalone.isEmpty ? [] : [Group(files: standalone, isStandalone: true)])
     }
 
@@ -74,7 +74,8 @@ public struct FileGraph: Sendable, Equatable {
     /// it, or with `afterAllUsed`, after the last of it and the others the test uses.
     private func placingTests(_ ordered: [String], afterAllUsed: Bool) -> [String] {
         let present = Set(ordered)
-        let subjects = Dictionary(uniqueKeysWithValues: ordered.compactMap { path in testSubject(of: path, among: present).map { (path, $0) } })
+        let byName = Dictionary(grouping: ordered) { ($0 as NSString).lastPathComponent }
+        let subjects = Dictionary(uniqueKeysWithValues: ordered.compactMap { path in testSubject(of: path, among: present, byName: byName).map { (path, $0) } })
         let place = Dictionary(uniqueKeysWithValues: ordered.enumerated().map { ($1, $0) })
         var tests: [String: [String]] = [:]
         for path in ordered {
@@ -86,9 +87,6 @@ public struct FileGraph: Sendable, Equatable {
         return ordered.filter { subjects[$0] == nil }.flatMap { [$0] + (tests[$0] ?? []) }
     }
 
-    private var position: [String: Int] {
-        Dictionary(uniqueKeysWithValues: files.enumerated().map { ($1, $0) })
-    }
 }
 
 /// The graph by the files' places in the tree's order, with edges from each file to those it uses.
@@ -209,7 +207,7 @@ private struct IndexedGraph {
 /// `x.test.ts` or `x.spec.ts` for `x.ts` (beside it, or above a `__tests__` directory),
 /// `XTests.swift` for `X.swift`, `x_spec.rb` for `x.rb` and `test_x.py` for `x.py`; one
 /// named alike elsewhere if there's just one. Nil when it isn't a test, or there's no such file.
-private func testSubject(of path: String, among present: Set<String>) -> String? {
+private func testSubject(of path: String, among present: Set<String>, byName: [String: [String]]) -> String? {
     let name = (path as NSString).lastPathComponent
     let directory = (path as NSString).deletingLastPathComponent
     var stems: [String] = []
@@ -242,6 +240,6 @@ private func testSubject(of path: String, among present: Set<String>) -> String?
             if full != path, present.contains(full) { return full }
         }
     }
-    let elsewhere = present.filter { $0 != path && names.contains(($0 as NSString).lastPathComponent) }
+    let elsewhere = names.flatMap { byName[$0] ?? [] }.filter { $0 != path }
     return elsewhere.count == 1 ? elsewhere.first : nil
 }
