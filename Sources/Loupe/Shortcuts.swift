@@ -11,7 +11,7 @@ enum Shortcut: CaseIterable {
     case openOnGitHub, copyLink, openInEditor, editDescription, reviewers, merge
     case summary, approve, requestChanges, submitReview
     case nextFile, previousFile, markReviewedAndNext, toggleReviewed, nextCommit, previousCommit
-    case toggleRendered, hideRevealedLines, hideWhitespace, wrapLines, quoteReply
+    case toggleRendered, hideRevealedLines, hideWhitespace, nextFileOrder, wrapLines, quoteReply
     case moveBetweenResources, toggleResource, expandAllResources, collapseAllResources
     case send, sendSecond, cancel, togglePreview, suggestChange, moveByCodeWord
 
@@ -31,7 +31,7 @@ enum Shortcut: CaseIterable {
         case .openSelected, .toggleTodo, .showClosed: .lists
         case .conversation, .files, .visualReview, .circleCI, .terraform, .openOnGitHub, .copyLink, .openInEditor, .editDescription, .reviewers, .merge: .pullRequest
         case .summary, .approve, .requestChanges, .submitReview: .review
-        case .nextFile, .previousFile, .markReviewedAndNext, .toggleReviewed, .nextCommit, .previousCommit, .toggleRendered, .hideRevealedLines, .hideWhitespace, .wrapLines, .quoteReply: .files
+        case .nextFile, .previousFile, .markReviewedAndNext, .toggleReviewed, .nextCommit, .previousCommit, .toggleRendered, .hideRevealedLines, .hideWhitespace, .nextFileOrder, .wrapLines, .quoteReply: .files
         case .moveBetweenResources, .toggleResource, .expandAllResources, .collapseAllResources: .terraform
         case .send, .sendSecond, .cancel, .togglePreview, .suggestChange, .moveByCodeWord: .comments
         }
@@ -79,6 +79,7 @@ enum Shortcut: CaseIterable {
         case .toggleRendered: "Switch between the diff and the rendered file"
         case .hideRevealedLines: "Hide the lines revealed around the hunks"
         case .hideWhitespace: "Hide whitespace changes"
+        case .nextFileOrder: "Order the files by folder, top down or bottom up, in turn"
         case .wrapLines: "Wrap lines"
         case .quoteReply: "Quote the selected text into a reply"
         case .send: "Send"
@@ -129,6 +130,7 @@ enum Shortcut: CaseIterable {
         case .toggleRendered: KeyboardShortcut("r", modifiers: [.command, .control])
         case .hideRevealedLines: KeyboardShortcut("e", modifiers: [.command, .control])
         case .hideWhitespace: KeyboardShortcut("h", modifiers: [.command, .control])
+        case .nextFileOrder: KeyboardShortcut("o", modifiers: [.command, .control])
         case .expandAllResources: KeyboardShortcut(.rightArrow, modifiers: [.command, .option])
         case .collapseAllResources: KeyboardShortcut(.leftArrow, modifiers: [.command, .option])
         case .wrapLines: KeyboardShortcut("l", modifiers: [.command, .option])

@@ -6,7 +6,7 @@ extension PullRequestTab {
     /// after the rest, stopping at either end; the first file when none is shown.
     public func selectAdjacentFile(_ step: Int) {
         guard case let .ready(changes)? = shownChanges else { return }
-        let files = FileTree(paths: changes.files.map(\.path)).files + FileTree(paths: changes.hidden.map(\.path)).files
+        let files = orderedFiles(of: changes) + FileTree(paths: changes.hidden.map(\.path)).files
         guard let current = selectedFile, let index = files.firstIndex(of: current) else {
             selectedFile = files.first
             return

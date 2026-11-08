@@ -52,6 +52,9 @@ public final class PullRequestTab: Identifiable {
     /// whitespace" does. Off for each tab as it opens, since whether it helps depends on the PR;
     /// it says what's wanted at once, while the changes shown follow once diffed.
     public private(set) var hidesWhitespace = false
+    /// How the file list orders the files to review. Directories for each tab as it opens, as
+    /// github.com lists them; the other orders follow once the files' dependencies are found.
+    public private(set) var fileOrder = FileOrder.directories
     /// Whether the changes shown were diffed ignoring whitespace.
     public private(set) var shownIgnoresWhitespace = false
     /// Whether the changes pending are being diffed ignoring whitespace.
@@ -194,6 +197,11 @@ public final class PullRequestTab: Identifiable {
     private var packageLockChanges: [HiddenFileKey: DiffState<PackageLockChanges>] = [:]
     /// The npm lockfiles shown as their diff rather than their package changes.
     private var rawPackageLocks: Set<String> = []
+    /// Which files to review use which, by range, once found. A range names its commits, so
+    /// these never go stale.
+    private var fileGraphs: [DiffRange: DiffState<FileGraph>] = [:]
+    /// The searches for each range's dependencies underway, which a second ask waits for.
+    @ObservationIgnored private var dependencySearches: [DiffRange: Task<Void, Never>] = [:]
 
     init(opened: PullRequestSummary, lists: PullRequestListModel, store: PullRequestStore, differ: PullRequestDiffer, client: GitHubClient, candidates: ReviewerCandidates, emojis: EmojiCatalog, sleep: @escaping @Sendable (Duration) async throws -> Void) {
         id = opened.id
@@ -451,6 +459,63 @@ public final class PullRequestTab: Identifiable {
         await show(pendingChoice ?? shownChoice, ignoringWhitespace: hides)
     }
 
+    /// Orders the file list as `order` asks, for every choice of changes in this tab. Until the
+    /// shown changes' dependencies are found, the list stays in directory order.
+    public func setFileOrder(_ order: FileOrder) async {
+        guard order != fileOrder else { return }
+        fileOrder = order
+        await findDependencies()
+    }
+
+    /// The shown changes' groups of files as the file list shows them in dependency order; nil
+    /// in directory order, or until their dependencies are found.
+    public var fileGroups: [FileGraph.Group]? {
+        guard fileOrder != .directories, let graph = shownFileGraph else { return nil }
+        return graph.groups(fileOrder)
+    }
+
+    /// Which of the shown changes' files to review use which, once found.
+    public var shownFileGraph: FileGraph? {
+        guard let range = shownRange, case let .ready(graph)? = fileGraphs[range] else { return nil }
+        return graph
+    }
+
+    /// The files to review of `changes`, the shown ones, in the file list's order.
+    public func orderedFiles(of changes: ReviewChanges) -> [String] {
+        guard let groups = fileGroups else { return FileTree(paths: changes.files.map(\.path)).files }
+        return groups.flatMap(\.files)
+    }
+
+    /// Finds which of the shown changes' files use which, from their contents at the changes'
+    /// head, once per range; while ordering by directory, nothing is looked for.
+    public func findDependencies() async {
+        guard fileOrder != .directories, let range = shownRange, let checkout, case let .ready(changes)? = shownChanges else { return }
+        switch fileGraphs[range] {
+        case .ready?: return
+        case .diffing?:
+            if let search = dependencySearches[range] { await search.value }
+            return
+        case .failed?, nil: break
+        }
+        fileGraphs[range] = .diffing
+        let paths = changes.files.map(\.path)
+        let differ = differ
+        let search = Task {
+            do {
+                let wanted = FileDependencies.filesToRead(among: paths)
+                let contents = wanted.isEmpty ? [:] : try await differ.contents(of: wanted, at: range.head, in: checkout, limit: FileDependencies.largestFile)
+                let dependencies = await Task.detached { FileDependencies.find(among: paths, contents: contents) }.value
+                fileGraphs[range] = .ready(FileGraph(paths: paths, dependencies: dependencies))
+            } catch {
+                log("Couldn't find the dependencies of \(pullRequest.repository)#\(pullRequest.number)'s files: \(error)")
+                fileGraphs[range] = .failed(error.localizedDescription)
+            }
+            dependencySearches[range] = nil
+        }
+        dependencySearches[range] = search
+        await search.value
+    }
+
     private func show(_ choice: ChangesChoice, ignoringWhitespace: Bool) async {
         guard case let .ready(review) = phase, let checkout else { return }
         if case let .since(anchor) = choice, anchorState(of: anchor) != .ready { return }
@@ -460,7 +525,8 @@ public final class PullRequestTab: Identifiable {
             pendingChoice = nil
             shownChoice = .all
             shownIgnoresWhitespace = false
-            return keepSelection(in: review.changes)
+            keepSelection(in: review.changes)
+            return await findDependencies()
         }
         let key = ChangesKey(range: range, ignoresWhitespace: ignoringWhitespace)
         switch pickedChanges[key] {
@@ -468,7 +534,8 @@ public final class PullRequestTab: Identifiable {
             pendingChoice = nil
             shownChoice = choice
             shownIgnoresWhitespace = ignoringWhitespace
-            return keepSelection(in: changes)
+            keepSelection(in: changes)
+            return await findDependencies()
         case .diffing:
             pendingChoice = choice
             pendingIgnoresWhitespace = ignoringWhitespace
@@ -487,6 +554,7 @@ public final class PullRequestTab: Identifiable {
         shownChoice = choice
         shownIgnoresWhitespace = ignoringWhitespace
         if case let .ready(changes) = state { keepSelection(in: changes) }
+        await findDependencies()
     }
 
     /// The changes over `range`. Ignoring whitespace, git leaves out the files only whitespace
@@ -840,7 +908,7 @@ public final class PullRequestTab: Identifiable {
             await show(.commit(commit.oid))
             if shownChoice == .commit(commit.oid), case let .ready(changes)? = shownChanges {
                 // The file just marked counts as viewed, whether or not GitHub has answered yet.
-                let files = FileTree(paths: changes.files.map(\.path)).files
+                let files = orderedFiles(of: changes)
                 selectedFile = files.first { $0 != current && !viewedState(of: $0).isViewed } ?? files.first ?? selectedFile
             }
             return await marking
@@ -858,12 +926,12 @@ public final class PullRequestTab: Identifiable {
         return review.commits.indices.contains(index + 1) ? review.commits[index + 1] : nil
     }
 
-    /// The first file after `id` in the shown changes, in the file list's tree order, that isn't
+    /// The first file after `id` in the shown changes, in the file list's order, that isn't
     /// viewed as it is now, wrapping round to the top; never `id` itself. Hidden files are
     /// passed over.
     public func nextUnviewedFile(after id: FileDiff.ID) -> FileDiff.ID? {
         guard case let .ready(changes)? = shownChanges else { return nil }
-        let files = FileTree(paths: changes.files.map(\.path)).files
+        let files = orderedFiles(of: changes)
         let start = files.firstIndex(of: id).map { $0 + 1 } ?? 0
         return (files[start...] + files[..<start]).first { $0 != id && !viewedState(of: $0).isViewed }
     }
@@ -1451,7 +1519,7 @@ public final class PullRequestTab: Identifiable {
     /// list shows.
     private func keepSelection(in changes: ReviewChanges) {
         if changes.files.contains(where: { $0.id == selectedFile }) || changes.hidden.contains(where: { $0.id == selectedFile }) { return }
-        selectedFile = FileTree(paths: changes.files.map(\.path)).files.first ?? FileTree(paths: changes.hidden.map(\.path)).files.first
+        selectedFile = orderedFiles(of: changes).first ?? FileTree(paths: changes.hidden.map(\.path)).files.first
     }
 
     /// Produces the diff of `pullRequest`. A diff already shown stays, its phase still ready,
@@ -1498,6 +1566,8 @@ public final class PullRequestTab: Identifiable {
             conflicts = [:]
             hiddenFileDiffs = [:]
             packageLockChanges = [:]
+            fileGraphs = [:]
+            dependencySearches = [:]
             contextExpansions.reset()
             keepSelection(in: review.changes)
             reloading = nil
@@ -1505,6 +1575,7 @@ public final class PullRequestTab: Identifiable {
             phase = .ready(review)
             // Turned on or off while this was being diffed.
             if hidesWhitespace != ignoring { await show(.all, ignoringWhitespace: hidesWhitespace) }
+            await findDependencies()
         } catch {
             phase = .failed(error.localizedDescription)
         }

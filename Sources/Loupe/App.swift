@@ -208,9 +208,11 @@ struct FileRow: View {
     }
 }
 
-/// A file's document symbol and name, on one line, cut short at the end when there isn't room.
+/// A file's document symbol and name, on one line, cut short at the end when there isn't room;
+/// with its directory dimmed after it if asked, which gives way first.
 struct FileName: View {
     let path: String
+    var showsDirectory = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -218,6 +220,14 @@ struct FileName: View {
             Text(verbatim: (path as NSString).lastPathComponent)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .layoutPriority(1)
+            let directory = (path as NSString).deletingLastPathComponent
+            if showsDirectory, !directory.isEmpty {
+                Text(verbatim: directory)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
         }
     }
 }

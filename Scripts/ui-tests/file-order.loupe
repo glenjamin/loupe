@@ -1,0 +1,26 @@
+# The picker above the file list orders the files by folder, as a tab opens, or by what uses
+# what, in groups under headers with each file's folder after its name; View ▸ Next File
+# Order's ⌃⌘O steps through the orders, the picker following.
+wait settled
+open tamarinworks/atrium#2928
+wait settled
+click image #doc
+wait settled
+expect radio "Folders" in #file-order has value "1"
+expect "kiln/models/recipe"
+expect ~"Standalone" missing
+
+click radio "Bottom up" in #file-order
+wait until ~"Standalone (3)"
+expect radio "Bottom up" in #file-order has value "1"
+expect "ledger/kiln/models/recipe"
+snap bottom-up list 1
+
+press ctrl+cmd+o
+expect radio "Folders" in #file-order has value "1"
+wait until ~"Standalone" missing
+expect "kiln/models/recipe"
+
+press ctrl+cmd+o
+expect radio "Top down" in #file-order has value "1"
+wait until ~"Standalone (3)"

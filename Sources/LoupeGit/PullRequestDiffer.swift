@@ -185,6 +185,13 @@ public struct PullRequestDiffer: Sendable {
         try await git(["show", "--no-textconv", "\(oid):\(path)"], in: checkout)
     }
 
+    /// The text of each of `paths` that commit `oid` has, by path, all read by one git. Paths it
+    /// doesn't have, and files over `limit` bytes, are left out.
+    public func contents(of paths: [String], at oid: String, in checkout: URL, limit: Int) async throws -> [String: String] {
+        let texts = try await Git.firstLines(of: paths.map { ("\(oid):\($0)", Int.max) }, maxBytes: limit, in: checkout, environment: readingReplays, timeout: localTimeout)
+        return Dictionary(zip(paths, texts).compactMap { path, text in text.map { (path, $0) } }) { first, _ in first }
+    }
+
     /// The bytes of the file at `path` in commit `oid`, or only its size when that's over `limit`,
     /// so a huge file is never read into memory.
     public func blob(of path: String, at oid: String, in checkout: URL, limit: Int) async throws -> Blob {

@@ -42,6 +42,23 @@ struct DiffCommands: Commands {
             }))
                 .keyboardShortcut(.hideWhitespace)
                 .disabled(tab == nil)
+            // The shown PR's alone, as Hide Whitespace is.
+            Picker("Order Files", selection: Binding(get: { tab?.fileOrder ?? .directories }, set: { order in
+                if let tab { Task { await tab.setFileOrder(order) } }
+            })) {
+                ForEach(FileOrder.allCases, id: \.self) { order in
+                    Text(order.menuTitle).tag(order)
+                }
+            }
+            .disabled(tab == nil)
+            Button("Next File Order") {
+                guard let tab else { return }
+                let orders = FileOrder.allCases
+                let next = orders[(orders.firstIndex(of: tab.fileOrder).map { $0 + 1 } ?? 0) % orders.count]
+                Task { await tab.setFileOrder(next) }
+            }
+            .keyboardShortcut(.nextFileOrder)
+            .disabled(tab == nil)
             Button("Show Rendered or Diff") { filesTab?.toggleRendered() }
                 .keyboardShortcut(.toggleRendered)
                 .disabled(filesTab?.canToggleRendered != true)

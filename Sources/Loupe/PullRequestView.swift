@@ -1063,9 +1063,10 @@ struct HoverHelp: HoverPopoverContent {
     }
 }
 
-/// The files to review as a tree of their directories, each file with its viewed state, then
-/// those hidden as vendored, lockfiles or generated as a second tree, which can be shown and
-/// marked reviewed too but are passed over when moving on.
+/// The files to review as a tree of their directories, or in dependency order as groups of
+/// files each named with its directory, each file with its viewed state; then those hidden as
+/// vendored, lockfiles or generated as a second tree, which can be shown and marked reviewed
+/// too but are passed over when moving on. The order is picked above the list.
 struct ReviewFileList: View {
     @Bindable var tab: PullRequestTab
     /// Nil while being diffed.
@@ -1080,10 +1081,24 @@ struct ReviewFileList: View {
         List(selection: selection) {
             if let changes {
                 let files = Dictionary(changes.files.map { ($0.path, $0) }) { first, _ in first }
-                Section {
-                    FileTreeRows(tree: FileTree(paths: files.keys), collapsed: collapsed(in: "review")) { path in
-                        if let file = files[path] {
-                            row(path) { ReviewLineCounts(file: file) }
+                if let groups = tab.fileGroups {
+                    ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
+                        Section {
+                            ForEach(group.files, id: \.self) { path in
+                                if let file = files[path] {
+                                    row(path, showsDirectory: true) { ReviewLineCounts(file: file) }
+                                }
+                            }
+                        } header: {
+                            Text(verbatim: group.isStandalone ? "Standalone (\(group.files.count))" : "Group \(index + 1) (\(group.files.count))")
+                        }
+                    }
+                } else {
+                    Section {
+                        FileTreeRows(tree: FileTree(paths: files.keys), collapsed: collapsed(in: "review")) { path in
+                            if let file = files[path] {
+                                row(path) { ReviewLineCounts(file: file) }
+                            }
                         }
                     }
                 }
@@ -1102,6 +1117,13 @@ struct ReviewFileList: View {
             }
         }
         .focused($isFocused)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            FileOrderPicker(tab: tab)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                // So rows scrolled under it don't show through.
+                .background(.bar)
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading, spacing: 4) {
                 if let error = tab.viewedStateError {
@@ -1123,8 +1145,8 @@ struct ReviewFileList: View {
         }
     }
 
-    private func row(_ path: String, help: String? = nil, @ViewBuilder trailing: () -> some View) -> some View {
-        ReviewFileRow(path: path, unresolvedThreads: tab.unresolvedThreadCount(of: path) ?? 0, state: tab.viewedState(of: path), isUnseparated: tab.unseparatedPaths.contains(path), conflictsWith: conflicts(path), trailing: trailing())
+    private func row(_ path: String, showsDirectory: Bool = false, help: String? = nil, @ViewBuilder trailing: () -> some View) -> some View {
+        ReviewFileRow(path: path, showsDirectory: showsDirectory, unresolvedThreads: tab.unresolvedThreadCount(of: path) ?? 0, state: tab.viewedState(of: path), isUnseparated: tab.unseparatedPaths.contains(path), conflictsWith: conflicts(path), trailing: trailing())
             // SwiftUI's List doesn't tell a row it's on the accent-coloured selection, so the
             // row is told here: selected, with the list focused in the key window.
             .environment(\.backgroundProminence, isEmphasized(path) ? .increased : .standard)
@@ -1144,6 +1166,43 @@ struct ReviewFileList: View {
 
     private func collapsed(in tree: String) -> Binding<Set<String>> {
         Binding { collapsed[tree] ?? [] } set: { collapsed[tree] = $0 }
+    }
+}
+
+/// Picks how the file list orders the files: by directory, or by their dependencies on each
+/// other either way up.
+struct FileOrderPicker: View {
+    let tab: PullRequestTab
+
+    var body: some View {
+        Picker("Order", selection: Binding(get: { tab.fileOrder }, set: { order in Task { await tab.setFileOrder(order) } })) {
+            ForEach(FileOrder.allCases, id: \.self) { order in
+                Text(order.title).tag(order)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .help("List the files by directory, or by what uses what: top down puts each file before those it uses, bottom up after them")
+        .accessibilityIdentifier("file-order")
+    }
+}
+
+extension FileOrder {
+    var title: String {
+        switch self {
+        case .directories: "Folders"
+        case .topDown: "Top down"
+        case .bottomUp: "Bottom up"
+        }
+    }
+
+    var menuTitle: String {
+        switch self {
+        case .directories: "By Folder"
+        case .topDown: "Top Down, Each File Before What It Uses"
+        case .bottomUp: "Bottom Up, Each File After What It Uses"
+        }
     }
 }
 
@@ -1208,6 +1267,8 @@ struct FileTreeRows<FileRow: View>: View {
 /// sidebar does, since colours and fading don't read on the accent background.
 struct ReviewFileRow<Trailing: View>: View {
     let path: String
+    /// Whether its directory follows its name, as when the list isn't a tree.
+    var showsDirectory = false
     let unresolvedThreads: Int
     let state: FileViewedState
     /// Whether its changes since a rebase couldn't be told apart from the rebase's.
@@ -1223,7 +1284,7 @@ struct ReviewFileRow<Trailing: View>: View {
             // folders' and sits right of its parent's.
             Color.clear.frame(width: 14, height: 14)
             HStack(spacing: 6) {
-                FileName(path: path)
+                FileName(path: path, showsDirectory: showsDirectory)
                 UnresolvedThreadCount(count: unresolvedThreads)
             }
             .opacity(dimming)

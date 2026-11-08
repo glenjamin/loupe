@@ -91,8 +91,8 @@ enum Git {
     /// The text of each object named, such as `<commit>:<path>`, up to and including the line
     /// its `lines` asks for, all read by one `git cat-file --batch`. Only those lines are kept, so
     /// a large file costs only its passage through the pipe. Nil for a name that isn't a blob, or
-    /// that has a newline, which batch input can't carry.
-    static func firstLines(of objects: [(name: String, lines: Int)], in directory: URL, environment: [String: String] = [:], timeout: Duration = .seconds(30)) async throws -> [String?] {
+    /// that has a newline, which batch input can't carry, or for a blob over `maxBytes`.
+    static func firstLines(of objects: [(name: String, lines: Int)], maxBytes: Int = .max, in directory: URL, environment: [String: String] = [:], timeout: Duration = .seconds(30)) async throws -> [String?] {
         let sendable = objects.filter { !$0.name.contains("\n") }
         guard !sendable.isEmpty else { return objects.map { _ in nil } }
         let input = Data(sendable.map { $0.name + "\n" }.joined().utf8)
@@ -101,7 +101,7 @@ enum Git {
             onOwnThread {
                 continuation.resume(with: Result {
                     try runBlocking(["cat-file", "--batch"], in: directory, input: input, environment: environment, timeout: timeout) { output in
-                        var reader = BatchReader(lines: lines)
+                        var reader = BatchReader(lines: lines, maxBytes: maxBytes)
                         while let chunk = try output.read(upToCount: 1 << 16), !chunk.isEmpty { reader.consume(chunk) }
                         return reader.heads
                     }
@@ -223,12 +223,14 @@ private final class Watchdog: @unchecked Sendable {
 private struct BatchReader {
     private(set) var heads: [String?] = []
     private let lines: [Int]
+    private let maxBytes: Int
     private var pending = Data()
     /// The current object's content: how much is still to come, and the part being kept.
     private var body: (remaining: Int, kept: Data, newlines: Int, isBlob: Bool)?
 
-    init(lines: [Int]) {
+    init(lines: [Int], maxBytes: Int) {
         self.lines = lines
+        self.maxBytes = maxBytes
     }
 
     mutating func consume(_ chunk: Data) {
@@ -238,7 +240,7 @@ private struct BatchReader {
                 let part = pending.prefix(current.remaining)
                 if current.isBlob {
                     // Kept through the wanted line's newline, and no further.
-                    var end = part.startIndex
+                    var end = wanted == .max ? part.endIndex : part.startIndex
                     while end < part.endIndex, current.newlines < wanted {
                         if part[end] == UInt8(ascii: "\n") { current.newlines += 1 }
                         end += 1
@@ -260,7 +262,7 @@ private struct BatchReader {
                 let header = pending[pending.startIndex..<newline].split(separator: UInt8(ascii: " "))
                 pending.removeSubrange(pending.startIndex...newline)
                 if header.count == 3, let size = Int(String(decoding: header[2], as: UTF8.self)) {
-                    body = (size, Data(), 0, header[1].elementsEqual("blob".utf8))
+                    body = (size, Data(), 0, header[1].elementsEqual("blob".utf8) && size <= maxBytes)
                 } else {
                     heads.append(nil)
                 }
