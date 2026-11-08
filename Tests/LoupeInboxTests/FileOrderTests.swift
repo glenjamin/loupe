@@ -231,6 +231,66 @@ struct FileOrderTests {
             "  spec/models/invoice_spec.rb",
         ], "a spec comes after its subject and the support it requires")
     }
+
+    @Test func aDeletedFileJoinsTheFilesItUsedAndThatUsedItBeforeTheChange() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(startingWith: [
+            "go.mod": "module example.com/shop\n",
+            "legacy/prices.go": "package legacy\n\nimport \"example.com/shop/money\"\n\nfunc Price() money.Amount { return 0 }\n",
+            "money/amount.go": "package money\n\ntype Amount int\n",
+            "checkout/total.go": "package checkout\n\nimport \"example.com/shop/legacy\"\n\nvar total = legacy.Price()\n",
+            "src/oldApi.ts": "export const get = () => 1\n",
+            "src/view.ts": "import { get } from './oldApi'\n\nget()\n",
+        ], changing: [
+            "legacy/prices.go": nil,
+            "money/amount.go": "package money\n\n// Amount is in pence.\ntype Amount int\n",
+            "checkout/total.go": "package checkout\n\nvar total = 0\n",
+            "src/oldApi.ts": nil,
+            "src/view.ts": "export const view = 1\n",
+            "NOTES.md": "notes\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == [
+            "group",
+            "  money/amount.go",
+            "  legacy/prices.go",
+            "  checkout/total.go",
+            "group",
+            "  src/oldApi.ts",
+            "  src/view.ts",
+            "standalone",
+            "  NOTES.md",
+        ])
+    }
+
+    @Test func aRenamedFileIsKnownByItsOldPathOnTheBaseSide() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(startingWith: [
+            "src/helpers.ts": "export const one = 1\nexport const two = 2\nexport const three = 3\nexport const four = 4\n",
+            "src/legacy.ts": "import { one } from './helpers'\n\nexport const legacy = one\n",
+        ], changing: [
+            "src/helpers.ts": nil,
+            "src/util/helpers.ts": "export const one = 1\nexport const two = 2\nexport const three = 3\nexport const four = 4\n",
+            "src/legacy.ts": nil,
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == ["group", "  src/util/helpers.ts", "  src/legacy.ts"])
+    }
+
+    @Test func scriptsGroupWithTheStylesheetsTheyImport() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "web/Button.tsx": "import './Button.scss'\n\nexport const Button = () => null\n",
+            "web/Button.scss": ".button { color: red; }\n",
+            "web/Card.jsx": "import styles from './Card.module.scss'\n\nexport const Card = () => styles.card\n",
+            "web/Card.module.scss": ".card { padding: 0; }\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == ["group", "  web/Button.scss", "  web/Button.tsx", "group", "  web/Card.module.scss", "  web/Card.jsx"])
+    }
 }
 
 /// The shown changes' groups, each as a line saying what kind it is, then its files indented.

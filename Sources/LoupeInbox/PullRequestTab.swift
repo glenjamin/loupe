@@ -498,14 +498,12 @@ public final class PullRequestTab: Identifiable {
         case .failed?, nil: break
         }
         fileGraphs[range] = .diffing
-        let paths = changes.files.map(\.path)
+        let files = changes.files
         let differ = differ
         let search = Task {
             do {
-                let wanted = FileDependencies.filesToRead(among: paths)
-                let contents = wanted.isEmpty ? [:] : try await differ.contents(of: wanted, at: range.head, in: checkout, limit: FileDependencies.largestFile)
-                let dependencies = await Task.detached { FileDependencies.find(among: paths, contents: contents) }.value
-                fileGraphs[range] = .ready(FileGraph(paths: paths, dependencies: dependencies))
+                let dependencies = try await Self.dependencies(among: files, over: range, differ: differ, checkout: checkout)
+                fileGraphs[range] = .ready(FileGraph(paths: files.map(\.path), dependencies: dependencies))
             } catch {
                 log("Couldn't find the dependencies of \(pullRequest.repository)#\(pullRequest.number)'s files: \(error)")
                 fileGraphs[range] = .failed(error.localizedDescription)
@@ -514,6 +512,36 @@ public final class PullRequestTab: Identifiable {
         }
         dependencySearches[range] = search
         await search.value
+    }
+
+    /// Which of `files` use which: as the range's head has them, and for the files it deletes,
+    /// as its base had them, both what a deleted file used and what used it, a renamed file
+    /// going by its old path there, so a deleted file joins the files it belonged with.
+    private nonisolated static func dependencies(among files: [FileDiff], over range: DiffRange, differ: PullRequestDiffer, checkout: URL) async throws -> [String: Set<String>] {
+        func find(among paths: [String], at oid: String) async throws -> [String: Set<String>] {
+            let wanted = FileDependencies.filesToRead(among: paths)
+            guard !wanted.isEmpty else { return [:] }
+            let contents = try await differ.contents(of: wanted, at: oid, in: checkout, limit: FileDependencies.largestFile)
+            return await Task.detached { FileDependencies.find(among: paths, contents: contents) }.value
+        }
+        var dependencies = try await find(among: files.map(\.path), at: range.head)
+        let deleted = Set(files.filter { $0.change == .deleted }.map(\.path))
+        guard !deleted.isEmpty else { return dependencies }
+        // Each file the base had, by its path there, as it's listed now.
+        var current: [String: String] = [:]
+        for file in files {
+            switch file.change {
+            case .added, .copied: continue
+            case let .renamed(from, _): current[from] = file.path
+            case .deleted, .modified: current[file.path] = file.path
+            }
+        }
+        for (file, used) in try await find(among: Array(current.keys), at: range.base) {
+            for dependency in used where deleted.contains(file) || deleted.contains(dependency) {
+                if let user = current[file], let usedNow = current[dependency] { dependencies[user, default: []].insert(usedNow) }
+            }
+        }
+        return dependencies
     }
 
     private func show(_ choice: ChangesChoice, ignoringWhitespace: Bool) async {
