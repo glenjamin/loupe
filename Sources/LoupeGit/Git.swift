@@ -129,6 +129,10 @@ enum Git {
         process.standardError = stderr
         let stdin = input.map { _ in Pipe() }
         process.standardInput = stdin ?? FileHandle.nullDevice
+        // Signalled as git exits: `waitUntilExit` polls a run loop, which on a thread without
+        // one adds tens of milliseconds to each run.
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         try process.run()
         if let stdin, let input {
             // Written alongside the reads below, so a large input can't deadlock against git's output.
@@ -146,11 +150,11 @@ enum Git {
         if case .failure(let error) = output {
             // Git would otherwise block on a pipe nobody reads.
             process.terminate()
-            process.waitUntilExit()
+            exited.wait()
             watchdog.disarm()
             throw error
         }
-        process.waitUntilExit()
+        exited.wait()
         watchdog.disarm()
 
         let message = String(decoding: errorOutput.wait(), as: UTF8.self)

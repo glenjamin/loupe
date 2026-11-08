@@ -1118,6 +1118,10 @@ A SwiftPM package's `Sources/X` and `Tests/X` directories are its targets, found
 
 SCSS's `@use`, `@forward` and `@import` name a file from the importing one as written, as a partial (`_name.scss`) or as a directory's `_index.scss`, as Sass tries them; built-in modules and load paths such as `node_modules` aren't followed. Ruby's `require_relative` names a file from the requiring one, but Rails and Zeitwerk code requires nothing, loading each constant from the file its name gives, so a constant a file names (`Billing::LineItem`, or each part of it) uses the changed files whose paths end `billing/line_item.rb`, specs aside. That's by convention rather than from what files define, so a constant named like an unrelated file elsewhere joins them, which in a PR's few files is rare.
 
+### Git's exit is waited for by its termination handler
+
+`Process.waitUntilExit()` waits by running the current thread's run loop in slices, and on the threads git runs from, which have none, it returned tens of milliseconds after git had exited: a `cat-file` git answered in 5ms took about 75ms from Loupe, most of the time. Each run now waits on a semaphore its termination handler signals, which every git Loupe runs gains from.
+
 ## Not yet decided
 
 Nothing is pending.
