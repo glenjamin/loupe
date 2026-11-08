@@ -165,6 +165,28 @@ struct FileOrderTests {
             "  envs/prod/region.tf",
         ])
     }
+
+    @Test func swiftFilesUseTheTargetsTheyImportAndTheTypesBesideThemTheyName() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "Sources/Model/Deployment.swift": "public struct Deployment {\n    public let url: String\n}\n",
+            "Sources/Model/Conversation.swift": "public struct Conversation {\n    public var deployments: [Deployment]\n}\n",
+            "Sources/Store/Store.swift": "import Foundation\nimport Model\n\nfunc save(_ conversation: Conversation) {}\n",
+            "Tests/StoreTests/StoreTests.swift": "@testable import Store\nimport Testing\n\nstruct StoreTests {}\n",
+            "Package.swift": "// swift-tools-version: 6.0\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == [
+            "group",
+            "  Sources/Model/Deployment.swift",
+            "  Sources/Model/Conversation.swift",
+            "  Sources/Store/Store.swift",
+            "  Tests/StoreTests/StoreTests.swift",
+            "standalone",
+            "  Package.swift",
+        ])
+    }
 }
 
 /// The shown changes' groups, each as a line saying what kind it is, then its files indented.

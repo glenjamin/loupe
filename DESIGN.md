@@ -1110,6 +1110,10 @@ A JavaScript or TypeScript file's imports, re-exports, `require` calls and `impo
 
 A directory's `.tf` files are one module sharing one scope, with no imports between them, so a file uses the file in its directory that defines what it refers to: `var.x` a variable, `local.x` a local, `module.x` a module call, `data.t.x` a data source and `t.x` a resource, read from each file's top-level blocks and its expressions, interpolations included. A `module` block whose source is a local path uses the changed files of the directory it names, so a module's files come before the environments calling it bottom up. Registry and git sources aren't changed files and are passed over. Outputs aren't referred to within their module, so a module's `outputs.tf` joins through what it refers to.
 
+### Swift files use the targets they import, and the types beside them they name
+
+A SwiftPM package's `Sources/X` and `Tests/X` directories are its targets, found from the path alone, and `import X` names target X of the same package, so a file uses that target's changed files. Within a target there are no imports, so a file uses the files defining the top-level types and protocols it names; members are left out, as matching every name a file declares joined nearly every pair of Loupe's own files. On Loupe's own commits this lists the model, then GitHub, the stores, the tab, the view and the tests bottom up. A target placed elsewhere by `path:` isn't known, as `Package.swift` isn't read.
+
 ## Not yet decided
 
 Nothing is pending.
