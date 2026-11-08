@@ -13,7 +13,9 @@ public enum FileOrder: Sendable, Hashable, CaseIterable {
 
 /// The changed files and which of them use which, for listing them in dependency order. Files
 /// joined by use, however indirectly, are grouped, largest group first; those using and used by
-/// none of the others come last, as one standalone group. Ties, and files that use each other
+/// none of the others come last, as one standalone group. A test named for a file in its group
+/// comes straight after that file, either way up, so each is read with what it tests. Ties, and
+/// files that use each other
 /// in a cycle, keep the order the directory tree lists them in, so files with no dependencies
 /// between them list as the tree does.
 public struct FileGraph: Sendable, Equatable {
@@ -57,7 +59,7 @@ public struct FileGraph: Sendable, Equatable {
         let components = graph.components()
         let joined = components.filter { $0.count > 1 }
             .sorted { $0.count != $1.count ? $0.count > $1.count : $0[0] < $1[0] }
-            .map { Group(files: graph.ordered($0, usersFirst: order == .topDown).map { files[$0] }, isStandalone: false) }
+            .map { Group(files: placingTests(graph.ordered($0, usersFirst: order == .topDown).map { files[$0] }), isStandalone: false) }
         let standalone = components.filter { $0.count == 1 }.map { files[$0[0]] }.sorted { position[$0]! < position[$1]! }
         return joined + (standalone.isEmpty ? [] : [Group(files: standalone, isStandalone: true)])
     }
@@ -65,6 +67,17 @@ public struct FileGraph: Sendable, Equatable {
     /// The files in the order `order` lists them, groups one after another.
     public func ordered(_ order: FileOrder) -> [String] {
         groups(order).flatMap(\.files)
+    }
+
+    /// `ordered` with each test that's named for one of its other files moved to straight after it.
+    private func placingTests(_ ordered: [String]) -> [String] {
+        let present = Set(ordered)
+        var tests: [String: [String]] = [:]
+        for path in ordered {
+            if let subject = testSubject(of: path, among: present) { tests[subject, default: []].append(path) }
+        }
+        let moved = Set(tests.values.joined())
+        return ordered.filter { !moved.contains($0) }.flatMap { [$0] + (tests[$0] ?? []) }
     }
 
     private var position: [String: Int] {
@@ -184,4 +197,45 @@ private struct IndexedGraph {
         for node in component where index[node] == nil { visit(node) }
         return result
     }
+}
+
+/// The file among `present` that `path` is named as the test of: `x_test.go` for `x.go`,
+/// `x.test.ts` or `x.spec.ts` for `x.ts` (beside it, or above a `__tests__` directory),
+/// `XTests.swift` for `X.swift`, `x_spec.rb` for `x.rb` and `test_x.py` for `x.py`; one
+/// named alike elsewhere if there's just one. Nil when it isn't a test, or there's no such file.
+private func testSubject(of path: String, among present: Set<String>) -> String? {
+    let name = (path as NSString).lastPathComponent
+    let directory = (path as NSString).deletingLastPathComponent
+    var stems: [String] = []
+    var extensions: [String] = []
+    let scriptExtensions = ["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"]
+    let parts = name.split(separator: ".").map(String.init)
+    if name.hasSuffix("_test.go") {
+        stems = [String(name.dropLast("_test.go".count))]
+        extensions = ["go"]
+    } else if parts.count >= 3, ["test", "spec"].contains(parts[parts.count - 2]), scriptExtensions.contains(parts[parts.count - 1]) {
+        stems = [parts.dropLast(2).joined(separator: ".")]
+        extensions = scriptExtensions
+    } else if name.hasSuffix("Tests.swift") || name.hasSuffix("Test.swift") {
+        stems = [String(name.dropLast(name.hasSuffix("Tests.swift") ? "Tests.swift".count : "Test.swift".count))]
+        extensions = ["swift"]
+    } else if name.hasSuffix("_spec.rb") || name.hasSuffix("_test.rb") {
+        stems = [String(name.dropLast("_spec.rb".count))]
+        extensions = ["rb"]
+    } else if name.hasPrefix("test_"), name.hasSuffix(".py") {
+        stems = [String(name.dropFirst("test_".count).dropLast(".py".count))]
+        extensions = ["py"]
+    }
+    guard let stem = stems.first, !stem.isEmpty else { return nil }
+    let names = extensions.map { "\(stem).\($0)" }
+    var directories = [directory]
+    if (directory as NSString).lastPathComponent == "__tests__" { directories.append((directory as NSString).deletingLastPathComponent) }
+    for candidateDirectory in directories {
+        for candidate in names {
+            let full = candidateDirectory.isEmpty ? candidate : "\(candidateDirectory)/\(candidate)"
+            if full != path, present.contains(full) { return full }
+        }
+    }
+    let elsewhere = present.filter { $0 != path && names.contains(($0 as NSString).lastPathComponent) }
+    return elsewhere.count == 1 ? elsewhere.first : nil
 }

@@ -1086,7 +1086,7 @@ struct ReviewFileList: View {
                         Section {
                             ForEach(group.files, id: \.self) { path in
                                 if let file = files[path] {
-                                    row(path, showsDirectory: true) { ReviewLineCounts(file: file) }
+                                    row(path, showsDirectory: true, help: dependencyHelp(path)) { ReviewLineCounts(file: file) }
                                 }
                             }
                         } header: {
@@ -1152,6 +1152,14 @@ struct ReviewFileList: View {
             .environment(\.backgroundProminence, isEmphasized(path) ? .increased : .standard)
             .help(help ?? path)
             .tag(Optional(path))
+    }
+
+    /// `path`, then the changed files it uses and is used by, as its row's tooltip in dependency order.
+    private func dependencyHelp(_ path: String) -> String {
+        guard let graph = tab.shownFileGraph else { return path }
+        let uses = (graph.dependencies[path] ?? []).sorted()
+        let usedBy = graph.dependents(of: path).sorted()
+        return ([path] + (uses.isEmpty ? [] : ["Uses " + uses.joined(separator: ", ")]) + (usedBy.isEmpty ? [] : ["Used by " + usedBy.joined(separator: ", ")])).joined(separator: "\n")
     }
 
     /// The base `path` conflicts with, once the conflicting files have been found.

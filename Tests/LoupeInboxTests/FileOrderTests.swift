@@ -42,8 +42,8 @@ struct FileOrderTests {
             "group",
             "  model/user.go",
             "  store/users.go",
-            "  api/server.go",
             "  store/users_test.go",
+            "  api/server.go",
             "standalone",
             "  README.md",
         ])
@@ -51,16 +51,16 @@ struct FileOrderTests {
         #expect(outline(tab) == [
             "group",
             "  api/server.go",
-            "  store/users_test.go",
             "  store/users.go",
+            "  store/users_test.go",
             "  model/user.go",
             "standalone",
             "  README.md",
         ])
         #expect(tab.selectedFile == "api/server.go", "the file the PR opened on stays shown")
         tab.selectAdjacentFile(1)
-        #expect(tab.selectedFile == "store/users_test.go", "moving on follows the list")
-        #expect(tab.nextUnviewedFile(after: "store/users_test.go") == "store/users.go")
+        #expect(tab.selectedFile == "store/users.go", "moving on follows the list")
+        #expect(tab.nextUnviewedFile(after: "store/users.go") == "store/users_test.go", "a test comes straight after what it tests")
     }
 
     @Test func goFilesInOnePackageUseThoseDefiningTheTopLevelNamesTheyReferTo() async throws {

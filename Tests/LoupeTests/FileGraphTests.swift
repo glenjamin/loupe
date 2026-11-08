@@ -61,6 +61,25 @@ struct FileGraphTests {
         #expect(graph.groups(.topDown) == [FileGraph.Group(files: ["a.go", "b.go"], isStandalone: true)])
     }
 
+    @Test func placesEachTestStraightAfterTheFileItsNamedForEitherWayUp() {
+        let graph = FileGraph(paths: ["api/server.go", "store/users.go", "store/users_test.go", "web/Profile.tsx", "web/__tests__/Profile.test.tsx", "Tests/StoreTests/UsersTests.swift", "Sources/Store/Users.swift"], dependencies: [
+            "api/server.go": ["store/users.go"],
+            "store/users_test.go": ["store/users.go"],
+            "web/__tests__/Profile.test.tsx": ["web/Profile.tsx"],
+            "Tests/StoreTests/UsersTests.swift": ["Sources/Store/Users.swift"],
+        ])
+        #expect(outline(graph, .bottomUp) == [
+            "group", "  store/users.go", "  store/users_test.go", "  api/server.go",
+            "group", "  Sources/Store/Users.swift", "  Tests/StoreTests/UsersTests.swift",
+            "group", "  web/Profile.tsx", "  web/__tests__/Profile.test.tsx",
+        ])
+        #expect(outline(graph, .topDown) == [
+            "group", "  api/server.go", "  store/users.go", "  store/users_test.go",
+            "group", "  Sources/Store/Users.swift", "  Tests/StoreTests/UsersTests.swift",
+            "group", "  web/Profile.tsx", "  web/__tests__/Profile.test.tsx",
+        ])
+    }
+
     @Test func saysWhatUsesAFile() {
         let graph = FileGraph(paths: ["core.go", "x.go", "y.go"], dependencies: ["x.go": ["core.go"], "y.go": ["core.go"]])
         #expect(graph.dependents(of: "core.go") == ["x.go", "y.go"])
