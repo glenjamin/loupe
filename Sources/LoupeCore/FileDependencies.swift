@@ -1,4 +1,5 @@
 import Foundation
+import LoupeModel
 import os
 import SwiftTreeSitter
 
@@ -9,37 +10,61 @@ public enum FileDependencies {
     /// Files larger than this aren't read, and so use nothing.
     public static let largestFile = 1 << 20
 
-    /// The files to read, at the changes' head, to find the dependencies among `paths`: those of
-    /// them in a language whose imports are understood, and the files that may say how those
-    /// resolve. Some may not exist.
+    /// The files to read, at the changes' head, to find the links among `paths`: those of them
+    /// a rule reads, and the files that may say how their imports resolve. Some may not exist.
     public static func filesToRead(among paths: [String]) -> [String] {
         var wanted: [String] = []
         var seen = Set<String>()
-        for language in languages {
-            for path in language.filesToRead(among: paths) where seen.insert(path).inserted { wanted.append(path) }
+        for rule in rules {
+            for path in rule.filesToRead(among: paths) where seen.insert(path).inserted { wanted.append(path) }
         }
         return wanted
     }
 
-    /// The files among `paths` each one uses, from `contents`, the text of those `filesToRead`
-    /// named that exist.
-    public static func find(among paths: [String], contents: [String: String]) -> [String: Set<String>] {
-        var dependencies: [String: Set<String>] = [:]
-        for language in languages {
-            for (path, used) in language.dependencies(among: paths, contents: contents) {
-                dependencies[path, default: []].formUnion(used)
-            }
-        }
-        return dependencies
+    /// The links among `paths`, from `contents`, the text of those `filesToRead` named that exist.
+    public static func find(among paths: [String], contents: [String: String]) -> [DependencyLink] {
+        var seen = Set<DependencyLink>()
+        return rules.flatMap { $0.links(among: paths, contents: contents) }.filter { $0.from != $0.to && seen.insert($0).inserted }
     }
 
-    private static let languages: [any DependencyLanguage] = [GoDependencies(), ScriptDependencies(), TerraformDependencies(), SwiftDependencies(), StylesheetDependencies(), RubyDependencies()]
+    private static let rules: [any DependencyRule] = [
+        GoDependencies(), ScriptDependencies(), TerraformDependencies(), SwiftDependencies(), StylesheetDependencies(), RubyDependencies(),
+        CompanionNames(), Readmes(),
+    ]
 }
 
-/// One language's imports: which files are needed to read them, and which changed files they name.
-protocol DependencyLanguage: Sendable {
+/// One way changed files are linked, by a language's imports or names, or by a convention:
+/// which files it needs to read, and the links it finds among the changed files.
+protocol DependencyRule: Sendable {
     func filesToRead(among paths: [String]) -> [String]
-    func dependencies(among paths: [String], contents: [String: String]) -> [String: Set<String>]
+    func links(among paths: [String], contents: [String: String]) -> [DependencyLink]
+}
+
+extension DependencyRule {
+    func filesToRead(among paths: [String]) -> [String] { [] }
+}
+
+/// Links as a rule finds them, each file to those it's linked to.
+struct LinkCollector {
+    private(set) var links: [DependencyLink] = []
+
+    mutating func add(from path: String, to targets: some Sequence<String>, _ reason: DependencyLink.Reason) {
+        for target in targets where target != path { links.append(DependencyLink(from: path, to: target, reason: reason)) }
+    }
+}
+
+/// The names each scope's changed files define, such as a Go package's top-level declarations,
+/// for linking the files in that scope that name them.
+struct NameIndex {
+    private var definers: [String: [String: Set<String>]] = [:]
+
+    mutating func define(_ name: String, in path: String, scope: String) {
+        definers[scope, default: [:]][name, default: []].insert(path)
+    }
+
+    func definers(of name: String, in scope: String) -> Set<String> {
+        definers[scope]?[name] ?? []
+    }
 }
 
 /// A query over one grammar, compiled once, that reads what a file's text names, such as the

@@ -1,39 +1,37 @@
 import CodeEditLanguages
 import Foundation
+import LoupeModel
 
 /// Ruby's `require_relative` names a file from the requiring one. Rails and Zeitwerk code
 /// requires nothing, loading a constant from the file its name gives (`Billing::LineItem` from
 /// `…/billing/line_item.rb`), so a constant a file names uses the changed files whose paths end
 /// that way, specs aside.
-struct RubyDependencies: DependencyLanguage {
+struct RubyDependencies: DependencyRule {
     func filesToRead(among paths: [String]) -> [String] {
         paths.filter(isRuby)
     }
 
-    func dependencies(among paths: [String], contents: [String: String]) -> [String: Set<String>] {
+    func links(among paths: [String], contents: [String: String]) -> [DependencyLink] {
         let sources = paths.filter { isRuby($0) && contents[$0] != nil }
-        guard !sources.isEmpty else { return [:] }
+        guard !sources.isEmpty else { return [] }
         let changed = Set(paths)
         let loadable = sources.filter { !isSpec($0) }
         let parsed = concurrentMap(sources) { path in Self.names?.captures(in: contents[path] ?? "") ?? [] }
-        var dependencies: [String: Set<String>] = [:]
+        var links = LinkCollector()
         for (path, captures) in zip(sources, parsed) {
-            var used = Set<String>()
             for capture in captures {
                 switch capture.name {
                 case "required":
                     let required = capture.text.hasSuffix(".rb") ? capture.text : capture.text + ".rb"
-                    if let file = normalisedPath(joined(directory(of: path), required)), changed.contains(file) { used.insert(file) }
+                    if let file = normalisedPath(joined(directory(of: path), required)), changed.contains(file) { links.add(from: path, to: [file], .imports) }
                 case "constant":
                     let file = capture.text.components(separatedBy: "::").map(underscored).joined(separator: "/") + ".rb"
-                    used.formUnion(loadable.filter { $0 == file || $0.hasSuffix("/" + file) })
+                    links.add(from: path, to: loadable.filter { $0 == file || $0.hasSuffix("/" + file) }, .names)
                 default: break
                 }
             }
-            used.remove(path)
-            if !used.isEmpty { dependencies[path] = used }
         }
-        return dependencies
+        return links.links
     }
 
     private static let names = ImportQuery(TreeSitterLanguage.ruby.tsLanguage, """

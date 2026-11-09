@@ -1,21 +1,22 @@
 import Foundation
+import LoupeModel
 
 /// Terraform's references: a directory's `.tf` files are one module sharing one scope, so a file
 /// uses the file in its directory that defines what it refers to (`var.x`, `local.x`,
 /// `module.x`, `data.t.x`, `t.x`); and a `module` block whose source is a local path uses that
 /// directory's changed files. Modules from a registry or git aren't changed files.
-struct TerraformDependencies: DependencyLanguage {
+struct TerraformDependencies: DependencyRule {
     func filesToRead(among paths: [String]) -> [String] {
         paths.filter(isTerraform)
     }
 
-    func dependencies(among paths: [String], contents: [String: String]) -> [String: Set<String>] {
+    func links(among paths: [String], contents: [String: String]) -> [DependencyLink] {
         let sources = paths.filter { isTerraform($0) && contents[$0] != nil }
-        guard !sources.isEmpty else { return [:] }
+        guard !sources.isEmpty else { return [] }
         let parsed = concurrentMap(sources) { path in Self.query?.matches(in: contents[path] ?? "") ?? [] }
         var byDirectory: [String: [String]] = [:]
-        // What each file defines, by directory, as it's referred to.
-        var definers: [String: [String: Set<String>]] = [:]
+        // What each module's files define, as it's referred to.
+        var definitions = NameIndex()
         var references: [String: Set<String>] = [:]
         var calls: [String: Set<String>] = [:]
         for (path, matches) in zip(sources, parsed) {
@@ -28,20 +29,17 @@ struct TerraformDependencies: DependencyLanguage {
                 } else if let root = captures["root"] {
                     if let name = referenceName(root: root, captures) { references[path, default: []].insert(name) }
                 } else if let name = definitionName(captures) {
-                    definers[module, default: [:]][name, default: []].insert(path)
+                    definitions.define(name, in: path, scope: module)
                 }
             }
         }
-        var dependencies: [String: Set<String>] = [:]
+        var links = LinkCollector()
         for path in sources {
             let module = directory(of: path)
-            var used = Set<String>()
-            for name in references[path] ?? [] { used.formUnion(definers[module]?[name] ?? []) }
-            for called in calls[path] ?? [] { used.formUnion(byDirectory[called] ?? []) }
-            used.remove(path)
-            if !used.isEmpty { dependencies[path] = used }
+            for name in references[path] ?? [] { links.add(from: path, to: definitions.definers(of: name, in: module), .names) }
+            for called in calls[path] ?? [] { links.add(from: path, to: byDirectory[called] ?? [], .imports) }
         }
-        return dependencies
+        return links.links
     }
 
     /// Top-level blocks and locals, which define names; references to them; and local module sources.

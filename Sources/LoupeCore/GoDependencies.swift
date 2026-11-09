@@ -1,5 +1,6 @@
 import CodeEditLanguages
 import Foundation
+import LoupeModel
 
 /// Go's imports: an import path names a package, a directory under the module whose `go.mod`
 /// is nearest above the file, so a file uses that package's changed files. Within a package,
@@ -7,7 +8,7 @@ import Foundation
 /// refers to. Its tests use their own directory's other files, whichever package they're in,
 /// and the helpers its other tests define. A string naming a changed file, such as a test's
 /// fixture, uses it.
-struct GoDependencies: DependencyLanguage {
+struct GoDependencies: DependencyRule {
     func filesToRead(among paths: [String]) -> [String] {
         let sources = paths.filter(isGo)
         var modules: [String] = []
@@ -18,9 +19,9 @@ struct GoDependencies: DependencyLanguage {
         return sources + modules
     }
 
-    func dependencies(among paths: [String], contents: [String: String]) -> [String: Set<String>] {
+    func links(among paths: [String], contents: [String: String]) -> [DependencyLink] {
         let sources = paths.filter { isGo($0) && contents[$0] != nil }
-        guard !sources.isEmpty else { return [:] }
+        guard !sources.isEmpty else { return [] }
         var modules: [String: String] = [:]
         for (path, text) in contents where (path as NSString).lastPathComponent == "go.mod" {
             if let module = modulePath(in: text) { modules[directory(of: path)] = module }
@@ -35,38 +36,35 @@ struct GoDependencies: DependencyLanguage {
         let parsed = Dictionary(uniqueKeysWithValues: zip(sources, concurrentMap(sources) { path in
             Self.names?.captures(in: contents[path] ?? "") ?? []
         }))
-        // What each directory's files define at the top level, by name; its tests' apart, as
-        // only tests can use them.
-        var definers: [String: [String: Set<String>]] = [:]
-        var testDefiners: [String: [String: Set<String>]] = [:]
+        // What each directory's files define at the top level; its tests' apart, as only tests
+        // can use them.
+        var definitions = NameIndex()
+        var testDefinitions = NameIndex()
         for path in sources {
             for capture in parsed[path] ?? [] where capture.name == "definition" && !["_", "init", "main"].contains(capture.text) {
                 if isTest(path) {
-                    testDefiners[directory(of: path), default: [:]][capture.text, default: []].insert(path)
+                    testDefinitions.define(capture.text, in: path, scope: directory(of: path))
                 } else {
-                    definers[directory(of: path), default: [:]][capture.text, default: []].insert(path)
+                    definitions.define(capture.text, in: path, scope: directory(of: path))
                 }
             }
         }
         let changed = Set(paths)
-        var dependencies: [String: Set<String>] = [:]
+        var links = LinkCollector()
         for path in sources {
-            var used = Set<String>()
             for capture in parsed[path] ?? [] {
                 switch capture.name {
-                case "path": used.formUnion(packages[unquoted(capture.text)] ?? [])
+                case "path": links.add(from: path, to: packages[unquoted(capture.text)] ?? [], .imports)
                 case "reference":
-                    used.formUnion(definers[directory(of: path)]?[capture.text] ?? [])
-                    if isTest(path) { used.formUnion(testDefiners[directory(of: path)]?[capture.text] ?? []) }
-                case "string": used.formUnion(filesNamed(by: unquoted(capture.text), from: path, among: changed))
+                    links.add(from: path, to: definitions.definers(of: capture.text, in: directory(of: path)), .names)
+                    if isTest(path) { links.add(from: path, to: testDefinitions.definers(of: capture.text, in: directory(of: path)), .names) }
+                case "string": links.add(from: path, to: filesNamed(by: unquoted(capture.text), from: path, among: changed), .path)
                 default: break
                 }
             }
-            if isTest(path) { used.formUnion(byDirectory[directory(of: path)] ?? []) }
-            used.remove(path)
-            if !used.isEmpty { dependencies[path] = used }
+            if isTest(path) { links.add(from: path, to: byDirectory[directory(of: path)] ?? [], .convention) }
         }
-        return dependencies
+        return links.links
     }
 
     private static let names = ImportQuery(TreeSitterLanguage.go.tsLanguage, """

@@ -9,7 +9,7 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 - The GUI can't be launched or screenshotted from the sandbox. Verify with tests and the build, and tell the user the `swift run Loupe` command to see it themselves.
 - To see the UI yourself, run `Scripts/snapshot.sh <dir>` with the sandbox off, then view the PNGs it prints with the Read tool. Snapshot runs are invisible and off-screen, and never write to GitHub or the checkouts. Set `LOUPE_DATABASE` to a copy of the database to keep the real one untouched; see "Snapshots" in `NOTES.md`.
 - To check that clicks, keys and hover do what you built, write a script for `LOUPE_SNAPSHOT_SCRIPT` rather than a new `LOUPE_SNAPSHOT_*` hook: it finds things in the accessibility tree, asserts, writes PNGs and fails the run with a non-zero exit. Add it to the UI suite in `Scripts/ui-tests/`, which runs against the fake GitHub and fixture checkouts, so it stays deterministic. After UI changes run `Scripts/ui-tests.sh` (sandbox off) alongside `swift test`; both must pass. See "Snapshot scripts" in `NOTES.md`.
-- Never launch the app any other way (`swift run Loupe`, `open .build/Loupe.app`, the bundle's binary without `LOUPE_SNAPSHOT_DIR`). That opens real, maximised windows on the user's screens and leaves them there. Only `Scripts/snapshot.sh`, `Scripts/ui-tests.sh` and `--bench` are allowed.
+- Never launch the app any other way (`swift run Loupe`, `open .build/Loupe.app`, the bundle's binary without `LOUPE_SNAPSHOT_DIR`). That opens real, maximised windows on the user's screens and leaves them there. Only `Scripts/snapshot.sh`, `Scripts/ui-tests.sh`, `--bench` and `--dependencies` are allowed.
 - Auth is `gh auth token`. Never write the token to disk, logs or fixtures.
 - Other git checkouts on this machine are in use by other sessions. While testing, only read from them (`fetch`, `diff`, `log`, `remote get-url`); never checkout, reset, commit or otherwise write.
 - Database: `~/Library/Application Support/Loupe/loupe.sqlite`. Tests use temp or in-memory databases.
@@ -29,7 +29,7 @@ Native macOS PR-review app. `DESIGN.md` holds the goals and the reasons behind e
 - `LoupeStore`: SQLite via GRDB, with migrations.
 - `LoupeGit`: local checkout discovery and read-only git.
 - `LoupeInbox`: the PR list model that wires GitHub, store and UI.
-- `Loupe`: the app. `swift run Loupe` opens its one window, the PR lists with a tab strip of open PRs under the title bar; `swift run Loupe <diff>` opens a diff file; `--bench` times the diff view.
+- `Loupe`: the app. `swift run Loupe` opens its one window, the PR lists with a tab strip of open PRs under the title bar; `swift run Loupe <diff>` opens a diff file; `--bench` times the diff view; `--dependencies <checkout> <base>...<head>` prints how a PR's files are ordered and why, the way to check a reported PR's ordering (it only reads the checkout).
 
 ## Conventions
 

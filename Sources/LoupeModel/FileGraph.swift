@@ -11,19 +11,17 @@ public enum FileOrder: Sendable, Hashable, CaseIterable {
     case bottomUp
 }
 
-/// The changed files and which of them use which, for listing them in dependency order. Files
-/// joined by use, however indirectly, are grouped, largest group first; those using and used by
-/// none of the others come last, as one standalone group. A file's companions, named for it,
-/// follow it either way up, ordered with it as one: its type declarations, then its stories,
-/// then its tests, so each is read with what it's for; a README follows the files beside it.
-/// Ties, and
-/// files that use each other
-/// in a cycle, keep the order the directory tree lists them in, so files with no dependencies
-/// between them list as the tree does.
+/// The changed files and the links between them, for listing them in dependency order. Files
+/// joined by links, however indirectly, are grouped, largest group first; those linked to none
+/// of the others come last, as one standalone group. A file's companions follow it either way
+/// up, ordered with it as one: its type declarations, then its stories, then its tests, so each
+/// is read with what it's for; a README follows the last of the files it describes. Ties, and
+/// files that use each other in a cycle, keep the order the directory tree lists them in, so
+/// files with no links between them list as the tree does.
 public struct FileGraph: Sendable, Equatable {
     public struct Group: Sendable, Equatable {
         public let files: [String]
-        /// Whether these are the files using and used by none of the others.
+        /// Whether these are the files linked to none of the others.
         public let isStandalone: Bool
 
         public init(files: [String], isStandalone: Bool) {
@@ -34,57 +32,57 @@ public struct FileGraph: Sendable, Equatable {
 
     /// The files in the tree's order.
     public let files: [String]
-    /// The files each file uses, by path, only among `files` and never itself.
+    /// The links between `files`, never from a file to itself.
+    public let links: [DependencyLink]
+    /// The files each file is linked to, by path.
     public let dependencies: [String: Set<String>]
-    /// Whether any files are joined into a group, by use or as companions, rather than every
-    /// one standing alone.
+    /// Whether any files are joined into a group rather than every one standing alone.
     public private(set) var isLinked = false
 
-    /// `dependencies` names the files each one uses; any outside `paths` are left out.
-    public init(paths: some Sequence<String>, dependencies: [String: Set<String>]) {
+    /// Links to or from files outside `paths` are left out.
+    public init(paths: some Sequence<String>, links: some Sequence<DependencyLink>) {
         files = FileTree(paths: paths).files
         let known = Set(files)
-        var kept: [String: Set<String>] = dependencies.reduce(into: [:]) { kept, entry in
-            guard known.contains(entry.key) else { return }
-            let used = entry.value.filter { known.contains($0) && $0 != entry.key }
-            if !used.isEmpty { kept[entry.key] = used }
-        }
-        // A README is about the files beside it.
-        let byDirectory = Dictionary(grouping: files) { ($0 as NSString).deletingLastPathComponent }
-        for readme in files where isReadme(readme) {
-            let beside = (byDirectory[(readme as NSString).deletingLastPathComponent] ?? []).filter { !isReadme($0) }
-            if !beside.isEmpty { kept[readme, default: []].formUnion(beside) }
-        }
-        self.dependencies = kept
+        var seen = Set<DependencyLink>()
+        self.links = links.filter { known.contains($0.from) && known.contains($0.to) && $0.from != $0.to && seen.insert($0).inserted }
+        dependencies = self.links.reduce(into: [:]) { $0[$1.from, default: []].insert($1.to) }
         isLinked = groups(.topDown).contains { !$0.isStandalone }
+    }
+
+    /// `dependencies` names the files each one uses, by import.
+    public init(paths: some Sequence<String>, dependencies: [String: Set<String>]) {
+        self.init(paths: paths, links: dependencies.flatMap { file, used in used.map { DependencyLink(from: file, to: $0, reason: .imports) } })
     }
 
     /// The files `path` is used by.
     public func dependents(of path: String) -> Set<String> {
-        Set(dependencies.compactMap { $0.value.contains(path) ? $0.key : nil })
+        Set(links.filter { $0.to == path }.map(\.from))
     }
 
     /// The files in groups, each ordered as `order` asks, then the standalone files. The tree's
     /// order for `.directories`, as one standalone group.
     public func groups(_ order: FileOrder) -> [Group] {
         guard order != .directories else { return files.isEmpty ? [] : [Group(files: files, isStandalone: true)] }
+        let position = Dictionary(uniqueKeysWithValues: files.enumerated().map { ($1, $0) })
         // Each file and its companions are ordered as one, then follow it in turn.
-        let present = Set(files)
-        let byName = Dictionary(grouping: files) { ($0 as NSString).lastPathComponent }
-        let companions = Dictionary(uniqueKeysWithValues: files.compactMap { path in companion(of: path, among: present, byName: byName).map { (path, $0) } })
+        var companions: [String: (subject: String, reason: DependencyLink.Reason)] = [:]
+        for link in links where link.reason.isCompanion {
+            if let existing = companions[link.from], (existing.reason, position[existing.subject]!) <= (link.reason, position[link.to]!) { continue }
+            companions[link.from] = (link.to, link.reason)
+        }
         func subject(of path: String) -> String {
             var current = path
             var seen: Set<String> = [path]
             while let next = companions[current]?.subject, seen.insert(next).inserted { current = next }
             return current
         }
-        let subjects = files.filter { companions[$0] == nil || subject(of: $0) == $0 }
+        let subjects = files.filter { subject(of: $0) == $0 }
         var following: [String: [String]] = [:]
-        for path in files where !subjects.contains(path) { following[subject(of: path), default: []].append(path) }
-        for (subject, paths) in following { following[subject] = paths.sorted { companions[$0]!.kind < companions[$1]!.kind } }
+        for path in files where subject(of: path) != path { following[subject(of: path), default: []].append(path) }
+        for (subject, paths) in following { following[subject] = paths.sorted { companions[$0]!.reason < companions[$1]!.reason } }
         var contracted: [String: Set<String>] = [:]
-        for (path, used) in dependencies {
-            for dependency in used where subject(of: dependency) != subject(of: path) { contracted[subject(of: path), default: []].insert(subject(of: dependency)) }
+        for link in links where subject(of: link.to) != subject(of: link.from) {
+            contracted[subject(of: link.from), default: []].insert(subject(of: link.to))
         }
         let graph = IndexedGraph(files: subjects, dependencies: contracted)
         func expanded(_ indices: [Int]) -> [String] {
@@ -93,7 +91,7 @@ public struct FileGraph: Sendable, Equatable {
         let components = graph.components().map { (indices: $0, size: expanded($0).count) }
         let joined = components.filter { $0.size > 1 }
             .sorted { $0.size != $1.size ? $0.size > $1.size : $0.indices[0] < $1.indices[0] }
-            .map { Group(files: placingReadmes(expanded(graph.ordered($0.indices, usersFirst: order == .topDown))), isStandalone: false) }
+            .map { Group(files: placingDescriptions(expanded(graph.ordered($0.indices, usersFirst: order == .topDown))), isStandalone: false) }
         let standalone = components.filter { $0.size == 1 }.map(\.indices[0]).sorted().map { subjects[$0] }
         return joined + (standalone.isEmpty ? [] : [Group(files: standalone, isStandalone: true)])
     }
@@ -102,13 +100,14 @@ public struct FileGraph: Sendable, Equatable {
         groups(order).flatMap(\.files)
     }
 
-    /// `ordered` with each README moved to after the last of the files beside it.
-    private func placingReadmes(_ ordered: [String]) -> [String] {
-        var result = ordered.filter { !isReadme($0) }
-        for readme in ordered where isReadme(readme) {
-            let directory = (readme as NSString).deletingLastPathComponent
-            let last = result.lastIndex { ($0 as NSString).deletingLastPathComponent == directory }
-            result.insert(readme, at: last.map { $0 + 1 } ?? result.endIndex)
+    /// `ordered` with each file describing others, a README, moved to after the last of them.
+    private func placingDescriptions(_ ordered: [String]) -> [String] {
+        let described = links.filter { $0.reason == .describes }.reduce(into: [String: Set<String>]()) { $0[$1.from, default: []].insert($1.to) }
+        var result = ordered.filter { described[$0] == nil }
+        for path in ordered {
+            guard let subjects = described[path] else { continue }
+            let last = result.lastIndex { subjects.contains($0) }
+            result.insert(path, at: last.map { $0 + 1 } ?? result.endIndex)
         }
         return result
     }
@@ -226,65 +225,4 @@ private struct IndexedGraph {
         for node in component where index[node] == nil { visit(node) }
         return result
     }
-}
-
-/// What a companion file is to its subject, in the order they follow it.
-private enum CompanionKind: Comparable {
-    /// `x.d.ts`, beside `x.js`.
-    case declaration
-    /// `x.stories.tsx`, Storybook's, after the code and before its tests.
-    case story
-    case test
-}
-
-/// The file among `present` that `path` is named as a companion of, and how: `x.d.ts` for
-/// `x.js`; `x.stories.tsx` or `x.story.tsx` for `x.tsx`; and as tests `x_test.go` for `x.go`,
-/// `x.test.ts` or `x.spec.ts` for `x.ts` (beside it, or above a `__tests__` directory),
-/// `XTests.swift` for `X.swift`, `x_spec.rb` for `x.rb` and `test_x.py` for `x.py`; one
-/// named alike elsewhere if there's just one. Nil when it isn't one, or there's no such file.
-private func companion(of path: String, among present: Set<String>, byName: [String: [String]]) -> (subject: String, kind: CompanionKind)? {
-    let name = (path as NSString).lastPathComponent
-    let directory = (path as NSString).deletingLastPathComponent
-    let scriptExtensions = ["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"]
-    let parts = name.split(separator: ".").map(String.init)
-    let stem: String
-    let extensions: [String]
-    let kind: CompanionKind
-    if parts.count >= 3, parts[parts.count - 2] == "d", ["ts", "mts", "cts"].contains(parts[parts.count - 1]) {
-        (stem, extensions, kind) = (parts.dropLast(2).joined(separator: "."), ["js", "jsx", "mjs", "cjs"], .declaration)
-    } else if parts.count >= 3, ["stories", "story"].contains(parts[parts.count - 2]), (scriptExtensions + ["mdx"]).contains(parts[parts.count - 1]) {
-        (stem, extensions, kind) = (parts.dropLast(2).joined(separator: "."), scriptExtensions, .story)
-    } else if name.hasSuffix("_test.go") {
-        (stem, extensions, kind) = (String(name.dropLast("_test.go".count)), ["go"], .test)
-    } else if parts.count >= 3, ["test", "spec"].contains(parts[parts.count - 2]), scriptExtensions.contains(parts[parts.count - 1]) {
-        (stem, extensions, kind) = (parts.dropLast(2).joined(separator: "."), scriptExtensions, .test)
-    } else if name.hasSuffix("Tests.swift") || name.hasSuffix("Test.swift") {
-        (stem, extensions, kind) = (String(name.dropLast(name.hasSuffix("Tests.swift") ? "Tests.swift".count : "Test.swift".count)), ["swift"], .test)
-    } else if name.hasSuffix("_spec.rb") || name.hasSuffix("_test.rb") {
-        (stem, extensions, kind) = (String(name.dropLast("_spec.rb".count)), ["rb"], .test)
-    } else if name.hasPrefix("test_"), name.hasSuffix(".py") {
-        (stem, extensions, kind) = (String(name.dropFirst("test_".count).dropLast(".py".count)), ["py"], .test)
-    } else {
-        return nil
-    }
-    guard !stem.isEmpty else { return nil }
-    let names = extensions.map { "\(stem).\($0)" }
-    var directories = [directory]
-    if (directory as NSString).lastPathComponent == "__tests__" { directories.append((directory as NSString).deletingLastPathComponent) }
-    for candidateDirectory in directories {
-        for candidate in names {
-            let full = candidateDirectory.isEmpty ? candidate : "\(candidateDirectory)/\(candidate)"
-            if full != path, present.contains(full) { return (full, kind) }
-        }
-    }
-    // A declaration names its file exactly; others may be named alike elsewhere.
-    guard kind != .declaration else { return nil }
-    let elsewhere = names.flatMap { byName[$0] ?? [] }.filter { $0 != path }
-    return elsewhere.count == 1 ? elsewhere.first.map { ($0, kind) } : nil
-}
-
-/// Whether `path` is a README, of whatever format.
-private func isReadme(_ path: String) -> Bool {
-    let name = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
-    return name.caseInsensitiveCompare("readme") == .orderedSame
 }

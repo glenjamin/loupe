@@ -1,29 +1,27 @@
 import Foundation
+import LoupeModel
 
 /// SCSS's `@use`, `@forward` and `@import`: a path from the importing file names a stylesheet
 /// as written, as a partial (`_name.scss`), or as a directory's `_index.scss`. Built-in modules
 /// (`sass:math`) and paths found through load paths, such as `node_modules`, aren't followed.
-struct StylesheetDependencies: DependencyLanguage {
+struct StylesheetDependencies: DependencyRule {
     func filesToRead(among paths: [String]) -> [String] {
         paths.filter(isSCSS)
     }
 
-    func dependencies(among paths: [String], contents: [String: String]) -> [String: Set<String>] {
+    func links(among paths: [String], contents: [String: String]) -> [DependencyLink] {
         let changed = Set(paths)
         let sources = paths.filter { isSCSS($0) && contents[$0] != nil }
         let parsed = concurrentMap(sources) { path in Self.imports?.captures(in: contents[path] ?? "") ?? [] }
-        var dependencies: [String: Set<String>] = [:]
+        var links = LinkCollector()
         for (path, captures) in zip(sources, parsed) {
-            var used = Set<String>()
             for capture in captures where capture.name == "source" {
                 let specifier = capture.text.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
                 guard !specifier.contains(":"), let base = normalisedPath(joined(directory(of: path), specifier)) else { continue }
-                if let file = candidates(of: base).first(where: changed.contains) { used.insert(file) }
+                links.add(from: path, to: candidates(of: base).first(where: changed.contains).map { [$0] } ?? [], .imports)
             }
-            used.remove(path)
-            if !used.isEmpty { dependencies[path] = used }
         }
-        return dependencies
+        return links.links
     }
 
     private static let imports = ImportQuery(VendoredGrammar.scss.tsLanguage, """

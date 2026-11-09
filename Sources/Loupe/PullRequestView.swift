@@ -1157,12 +1157,17 @@ struct ReviewFileList: View {
             .tag(Optional(path))
     }
 
-    /// `path`, then the changed files it uses and is used by, as its row's tooltip in dependency order.
+    /// `path`, then the changed files it's linked to and from and why, as its row's tooltip in
+    /// dependency order.
     private func dependencyHelp(_ path: String) -> String {
         guard let graph = tab.shownFileGraph else { return path }
-        let uses = (graph.dependencies[path] ?? []).sorted()
-        let usedBy = graph.dependents(of: path).sorted()
-        return ([path] + (uses.isEmpty ? [] : ["Uses " + uses.joined(separator: ", ")]) + (usedBy.isEmpty ? [] : ["Used by " + usedBy.joined(separator: ", ")])).joined(separator: "\n")
+        func listed(_ links: [DependencyLink], file: KeyPath<DependencyLink, String>) -> String {
+            links.sorted { ($0[keyPath: file], $0.reason) < ($1[keyPath: file], $1.reason) }
+                .map { "\($0[keyPath: file]) (\($0.reason.label))" }.joined(separator: ", ")
+        }
+        let uses = graph.links.filter { $0.from == path }
+        let usedBy = graph.links.filter { $0.to == path }
+        return ([path] + (uses.isEmpty ? [] : ["Uses " + listed(uses, file: \.to)]) + (usedBy.isEmpty ? [] : ["Used by " + listed(usedBy, file: \.from)])).joined(separator: "\n")
     }
 
     /// The base `path` conflicts with, once the conflicting files have been found.
@@ -1218,6 +1223,22 @@ struct FileOrderPicker: View {
         .controlSize(.small)
         .help("List the files by directory, or by what uses what: top down puts each file before those it uses, bottom up after them")
         .accessibilityIdentifier("file-order")
+    }
+}
+
+extension DependencyLink.Reason {
+    /// Why, in a word or two, as a row's tooltip says.
+    var label: String {
+        switch self {
+        case .imports: "imports"
+        case .names: "names"
+        case .path: "path"
+        case .convention: "convention"
+        case .declares: "types"
+        case .story: "story"
+        case .tests: "tests"
+        case .describes: "readme"
+        }
     }
 }
 

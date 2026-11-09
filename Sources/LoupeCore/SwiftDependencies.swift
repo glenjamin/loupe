@@ -1,18 +1,19 @@
 import CodeEditLanguages
 import Foundation
+import LoupeModel
 
 /// Swift's imports: a SwiftPM package's `Sources/X` and `Tests/X` directories are targets, and
 /// `import X` names target X of the same package, so a file uses that target's changed files.
 /// Within a target, with no imports between its files, a file uses those defining the
 /// top-level types and protocols it names. Targets placed elsewhere by `path:` aren't known.
-struct SwiftDependencies: DependencyLanguage {
+struct SwiftDependencies: DependencyRule {
     func filesToRead(among paths: [String]) -> [String] {
         paths.filter { target(of: $0) != nil }
     }
 
-    func dependencies(among paths: [String], contents: [String: String]) -> [String: Set<String>] {
+    func links(among paths: [String], contents: [String: String]) -> [DependencyLink] {
         var targets: [Target: [String]] = [:]
-        var definers: [Target: [String: Set<String>]] = [:]
+        var definitions = NameIndex()
         var parsed: [String: (modules: Set<String>, references: Set<String>)] = [:]
         let sources = paths.filter { target(of: $0) != nil && contents[$0] != nil }
         let captures = concurrentMap(sources) { path in Self.names?.captures(in: contents[path] ?? "") ?? [] }
@@ -24,24 +25,21 @@ struct SwiftDependencies: DependencyLanguage {
             for capture in found {
                 switch capture.name {
                 case "module": modules.insert(String(capture.text.prefix { $0 != "." }))
-                case "definition": definers[target, default: [:]][capture.text, default: []].insert(path)
+                case "definition": definitions.define(capture.text, in: path, scope: target.scope)
                 default: references.insert(capture.text)
                 }
             }
             parsed[path] = (modules, references)
         }
-        var dependencies: [String: Set<String>] = [:]
+        var links = LinkCollector()
         for (path, names) in parsed {
             guard let target = target(of: path) else { continue }
-            var used = Set<String>()
             for module in names.modules {
-                used.formUnion(targets[Target(package: target.package, kind: "Sources", name: module)] ?? [])
+                links.add(from: path, to: targets[Target(package: target.package, kind: "Sources", name: module)] ?? [], .imports)
             }
-            for name in names.references { used.formUnion(definers[target]?[name] ?? []) }
-            used.remove(path)
-            if !used.isEmpty { dependencies[path] = used }
+            for name in names.references { links.add(from: path, to: definitions.definers(of: name, in: target.scope), .names) }
         }
-        return dependencies
+        return links.links
     }
 
     private static let names = ImportQuery(TreeSitterLanguage.swift.tsLanguage, """
@@ -66,4 +64,7 @@ private struct Target: Hashable {
     /// `Sources` or `Tests`.
     let kind: String
     let name: String
+
+    /// A name for the target as a scope of names.
+    var scope: String { "\(package)/\(kind)/\(name)" }
 }

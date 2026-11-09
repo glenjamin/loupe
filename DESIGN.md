@@ -1138,6 +1138,10 @@ Dependency order was first opt-in, starting each tab on folders, in case finding
 
 Top down orders nothing when none of the shown files use each other or are companions: every one is standalone, a flat list of what the folder tree shows better. Such changes, docs and config often, open by folder, the order picker saying so, and on the first file by folder. Only the default follows the files: a reviewer's pick, made before the order arrived or after, is kept for every choice of changes in the tab, so picking top down shows the flat standalone list. The default is the shown changes', so one commit's changes can open by folder and the whole PR's top down.
 
+### Dependency rules return typed links, and the graph knows no languages
+
+Each way files are linked is a rule, a language's imports and names or a framework's convention, which says what it reads and returns links, each with why: an import, a name defined there, a path in a string, a convention, or a companion, as declarations, a story, a test or a README. The graph takes the links and does only graph work: companions are ordered with their subject and READMEs placed after what they describe, by the link's kind rather than by file names it knows. So a rule for a new language or framework adds links without touching the ordering, a row's tooltip can say why each link is there, and `Loupe --dependencies` prints a PR's groups and links for checking a reported ordering against reality. Names defined in one scope and used across it, as in a Go package or a Swift target, go through one shared index.
+
 ## Not yet decided
 
 Nothing is pending.

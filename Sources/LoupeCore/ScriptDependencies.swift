@@ -1,5 +1,6 @@
 import CodeEditLanguages
 import Foundation
+import LoupeModel
 
 /// JavaScript's and TypeScript's imports, requires and re-exports: a relative specifier is a
 /// path from the importing file, and a bare one may be mapped to paths by the `paths` and
@@ -8,7 +9,7 @@ import Foundation
 /// Packages from npm aren't changed files, so they're passed over. A type declaration file
 /// (`x.d.ts`) names the script it declares (`x.js`) too, when that's changed. Any other
 /// string naming a changed file, such as a fixture's path, uses it.
-struct ScriptDependencies: DependencyLanguage {
+struct ScriptDependencies: DependencyRule {
     func filesToRead(among paths: [String]) -> [String] {
         let sources = paths.filter { Self.grammar(of: $0) != nil }
         var configs: [String] = []
@@ -21,7 +22,7 @@ struct ScriptDependencies: DependencyLanguage {
         return sources + configs
     }
 
-    func dependencies(among paths: [String], contents: [String: String]) -> [String: Set<String>] {
+    func links(among paths: [String], contents: [String: String]) -> [DependencyLink] {
         let changed = Set(paths.filter { contents[$0] != nil || Self.grammar(of: $0) == nil })
         let named = Set(paths)
         var configs: [String: Config] = [:]
@@ -32,28 +33,25 @@ struct ScriptDependencies: DependencyLanguage {
         let parsed = Dictionary(uniqueKeysWithValues: zip(scripts, concurrentMap(scripts) { path in
             Self.grammar(of: path)?.captures(in: contents[path] ?? "") ?? []
         }))
-        var dependencies: [String: Set<String>] = [:]
+        var links = LinkCollector()
         for path in scripts {
             let config = ([directory(of: path)] + ancestors(of: path)).lazy.compactMap { configs[$0] }.first
-            var used = Set<String>()
             for capture in parsed[path] ?? [] {
                 guard capture.name == "source" else {
-                    used.formUnion(filesNamed(by: capture.text, from: path, among: named))
+                    links.add(from: path, to: filesNamed(by: capture.text, from: path, among: named), .path)
                     continue
                 }
                 let specifier = capture.text.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
                 for base in bases(of: specifier, from: path, config: config) {
                     let files = resolve(base, among: changed)
                     if !files.isEmpty {
-                        used.formUnion(files)
+                        links.add(from: path, to: files, .imports)
                         break
                     }
                 }
             }
-            used.remove(path)
-            if !used.isEmpty { dependencies[path] = used }
         }
-        return dependencies
+        return links.links
     }
 
     private static let configNames = ["tsconfig.json", "jsconfig.json"]

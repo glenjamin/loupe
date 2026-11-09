@@ -2,7 +2,8 @@ import Foundation
 import LoupeCore
 
 /// `Loupe` opens the PR list; `Loupe <diff>` opens a diff file; `Loupe --bench <diff>
-/// [path-substring]` times parse, render and layout headlessly and exits.
+/// [path-substring]` times parse, render and layout headlessly and exits; `Loupe --dependencies
+/// <checkout> <base>...<head>` prints how those changes' files are ordered and exits.
 @main
 enum Entry {
     @MainActor
@@ -12,13 +13,17 @@ enum Entry {
             Bench.run(diffPath: args[1], fileFilter: args.count > 2 ? args[2] : nil)
             return
         }
+        if args.first == "--dependencies", args.count == 3 {
+            Task { exit(await DependencyReport.run(checkout: args[1], range: args[2])) }
+            RunLoop.main.run()
+        }
         if args.first == "--fixture-checkouts", args.count == 2 {
             let directory = URL(filePath: args[1], directoryHint: .isDirectory)
             Task { exit(await FixtureRun.buildCheckouts(in: directory)) }
             RunLoop.main.run()
         }
         if args.first?.hasPrefix("-") == true || args.count > 1 {
-            FileHandle.standardError.write(Data("usage: Loupe [diff-file] | --bench <diff-file> [path-substring] | --fixture-checkouts <dir>\n".utf8))
+            FileHandle.standardError.write(Data("usage: Loupe [diff-file] | --bench <diff-file> [path-substring] | --dependencies <checkout> <base>...<head> | --fixture-checkouts <dir>\n".utf8))
             exit(2)
         }
         // Native tooltips, SwiftUI's `.help` included, show sooner than macOS's default; registered
