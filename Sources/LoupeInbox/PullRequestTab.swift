@@ -52,9 +52,9 @@ public final class PullRequestTab: Identifiable {
     /// whitespace" does. Off for each tab as it opens, since whether it helps depends on the PR;
     /// it says what's wanted at once, while the changes shown follow once diffed.
     public private(set) var hidesWhitespace = false
-    /// How the file list orders the files to review. Directories for each tab as it opens, as
-    /// github.com lists them; the other orders follow once the files' dependencies are found.
-    public private(set) var fileOrder = FileOrder.directories
+    /// How the file list orders the files to review: top down for each tab as it opens, once
+    /// the files' dependencies are found, which is quick enough to wait for.
+    public private(set) var fileOrder = FileOrder.topDown
     /// Whether the changes shown were diffed ignoring whitespace.
     public private(set) var shownIgnoresWhitespace = false
     /// Whether the changes pending are being diffed ignoring whitespace.
@@ -460,11 +460,12 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// Orders the file list as `order` asks, for every choice of changes in this tab. Until the
-    /// shown changes' dependencies are found, the list stays in directory order.
+    /// shown changes' dependencies are found, the list waits for them.
     public func setFileOrder(_ order: FileOrder) async {
         guard order != fileOrder else { return }
         fileOrder = order
         await findDependencies()
+        if let range = shownRange { selectFirstFileOnceOrdered(over: range) }
     }
 
     /// The shown changes' groups of files as the file list shows them in dependency order; nil
@@ -478,6 +479,13 @@ public final class PullRequestTab: Identifiable {
     public var shownFileGraph: FileGraph? {
         guard let range = shownRange, case let .ready(graph)? = fileGraphs[range] else { return nil }
         return graph
+    }
+
+    /// Whether the file list is waiting for the shown changes' dependencies to order them. A
+    /// failure to find them leaves the list in directory order.
+    public var isOrderingFiles: Bool {
+        guard fileOrder != .directories, checkout != nil, let range = shownRange, case .ready? = shownChanges else { return false }
+        return isPending(fileGraphs[range])
     }
 
     /// The files to review of `changes`, the shown ones, in the file list's order.
@@ -504,9 +512,11 @@ public final class PullRequestTab: Identifiable {
             do {
                 let dependencies = try await Self.dependencies(among: files, over: range, differ: differ, checkout: checkout)
                 fileGraphs[range] = .ready(FileGraph(paths: files.map(\.path), dependencies: dependencies))
+                selectFirstFileOnceOrdered(over: range)
             } catch {
                 log("Couldn't find the dependencies of \(pullRequest.repository)#\(pullRequest.number)'s files: \(error)")
                 fileGraphs[range] = .failed(error.localizedDescription)
+                selectFirstFileOnceOrdered(over: range)
             }
             dependencySearches[range] = nil
         }
@@ -553,7 +563,7 @@ public final class PullRequestTab: Identifiable {
             pendingChoice = nil
             shownChoice = .all
             shownIgnoresWhitespace = false
-            keepSelection(in: review.changes)
+            keepSelection(in: review.changes, over: review.range)
             return await findDependencies()
         }
         let key = ChangesKey(range: range, ignoresWhitespace: ignoringWhitespace)
@@ -562,7 +572,7 @@ public final class PullRequestTab: Identifiable {
             pendingChoice = nil
             shownChoice = choice
             shownIgnoresWhitespace = ignoringWhitespace
-            keepSelection(in: changes)
+            keepSelection(in: changes, over: range)
             return await findDependencies()
         case .diffing:
             pendingChoice = choice
@@ -581,7 +591,7 @@ public final class PullRequestTab: Identifiable {
         pendingChoice = nil
         shownChoice = choice
         shownIgnoresWhitespace = ignoringWhitespace
-        if case let .ready(changes) = state { keepSelection(in: changes) }
+        if case let .ready(changes) = state { keepSelection(in: changes, over: range) }
         await findDependencies()
     }
 
@@ -1544,9 +1554,20 @@ public final class PullRequestTab: Identifiable {
     }
 
     /// Keeps the shown file if `changes` has it, hidden or not, else shows the first file the
-    /// list shows.
-    private func keepSelection(in changes: ReviewChanges) {
+    /// list shows; none while the list waits for the files' dependencies to order them, until
+    /// they're found.
+    private func keepSelection(in changes: ReviewChanges, over range: DiffRange) {
         if changes.files.contains(where: { $0.id == selectedFile }) || changes.hidden.contains(where: { $0.id == selectedFile }) { return }
+        if fileOrder != .directories, checkout != nil, isPending(fileGraphs[range]) {
+            selectedFile = nil
+            return
+        }
+        selectedFile = orderedFiles(of: changes).first ?? FileTree(paths: changes.hidden.map(\.path)).files.first
+    }
+
+    /// Picks the first file the list shows once the shown changes' order is known, unless one is.
+    private func selectFirstFileOnceOrdered(over range: DiffRange) {
+        guard selectedFile == nil, shownRange == range, case let .ready(changes)? = shownChanges else { return }
         selectedFile = orderedFiles(of: changes).first ?? FileTree(paths: changes.hidden.map(\.path)).files.first
     }
 
@@ -1597,7 +1618,7 @@ public final class PullRequestTab: Identifiable {
             fileGraphs = [:]
             dependencySearches = [:]
             contextExpansions.reset()
-            keepSelection(in: review.changes)
+            keepSelection(in: review.changes, over: review.range)
             reloading = nil
             followPlacedThreads()
             phase = .ready(review)
@@ -1789,4 +1810,12 @@ private enum StackMergeError: Error, Equatable, LocalizedError {
 
 private func log(_ message: String) {
     FileHandle.standardError.write(Data("\(message)\n".utf8))
+}
+
+/// Whether dependencies are still to be found: not asked for yet, or being found.
+private func isPending(_ state: DiffState<FileGraph>?) -> Bool {
+    switch state {
+    case nil, .diffing?: true
+    case .ready?, .failed?: false
+    }
 }

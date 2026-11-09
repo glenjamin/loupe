@@ -1,39 +1,41 @@
-# The picker above the file list orders the files by folder, as a tab opens, or by what uses
-# what, in groups under headers with each file's folder after its name; View ▸ Next File
-# Order's ⌃⌘O steps through the orders, the picker following.
+# The picker above the file list orders the files top down, as a tab opens, once their
+# dependencies are found, or by folder, or bottom up: in dependency order the files are in
+# groups under headers, each with its folder after its name. View ▸ Next File Order's ⌃⌘O
+# steps through the orders, the picker following.
 wait settled
-open tamarinworks/atrium#2928
+open tamarinworks/gazette#273
 wait settled
-click image #doc
+# main.go imports the batch package the PR adds, so its files open on main.go, above the
+# package, which stays shown as the order changes; its doc uses nothing.
+expect radio "Top down" in #file-order has value "1"
+wait until ~"Group 1 (2)"
+expect ~"Standalone (1)"
+expect text "main.go" 1
+press ctrl+2
 wait settled
-expect radio "Folders" in #file-order has value "1"
-expect "kiln/models/recipe"
-expect ~"Standalone" missing
+expect text "cmd/gazette/main.go" in #file-header
+snap gazette-top-down list 1
 
 click radio "Bottom up" in #file-order
-wait until ~"Standalone (3)"
 expect radio "Bottom up" in #file-order has value "1"
-expect "ledger/kiln/models/recipe"
-snap bottom-up list 1
+expect text "status.go" 1
+expect text "cmd/gazette/main.go" in #file-header
+snap gazette-bottom-up list 1
 
 press ctrl+cmd+o
 expect radio "Folders" in #file-order has value "1"
-wait until ~"Standalone" missing
-expect "kiln/models/recipe"
+wait until ~"Group 1" missing
+expect "cmd/gazette"
+expect text "status.go" 1
 
 press ctrl+cmd+o
 expect radio "Top down" in #file-order has value "1"
-wait until ~"Standalone (3)"
-
-# gazette #273's main.go imports the batch package it adds, so they're grouped, bottom up the
-# package first; its doc uses nothing.
-open tamarinworks/gazette#273
-wait settled
-click image #doc
-wait settled
-expect radio "Folders" in #file-order has value "1"
-click radio "Bottom up" in #file-order
 wait until ~"Group 1 (2)"
-expect ~"Standalone (1)"
-expect text "status.go" 1
-snap gazette-bottom-up list 1
+
+# atrium #2928's files use none of each other, so top down they're all standalone, in the
+# tree's order.
+open tamarinworks/atrium#2928
+wait settled
+wait until ~"Standalone (3)"
+expect radio "Top down" in #file-order has value "1"
+expect "ledger/kiln/models/recipe"

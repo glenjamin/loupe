@@ -262,7 +262,7 @@ final class SnapshotScript {
     }
 
     /// Waits until the lists have refreshed and the shown PR has its changes and conversation,
-    /// or they've failed, and every web page asked for has loaded.
+    /// or they've failed, its files ordered, and every web page asked for has loaded.
     private func settle(within timeout: Duration) async throws -> String? {
         let tabs = windows.tabs
         let deadline = Date.now + timeout.timeInterval
@@ -273,7 +273,7 @@ final class SnapshotScript {
             case .producing: return false
             case .ready, .failed, .noCheckout: break
             }
-            guard !tab.isReplacingShownChanges, tab.isConversationSettled else { return false }
+            guard !tab.isReplacingShownChanges, !tab.isOrderingFiles, tab.isConversationSettled else { return false }
             // A preview or rendered file still loading, or drawing its diagrams.
             guard !GitHubWebPage.livePages.allObjects.contains(where: \.isLoading) else { return false }
             guard tab.shownSection == .conversation, tab.conversation != nil else { return true }

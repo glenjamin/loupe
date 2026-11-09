@@ -9,20 +9,31 @@ import Testing
 
 @MainActor
 struct FileOrderTests {
-    @Test func filesAreListedByFolderUntilAskedForDependencyOrderForThatTabAlone() async throws {
+    @Test func aTabOpensTopDownOnItsFirstFileAndCanBeListedByFolderForThatTabAlone() async throws {
         let app = try await ThreadsApp()
-        let pullRequest = try await app.pushPullRequest(changing: ["docs/b.md": "b\n", "docs/a.md": "a\n", "README.md": "readme\n"])
+        let pullRequest = try await app.pushPullRequest(startingWith: ["go.mod": "module example.com/shop\n"], changing: [
+            "cmd/shop/main.go": "package main\n\nimport \"example.com/shop/catalog\"\n\nfunc main() { catalog.Load() }\n",
+            "catalog/load.go": "package catalog\n\nfunc Load() {}\n",
+            "docs/b.md": "b\n",
+            "docs/a.md": "a\n",
+        ])
         let tab = try await app.open(pullRequest)
-        #expect(tab.fileOrder == .directories, "folders as a tab opens")
-        #expect(tab.fileGroups == nil)
+        #expect(tab.fileOrder == .topDown, "top down as a tab opens")
+        #expect(!tab.isOrderingFiles)
+        #expect(tab.fileGroups == [
+            FileGraph.Group(files: ["cmd/shop/main.go", "catalog/load.go"], isStandalone: false),
+            FileGraph.Group(files: ["docs/a.md", "docs/b.md"], isStandalone: true),
+        ])
+        #expect(tab.selectedFile == "cmd/shop/main.go", "the first file top down, not by folder")
 
-        await tab.setFileOrder(.bottomUp)
-
-        #expect(tab.fileOrder == .bottomUp)
-        #expect(tab.fileGroups == [FileGraph.Group(files: ["docs/a.md", "docs/b.md", "README.md"], isStandalone: true)], "files using nothing list as the tree does")
-        #expect(app.tabs.tabs.allSatisfy { $0 === tab || $0.fileOrder == .directories }, "only this tab")
         await tab.setFileOrder(.directories)
+
+        #expect(tab.fileOrder == .directories)
         #expect(tab.fileGroups == nil)
+        #expect(tab.selectedFile == "cmd/shop/main.go", "the file shown stays")
+        tab.selectAdjacentFile(1)
+        #expect(tab.selectedFile == "docs/a.md", "moving on follows the folders")
+        #expect(app.tabs.tabs.allSatisfy { $0 === tab || $0.fileOrder == .topDown }, "only this tab")
     }
 
     @Test func goFilesUseThePackagesTheyImportAndTestsTheirOwnPackage() async throws {

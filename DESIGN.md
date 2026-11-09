@@ -1130,6 +1130,10 @@ Timed in a release build on real PRs (git read, then parse and resolve, then gro
 
 A file and its companions are ordered as one, then laid out in turn, rather than ordered apart and moved: moving a test after its subject left the fixtures it alone used ahead of the subject top down, and a story's extra dependencies split it from its tests bottom up. Ordered as one, what any of them uses comes after them all top down and before them all bottom up, and the subject reads implementation, stories, tests, as reviewing a component does. A string naming a changed file, from the file's directory or the top, uses it, in Go and scripts, so a test joins the fixture it loads by path; a Go test also uses the helpers its directory's other tests define, which only tests can. A README joins the changed files beside it and follows them, so a fixture directory's README is read with its fixtures. An import that resolves to a declaration file (`x.d.ts`) also uses the script it declares when that's changed, as the two change together.
 
+### Files open top down, the list held until they're ordered
+
+Dependency order was first opt-in, starting each tab on folders, in case finding the dependencies was too slow to wait for. Timed in a release build on real PRs it isn't: tens of milliseconds for a typical Go, TypeScript or Terraform PR, under 100ms for 260 Terraform files, and 200 to 250ms only for 335 Swift files or a 568-file PR read on both sides. So each tab now opens top down, and since the order arrives after the files, the list is held rather than shown by folder and then reordered under the reviewer: nothing shows for the first 200ms, then a spinner saying the files are being ordered. The file a PR opens on is the first top down, picked once the order is known, and the diff pane waits for it with the list. If the dependencies can't be found, the list falls back to folders without a word, as it was before. A diff file opened with `swift run Loupe <diff>` has no checkout to read and stays by folder.
+
 ## Not yet decided
 
 Nothing is pending.

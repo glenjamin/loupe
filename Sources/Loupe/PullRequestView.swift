@@ -1081,7 +1081,10 @@ struct ReviewFileList: View {
         List(selection: selection) {
             if let changes {
                 let files = Dictionary(changes.files.map { ($0.path, $0) }) { first, _ in first }
-                if let groups = tab.fileGroups {
+                if tab.isOrderingFiles {
+                    // Held rather than shown by folder, so the files don't move under the reviewer.
+                    OrderingFiles()
+                } else if let groups = tab.fileGroups {
                     ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
                         Section {
                             ForEach(group.files, id: \.self) { path in
@@ -1174,6 +1177,28 @@ struct ReviewFileList: View {
 
     private func collapsed(in tree: String) -> Binding<Set<String>> {
         Binding { collapsed[tree] ?? [] } set: { collapsed[tree] = $0 }
+    }
+}
+
+/// Where the files will be while they're being ordered: nothing at first, as that's usually
+/// quick, then a spinner if it isn't.
+private struct OrderingFiles: View {
+    @State private var isSlow = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if isSlow {
+                ProgressView().controlSize(.small)
+                Text("Ordering files…").foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+        .selectionDisabled()
+        .accessibilityIdentifier("ordering-files")
+        .task {
+            try? await Task.sleep(for: .milliseconds(200))
+            isSlow = true
+        }
     }
 }
 
