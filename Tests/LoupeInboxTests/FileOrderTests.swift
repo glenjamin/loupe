@@ -407,6 +407,62 @@ struct FileOrderTests {
         await tab.setFileOrder(.topDown)
         #expect(outline(tab) == ["group", "  ui/picker/picker.js", "  ui/picker/picker.d.ts", "  ui/picker/picker.test.js", "  ui/picker/README.mdx"])
     }
+
+    @Test func railsViewsUseTheHelpersTheyCallAndThePartialsTheyRenderWithSpecsAfterWhatTheyTest() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "app/helpers/application_helper.rb": "module ApplicationHelper\n  def bundle_tags(name)\n    name\n  end\nend\n",
+            "app/views/layouts/application.html.erb": "<html>\n<%= render 'shared/head' %>\n<%= bundle_tags 'app' %>\n</html>\n",
+            "app/views/shared/_head.html.erb": "<%# The page's head %>\n<title><%= page_title %></title>\n",
+            "spec/helpers/bundle_tags_spec.rb": "RSpec.describe 'bundle tags' do\n  it { expect(helper.bundle_tags('a')).to eq('a') }\nend\n",
+            "NOTES.md": "notes\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        #expect(outline(tab) == [
+            "group",
+            "  app/views/layouts/application.html.erb",
+            "  app/helpers/application_helper.rb",
+            "  spec/helpers/bundle_tags_spec.rb",
+            "  app/views/shared/_head.html.erb",
+            "standalone",
+            "  NOTES.md",
+        ], "a spec named for no file follows the helper it calls")
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == [
+            "group",
+            "  app/helpers/application_helper.rb",
+            "  spec/helpers/bundle_tags_spec.rb",
+            "  app/views/shared/_head.html.erb",
+            "  app/views/layouts/application.html.erb",
+            "standalone",
+            "  NOTES.md",
+        ])
+    }
+
+    @Test func railsRoutesUseTheirControllersAndControllersTheirViewsDeletedOnesToo() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(startingWith: [
+            "app/controllers/reports_controller.rb": "class ReportsController < ApplicationController\n  def show; end\nend\n",
+            "app/views/reports/show.html.erb": "<h1>Report</h1>\n",
+            "app/controllers/home_controller.rb": "class HomeController < ApplicationController\n  def index; end\nend\n",
+            "config/routes.rb": "Rails.application.routes.draw do\n  get 'reports/:id' => 'reports#show'\n  get 'home', to: 'home#index'\nend\n",
+        ], changing: [
+            "app/controllers/reports_controller.rb": nil,
+            "app/views/reports/show.html.erb": nil,
+            "app/controllers/home_controller.rb": "class HomeController < ApplicationController\n  def index\n    @greeting = 'hi'\n  end\nend\n",
+            "app/views/home/index.html.erb": "<p><%= @greeting %></p>\n",
+            "config/routes.rb": "Rails.application.routes.draw do\n  get 'home', to: 'home#index'\nend\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        #expect(outline(tab) == [
+            "group",
+            "  config/routes.rb",
+            "  app/controllers/home_controller.rb",
+            "  app/controllers/reports_controller.rb",
+            "  app/views/home/index.html.erb",
+            "  app/views/reports/show.html.erb",
+        ], "routes, then controllers, then their views")
+    }
 }
 
 /// The shown changes' groups, each as a line saying what kind it is, then its files indented.

@@ -24,13 +24,30 @@ public enum FileDependencies {
     /// The links among `paths`, from `contents`, the text of those `filesToRead` named that exist.
     public static func find(among paths: [String], contents: [String: String]) -> [DependencyLink] {
         var seen = Set<DependencyLink>()
-        return rules.flatMap { $0.links(among: paths, contents: contents) }.filter { $0.from != $0.to && seen.insert($0).inserted }
+        let links = rules.flatMap { $0.links(among: paths, contents: contents) }.filter { $0.from != $0.to && seen.insert($0).inserted }
+        return links + testsOfWhatTheyUse(links, among: paths)
     }
 
     private static let rules: [any DependencyRule] = [
         GoDependencies(), ScriptDependencies(), TerraformDependencies(), SwiftDependencies(), StylesheetDependencies(), RubyDependencies(),
-        CompanionNames(), Readmes(),
+        RailsConventions(), CompanionNames(), Readmes(),
     ]
+
+    /// A test named for no changed file tests the file its code uses most, ties going to the
+    /// first by path, so it follows that file as a test named for it would. Other tests, and
+    /// files it only names the path of, such as fixtures, aren't what it tests.
+    private static func testsOfWhatTheyUse(_ links: [DependencyLink], among paths: [String]) -> [DependencyLink] {
+        let tests = Set(paths.filter { TestNaming($0)?.reason == .tests })
+        let named = Set(links.filter { $0.reason == .tests }.map(\.from))
+        var uses: [String: [String: Int]] = [:]
+        for link in links where tests.contains(link.from) && !named.contains(link.from) && !tests.contains(link.to) {
+            guard [.imports, .names, .convention].contains(link.reason) else { continue }
+            uses[link.from, default: [:]][link.to, default: 0] += 1
+        }
+        return uses.compactMap { test, counts in
+            counts.min { ($1.value, $0.key) < ($0.value, $1.key) }.map { DependencyLink(from: test, to: $0.key, reason: .tests) }
+        }
+    }
 }
 
 /// One way changed files are linked, by a language's imports or names, or by a convention:
