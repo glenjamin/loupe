@@ -4,7 +4,9 @@ import Foundation
 /// Go's imports: an import path names a package, a directory under the module whose `go.mod`
 /// is nearest above the file, so a file uses that package's changed files. Within a package,
 /// with no imports between its files, a file uses those defining the top-level names it
-/// refers to. Its tests use their own directory's other files, whichever package they're in.
+/// refers to. Its tests use their own directory's other files, whichever package they're in,
+/// and the helpers its other tests define. A string naming a changed file, such as a test's
+/// fixture, uses it.
 struct GoDependencies: DependencyLanguage {
     func filesToRead(among paths: [String]) -> [String] {
         let sources = paths.filter(isGo)
@@ -33,20 +35,30 @@ struct GoDependencies: DependencyLanguage {
         let parsed = Dictionary(uniqueKeysWithValues: zip(sources, concurrentMap(sources) { path in
             Self.names?.captures(in: contents[path] ?? "") ?? []
         }))
-        // What each directory's files define at the top level, by name.
+        // What each directory's files define at the top level, by name; its tests' apart, as
+        // only tests can use them.
         var definers: [String: [String: Set<String>]] = [:]
-        for path in sources where !isTest(path) {
+        var testDefiners: [String: [String: Set<String>]] = [:]
+        for path in sources {
             for capture in parsed[path] ?? [] where capture.name == "definition" && !["_", "init", "main"].contains(capture.text) {
-                definers[directory(of: path), default: [:]][capture.text, default: []].insert(path)
+                if isTest(path) {
+                    testDefiners[directory(of: path), default: [:]][capture.text, default: []].insert(path)
+                } else {
+                    definers[directory(of: path), default: [:]][capture.text, default: []].insert(path)
+                }
             }
         }
+        let changed = Set(paths)
         var dependencies: [String: Set<String>] = [:]
         for path in sources {
             var used = Set<String>()
             for capture in parsed[path] ?? [] {
                 switch capture.name {
                 case "path": used.formUnion(packages[unquoted(capture.text)] ?? [])
-                case "reference": used.formUnion(definers[directory(of: path)]?[capture.text] ?? [])
+                case "reference":
+                    used.formUnion(definers[directory(of: path)]?[capture.text] ?? [])
+                    if isTest(path) { used.formUnion(testDefiners[directory(of: path)]?[capture.text] ?? []) }
+                case "string": used.formUnion(filesNamed(by: unquoted(capture.text), from: path, among: changed))
                 default: break
                 }
             }
@@ -65,6 +77,8 @@ struct GoDependencies: DependencyLanguage {
         (source_file (var_declaration (var_spec name: (identifier) @definition)))
         (identifier) @reference
         (type_identifier) @reference
+        (interpreted_string_literal) @string
+        (raw_string_literal) @string
         """)
 
     private func isGo(_ path: String) -> Bool {

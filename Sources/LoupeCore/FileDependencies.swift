@@ -100,6 +100,13 @@ private final class Results<Value: Sendable>: @unchecked Sendable {
     var values: [Value] { lock.withLock { slots.compactMap { $0 } } }
 }
 
+/// The changed files a string in `path` names: as a path from its directory, or from the top.
+func filesNamed(by literal: String, from path: String, among changed: Set<String>) -> [String] {
+    guard !literal.isEmpty, literal.count < 300, !literal.contains("\n") else { return [] }
+    let candidates = [normalisedPath(joined(directory(of: path), literal)), normalisedPath(literal)].compactMap { $0 }
+    return Array(Set(candidates.filter { $0 != path && changed.contains($0) }))
+}
+
 /// `path`'s directory, empty for one at the top.
 func directory(of path: String) -> String {
     (path as NSString).deletingLastPathComponent

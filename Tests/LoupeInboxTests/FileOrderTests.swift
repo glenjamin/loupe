@@ -224,12 +224,12 @@ struct FileOrderTests {
         #expect(outline(tab) == [
             "group",
             "  app/models/billing/line_item.rb",
-            "  app/models/invoice.rb",
             "  app/services/http_client.rb",
-            "  app/controllers/invoices_controller.rb",
             "  spec/support/factories.rb",
+            "  app/models/invoice.rb",
             "  spec/models/invoice_spec.rb",
-        ], "a spec comes after its subject and the support it requires")
+            "  app/controllers/invoices_controller.rb",
+        ], "a spec follows its subject, after the support it requires")
     }
 
     @Test func aDeletedFileJoinsTheFilesItUsedAndThatUsedItBeforeTheChange() async throws {
@@ -290,6 +290,80 @@ struct FileOrderTests {
         let tab = try await app.open(pullRequest)
         await tab.setFileOrder(.bottomUp)
         #expect(outline(tab) == ["group", "  web/Button.scss", "  web/Button.tsx", "group", "  web/Card.module.scss", "  web/Card.jsx"])
+    }
+
+    @Test func goTestsUseTheHelpersOtherTestsDefineAndTheFixturesTheyNameWithTheirReadme() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(startingWith: ["go.mod": "module example.com/shop\n", "importer/importer.go": "package importer\n\nfunc Import() {}\n"], changing: [
+            "importer/helper_test.go": "package importer\n\nfunc fixtureServer(path string) string { return path }\n",
+            "importer/sync_test.go": "package importer\n\nimport \"testing\"\n\nfunc TestSync(t *testing.T) {\n\tfixtureServer(\"testdata/orders.json\")\n}\n",
+            "importer/refund_test.go": "package importer\n\nimport \"testing\"\n\nfunc TestRefund(t *testing.T) {\n\tfixtureServer(`testdata/refunds.json`)\n}\n",
+            "importer/testdata/orders.json": "[]\n",
+            "importer/testdata/refunds.json": "[]\n",
+            "importer/testdata/README.md": "Made-up orders.\n",
+            "importer/MIGRATION.md": "Moved the tests.\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == [
+            "group",
+            "  importer/testdata/orders.json",
+            "  importer/testdata/refunds.json",
+            "  importer/testdata/README.md",
+            "  importer/helper_test.go",
+            "  importer/refund_test.go",
+            "  importer/sync_test.go",
+            "standalone",
+            "  importer/MIGRATION.md",
+        ])
+    }
+
+    @Test func aStoryComesAfterWhatItShowsAndBeforeItsTestsEitherWayUp() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "src/panel/panel.tsx": "import { Table } from './table'\n\nexport const Panel = () => Table\n",
+            "src/panel/table.tsx": "export const Table = null\n",
+            "src/panel/panel.stories.tsx": "import { Panel } from './panel'\nimport { sample } from '../../stories/sample'\n\nexport default { component: Panel, args: sample }\n",
+            "src/panel/panel.test.tsx": "import { Panel } from './panel'\nimport data from './fixtures/rows.json'\n\nit('renders', () => Panel)\n",
+            "src/panel/fixtures/rows.json": "[]\n",
+            "stories/sample.ts": "export const sample = {}\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.topDown)
+        #expect(outline(tab) == [
+            "group",
+            "  src/panel/panel.tsx",
+            "  src/panel/panel.stories.tsx",
+            "  src/panel/panel.test.tsx",
+            "  src/panel/fixtures/rows.json",
+            "  src/panel/table.tsx",
+            "  stories/sample.ts",
+        ])
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == [
+            "group",
+            "  src/panel/fixtures/rows.json",
+            "  src/panel/table.tsx",
+            "  stories/sample.ts",
+            "  src/panel/panel.tsx",
+            "  src/panel/panel.stories.tsx",
+            "  src/panel/panel.test.tsx",
+        ])
+    }
+
+    @Test func anImportResolvingToADeclarationFileUsesTheScriptItDeclaresToo() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "ui/picker/picker.js": "export const pick = () => 1\n",
+            "ui/picker/picker.d.ts": "export declare const pick: () => number\n",
+            "ui/picker/picker.test.js": "import { pick } from './picker'\n\nit('picks', () => pick())\n",
+            "ui/picker/README.mdx": "# Picker\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.bottomUp)
+        #expect(outline(tab) == ["group", "  ui/picker/picker.js", "  ui/picker/picker.d.ts", "  ui/picker/picker.test.js", "  ui/picker/README.mdx"])
+        await tab.setFileOrder(.topDown)
+        #expect(outline(tab) == ["group", "  ui/picker/picker.js", "  ui/picker/picker.d.ts", "  ui/picker/picker.test.js", "  ui/picker/README.mdx"])
     }
 }
 

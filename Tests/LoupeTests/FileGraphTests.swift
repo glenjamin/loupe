@@ -25,10 +25,10 @@ struct FileGraphTests {
             "group",
             "  a/one.go",
             "  a/two.go",
-            "standalone",
+            "group",
             "  Makefile",
             "  README.md",
-        ])
+        ], "a README joins the files beside it")
     }
 
     @Test func breaksTiesByTheTreesOrderSoBottomUpIsntTopDownReversed() {

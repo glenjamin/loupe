@@ -5,7 +5,9 @@ import Foundation
 /// path from the importing file, and a bare one may be mapped to paths by the `paths` and
 /// `baseUrl` of the `tsconfig.json` or `jsconfig.json` nearest above it. A path names a file
 /// with or without its extension, or a directory's `index`, as bundlers and TypeScript resolve.
-/// Packages from npm aren't changed files, so they're passed over.
+/// Packages from npm aren't changed files, so they're passed over. A type declaration file
+/// (`x.d.ts`) names the script it declares (`x.js`) too, when that's changed. Any other
+/// string naming a changed file, such as a fixture's path, uses it.
 struct ScriptDependencies: DependencyLanguage {
     func filesToRead(among paths: [String]) -> [String] {
         let sources = paths.filter { Self.grammar(of: $0) != nil }
@@ -21,6 +23,7 @@ struct ScriptDependencies: DependencyLanguage {
 
     func dependencies(among paths: [String], contents: [String: String]) -> [String: Set<String>] {
         let changed = Set(paths.filter { contents[$0] != nil || Self.grammar(of: $0) == nil })
+        let named = Set(paths)
         var configs: [String: Config] = [:]
         for (path, text) in contents where Self.configNames.contains((path as NSString).lastPathComponent) {
             if let config = Config(text, at: directory(of: path)) { configs[directory(of: path)] = config }
@@ -33,11 +36,16 @@ struct ScriptDependencies: DependencyLanguage {
         for path in scripts {
             let config = ([directory(of: path)] + ancestors(of: path)).lazy.compactMap { configs[$0] }.first
             var used = Set<String>()
-            for capture in parsed[path] ?? [] where capture.name == "source" {
+            for capture in parsed[path] ?? [] {
+                guard capture.name == "source" else {
+                    used.formUnion(filesNamed(by: capture.text, from: path, among: named))
+                    continue
+                }
                 let specifier = capture.text.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
                 for base in bases(of: specifier, from: path, config: config) {
-                    if let file = resolve(base, among: changed) {
-                        used.insert(file)
+                    let files = resolve(base, among: changed)
+                    if !files.isEmpty {
+                        used.formUnion(files)
                         break
                     }
                 }
@@ -59,6 +67,7 @@ struct ScriptDependencies: DependencyLanguage {
         (export_statement source: (string) @source)
         ((call_expression function: (identifier) @function arguments: (arguments . (string) @source)) (#eq? @function "require"))
         (call_expression function: (import) arguments: (arguments . (string) @source))
+        (string (string_fragment) @string)
         """
 
     private static func grammar(of path: String) -> ImportQuery? {
@@ -79,9 +88,10 @@ struct ScriptDependencies: DependencyLanguage {
         return config.bases(of: specifier).compactMap(normalisedPath)
     }
 
-    /// The changed file `base` names: itself, with a script's extension, or its directory's index.
-    private func resolve(_ base: String, among changed: Set<String>) -> String? {
-        if changed.contains(base) { return base }
+    /// The changed file `base` names: itself, with a script's extension, or its directory's
+    /// index; a declaration file with the script it declares.
+    private func resolve(_ base: String, among changed: Set<String>) -> [String] {
+        if changed.contains(base) { return [base] }
         let extensions = ["ts", "tsx", "d.ts", "js", "jsx", "mjs", "cjs", "mts", "cts"]
         var candidates = extensions.map { "\(base).\($0)" } + extensions.map { "\(base)/index.\($0)" }
         // TypeScript's ES modules import a file by the name it compiles to.
@@ -91,7 +101,10 @@ struct ScriptDependencies: DependencyLanguage {
             let stem = (base as NSString).deletingPathExtension
             candidates = sources.map { "\(stem).\($0)" } + candidates
         }
-        return candidates.first { changed.contains($0) }
+        guard let found = candidates.first(where: changed.contains) else { return [] }
+        guard found.hasSuffix(".d.ts") else { return [found] }
+        let stem = String(found.dropLast(".d.ts".count))
+        return [found] + ["js", "jsx", "mjs", "cjs"].map { "\(stem).\($0)" }.filter(changed.contains)
     }
 }
 
