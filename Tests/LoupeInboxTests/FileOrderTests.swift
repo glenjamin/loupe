@@ -36,6 +36,37 @@ struct FileOrderTests {
         #expect(app.tabs.tabs.allSatisfy { $0 === tab || $0.fileOrder == .topDown }, "only this tab")
     }
 
+    @Test func aTabWhoseFilesDontUseEachOtherOpensByFolderUnlessDependencyOrderIsPicked() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "docs/setup.md": "Setup.\n",
+            "config/app.yml": "debug: false\n",
+            "Makefile": "test:\n\tgo test ./...\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        #expect(tab.fileOrder == .directories, "nothing to order by")
+        #expect(tab.fileGroups == nil)
+        #expect(tab.selectedFile == "config/app.yml", "the first file by folder")
+
+        await tab.setFileOrder(.topDown)
+
+        #expect(tab.fileOrder == .topDown, "as picked, though nothing links")
+        #expect(tab.fileGroups == [FileGraph.Group(files: ["config/app.yml", "docs/setup.md", "Makefile"], isStandalone: true)])
+        #expect(tab.selectedFile == "config/app.yml")
+    }
+
+    @Test func anOrderPickedBeforeTheFilesAreOrderedIsKept() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: ["docs/a.md": "a\n", "docs/b.md": "b\n"])
+        let listed = try #require(app.tabs.lists.pullRequest(id: pullRequest.id))
+        app.tabs.open(listed)
+        let tab = try #require(app.tabs.tab(id: listed.id))
+        await tab.setFileOrder(.bottomUp)
+        await tab.load()
+        #expect(tab.fileOrder == .bottomUp)
+        #expect(tab.fileGroups == [FileGraph.Group(files: ["docs/a.md", "docs/b.md"], isStandalone: true)])
+    }
+
     @Test func goFilesUseThePackagesTheyImportAndTestsTheirOwnPackage() async throws {
         let app = try await ThreadsApp()
         let pullRequest = try await app.pushPullRequest(startingWith: ["go.mod": "module example.com/shop\n\ngo 1.22\n"], changing: [

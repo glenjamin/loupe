@@ -52,9 +52,21 @@ public final class PullRequestTab: Identifiable {
     /// whitespace" does. Off for each tab as it opens, since whether it helps depends on the PR;
     /// it says what's wanted at once, while the changes shown follow once diffed.
     public private(set) var hidesWhitespace = false
-    /// How the file list orders the files to review: top down for each tab as it opens, once
-    /// the files' dependencies are found, which is quick enough to wait for.
-    public private(set) var fileOrder = FileOrder.topDown
+    /// How the file list orders the files to review: as the reviewer picked, else top down once
+    /// the files' dependencies are found, which is quick enough to wait for, or by folder when
+    /// none of the shown files use each other, as there's no order to show.
+    public var fileOrder: FileOrder {
+        if let chosenFileOrder { return chosenFileOrder }
+        if let graph = shownFileGraph, !graph.isLinked { return .directories }
+        return .topDown
+    }
+    /// The order the reviewer picked in this tab, if they have.
+    private var chosenFileOrder: FileOrder?
+    /// Whether the files are to be ordered by their dependencies, as they are unless the
+    /// reviewer picked folders, so they're looked for.
+    private var ordersByDependencies: Bool {
+        (chosenFileOrder ?? .topDown) != .directories
+    }
     /// Whether the changes shown were diffed ignoring whitespace.
     public private(set) var shownIgnoresWhitespace = false
     /// Whether the changes pending are being diffed ignoring whitespace.
@@ -459,11 +471,12 @@ public final class PullRequestTab: Identifiable {
         await show(pendingChoice ?? shownChoice, ignoringWhitespace: hides)
     }
 
-    /// Orders the file list as `order` asks, for every choice of changes in this tab. Until the
-    /// shown changes' dependencies are found, the list waits for them.
+    /// Orders the file list as `order` asks, for every choice of changes in this tab, whether or
+    /// not the files use each other. Until the shown changes' dependencies are found, the list
+    /// waits for them.
     public func setFileOrder(_ order: FileOrder) async {
-        guard order != fileOrder else { return }
-        fileOrder = order
+        guard order != chosenFileOrder else { return }
+        chosenFileOrder = order
         await findDependencies()
         if let range = shownRange { selectFirstFileOnceOrdered(over: range) }
     }
@@ -484,7 +497,7 @@ public final class PullRequestTab: Identifiable {
     /// Whether the file list is waiting for the shown changes' dependencies to order them. A
     /// failure to find them leaves the list in directory order.
     public var isOrderingFiles: Bool {
-        guard fileOrder != .directories, checkout != nil, let range = shownRange, case .ready? = shownChanges else { return false }
+        guard ordersByDependencies, checkout != nil, let range = shownRange, case .ready? = shownChanges else { return false }
         return isPending(fileGraphs[range])
     }
 
@@ -497,7 +510,7 @@ public final class PullRequestTab: Identifiable {
     /// Finds which of the shown changes' files use which, from their contents at the changes'
     /// head, once per range; while ordering by directory, nothing is looked for.
     public func findDependencies() async {
-        guard fileOrder != .directories, let range = shownRange, let checkout, case let .ready(changes)? = shownChanges else { return }
+        guard ordersByDependencies, let range = shownRange, let checkout, case let .ready(changes)? = shownChanges else { return }
         switch fileGraphs[range] {
         case .ready?: return
         case .diffing?:
@@ -1558,7 +1571,7 @@ public final class PullRequestTab: Identifiable {
     /// they're found.
     private func keepSelection(in changes: ReviewChanges, over range: DiffRange) {
         if changes.files.contains(where: { $0.id == selectedFile }) || changes.hidden.contains(where: { $0.id == selectedFile }) { return }
-        if fileOrder != .directories, checkout != nil, isPending(fileGraphs[range]) {
+        if ordersByDependencies, checkout != nil, isPending(fileGraphs[range]) {
             selectedFile = nil
             return
         }

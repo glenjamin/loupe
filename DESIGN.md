@@ -1134,6 +1134,10 @@ A file and its companions are ordered as one, then laid out in turn, rather than
 
 Dependency order was first opt-in, starting each tab on folders, in case finding the dependencies was too slow to wait for. Timed in a release build on real PRs it isn't: tens of milliseconds for a typical Go, TypeScript or Terraform PR, under 100ms for 260 Terraform files, and 200 to 250ms only for 335 Swift files or a 568-file PR read on both sides. So each tab now opens top down, and since the order arrives after the files, the list is held rather than shown by folder and then reordered under the reviewer: nothing shows for the first 200ms, then a spinner saying the files are being ordered. The file a PR opens on is the first top down, picked once the order is known, and the diff pane waits for it with the list. If the dependencies can't be found, the list falls back to folders without a word, as it was before. A diff file opened with `swift run Loupe <diff>` has no checkout to read and stays by folder.
 
+### Files that don't use each other open by folder
+
+Top down orders nothing when none of the shown files use each other or are companions: every one is standalone, a flat list of what the folder tree shows better. Such changes, docs and config often, open by folder, the order picker saying so, and on the first file by folder. Only the default follows the files: a reviewer's pick, made before the order arrived or after, is kept for every choice of changes in the tab, so picking top down shows the flat standalone list. The default is the shown changes', so one commit's changes can open by folder and the whole PR's top down.
+
 ## Not yet decided
 
 Nothing is pending.

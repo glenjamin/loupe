@@ -36,6 +36,9 @@ public struct FileGraph: Sendable, Equatable {
     public let files: [String]
     /// The files each file uses, by path, only among `files` and never itself.
     public let dependencies: [String: Set<String>]
+    /// Whether any files are joined into a group, by use or as companions, rather than every
+    /// one standing alone.
+    public private(set) var isLinked = false
 
     /// `dependencies` names the files each one uses; any outside `paths` are left out.
     public init(paths: some Sequence<String>, dependencies: [String: Set<String>]) {
@@ -53,6 +56,7 @@ public struct FileGraph: Sendable, Equatable {
             if !beside.isEmpty { kept[readme, default: []].formUnion(beside) }
         }
         self.dependencies = kept
+        isLinked = groups(.topDown).contains { !$0.isStandalone }
     }
 
     /// The files `path` is used by.

@@ -1,5 +1,5 @@
 # The picker above the file list orders the files top down, as a tab opens, once their
-# dependencies are found, or by folder, or bottom up: in dependency order the files are in
+# dependencies are found (by folder if none of them use each other), or by folder, or bottom up: in dependency order the files are in
 # groups under headers, each with its folder after its name. View ▸ Next File Order's ⌃⌘O
 # steps through the orders, the picker following.
 wait settled
@@ -32,10 +32,13 @@ press ctrl+cmd+o
 expect radio "Top down" in #file-order has value "1"
 wait until ~"Group 1 (2)"
 
-# atrium #2928's files use none of each other, so top down they're all standalone, in the
-# tree's order.
+# atrium #2928's files use none of each other, so it opens by folder, as a tree; picking top
+# down lists them all as standalone, in the tree's order.
 open tamarinworks/atrium#2928
 wait settled
+expect radio "Folders" in #file-order has value "1"
+expect "kiln/models/recipe"
+expect ~"Standalone" missing
+click radio "Top down" in #file-order
 wait until ~"Standalone (3)"
-expect radio "Top down" in #file-order has value "1"
 expect "ledger/kiln/models/recipe"
