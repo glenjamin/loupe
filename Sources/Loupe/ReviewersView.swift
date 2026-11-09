@@ -132,9 +132,11 @@ private struct RequestReviewPopover: View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("Search people and teams", text: $text)
                 .textFieldStyle(.roundedBorder)
-                // Ready to type into however the popover was opened.
+                // Ready to type into however the popover was opened. Asked again once the
+                // popover's window is up, as it can't take the focus while it's appearing.
                 .focused($isSearching)
-                .onAppear { isSearching = true }
+                .defaultFocus($isSearching, true)
+                .onAppear { DispatchQueue.main.async { isSearching = true } }
                 .onChange(of: text) { highlighted = nil }
                 .onKeyPress(.downArrow) {
                     guard !choices.isEmpty else { return .ignored }
