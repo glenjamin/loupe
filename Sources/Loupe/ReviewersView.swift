@@ -113,8 +113,8 @@ private struct ReviewerRow: View {
     }
 }
 
-/// Filters the people and teams who could review as the viewer types, those already asked first
-/// and ticked, as on github.com. Choosing someone asks them, or withdraws the request of someone
+/// Filters the people and teams who could review as the viewer types, the search field focused
+/// on opening and those already asked first and ticked, as on github.com. Choosing someone asks them, or withdraws the request of someone
 /// ticked, saying here if GitHub refuses.
 private struct RequestReviewPopover: View {
     let tab: PullRequestTab
@@ -122,6 +122,7 @@ private struct RequestReviewPopover: View {
     @State private var fetchError: String?
     /// The row ↓ and ↑ have moved to, which Return picks; the focus stays in the search field.
     @State private var highlighted: Int?
+    @FocusState private var isSearching: Bool
 
     var body: some View {
         let requested = tab.requestedReviewers(matching: text)
@@ -131,6 +132,9 @@ private struct RequestReviewPopover: View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("Search people and teams", text: $text)
                 .textFieldStyle(.roundedBorder)
+                // Ready to type into however the popover was opened.
+                .focused($isSearching)
+                .onAppear { isSearching = true }
                 .onChange(of: text) { highlighted = nil }
                 .onKeyPress(.downArrow) {
                     guard !choices.isEmpty else { return .ignored }
