@@ -76,6 +76,10 @@ public final class PullRequestTab: Identifiable {
     public let images: ImagePreviews
     /// The description being edited, shown in place of the conversation, or nil when it isn't.
     public private(set) var descriptionEditor: DescriptionEditor?
+    /// Whether a new title is on its way to GitHub.
+    public private(set) var isRenaming = false
+    /// Why GitHub refused the last rename, until another is tried.
+    public private(set) var renameError: String?
     /// Whether Merge is asking to be confirmed.
     public var isConfirmingMerge = false
     /// Whether the picker of reviewers to ask is open.
@@ -1153,6 +1157,42 @@ public final class PullRequestTab: Identifiable {
     /// Closes the editor, dropping any draft; asking first is the view's job.
     public func closeDescriptionEditor() {
         descriptionEditor = nil
+    }
+
+    /// Whether the viewer can rename the PR, which, as with its description, is only offered on
+    /// their own PRs.
+    public var canRename: Bool {
+        isViewersOwn
+    }
+
+    /// Renames the PR on GitHub, trimmed of surrounding space. Returns whether the title is now
+    /// `title`: a blank or unchanged one is accepted without asking GitHub, and a refusal says why
+    /// in `renameError`.
+    @discardableResult
+    public func rename(to title: String) async -> Bool {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canRename, !isRenaming, !title.isEmpty else { return false }
+        renameError = nil
+        guard title != pullRequest.title else { return true }
+        isRenaming = true
+        defer { isRenaming = false }
+        do {
+            try await client.updatePullRequestTitle(title, pullRequestId: id)
+        } catch {
+            renameError = "Couldn't rename: \(error.localizedDescription)"
+            return false
+        }
+        do {
+            try await lists.renamed(id, to: title)
+        } catch {
+            log("Couldn't store the new title of \(pullRequest.repository)#\(pullRequest.number): \(error)")
+        }
+        return true
+    }
+
+    /// Forgets why the last rename was refused, as when it's abandoned.
+    public func clearRenameError() {
+        renameError = nil
     }
 
     /// Whether the conversation has been asked for and has arrived or failed.

@@ -230,6 +230,16 @@ struct ConversationApp {
         Self.tabs(github, details, store, delay, showDelay)
     }
 
+    /// Opens the viewer's first PR, with the probe's conversation, and waits for it to load.
+    func openMine() async throws -> (PullRequestTab, PullRequestSummary) {
+        let pullRequest = mine[0]
+        try await conversations.add(pullRequest.id)
+        tabs.open(pullRequest)
+        let tab = try #require(tabs.tab(id: pullRequest.id))
+        await tab.load()
+        return (tab, pullRequest)
+    }
+
     private static func tabs(_ github: FakeGitHub, _ details: FakePullRequestDetails, _ store: PullRequestStore, _ delay: ManualDelay, _ showDelay: ManualDelay) -> TabsModel {
         let lists = PullRequestListModel(client: github.client(), store: store, checkoutSearchRoots: [], onOpen: { _ in })
         return .manuallyTimed(lists: lists, store: store, client: details.client(), notifications: github.notifications(), delay: delay, showDelay: showDelay)

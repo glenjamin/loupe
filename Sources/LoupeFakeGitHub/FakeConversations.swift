@@ -8,7 +8,7 @@ import LoupeGitHub
 /// it pages with cursors as GitHub does; asking them to review adds them to a PR's review
 /// requests, and asking anyone it doesn't know is refused, as GitHub refuses an id it can't
 /// resolve. Requests are withdrawn over REST, for a PR added with its number, which leaves any
-/// review the reviewer submitted and passes over anyone not asked, or refused. A PR's description can be asked for alone and replaced with `updatePullRequest`,
+/// review the reviewer submitted and passes over anyone not asked, or refused. A PR's description can be asked for alone and replaced, and its title changed, with `updatePullRequest`,
 /// which renders it afresh. A PR's review threads can be asked for alone, replied to over
 /// REST, which adds the viewer's comment, and resolved or unresolved. The viewer can hold one
 /// pending review per PR, as in `probe/pending-review.json`: started with or without threads,
@@ -217,7 +217,8 @@ actor FakeConversations {
 
     struct UpdateInput: Equatable {
         let pullRequestId: String
-        let body: String?
+        var title: String? = nil
+        var body: String? = nil
     }
 
     /// Gives the PR with `id` the probe's conversation, and with its `number` it can be
@@ -1140,7 +1141,8 @@ actor FakeConversations {
         let input = try require(variables["input"] as? [String: Any])
         let id = try require(input["pullRequestId"] as? String)
         let body = input["body"] as? String
-        updatesReceived.append(UpdateInput(pullRequestId: id, body: body))
+        let title = input["title"] as? String
+        updatesReceived.append(UpdateInput(pullRequestId: id, title: title, body: body))
         guard var node = nodes[id] else { return try refusal(unresolved: id, mutation: "updatePullRequest", url) }
         if editsRefused {
             let refusal: [String: Any] = [
@@ -1150,6 +1152,7 @@ actor FakeConversations {
             return (try JSONSerialization.data(withJSONObject: refusal), fakeResponse(url, status: 200))
         }
         if let body { setBody(body, on: &node) }
+        if let title { node["title"] = title }
         nodes[id] = node
         return (try JSONSerialization.data(withJSONObject: ["data": ["updatePullRequest": ["pullRequest": ["id": id]]]]), fakeResponse(url, status: 200))
     }

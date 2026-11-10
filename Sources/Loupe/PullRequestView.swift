@@ -331,12 +331,7 @@ struct PullRequestHeader: View {
                     if let review = tab.visualReview {
                         VisualReviewBadge(tab: tab, review: review)
                     }
-                    Text(pullRequest.title)
-                        .font(.title3)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .textSelection(.enabled)
-                        .help(pullRequest.title)
+                    PullRequestTitle(title: pullRequest.title, tab: tab)
                 }
                 HStack(spacing: 10) {
                     if let author = pullRequest.author {
@@ -409,6 +404,65 @@ struct PullRequestHeader: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+}
+
+/// The PR's title. On the viewer's own PRs a pencil beside it turns it into a field to rename
+/// the PR: Return sends the new title, Escape or leaving the field puts the old one back.
+struct PullRequestTitle: View {
+    let title: String
+    let tab: PullRequestTab
+    @State private var draft: String?
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            if let draft {
+                TextField("Title", text: Binding { draft } set: { self.draft = $0 })
+                    .font(.title3)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isFocused)
+                    .onSubmit { Task { await save(draft) } }
+                    .onExitCommand { cancel() }
+                    .onChange(of: isFocused) { _, focused in
+                        if !focused, !tab.isRenaming { cancel() }
+                    }
+                    // On the next turn, as the field can't take the focus while it's appearing.
+                    .onAppear { DispatchQueue.main.async { isFocused = true } }
+                    .accessibilityIdentifier("rename-field")
+                DelayedSpinner(isActive: tab.isRenaming)
+            } else {
+                Text(title)
+                    .font(.title3)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .textSelection(.enabled)
+                    .help(title)
+                if tab.canRename {
+                    Button("Rename", systemImage: "pencil") {
+                        tab.clearRenameError()
+                        draft = title
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .help("Rename this PR")
+                }
+            }
+            if let error = tab.renameError {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.diffDanger)
+                    .help(error)
+                    .accessibilityLabel(error)
+            }
+        }
+    }
+
+    private func save(_ draft: String) async {
+        if await tab.rename(to: draft) { self.draft = nil }
+    }
+
+    private func cancel() {
+        draft = nil
     }
 }
 

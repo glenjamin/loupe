@@ -7,7 +7,7 @@ public struct PullRequestSummary: Sendable, Hashable, Identifiable {
     /// `owner/name`.
     public let repository: String
     public let number: Int
-    public let title: String
+    public var title: String
     public let url: URL
     /// Nil when the author's account has been deleted.
     public let author: String?

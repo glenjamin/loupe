@@ -11,8 +11,12 @@ extension GitHubClient {
 
     /// Replaces the PR's description with `body`, in markdown.
     public func updatePullRequestBody(_ body: String, pullRequestId: String) async throws {
-        let input = UpdatePullRequestInput(pullRequestId: pullRequestId, body: body)
-        let _: UpdatePullRequestResponse = try await query(Self.updatePullRequestMutation, variables: UpdatePullRequestVariables(input: input))
+        try await updatePullRequest(UpdatePullRequestInput(pullRequestId: pullRequestId, body: body))
+    }
+
+    /// Renames the PR to `title`.
+    public func updatePullRequestTitle(_ title: String, pullRequestId: String) async throws {
+        try await updatePullRequest(UpdatePullRequestInput(pullRequestId: pullRequestId, title: title))
     }
 
     static let pullRequestBodyQuery = """
@@ -26,6 +30,10 @@ extension GitHubClient {
           updatePullRequest(input: $input) { pullRequest { id } }
         }
         """
+
+    private func updatePullRequest(_ input: UpdatePullRequestInput) async throws {
+        let _: UpdatePullRequestResponse = try await query(Self.updatePullRequestMutation, variables: UpdatePullRequestVariables(input: input))
+    }
 }
 
 private struct BodyVariables: Encodable, Sendable {
@@ -46,7 +54,9 @@ private struct UpdatePullRequestVariables: Encodable, Sendable {
 
 private struct UpdatePullRequestInput: Encodable, Sendable {
     let pullRequestId: String
-    let body: String
+    /// Left out when nil, so only what's given changes.
+    var title: String?
+    var body: String?
 }
 
 private struct UpdatePullRequestResponse: Decodable {}

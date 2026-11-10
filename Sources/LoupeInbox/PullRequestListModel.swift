@@ -315,6 +315,15 @@ public final class PullRequestListModel {
         }
     }
 
+    /// Gives the PR with `id` its new title once GitHub has accepted it from here, so its row
+    /// and tab say so before the next refresh.
+    func renamed(_ id: String, to title: String) async throws {
+        guard var pullRequest = pullRequest(id: id) else { return }
+        pullRequest.title = title
+        snapshot = try await store.update([pullRequest])
+        if unlisted[id] != nil { unlisted[id] = pullRequest }
+    }
+
     /// Records the viewer's review of the PR with `id`, once GitHub has accepted it from here, so
     /// its row says so before the next refresh. An approval or request for changes answers their
     /// request for review, as on GitHub.

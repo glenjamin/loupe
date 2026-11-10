@@ -1,0 +1,24 @@
+# The pencil beside one of the viewer's own PRs' titles turns it into a field, focused with the
+# title in it: Esc puts the title back, and Return sends the new one, which a snapshot run refuses
+# before it reaches GitHub, keeping the field open and saying why.
+wait settled
+open tamarinworks/gazette#272
+wait settled
+
+click button "Rename"
+wait until #rename-field is focused
+expect #rename-field has no value ""
+snap renaming
+press esc
+wait until #rename-field missing
+expect button "Rename"
+
+click button "Rename"
+wait until #rename-field is focused
+press cmd+a
+type "A clearer title"
+press return
+wait until image ~"Couldn't rename"
+expect-request updatePullRequest
+expect #rename-field has value "A clearer title"
+snap rename-blocked

@@ -114,15 +114,3 @@ struct DescriptionEditorTests {
         #expect(tab.descriptionEditor == nil)
     }
 }
-
-private extension ConversationApp {
-    /// Opens the viewer's first PR, with the probe's conversation, and waits for it to load.
-    func openMine() async throws -> (PullRequestTab, PullRequestSummary) {
-        let pullRequest = mine[0]
-        try await conversations.add(pullRequest.id)
-        tabs.open(pullRequest)
-        let tab = try #require(tabs.tab(id: pullRequest.id))
-        await tab.load()
-        return (tab, pullRequest)
-    }
-}
