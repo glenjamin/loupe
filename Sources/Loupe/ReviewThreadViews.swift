@@ -81,18 +81,21 @@ private struct NewCommentCard: View {
     /// Where the viewer can start a review, their own PR included, a single comment posted at
     /// once and one into their review, as on github.com, ⌘↩ posting at once and ⌘⇧↩ starting
     /// the review. While a review is pending, adding to it is the only way, as GitHub refuses
-    /// a comment posted at once then.
+    /// a comment posted at once then, so one it can't take shows its button disabled.
     private var actions: [ComposerAction] {
         let atOnce = "Post this comment at once, not as part of a review"
         if tab.pendingReview != nil {
-            guard comment.takesReviewComments else { return [] }
+            guard comment.takesReviewComments else {
+                let reason = "GitHub's reviews only hold a comment on one line of an earlier commit; submit or discard your review to post this at once, or comment on the whole PR's diff"
+                return [.unavailable("Add review comment", because: reason)]
+            }
             let add = ComposerAction(label: "Add review comment", help: "Add this comment to your pending review; no one else sees it until the review is submitted") {
                 Task { await tab.sendReviewComment() }
             }
             return [add]
         }
         guard comment.takesReviewComments else {
-            let help = "Post this comment on this commit at once; GitHub's reviews only hold a comment on one line of a commit"
+            let help = "Post this comment on this commit at once; GitHub's reviews only hold a comment on one line of an earlier commit"
             return [ComposerAction(label: "Add single comment", help: help) { Task { await tab.sendComment() } }]
         }
         guard tab.canStartReview else {
@@ -117,9 +120,9 @@ private struct NewCommentCard: View {
         if tab.pendingReview != nil {
             return comment.takesReviewComments
                 ? "Markdown. ⌘↩ adds to your review."
-                : "Markdown. A review can't hold several lines of one commit; submit or discard yours to post this."
+                : "A review can't hold several lines of an earlier commit."
         }
-        guard comment.takesReviewComments else { return "Markdown. Posts at once: a review can't hold a comment on several lines of one commit." }
+        guard comment.takesReviewComments else { return "Markdown. Posts at once: a review can't hold several lines of an earlier commit." }
         guard tab.canStartReview else { return "Markdown. Posts at once, not as part of a review." }
         return "Markdown. ⌘↩ posts a single comment; ⌘⇧↩ starts a review."
     }
@@ -665,11 +668,17 @@ struct DeleteCommentButton: View {
     }
 }
 
-/// One way to send a comment: its button's title and tooltip, and what it does.
+/// One way to send a comment: its button's title and tooltip, and what it does. One that
+/// can't be used shows disabled, its tooltip saying why, so a composer always has its button.
 struct ComposerAction {
     let label: String
     let help: String
+    var isAvailable = true
     let send: () -> Void
+
+    static func unavailable(_ label: String, because reason: String) -> ComposerAction {
+        ComposerAction(label: label, help: reason, isAvailable: false) {}
+    }
 }
 
 /// A plain-text field for a comment in markdown, as the description's editor is: ⌘↩ sends by
@@ -716,7 +725,12 @@ struct CommentComposer: View {
                 Button("Cancel", action: cancelAsking)
                 // The default sits last, at the trailing edge, as in a dialog.
                 ForEach(Array(actions.enumerated().reversed()), id: \.offset) { index, action in
-                    if index == 0 {
+                    if !action.isAvailable {
+                        Button(action.label) {}
+                            .buttonStyle(.borderedProminent)
+                            .disabled(true)
+                            .help(action.help)
+                    } else if index == 0 {
                         Button(action.label) { send(action) }
                             .buttonStyle(.borderedProminent)
                             .disabled(!draft.canSend)
@@ -749,7 +763,8 @@ struct CommentComposer: View {
     }
 
     private func send(_ action: ComposerAction?) {
-        if draft.canSend { action?.send() }
+        guard let action, action.isAvailable, draft.canSend else { return }
+        action.send()
     }
 
     private func cancelAsking() {

@@ -105,6 +105,27 @@ struct CommitCommentTests {
         #expect(tab.shownNewComment?.draft.text == "These three could be one.", "kept to send once the review's done")
     }
 
+    @Test func aRangeOnTheHeadCommitsNewLinesGoesIntoThePendingReviewAsOnTheWholeDiff() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest()
+        try await app.conversations.startPendingReview(on: pullRequest.id, path: "app.go", line: 11, body: "Hmm")
+        let tab = try await app.open(pullRequest)
+        let reviewId = try #require(tab.pendingReview?.id)
+        let head = try #require(tab.ready?.commits.last)
+        await tab.show(.commit(head.oid))
+
+        tab.startComment(at: DiffAnchor(path: "new.go", side: .right, line: 3), from: DiffAnchor(path: "new.go", side: .right, line: 1))
+        let comment = try #require(tab.shownNewComment)
+        #expect(comment.start != nil && comment.takesReviewComments, "the head commit's new lines are the head's")
+        comment.draft.text = "Needs docs."
+        await tab.sendReviewComment()
+
+        let expected = FakeConversations.ThreadInput(path: "new.go", line: 3, side: "RIGHT", body: "Needs docs.", startLine: 1, startSide: "RIGHT")
+        #expect(await app.conversations.reviewMutationsReceived == [.addThread(reviewId: reviewId, expected)])
+        #expect(tab.threadActivity.newCommentError == nil)
+        #expect(tab.threads(on: try #require(tab.file("new.go")))?.anchored.map(\.line) == [3], "shown on the commit's lines")
+    }
+
     @Test func aSingleCommentGitHubRefusesForAReviewStartedElsewhereSaysWhy() async throws {
         let app = try await ThreadsApp()
         let pullRequest = try await app.pushPullRequest()

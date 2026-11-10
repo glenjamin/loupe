@@ -475,7 +475,7 @@ struct ThreadsApp {
         changed.remove(at: 49)
         changed.replaceSubrange(9...9, with: ["10a", "10b", "10c"])
         try await repo.commit(["app.go": changed.joined(separator: "\n") + "\n", "vendor/example.com/lib/lib.go": "package lib // patched\n"], message: "Change app.go")
-        let head = try await repo.commit(["new.go": "package app\n"], message: "Add new.go")
+        let head = try await repo.commit(["new.go": "package app\n\nfunc New() {}\n"], message: "Add new.go")
         try await repo.push(asPullRequest: listed.number)
         try await github.edit(listed.id) { $0.headRefOid = head; $0.baseRefOid = branchPoint }
         await conversations.setHead(head, of: listed.id)

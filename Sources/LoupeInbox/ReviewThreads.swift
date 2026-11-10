@@ -91,10 +91,17 @@ public struct NewComment {
     public let target: CommentTarget
     public let draft: CommentDraft
 
-    /// Whether it can go into a pending review: anything on the whole PR's diff, and one line of
-    /// a commit, as GitHub's only way to put a comment on another commit into a review takes no
-    /// range.
-    public var takesReviewComments: Bool { target.isOnHead || start == nil }
+    /// Whether it can go into a pending review: anything on lines numbered as the head's, and
+    /// one line of another commit, as GitHub's only way to put a comment on another commit into
+    /// a review takes no range.
+    public var takesReviewComments: Bool { isOnHeadLines || start == nil }
+
+    /// Whether all its lines are numbered as the head's, so it goes into a review as one on the
+    /// whole PR's diff does: anything on changes up to the head, and the new side of the head
+    /// commit's own changes.
+    public var isOnHeadLines: Bool {
+        target.isOnHead || (target.isHead && anchor.side == .right && start?.side != .left)
+    }
 }
 
 /// The commit a new comment on the changes shown is anchored to, as GitHub takes it.
@@ -106,6 +113,8 @@ public struct CommentTarget: Sendable, Equatable {
     /// since an earlier head up to it are on their new side, so a comment goes on the head as
     /// one on the whole PR's diff does, and the head's threads show on those lines.
     public let isOnHead: Bool
+    /// Whether its commit is the PR's head, whose own changes' new side is numbered as the head's.
+    public let isHead: Bool
     /// Whether deleted lines take comments. GitHub numbers a deleted line in the PR's base, so
     /// only a commit whose parent is that base can number them the same way.
     public let takesDeletedLines: Bool
@@ -236,14 +245,16 @@ extension PullRequestTab {
     public var commentTarget: CommentTarget? {
         guard case let .ready(review) = phase else { return nil }
         if shownChoice == .all {
-            return CommentTarget(commitOid: review.headOid, isWholePullRequest: true, isOnHead: true, takesDeletedLines: true)
+            return CommentTarget(commitOid: review.headOid, isWholePullRequest: true, isOnHead: true, isHead: true, takesDeletedLines: true)
         }
         guard let range = shownRange else { return nil }
         if let commit = review.commits.first(where: { $0.range == range }) {
-            return CommentTarget(commitOid: commit.oid, isWholePullRequest: false, isOnHead: false, takesDeletedLines: range.base == review.mergeBase)
+            return CommentTarget(
+                commitOid: commit.oid, isWholePullRequest: false, isOnHead: false, isHead: commit.oid == review.headOid, takesDeletedLines: range.base == review.mergeBase
+            )
         }
         guard case .since = shownChoice, range.head == review.headOid else { return nil }
-        return CommentTarget(commitOid: review.headOid, isWholePullRequest: false, isOnHead: true, takesDeletedLines: false)
+        return CommentTarget(commitOid: review.headOid, isWholePullRequest: false, isOnHead: true, isHead: true, takesDeletedLines: false)
     }
 
     /// How many threads on the file at `path` aren't resolved, hidden files' included. Nil when
@@ -325,14 +336,14 @@ public func startComment(at anchor: DiffAnchor, from start: DiffAnchor? = nil) {
     /// takes it away and opens the draft again with the reason. Nothing posts while the viewer
     /// has a review pending, as GitHub refuses a comment at once then.
     public func sendComment() async {
-        guard pendingReview == nil, let comment = threadActivity.newComment, comment.draft.canSend, case let .ready(review) = phase else { return }
+        guard pendingReview == nil, let comment = threadActivity.newComment, comment.draft.canSend, case .ready = phase else { return }
         threadActivity.newCommentError = nil
         let pullRequest = pullRequest
         let known = Set((conversation?.threads ?? []).map(\.id) + threadsOfShownDiff.map(\.id))
         let text = comment.draft.text
         let sending = sendingComment(text, isPending: false)
         threadActivity.newComment = nil
-        let change = make(.comment(sending, thread: sendingThread(for: comment, in: review), startsThread: true, reviewId: nil))
+        let change = make(.comment(sending, thread: sendingThread(for: comment), startsThread: true, reviewId: nil))
         await storeOwnChanges()
         let posted: ThreadComment
         do {

@@ -110,11 +110,11 @@ extension PullRequestTab {
         let text = comment.draft.text
         let sending = sendingComment(text, isPending: true)
         threadActivity.newComment = nil
-        let change = make(.comment(sending, thread: sendingThread(for: comment, in: review), startsThread: true, reviewId: pendingReview?.id))
+        let change = make(.comment(sending, thread: sendingThread(for: comment), startsThread: true, reviewId: pendingReview?.id))
         await storeOwnChanges()
         let added: (comment: ThreadComment, threadId: String?, reviewId: String)
         do {
-            if comment.target.isOnHead {
+            if comment.isOnHeadLines {
                 let thread = DraftThread(
                     path: anchor.path, line: anchor.line, side: anchor.side.rawValue, startLine: comment.start?.line, startSide: comment.start?.side.rawValue, body: text
                 )
