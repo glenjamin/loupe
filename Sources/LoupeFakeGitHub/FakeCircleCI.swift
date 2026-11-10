@@ -205,6 +205,7 @@ private let fixtureJobs: [FakeCircleCI.Job] = [
         tests: [
             FakeCircleCI.Test(classname: "e2e/boards.spec.ts", name: "a board keeps its layout after a reload", result: "failure", runTime: 41.2, message: "TimeoutError: locator.waitFor: Timeout 40000ms exceeded.\nCall log:\n  - waiting for getByRole('grid', { name: 'Board' }) to be visible\n\n    at e2e/boards.spec.ts:58:21"),
             FakeCircleCI.Test(classname: "e2e/boards.spec.ts", name: "a board's tiles can be dragged", result: "success", runTime: 6.1),
+            FakeCircleCI.Test(classname: "e2e/boards.spec.ts", name: "a board's tiles can be dragged", result: "system-out", runTime: 6.1, message: "4 tiles out of 4 tiles have been rendered"),
             FakeCircleCI.Test(classname: "e2e/sharing.spec.ts", name: "a shared link opens read-only", result: "failure", runTime: 12.8, message: "Error: expect(received).toHaveText(expected)\n\nExpected: \"Read only\"\nReceived: \"Edit\"\n\n    at e2e/sharing.spec.ts:24:7"),
             FakeCircleCI.Test(classname: "e2e/sharing.spec.ts", name: "a link can be revoked", result: "skipped"),
         ],

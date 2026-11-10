@@ -100,7 +100,8 @@ public struct CircleCIJobs: Sendable {
         if let tests = await kept.tests(job.id) { return tests }
         let data = try await get("api/v3/jobs/\(job.id)/tests")
         let results = data.split(separator: UInt8(ascii: "\n")).compactMap { try? JSONDecoder.circleCI.decode(TestResultWire.self, from: Data($0)) }
-        let tests = results.filter { !["success", "skipped"].contains($0.result) }.enumerated().map { index, result in
+        // A JUnit report's captured output comes through as results of its own, beside the test's.
+        let tests = results.filter { ["failure", "error"].contains($0.result) }.enumerated().map { index, result in
             CircleCITestFailure(id: index, classname: result.classname ?? "", name: result.name ?? "", message: result.message ?? "", runTime: result.runTime)
         }
         if job.hasEnded { await kept.keep(tests: tests, for: job.id) }
