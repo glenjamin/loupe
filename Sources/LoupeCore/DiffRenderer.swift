@@ -51,6 +51,8 @@ public extension NSAttributedString.Key {
     static let diffGutter = NSAttributedString.Key("Loupe.diffGutter")
     /// The width of the gutter's tinted columns, measured from the start of the line.
     static let diffGutterWidth = NSAttributedString.Key("Loupe.diffGutterWidth")
+    /// Where the mark on a wrapped row's continuation lines ends, measured from the start of the line.
+    static let diffContinuationMarkEnd = NSAttributedString.Key("Loupe.diffContinuationMarkEnd")
     /// Marks the words that changed within a modified line, for a stronger tint than the row's.
     static let diffEmphasis = NSAttributedString.Key("Loupe.diffEmphasis")
     /// Marks a control in a hunk header's gutter that reveals more of the file, holding the
@@ -318,7 +320,9 @@ private struct Style {
         paragraph.headIndent = codeStart + digit * 2
         paragraph.tabStops = (0..<32).map { NSTextTab(textAlignment: .left, location: codeStart + digit * 4 * CGFloat($0)) }
         paragraph.defaultTabInterval = digit * 4
-        base = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph, .diffGutterWidth: gutterWidth]
+        // The mark on a continuation line ends where the new line number does, two before the marker.
+        let markEnd = digit * CGFloat(gutterColumns - 3)
+        base = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph, .diffGutterWidth: gutterWidth, .diffContinuationMarkEnd: markEnd]
         gutter = [.foregroundColor: NSColor.tertiaryLabelColor, .diffGutter: true]
         hunkHeader = [.foregroundColor: NSColor.secondaryLabelColor]
         control = [.foregroundColor: NSColor.linkColor, .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)]

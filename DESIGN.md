@@ -1157,3 +1157,7 @@ A test named for no file beside it was taken for the test of the one file named 
 ## Not yet decided
 
 Nothing is pending.
+
+### Wrapped rows' continuations are marked with ↪ in the gutter
+
+The hanging indent alone left a wrapped row's continuation easy to take for a line of its own at a glance. Each continuation line now has a faint "↪" in its line-number column, ending where the new line number does, as Vim's `showbreak` marks the start of a continuation, but in the gutter that's otherwise empty there rather than in the code. Emacs's fringe arrows are the same idea. Marking the end of the broken line instead, as JetBrains and delta do, was passed over as it sits in the code where it's harder to scan for, and a bar down the gutter was too. The mark is drawn by the layout manager as each line is drawn, not put in the text, so copying, find, clicks and lazy layout are untouched, and it goes with wrapping when that's off.

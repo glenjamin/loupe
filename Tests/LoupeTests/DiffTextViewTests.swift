@@ -104,6 +104,40 @@ struct DiffTextViewTests {
         #expect(color.greenComponent > color.redComponent)
     }
 
+    @Test func wrappedRowsMarkTheirContinuationsInTheLineNumberColumn() throws {
+        let view = DiffTextView.make()
+        view.frame = NSRect(x: 0, y: 0, width: 300, height: 400)
+        let rendered = try RenderedDiff(file: goMod())
+        view.show(rendered)
+        let layoutManager = try #require(view.layoutManager)
+        layoutManager.ensureLayout(for: try #require(view.textContainer))
+        let text = rendered.text.string as NSString
+        let column = ("0" as NSString).size(withAttributes: [.font: view.font as Any]).width
+
+        // Whether anything stands out from the tint in the new line number's three columns of a line.
+        func inkInNumberColumn(ofLineWithGlyph glyph: Int) throws -> Bool {
+            let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let padding = try #require(view.textContainer).lineFragmentPadding
+            let start = view.textContainerOrigin.x + padding + column * 5
+            // Kept a little inside the columns, as a crop's fractional edge blends in what's beside it.
+            let numbers = NSRect(x: start, y: view.textContainerOrigin.y + fragment.minY, width: column * 3, height: fragment.height).integral.insetBy(dx: 2, dy: 2)
+            let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: numbers))
+            view.cacheDisplay(in: numbers, to: bitmap)
+            let tint = try #require(bitmap.colorAt(x: 0, y: 0)).brightnessComponent
+            return (0..<bitmap.pixelsWide).contains { x in
+                (0..<bitmap.pixelsHigh).contains { y in abs((bitmap.colorAt(x: x, y: y)?.brightnessComponent ?? tint) - tint) > 0.1 }
+            }
+        }
+
+        let row = text.lineRange(for: NSRange(location: text.range(of: "transfermanager").location, length: 0))
+        let continuation = layoutManager.glyphIndexForCharacter(at: NSMaxRange(row) - 2)
+        #expect(try inkInNumberColumn(ofLineWithGlyph: continuation))
+
+        // A row that fits has its line number there, and the blank side of a deleted row stays blank.
+        let deleted = text.lineRange(for: NSRange(location: text.range(of: "aws-sdk-go v1.49.23").location, length: 0))
+        #expect(try !inkInNumberColumn(ofLineWithGlyph: layoutManager.glyphIndexForCharacter(at: deleted.location)))
+    }
+
     @Test func lineNumbersSitInRightAlignedColumnsBesideTheCode() throws {
         let view = DiffTextView.make()
         view.frame = NSRect(x: 0, y: 0, width: 1600, height: 400)

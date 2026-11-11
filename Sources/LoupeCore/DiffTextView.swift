@@ -567,6 +567,25 @@ private final class RowBackgroundLayoutManager: NSLayoutManager {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
     }
 
+    /// Marks each continuation of a wrapped row with "↪" in its otherwise empty line-number column.
+    /// Drawn rather than put in the text, so copies, find and clicks see only the code.
+    override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+        guard let textStorage else { return }
+        let text = textStorage.string as NSString
+        enumerateLineFragments(forGlyphRange: glyphsToShow) { fragment, _, container, glyphRange, _ in
+            let charIndex = self.characterIndexForGlyph(at: glyphRange.location)
+            guard charIndex > 0, charIndex < textStorage.length, text.character(at: charIndex - 1) != 0x0A,
+                  let end = textStorage.attribute(.diffContinuationMarkEnd, at: charIndex, effectiveRange: nil) as? CGFloat,
+                  let font = textStorage.attribute(.font, at: charIndex, effectiveRange: nil) as? NSFont
+            else { return }
+            let mark = NSAttributedString(string: "↪", attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor])
+            let baseline = self.location(forGlyphAt: glyphRange.location).y
+            let x = origin.x + fragment.minX + container.lineFragmentPadding + end - mark.size().width
+            mark.draw(at: NSPoint(x: x, y: origin.y + fragment.minY + baseline - font.ascender))
+        }
+    }
+
     /// Tints the changed words on one line fragment, the full height of the row.
     private func fillEmphasis(in glyphs: NSRange, row: NSRect, origin: NSPoint, container: NSTextContainer, color: NSColor) {
         guard let textStorage else { return }
