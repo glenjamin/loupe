@@ -1150,6 +1150,10 @@ In a Rails app most files are tied by convention rather than by import: a view c
 
 A Terraform directory is one module, and a small one reads as one change, but its files often don't refer to each other: one declares the variables, another the outputs, both using a module declared in a file left unchanged. They listed as standalone. Now the changed `.tf` files of a module of at most 12 `.tf` files, at the changes' head, are linked as one module, so they group; a larger directory, as a root configuration gathering many services usually is, holds unrelated changes and gets no such links. The directories are listed by one `git ls-tree` with the files' reading. A module link joins a group without ordering it, so within the group the files still go by use, and where neither uses the other, as the tree lists them. A row's tooltip names them as the same module rather than as used and using.
 
+### A Go test is of its own package, and a test tied between files follows the one using the rest
+
+A test named for no file beside it was taken for the test of the one file named alike anywhere, so `registry/x/x_test.go` followed `server/x.go`, another package it doesn't even import. A Go test is always of the package in its directory, so Go's tests no longer look elsewhere; one named for no changed file follows what its code uses most, as other unnamed tests do. When the files it uses most tie, it followed the first by path, which could be a file the other uses: the test's own links, moved to that file, then made a cycle of the two, putting the used file first top down. The tie now goes to a tied file using the others, as the test reaches them through it, then to the first by path.
+
 ## Not yet decided
 
 Nothing is pending.

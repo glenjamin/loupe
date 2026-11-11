@@ -4,8 +4,8 @@ import LoupeModel
 /// Files named as another's companions: `x.d.ts` declares `x.js`; `x.stories.tsx` or
 /// `x.story.tsx` is a story of `x.tsx`; and tests, `x_test.go` of `x.go`, `x.test.ts` or
 /// `x.spec.ts` of `x.ts` (beside it, or above a `__tests__` directory), `XTests.swift` of
-/// `X.swift`, `x_spec.rb` of `x.rb` and `test_x.py` of `x.py`, or of one named alike elsewhere
-/// if there's just one.
+/// `X.swift`, `x_spec.rb` of `x.rb` and `test_x.py` of `x.py`, or, but for Go's, of one named
+/// alike elsewhere if there's just one.
 struct CompanionNames: DependencyRule {
     func links(among paths: [String], contents: [String: String]) -> [DependencyLink] {
         let present = Set(paths)
@@ -27,8 +27,9 @@ struct CompanionNames: DependencyRule {
                 if full != path, present.contains(full) { return (full, naming.reason) }
             }
         }
-        // A declaration names its file exactly; others may be named alike elsewhere.
-        guard naming.reason != .declares else { return nil }
+        // A declaration names its file exactly, and a Go test is of its own package; others may
+        // be named alike elsewhere.
+        guard naming.reason != .declares, !path.hasSuffix(".go") else { return nil }
         let elsewhere = names.flatMap { byName[$0] ?? [] }.filter { $0 != path }
         return elsewhere.count == 1 ? elsewhere.first.map { ($0, naming.reason) } : nil
     }

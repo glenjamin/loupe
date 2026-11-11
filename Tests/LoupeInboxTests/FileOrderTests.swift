@@ -105,6 +105,27 @@ struct FileOrderTests {
         #expect(tab.nextUnviewedFile(after: "store/users.go") == "store/users_test.go", "a test comes straight after what it tests")
     }
 
+    @Test func aGoTestNamedForAFileInAnotherPackageFollowsWhatItUsesInItsOwn() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(startingWith: ["go.mod": "module example.com/shop\n\ngo 1.22\n"], changing: [
+            "billing/invoice/id.go": "package invoice\n\nfunc NewID() string { return \"id\" }\n",
+            "billing/invoice/render.go": "package invoice\n\nfunc Render() string { return NewID() }\n",
+            "billing/invoice/invoice_test.go": "package invoice\n\nimport \"testing\"\n\nfunc TestRender(t *testing.T) { Render() }\n\nfunc TestNewID(t *testing.T) { NewID() }\n",
+            "server/invoice.go": "package server\n\nimport \"example.com/shop/billing/invoice\"\n\nfunc Show() string { return invoice.Render() }\n",
+        ])
+        let tab = try await app.open(pullRequest)
+
+        await tab.setFileOrder(.bottomUp)
+
+        #expect(outline(tab) == [
+            "group",
+            "  billing/invoice/id.go",
+            "  billing/invoice/render.go",
+            "  billing/invoice/invoice_test.go",
+            "  server/invoice.go",
+        ])
+    }
+
     @Test func goFilesInOnePackageUseThoseDefiningTheTopLevelNamesTheyReferTo() async throws {
         let app = try await ThreadsApp()
         let pullRequest = try await app.pushPullRequest(changing: [
