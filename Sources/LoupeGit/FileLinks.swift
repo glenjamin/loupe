@@ -36,7 +36,9 @@ extension PullRequestDiffer {
 
     private func links(among paths: [String], at oid: String, in checkout: URL) async throws -> [DependencyLink] {
         let wanted = FileDependencies.filesToRead(among: paths)
-        let contents = wanted.isEmpty ? [:] : try await contents(of: wanted, at: oid, in: checkout, limit: FileDependencies.largestFile)
-        return await Task.detached { FileDependencies.find(among: paths, contents: contents) }.value
+        async let contents = wanted.isEmpty ? [:] : contents(of: wanted, at: oid, in: checkout, limit: FileDependencies.largestFile)
+        async let listings = files(in: FileDependencies.directoriesToList(among: paths), at: oid, in: checkout)
+        let (read, listed) = try await (contents, listings)
+        return await Task.detached { FileDependencies.find(among: paths, contents: read, listings: listed) }.value
     }
 }

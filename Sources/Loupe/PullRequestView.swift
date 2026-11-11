@@ -1165,9 +1165,10 @@ struct ReviewFileList: View {
             links.sorted { ($0[keyPath: file], $0.reason) < ($1[keyPath: file], $1.reason) }
                 .map { "\($0[keyPath: file]) (\($0.reason.label))" }.joined(separator: ", ")
         }
-        let uses = graph.links.filter { $0.from == path }
-        let usedBy = graph.links.filter { $0.to == path }
-        return ([path] + (uses.isEmpty ? [] : ["Uses " + listed(uses, file: \.to)]) + (usedBy.isEmpty ? [] : ["Used by " + listed(usedBy, file: \.from)])).joined(separator: "\n")
+        let uses = graph.links.filter { $0.from == path && $0.reason != .module }
+        let usedBy = graph.links.filter { $0.to == path && $0.reason != .module }
+        let mates = graph.links.filter { $0.reason == .module }.compactMap { $0.from == path ? $0.to : $0.to == path ? $0.from : nil }.sorted()
+        return ([path] + (uses.isEmpty ? [] : ["Uses " + listed(uses, file: \.to)]) + (usedBy.isEmpty ? [] : ["Used by " + listed(usedBy, file: \.from)]) + (mates.isEmpty ? [] : ["Same module as " + mates.joined(separator: ", ")])).joined(separator: "\n")
     }
 
     /// The base `path` conflicts with, once the conflicting files have been found.
@@ -1238,6 +1239,7 @@ extension DependencyLink.Reason {
         case .story: "story"
         case .tests: "tests"
         case .describes: "readme"
+        case .module: "module"
         }
     }
 }

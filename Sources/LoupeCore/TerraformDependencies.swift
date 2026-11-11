@@ -4,13 +4,39 @@ import LoupeModel
 /// Terraform's references: a directory's `.tf` files are one module sharing one scope, so a file
 /// uses the file in its directory that defines what it refers to (`var.x`, `local.x`,
 /// `module.x`, `data.t.x`, `t.x`); and a `module` block whose source is a local path uses that
-/// directory's changed files. Modules from a registry or git aren't changed files.
+/// directory's changed files. Modules from a registry or git aren't changed files. A small
+/// module's changed files are read as one, so they're grouped even where neither uses the other;
+/// a large one, as a root configuration gathering many services often is, holds unrelated files.
 struct TerraformDependencies: DependencyRule {
+    /// The most `.tf` files a module can have and still be read as one.
+    static let smallModule = 12
+
     func filesToRead(among paths: [String]) -> [String] {
         paths.filter(isTerraform)
     }
 
+    func directoriesToList(among paths: [String]) -> [String] {
+        Array(Set(paths.filter(isTerraform).map(directory(of:)))).sorted()
+    }
+
     func links(among paths: [String], contents: [String: String]) -> [DependencyLink] {
+        links(among: paths, contents: contents, listings: [:])
+    }
+
+    func links(among paths: [String], contents: [String: String], listings: [String: [String]]) -> [DependencyLink] {
+        var links = references(among: paths, contents: contents)
+        let changed = Dictionary(grouping: paths.filter(isTerraform), by: directory(of:))
+        for (module, files) in changed where files.count > 1 {
+            guard let listed = listings[module], listed.filter(isTerraform).count <= Self.smallModule else { continue }
+            let files = files.sorted()
+            for (index, file) in files.enumerated() {
+                for other in files[(index + 1)...] { links.append(DependencyLink(from: file, to: other, reason: .module)) }
+            }
+        }
+        return links
+    }
+
+    private func references(among paths: [String], contents: [String: String]) -> [DependencyLink] {
         let sources = paths.filter { isTerraform($0) && contents[$0] != nil }
         guard !sources.isEmpty else { return [] }
         let parsed = concurrentMap(sources) { path in Self.query?.matches(in: contents[path] ?? "") ?? [] }

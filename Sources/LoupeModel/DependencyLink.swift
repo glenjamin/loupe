@@ -17,6 +17,9 @@ public struct DependencyLink: Sendable, Hashable {
         case tests
         /// It's a README about the other, beside it.
         case describes
+        /// They're files of one small module, as a Terraform directory's are, so read together
+        /// though neither uses the other. It groups them without ordering them.
+        case module
 
         /// Whether the file goes with the other wherever that's listed, rather than being
         /// ordered by its use of it.

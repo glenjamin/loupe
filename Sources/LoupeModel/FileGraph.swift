@@ -15,7 +15,8 @@ public enum FileOrder: Sendable, Hashable, CaseIterable {
 /// joined by links, however indirectly, are grouped, largest group first; those linked to none
 /// of the others come last, as one standalone group. A file's companions follow it either way
 /// up, ordered with it as one: its type declarations, then its stories, then its tests, so each
-/// is read with what it's for; a README follows the last of the files it describes. Ties, and
+/// is read with what it's for; a README follows the last of the files it describes. Files of one
+/// small module are grouped but not ordered by it. Ties, and
 /// files that use each other in a cycle, keep the order the directory tree lists them in, so
 /// files with no links between them list as the tree does.
 public struct FileGraph: Sendable, Equatable {
@@ -81,10 +82,15 @@ public struct FileGraph: Sendable, Equatable {
         for path in files where subject(of: path) != path { following[subject(of: path), default: []].append(path) }
         for (subject, paths) in following { following[subject] = paths.sorted { companions[$0]!.reason < companions[$1]!.reason } }
         var contracted: [String: Set<String>] = [:]
+        var joins: [String: Set<String>] = [:]
         for link in links where subject(of: link.to) != subject(of: link.from) {
-            contracted[subject(of: link.from), default: []].insert(subject(of: link.to))
+            if link.reason == .module {
+                joins[subject(of: link.from), default: []].insert(subject(of: link.to))
+            } else {
+                contracted[subject(of: link.from), default: []].insert(subject(of: link.to))
+            }
         }
-        let graph = IndexedGraph(files: subjects, dependencies: contracted)
+        let graph = IndexedGraph(files: subjects, dependencies: contracted, joins: joins)
         func expanded(_ indices: [Int]) -> [String] {
             indices.flatMap { [subjects[$0]] + (following[subjects[$0]] ?? []) }
         }
@@ -113,15 +119,18 @@ public struct FileGraph: Sendable, Equatable {
     }
 }
 
-/// The graph by the files' places in the tree's order, with edges from each file to those it uses.
+/// The graph by the files' places in the tree's order, with edges from each file to those it uses,
+/// and joins between files that group without either using the other.
 private struct IndexedGraph {
     let uses: [[Int]]
     let usedBy: [[Int]]
+    let joined: [[Int]]
 
-    init(files: [String], dependencies: [String: Set<String>]) {
+    init(files: [String], dependencies: [String: Set<String>], joins: [String: Set<String>]) {
         let position = Dictionary(uniqueKeysWithValues: files.enumerated().map { ($1, $0) })
         var uses = Array(repeating: [Int](), count: files.count)
         var usedBy = uses
+        var joined = uses
         for (file, used) in dependencies {
             guard let from = position[file] else { continue }
             for to in used.compactMap({ position[$0] }).sorted() {
@@ -129,11 +138,20 @@ private struct IndexedGraph {
                 usedBy[to].append(from)
             }
         }
+        for (file, others) in joins {
+            guard let from = position[file] else { continue }
+            for to in others.compactMap({ position[$0] }) {
+                joined[from].append(to)
+                joined[to].append(from)
+            }
+        }
         self.uses = uses
         self.usedBy = usedBy
+        self.joined = joined
     }
 
-    /// The files joined by use in either direction, each ascending, as are the first files of each.
+    /// The files joined by use in either direction or by a join, each ascending, as are the first
+    /// files of each.
     func components() -> [[Int]] {
         var seen = Array(repeating: false, count: uses.count)
         var components: [[Int]] = []
@@ -143,7 +161,7 @@ private struct IndexedGraph {
             seen[start] = true
             while let node = stack.popLast() {
                 component.append(node)
-                for next in uses[node] + usedBy[node] where !seen[next] {
+                for next in uses[node] + usedBy[node] + joined[node] where !seen[next] {
                     seen[next] = true
                     stack.append(next)
                 }

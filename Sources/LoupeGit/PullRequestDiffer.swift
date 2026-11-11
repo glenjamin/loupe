@@ -192,6 +192,22 @@ public struct PullRequestDiffer: Sendable {
         return Dictionary(zip(paths, texts).compactMap { path, text in text.map { (path, $0) } }) { first, _ in first }
     }
 
+    /// The names of the files directly in each of `directories`, from the repo's root, as commit
+    /// `oid` has them, all listed by one git. Directories it doesn't have are left out.
+    public func files(in directories: [String], at oid: String, in checkout: URL) async throws -> [String: [String]] {
+        guard !directories.isEmpty else { return [:] }
+        let pathspecs = directories.map { $0.isEmpty ? "." : "\($0)/" }
+        let listing = try await Git.run(["ls-tree", "-z", "--full-tree", oid, "--"] + pathspecs, in: checkout, environment: readingReplays.merging(["GIT_LITERAL_PATHSPECS": "1"]) { $1 }, timeout: localTimeout)
+        var files: [String: [String]] = [:]
+        // `<mode> <type> <oid>TAB<path>`
+        for entry in listing.split(separator: "\0") {
+            guard let tab = entry.firstIndex(of: "\t"), entry.split(separator: " ").dropFirst().first == "blob" else { continue }
+            let path = (String(entry[entry.index(after: tab)...]) as NSString)
+            files[path.deletingLastPathComponent, default: []].append(path.lastPathComponent)
+        }
+        return files
+    }
+
     /// The bytes of the file at `path` in commit `oid`, or only its size when that's over `limit`,
     /// so a huge file is never read into memory.
     public func blob(of path: String, at oid: String, in checkout: URL, limit: Int) async throws -> Blob {

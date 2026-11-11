@@ -208,6 +208,35 @@ struct FileOrderTests {
         ])
     }
 
+    @Test func aSmallTerraformModulesChangedFilesGroupThoughNeitherUsesTheOtherButALargeOnesDont() async throws {
+        let app = try await ThreadsApp()
+        var base: [String: String?] = ["modules/app/main.tf": "module \"queue\" {\n  source = \"../queue\"\n}\n"]
+        // With the new file, more than a small module holds.
+        for index in 1...12 {
+            base["envs/prod/service\(index).tf"] = "resource \"aws_sqs_queue\" \"service\(index)\" {}\n"
+        }
+        let pullRequest = try await app.pushPullRequest(startingWith: base, changing: [
+            "modules/app/config.tf": "variable \"name\" {\n  type = string\n}\n",
+            "modules/app/outputs.tf": "output \"queue\" {\n  value = module.queue.url\n}\n",
+            "envs/prod/service1.tf": "resource \"aws_sqs_queue\" \"service1\" {\n  name = \"one\"\n}\n",
+            "envs/prod/service2.tf": "resource \"aws_sqs_queue\" \"service2\" {\n  name = \"two\"\n}\n",
+            "envs/prod/new.tf": "resource \"aws_sqs_queue\" \"new\" {}\n",
+        ])
+        let tab = try await app.open(pullRequest)
+
+        await tab.setFileOrder(.topDown)
+
+        #expect(outline(tab) == [
+            "group",
+            "  modules/app/config.tf",
+            "  modules/app/outputs.tf",
+            "standalone",
+            "  envs/prod/new.tf",
+            "  envs/prod/service1.tf",
+            "  envs/prod/service2.tf",
+        ])
+    }
+
     @Test func swiftFilesUseTheTargetsTheyImportAndTheTypesBesideThemTheyName() async throws {
         let app = try await ThreadsApp()
         let pullRequest = try await app.pushPullRequest(changing: [

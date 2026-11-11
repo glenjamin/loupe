@@ -21,10 +21,17 @@ public enum FileDependencies {
         return wanted
     }
 
-    /// The links among `paths`, from `contents`, the text of those `filesToRead` named that exist.
-    public static func find(among paths: [String], contents: [String: String]) -> [DependencyLink] {
+    /// The directories whose files to list, at the changes' head, to find the links among `paths`.
+    public static func directoriesToList(among paths: [String]) -> [String] {
+        var seen = Set<String>()
+        return rules.flatMap { $0.directoriesToList(among: paths) }.filter { seen.insert($0).inserted }
+    }
+
+    /// The links among `paths`, from `contents`, the text of those `filesToRead` named that exist,
+    /// and `listings`, the names of the files in each of `directoriesToList`.
+    public static func find(among paths: [String], contents: [String: String], listings: [String: [String]] = [:]) -> [DependencyLink] {
         var seen = Set<DependencyLink>()
-        let links = rules.flatMap { $0.links(among: paths, contents: contents) }.filter { $0.from != $0.to && seen.insert($0).inserted }
+        let links = rules.flatMap { $0.links(among: paths, contents: contents, listings: listings) }.filter { $0.from != $0.to && seen.insert($0).inserted }
         return links + testsOfWhatTheyUse(links, among: paths)
     }
 
@@ -54,11 +61,18 @@ public enum FileDependencies {
 /// which files it needs to read, and the links it finds among the changed files.
 protocol DependencyRule: Sendable {
     func filesToRead(among paths: [String]) -> [String]
+    /// The directories whose files it needs listed, as for how big a module is.
+    func directoriesToList(among paths: [String]) -> [String]
     func links(among paths: [String], contents: [String: String]) -> [DependencyLink]
+    func links(among paths: [String], contents: [String: String], listings: [String: [String]]) -> [DependencyLink]
 }
 
 extension DependencyRule {
     func filesToRead(among paths: [String]) -> [String] { [] }
+    func directoriesToList(among paths: [String]) -> [String] { [] }
+    func links(among paths: [String], contents: [String: String], listings: [String: [String]]) -> [DependencyLink] {
+        links(among: paths, contents: contents)
+    }
 }
 
 /// Links as a rule finds them, each file to those it's linked to.
