@@ -9,13 +9,20 @@ public struct PullRequestStacks: Sendable {
     private let byId: [String: PullRequestSummary]
     private let parents: [String: String]
     private let children: [String: [PullRequestSummary]]
+    /// Every known member of each GitHub stack, whatever its state, by the stack's id.
+    private let gitHubStacks: [String: [PullRequestSummary]]
 
     /// From every PR known, in any list or none; a PR given twice is taken the first time.
     public init(_ pullRequests: [PullRequestSummary]) {
         var byId: [String: PullRequestSummary] = [:]
-        for pullRequest in pullRequests where pullRequest.state == .open && byId[pullRequest.id] == nil {
-            byId[pullRequest.id] = pullRequest
+        var gitHubStacks: [String: [PullRequestSummary]] = [:]
+        for pullRequest in pullRequests {
+            if let stackId = pullRequest.stackId, gitHubStacks[stackId]?.contains(where: { $0.id == pullRequest.id }) != true {
+                gitHubStacks[stackId, default: []].append(pullRequest)
+            }
+            if pullRequest.state == .open && byId[pullRequest.id] == nil { byId[pullRequest.id] = pullRequest }
         }
+        self.gitHubStacks = gitHubStacks
         let open = byId.values.sorted { $0.number < $1.number }
         var parents: [String: String] = [:]
         for pullRequest in open {
@@ -56,8 +63,10 @@ public struct PullRequestStacks: Sendable {
     /// The stack as seen from `pullRequest`, for its header: the PRs below it from the bottom up,
     /// then it, then those above while there's one on each; where several PRs are stacked on the
     /// same one they're one level, side by side, and the line ends there. Nil when it isn't
-    /// stacked.
+    /// stacked. A merged or closed PR, no longer stacked on anything, has its GitHub stack's
+    /// members as they were placed, merged ones included, so it still shows what it was part of.
     public func line(through pullRequest: PullRequestSummary) -> StackLine? {
+        if pullRequest.state != .open { return formerLine(through: pullRequest) }
         guard byId[pullRequest.id] != nil, isStacked(pullRequest) else { return nil }
         var below: [PullRequestSummary] = []
         var current = pullRequest
@@ -97,6 +106,16 @@ public struct PullRequestStacks: Sendable {
             }
         }
         return grouped
+    }
+
+    /// A merged or closed PR's GitHub stack in position order, with the PR as given; nil when
+    /// it was in none, or none of the others are known.
+    private func formerLine(through pullRequest: PullRequestSummary) -> StackLine? {
+        guard let stackId = pullRequest.stackId else { return nil }
+        let others = (gitHubStacks[stackId] ?? []).filter { $0.id != pullRequest.id }
+        guard !others.isEmpty else { return nil }
+        let members = (others + [pullRequest]).sorted { ($0.stackPosition ?? .max, $0.number) < ($1.stackPosition ?? .max, $1.number) }
+        return StackLine(levels: members.map { [$0] }, current: pullRequest.id)
     }
 
     /// Below this one, nearest first.

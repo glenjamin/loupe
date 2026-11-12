@@ -56,14 +56,18 @@ struct StackBar: View {
     }
 }
 
-/// Where a stacked PR's review stands, as a small glyph: a draft, approved, changes requested,
-/// or waiting on review.
+/// Where a stacked PR's review stands, as a small glyph: merged or closed, a draft, approved,
+/// changes requested, or waiting on review.
 struct StackReviewGlyph: View {
     let pullRequest: PullRequestSummary
 
     var body: some View {
         Group {
-            if pullRequest.isDraft {
+            if pullRequest.state == .merged {
+                Image(systemName: "arrow.triangle.merge").foregroundStyle(.purple)
+            } else if pullRequest.state == .closed {
+                Image(systemName: "xmark.circle").foregroundStyle(.secondary)
+            } else if pullRequest.isDraft {
                 Image(systemName: "circle.dashed").foregroundStyle(.secondary)
             } else {
                 switch pullRequest.reviewDecision {
@@ -77,6 +81,8 @@ struct StackReviewGlyph: View {
     }
 
     static func words(_ pullRequest: PullRequestSummary) -> String {
+        if pullRequest.state == .merged { return "merged" }
+        if pullRequest.state == .closed { return "closed" }
         if pullRequest.isDraft { return "draft" }
         return switch pullRequest.reviewDecision {
         case .approved: "approved"

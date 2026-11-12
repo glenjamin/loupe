@@ -561,13 +561,18 @@ public final class PullRequestListModel {
     /// stack is whole and its members current whichever lists they're in, then those stacked
     /// with the PRs found, until no more turn up. A GitHub stack is asked about once, through any
     /// one member, as that finds them all. Each of `others`, the stored PRs in neither list, is
-    /// looked up too, stacked or not, so a neighbour merged since drops out. A failure leaves
-    /// the stacks as last looked up, and doesn't count as the lists failing to refresh.
+    /// looked up too, stacked or not, so a neighbour merged since drops out, as is the GitHub
+    /// stack of any merged or closed one, which its header still shows. A failure leaves the
+    /// stacks as last looked up, and doesn't count as the lists failing to refresh.
     func lookUpStacks(around pullRequests: [PullRequestSummary], refreshing others: [PullRequestSummary] = []) async {
         var asked: Set<String> = []
         var askedStacks: Set<String> = []
         var candidates = pullRequests
         var refreshing = others.filter { $0.state == .open }
+        var formerStacks = Set(refreshing.compactMap(\.stackId))
+        for pullRequest in others where pullRequest.state != .open {
+            if let stackId = pullRequest.stackId, formerStacks.insert(stackId).inserted { refreshing.append(pullRequest) }
+        }
         do {
             for _ in 0..<Self.stackLookupRounds {
                 var ids = refreshing.map(\.id)

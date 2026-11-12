@@ -138,6 +138,32 @@ struct StackTests {
         #expect(app.tabs.lists.listing(in: .mine, includingStale: true).first { $0.id == top.id }?.parent == nil)
     }
 
+    @Test func aMergedPullRequestStillShowsTheGitHubStackItWasIn() async throws {
+        let app = try await ConversationApp()
+        try await app.github.addCapturedStack()
+        let top = try await app.github.openPullRequest(number: 281, by: "rowan-ashby", in: "tamarinworks/gazette")
+        try await app.github.stack(top.id, on: "PR_kwDOAYVX-88AAAABI5AxRA")
+        await app.tabs.lists.refresh()
+        let bottom = try #require(app.mine.first { $0.number == 277 && $0.repository == "tamarinworks/gazette" })
+        app.tabs.open(bottom)
+
+        try await app.github.merge(bottom.id)
+        await app.tabs.lists.refresh()
+        let tab = try #require(app.tabs.tab(id: bottom.id))
+        #expect(tab.pullRequest.state == .merged)
+        let line = try #require(tab.stackLine)
+        #expect(line.levels.map { $0.map(\.number) } == [[277], [278], [281]])
+        #expect(line.current == bottom.id)
+
+        // The open PRs' own stack leaves the merged one out, as it no longer waits on it.
+        let middle = try #require(app.tabs.lists.pullRequest(id: "PR_kwDOAYVX-88AAAABI5AxRA"))
+        #expect(app.tabs.lists.stacks.line(through: middle)?.levels.map { $0.map(\.number) } == [[278], [281]])
+
+        // It outlasts a relaunch, with the member in neither list kept for it.
+        let nextRun = try #require(app.relaunch().tab(id: bottom.id))
+        #expect(nextRun.stackLine?.levels.map { $0.map(\.number) } == [[277], [278], [281]])
+    }
+
     @Test func aMergedParentInNeitherListDropsOutAndIsLetGoWhenItsBranchStays() async throws {
         let app = try await ConversationApp()
         let parent = try await app.github.openPullRequest(number: 930, by: "rowan-ashby")

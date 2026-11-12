@@ -727,6 +727,9 @@ public struct PullRequestStore: Sendable {
             WITH RECURSIVE kept(id) AS (
                 SELECT pullRequestId FROM listMembership
                 UNION SELECT pullRequestId FROM openTab
+                UNION SELECT other.id FROM openTab
+                    JOIN pullRequest AS this ON this.id = openTab.pullRequestId
+                    JOIN pullRequest AS other ON other.stackId = this.stackId
                 UNION SELECT other.id FROM kept
                     JOIN pullRequest AS this ON this.id = kept.id AND this.state = 'OPEN'
                     JOIN pullRequest AS other ON other.repository = this.repository AND other.state = 'OPEN' AND (
