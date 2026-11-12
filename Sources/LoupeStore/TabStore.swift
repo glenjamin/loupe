@@ -51,14 +51,15 @@ extension PullRequestStore {
         }
     }
 
-    /// Replaces the open tabs with the PRs with `ids`, in order. A tab keeps its PR stored after
-    /// the PR leaves both lists; closing it lets the PR go. Written synchronously, as it's small
-    /// and successive saves must land in order.
-    public func saveOpenTabs(_ ids: [String], selected: String?) throws {
+    /// Replaces the open tabs with `pullRequests`, in order. A tab keeps its PR stored after the
+    /// PR leaves both lists; closing it lets the PR go, and opening it again stores it again.
+    /// Written synchronously, as it's small and successive saves must land in order.
+    public func saveOpenTabs(_ pullRequests: [PullRequestSummary], selected: String?) throws {
         try database.write { db in
             try db.execute(sql: "DELETE FROM openTab")
-            for (position, id) in ids.enumerated() {
-                try db.execute(sql: "INSERT INTO openTab (position, pullRequestId) VALUES (?, ?)", arguments: [position, id])
+            for (position, pullRequest) in pullRequests.enumerated() {
+                if try !PullRequestRow.exists(db, key: pullRequest.id) { try Self.upsert(pullRequest, db) }
+                try db.execute(sql: "INSERT INTO openTab (position, pullRequestId) VALUES (?, ?)", arguments: [position, pullRequest.id])
             }
             if let selected {
                 try Setting(key: Setting.selectedTab, value: selected).upsert(db)

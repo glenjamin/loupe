@@ -44,6 +44,8 @@ public final class TabsModel {
     /// When each open PR was last checked for changes, so showing it again soon after doesn't
     /// ask GitHub again.
     private var lastChecked: [String: ContinuousClock.Instant] = [:]
+    /// The tabs closed this run, most recent last, for reopening.
+    private var recentlyClosed: [ClosedTab] = []
 
     /// Restores the PRs stored by the previous run, and makes choosing a PR in `lists` open it.
     /// `fallbackInterval` is how often open PRs are checked when notifications can't say.
@@ -96,15 +98,7 @@ public final class TabsModel {
     /// Opens the PR, or focuses it if it's already open. A tab waiting on a link to it becomes
     /// its tab in place.
     public func open(_ pullRequest: PullRequestSummary) {
-        if tab(id: pullRequest.id) == nil {
-            let tab = TabItem.pullRequest(makeTab(pullRequest))
-            if let index = items.firstIndex(where: { $0.pending.map { $0.link.names(pullRequest) } ?? false }) {
-                items[index] = tab
-            } else {
-                items.append(tab)
-            }
-        }
-        reveal(pullRequest.id)
+        open(pullRequest, at: nil)
     }
 
     /// Opens the PR a link names, or focuses its tab, then lands on what in it the link points
@@ -114,19 +108,15 @@ public final class TabsModel {
     /// says why. Returns the lookup and landing, for whoever wants to wait for them.
     @discardableResult
     public func open(_ link: PullRequestLink) -> Task<Void, Never>? {
-        if let known = tabs.map(\.pullRequest).first(where: link.names) ?? lists.pullRequest(repository: link.repository, number: link.number) {
-            open(known)
-            return land(on: link.target, inTab: known.id)
-        }
-        if let pending = items.lazy.compactMap(\.pending).first(where: { $0.link.names(link) }) {
-            pending.target = link.target
-            reveal(pending.id)
-            return retry(pending)
-        }
-        let pending = PendingTab(link: link)
-        items.append(.pending(pending))
-        reveal(pending.id)
-        return startLookUp(pending)
+        open(link, at: nil)
+    }
+
+    /// Opens the most recently closed tab again where it was, looking its PR up again if the
+    /// store has let it go, as browsers' Reopen Closed Tab does. Those closed this run only.
+    @discardableResult
+    public func reopenClosedTab() -> Task<Void, Never>? {
+        guard let closed = recentlyClosed.popLast() else { return nil }
+        return open(closed.link, at: closed.position)
     }
 
     /// Looks the link's PR up again after it failed; while a lookup is underway, returns that.
@@ -177,6 +167,7 @@ public final class TabsModel {
     /// place, or the one before it when it was last, as browsers do.
     public func close(_ id: String) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        rememberClosed(items[index], at: index)
         items.remove(at: index)
         if selected == id {
             selected = items.isEmpty ? nil : items[min(index, items.count - 1)].id
@@ -187,6 +178,8 @@ public final class TabsModel {
 
     /// Forgets every open PR, leaving the lists shown.
     public func closeAll() {
+        // Last first, so reopening brings back the first first, each into its old place.
+        for (index, item) in items.enumerated().reversed() { rememberClosed(item, at: index) }
         items = []
         selected = nil
         save()
@@ -281,6 +274,48 @@ public final class TabsModel {
     /// How soon a PR checked once can be checked again on being shown.
     private static let recheckInterval = Duration.seconds(10)
 
+    /// Opens the PR at `position` in the strip, or after the others for nil.
+    private func open(_ pullRequest: PullRequestSummary, at position: Int?) {
+        if tab(id: pullRequest.id) == nil {
+            let tab = TabItem.pullRequest(makeTab(pullRequest))
+            if let index = items.firstIndex(where: { $0.pending.map { $0.link.names(pullRequest) } ?? false }) {
+                items[index] = tab
+            } else {
+                insert(tab, at: position)
+            }
+        }
+        reveal(pullRequest.id)
+    }
+
+    /// Opens the link's PR at `position` in the strip, or after the others for nil.
+    private func open(_ link: PullRequestLink, at position: Int?) -> Task<Void, Never>? {
+        if let known = tabs.map(\.pullRequest).first(where: link.names) ?? lists.pullRequest(repository: link.repository, number: link.number) {
+            open(known, at: position)
+            return land(on: link.target, inTab: known.id)
+        }
+        if let pending = items.lazy.compactMap(\.pending).first(where: { $0.link.names(link) }) {
+            pending.target = link.target
+            reveal(pending.id)
+            return retry(pending)
+        }
+        let pending = PendingTab(link: link)
+        insert(.pending(pending), at: position)
+        reveal(pending.id)
+        return startLookUp(pending)
+    }
+
+    private func insert(_ item: TabItem, at position: Int?) {
+        items.insert(item, at: min(position ?? items.count, items.count))
+    }
+
+    private func rememberClosed(_ item: TabItem, at position: Int) {
+        let link = switch item {
+        case let .pullRequest(tab): PullRequestLink(repository: tab.pullRequest.repository, number: tab.pullRequest.number)
+        case let .pending(pending): PullRequestLink(repository: pending.link.repository, number: pending.link.number)
+        }
+        recentlyClosed.append(ClosedTab(link: link, position: position))
+    }
+
     /// Shows the tab with `id`, already among the items.
     private func reveal(_ id: String) {
         selected = id
@@ -353,7 +388,7 @@ public final class TabsModel {
     /// lists are stored as shown while it is.
     private func save() {
         do {
-            try store.saveOpenTabs(tabs.map(\.id), selected: selected.flatMap(tab(id:))?.id)
+            try store.saveOpenTabs(tabs.map(\.pullRequest), selected: selected.flatMap(tab(id:))?.id)
         } catch {
             log("Couldn't save open tabs: \(error)")
         }
@@ -406,6 +441,12 @@ public enum TabItem: Identifiable {
     public var pending: PendingTab? {
         if case let .pending(pending) = self { pending } else { nil }
     }
+}
+
+/// A closed tab's PR, and where it was in the strip after the lists.
+private struct ClosedTab {
+    let link: PullRequestLink
+    let position: Int
 }
 
 /// How open PRs learn they've changed on GitHub.

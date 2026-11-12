@@ -4,7 +4,7 @@ import SwiftUI
 /// Every keyboard shortcut: the menus bind theirs from here, the review keys' monitor matches
 /// the plain keys, and the shortcuts panel lists them all, so none can be missing from it.
 enum Shortcut: CaseIterable {
-    case showShortcuts, showLists, selectTab, selectLastTab, previousTab, nextTab, closeTab, closeAllTabs
+    case showShortcuts, showLists, selectTab, selectLastTab, previousTab, nextTab, closeTab, closeAllTabs, reopenClosedTab
     case find, findNext, findPrevious, refresh
     case openSelected, toggleTodo, showClosed
     case conversation, files, visualReview, circleCI, terraform
@@ -27,7 +27,7 @@ enum Shortcut: CaseIterable {
 
     var group: Group {
         switch self {
-        case .showShortcuts, .showLists, .selectTab, .selectLastTab, .previousTab, .nextTab, .closeTab, .closeAllTabs, .find, .findNext, .findPrevious, .refresh: .anywhere
+        case .showShortcuts, .showLists, .selectTab, .selectLastTab, .previousTab, .nextTab, .closeTab, .closeAllTabs, .reopenClosedTab, .find, .findNext, .findPrevious, .refresh: .anywhere
         case .openSelected, .toggleTodo, .showClosed: .lists
         case .conversation, .files, .visualReview, .circleCI, .terraform, .openOnGitHub, .copyLink, .openInEditor, .editDescription, .reviewers, .merge: .pullRequest
         case .summary, .approve, .requestChanges, .submitReview: .review
@@ -48,6 +48,7 @@ enum Shortcut: CaseIterable {
         case .nextTab: "Next tab"
         case .closeTab: "Close the tab"
         case .closeAllTabs: "Close all tabs"
+        case .reopenClosedTab: "Reopen the last closed tab"
         case .find: "Search the lists, or find in a PR"
         case .findNext: "Find next"
         case .findPrevious: "Find previous"
@@ -104,6 +105,7 @@ enum Shortcut: CaseIterable {
         case .nextTab: KeyboardShortcut("]", modifiers: [.command, .shift])
         case .closeTab: KeyboardShortcut("w")
         case .closeAllTabs: KeyboardShortcut("w", modifiers: [.command, .option])
+        case .reopenClosedTab: KeyboardShortcut("t", modifiers: [.command, .shift])
         case .find: KeyboardShortcut("f")
         case .findNext: KeyboardShortcut("g")
         case .findPrevious: KeyboardShortcut("g", modifiers: [.command, .shift])

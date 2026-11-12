@@ -126,6 +126,12 @@ final class WindowManager {
         render()
     }
 
+    /// Opens the most recently closed PR tab again; with none, quietly does nothing.
+    func reopenClosedTab() {
+        tabs.reopenClosedTab()
+        render()
+    }
+
     /// Clicks the strip's item at `position` (0 for the lists) as a mouse would, so a snapshot
     /// run can show that the strip takes clicks. Returns whether there was such an item.
     func clickStripItem(at position: Int) -> Bool {
@@ -463,7 +469,7 @@ private final class TextFinderSender: NSObject, NSValidatedUserInterfaceItem {
     }
 }
 
-/// The tab keys: ⌘W and ⌥⌘W close PR tabs, ⌘⇧[ and ⌘⇧] step through the strip, and ⌘1–⌘9
+/// The tab keys: ⌘W and ⌥⌘W close PR tabs, ⇧⌘T reopens the last closed, ⌘⇧[ and ⌘⇧] step through the strip, and ⌘1–⌘9
 /// pick an item in it by position, ⌘1 being the lists. ⌃Tab is the window manager's key monitor.
 struct TabCommands: Commands {
     let windows: WindowManager
@@ -475,6 +481,8 @@ struct TabCommands: Commands {
                 .keyboardShortcut(.closeTab)
             Button("Close All Tabs") { windows.closeAllTabs() }
                 .keyboardShortcut(.closeAllTabs)
+            Button("Reopen Closed Tab") { windows.reopenClosedTab() }
+                .keyboardShortcut(.reopenClosedTab)
         }
         CommandGroup(before: .windowArrangement) {
             Button("Show Pull Requests") { windows.showLists() }

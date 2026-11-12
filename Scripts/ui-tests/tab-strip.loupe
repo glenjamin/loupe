@@ -1,5 +1,5 @@
-# The tab strip takes clicks, as LOUPE_SNAPSHOT_CLICK_TAB shows for one item, and ⌃Tab steps
-# along it through the window's key monitor.
+# The tab strip takes clicks, as LOUPE_SNAPSHOT_CLICK_TAB shows for one item, ⌃Tab steps
+# along it through the window's key monitor, and a closed tab can be reopened.
 wait settled
 open tamarinworks/gazette#272
 wait settled
@@ -17,3 +17,12 @@ snap strip-next
 
 press ctrl+shift+tab
 expect window has title "Pull Requests"
+
+# ⌘W closes the PR's tab and ⇧⌘T brings it back.
+press ctrl+tab
+expect window has no title "Pull Requests"
+press cmd+w
+expect window has title "Pull Requests"
+press cmd+shift+t
+expect window has no title "Pull Requests"
+expect button "Conversation" exists

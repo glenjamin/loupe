@@ -357,6 +357,45 @@ struct TabsTests {
         #expect(try app.relaunch().tabs.isEmpty)
     }
 
+    @Test func reopeningBringsBackTheLastClosedTabsWhereTheyWereMostRecentFirst() async throws {
+        let app = try await App()
+        let (first, second, third) = (app.toReview[0], app.toReview[1], app.toReview[2])
+        #expect(app.tabs.reopenClosedTab() == nil, "nothing closed yet")
+        app.tabs.open(first)
+        app.tabs.open(second)
+        app.tabs.open(third)
+
+        app.tabs.close(second.id)
+        app.tabs.close(third.id)
+        app.tabs.reopenClosedTab()
+        #expect(app.tabs.tabs.map(\.id) == [first.id, third.id])
+        #expect(app.tabs.selected == third.id)
+        app.tabs.reopenClosedTab()
+        #expect(app.tabs.tabs.map(\.id) == [first.id, second.id, third.id], "back in its place")
+        #expect(app.tabs.selected == second.id)
+        #expect(try app.relaunch().tabs.map(\.id) == [first.id, second.id, third.id])
+
+        app.tabs.closeAll()
+        for _ in 0..<3 { app.tabs.reopenClosedTab() }
+        #expect(app.tabs.tabs.map(\.id) == [first.id, second.id, third.id], "each in its place")
+        #expect(app.tabs.reopenClosedTab() == nil, "all reopened")
+        #expect(app.tabs.tabs.count == 3)
+    }
+
+    @Test func reopeningAClosedUnlistedPullRequestLooksItUpAgain() async throws {
+        let app = try await App()
+        let link = PullRequestLink(repository: "tamarinworks/porter", number: 1522)
+        await app.tabs.open(link)?.value
+        let opened = try #require(app.tabs.tabs.first)
+        app.tabs.close(opened.id)
+
+        await app.tabs.reopenClosedTab()?.value
+
+        #expect(app.tabs.tabs.map(\.id) == [opened.id])
+        #expect(app.tabs.selected == opened.id)
+        #expect(try app.relaunch().tabs.map(\.id) == [opened.id])
+    }
+
     @Test func previousAndNextGoThroughTheListsThenEachTabAndWrapAround() async throws {
         let app = try await App()
         let (first, second) = (app.toReview[0], app.toReview[1])

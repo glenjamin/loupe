@@ -464,7 +464,8 @@ struct ThreadsApp {
     /// line 10 becomes three (new lines 10 to 12) and line 50 goes. It also adds `new.go` and
     /// changes a vendored file, which is hidden. The viewer's own PR is theirs on GitHub too.
     func pushPullRequest(in list: PullRequestList = .toReview) async throws -> PullRequestSummary {
-        let listed = try #require(tabs.lists.pullRequests(in: list).first)
+        // The fixture's PRs age against the real clock, so stale ones count too.
+        let listed = try #require(tabs.lists.pullRequests(in: list, includingStale: true).first)
         try await conversations.add(listed.id, number: listed.number, author: list == .mine ? listed.author : nil)
         try await store.updateLocalRepos(saving: [LocalRepo(nameWithOwner: listed.repository, path: repo.checkout, verifiedAt: .now)])
         let lines = (1...60).map { "\($0) line" }
