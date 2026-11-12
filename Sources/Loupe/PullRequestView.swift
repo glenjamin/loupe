@@ -47,17 +47,11 @@ struct PullRequestView: View {
                     }
                     let showsCircleCI = section == .circleCI
                     if let failures = showsCircleCI ? CircleCIPages.failures(for: tab) : CircleCIPages.existingFailures(for: tab) {
-                        CircleCIPane(failures: failures, checks: tab.failedCircleCIChecks, isShown: showsCircleCI)
-                            .opacity(showsCircleCI ? 1 : 0)
-                            .allowsHitTesting(showsCircleCI)
-                            .accessibilityHidden(!showsCircleCI)
+                        KeptPane(isShown: showsCircleCI, content: CircleCIPane(failures: failures, checks: tab.failedCircleCIChecks, isShown: showsCircleCI))
                     }
                     let showsTerraform = section == .terraform
                     if let plans = showsTerraform ? TerraformPages.plans(for: tab) : TerraformPages.existingPlans(for: tab) {
-                        TerraformPane(plans: plans, checks: tab.terraformPlans)
-                            .opacity(showsTerraform ? 1 : 0)
-                            .allowsHitTesting(showsTerraform)
-                            .accessibilityHidden(!showsTerraform)
+                        KeptPane(isShown: showsTerraform, content: TerraformPane(plans: plans, checks: tab.terraformPlans))
                     }
                     let showsVisualReview = section == .visualReview
                     if let review = tab.visualReview, let page = showsVisualReview ? VisualReviewPage.page(for: tab) : VisualReviewPage.existingPage(for: tab) {
@@ -1767,4 +1761,24 @@ private extension DiffStep {
 /// hover tint while the pointer is over it.
 func sidebarRowStyle(isShown: Bool, isHovered: Bool) -> AnyShapeStyle {
     isShown ? AnyShapeStyle(Color.accentColor) : isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear)
+}
+
+/// A pane kept while another section is shown, in an AppKit view of its own that's hidden with
+/// it. Opacity and hit testing alone leave the AppKit views SwiftUI makes for it, a `List`'s
+/// table and its rows' tooltips, live under the pointer over whatever is shown.
+struct KeptPane<Content: View>: NSViewRepresentable {
+    let isShown: Bool
+    let content: Content
+
+    func makeNSView(context: Context) -> NSHostingView<Content> {
+        let view = NSHostingView(rootView: content)
+        // It takes the size it's given, as the pane would in the stack.
+        view.sizingOptions = []
+        return view
+    }
+
+    func updateNSView(_ view: NSHostingView<Content>, context: Context) {
+        view.rootView = content
+        view.isHidden = !isShown
+    }
 }
