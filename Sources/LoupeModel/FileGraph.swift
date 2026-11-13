@@ -16,7 +16,9 @@ public enum FileOrder: Sendable, Hashable, CaseIterable {
 /// of the others come last, as one standalone group. A file's companions follow it either way
 /// up, ordered with it as one: its type declarations, then its stories, then its tests, so each
 /// is read with what it's for; a README follows the last of the files it describes. Files of one
-/// small module are grouped but not ordered by it. Ties, and
+/// small module are grouped but not ordered by it. A group's interfaces, such as the `.proto`
+/// files its code is generated from, lead it either way up, as what the rest is built on and
+/// offers. Ties, and
 /// files that use each other in a cycle, keep the order the directory tree lists them in, so
 /// files with no links between them list as the tree does.
 public struct FileGraph: Sendable, Equatable {
@@ -91,13 +93,18 @@ public struct FileGraph: Sendable, Equatable {
             }
         }
         let graph = IndexedGraph(files: subjects, dependencies: contracted, joins: joins)
+        let interfaces = Set(links.filter { $0.reason == .interface }.map { subject(of: $0.to) })
         func expanded(_ indices: [Int]) -> [String] {
             indices.flatMap { [subjects[$0]] + (following[subjects[$0]] ?? []) }
         }
         let components = graph.components().map { (indices: $0, size: expanded($0).count) }
         let joined = components.filter { $0.size > 1 }
             .sorted { $0.size != $1.size ? $0.size > $1.size : $0.indices[0] < $1.indices[0] }
-            .map { Group(files: placingDescriptions(expanded(graph.ordered($0.indices, usersFirst: order == .topDown))), isStandalone: false) }
+            .map { component in
+                let ordered = graph.ordered(component.indices, usersFirst: order == .topDown)
+                let leading = ordered.filter { interfaces.contains(subjects[$0]) } + ordered.filter { !interfaces.contains(subjects[$0]) }
+                return Group(files: placingDescriptions(expanded(leading)), isStandalone: false)
+            }
         let standalone = components.filter { $0.size == 1 }.map(\.indices[0]).sorted().map { subjects[$0] }
         return joined + (standalone.isEmpty ? [] : [Group(files: standalone, isStandalone: true)])
     }

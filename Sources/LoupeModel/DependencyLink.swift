@@ -3,6 +3,9 @@ public struct DependencyLink: Sendable, Hashable {
     public enum Reason: Sendable, Hashable, Comparable {
         /// It imports, requires or includes the other.
         case imports
+        /// It uses code generated from the other, a public interface such as a `.proto`, which
+        /// is read first either way up.
+        case interface
         /// It names something the other defines.
         case names
         /// It names the other's path in a string, as a test does its fixture.

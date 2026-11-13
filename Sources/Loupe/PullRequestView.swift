@@ -1226,6 +1226,7 @@ extension DependencyLink.Reason {
     var label: String {
         switch self {
         case .imports: "imports"
+        case .interface: "interface"
         case .names: "names"
         case .path: "path"
         case .convention: "convention"

@@ -7,8 +7,8 @@ import LoupeModel
 /// with no imports between its files, a file uses those defining the top-level names it
 /// refers to. Its tests use their own directory's other files, whichever package they're in,
 /// and the helpers its other tests define. A string naming a changed file, such as a test's
-/// fixture, uses it. A package's `.proto` files are among its files, as its generated code is
-/// hidden: those beside it, and those whose `go_package` names it.
+/// fixture, uses it. Importing a package uses the `.proto` files its hidden generated code comes
+/// from as its interface: those beside it, and those whose `go_package` names it.
 struct GoDependencies: DependencyRule {
     func filesToRead(among paths: [String]) -> [String] {
         let sources = paths.filter(isGo)
@@ -35,10 +35,11 @@ struct GoDependencies: DependencyRule {
             byDirectory[directory(of: path), default: []].append(path)
             if let importPath = importPath(of: directory(of: path), modules: modules) { packages[importPath, default: []].append(path) }
         }
+        var interfaces: [String: [String]] = [:]
         for path in paths where isProto(path) {
             let named = contents[path].flatMap(ProtoFile.goPackage(in:))
             for importPath in Set([named, importPath(of: directory(of: path), modules: modules)].compactMap(\.self)) {
-                packages[importPath, default: []].append(path)
+                interfaces[importPath, default: []].append(path)
             }
         }
         let parsed = Dictionary(uniqueKeysWithValues: zip(sources, concurrentMap(sources) { path in
@@ -62,7 +63,9 @@ struct GoDependencies: DependencyRule {
         for path in sources {
             for capture in parsed[path] ?? [] {
                 switch capture.name {
-                case "path": links.add(from: path, to: packages[unquoted(capture.text)] ?? [], .imports)
+                case "path":
+                    links.add(from: path, to: packages[unquoted(capture.text)] ?? [], .imports)
+                    links.add(from: path, to: interfaces[unquoted(capture.text)] ?? [], .interface)
                 case "reference":
                     links.add(from: path, to: definitions.definers(of: capture.text, in: directory(of: path)), .names)
                     if isTest(path) { links.add(from: path, to: testDefinitions.definers(of: capture.text, in: directory(of: path)), .names) }
