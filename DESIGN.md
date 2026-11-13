@@ -1158,6 +1158,10 @@ A test named for no file beside it was taken for the test of the one file named 
 
 A `.proto` file stood alone in the file list, as its generated `.pb.go` files, which Go code imports, are hidden. A proto now uses the changed protos it imports, matched by the end of their path as the compiler's include paths are unknown, the one beside it first. A Go package's protos count among its files for Go's imports: those in the package's directory, and those whose `go_package` names its full import path, as when the code is generated elsewhere. So a PR changing a proto and the Go using it reads as one group, the proto first bottom up.
 
+### Typing @ in a comment box offers who to mention
+
+As on github.com, an `@` at the start of a word in any comment box offers who to mention, narrowed as a login or name is typed, and ↩ or Tab puts in `@login` and a space. Those taking part in the PR come first, its author then the rest latest first, then the repo's people and teams: the reviewer picker's candidates, fetched once a run per repo, so no new query and nothing asked of GitHub per keystroke. The viewer is never offered. Logins starting with what's typed rank above names with a word starting with it, then anything containing it. An `@` after another character, as in an email address, offers nothing. It shares the emoji completion's list, AppKit's own, and is offered again if the repo's people arrive while a mention is being typed.
+
 ## Not yet decided
 
 Nothing is pending.

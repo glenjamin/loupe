@@ -971,6 +971,29 @@ public final class PullRequestTab: Identifiable {
         await emojiCatalog.fetch()
     }
 
+    /// Who a comment box offers to `@`-mention: those taking part in the PR first, its author then
+    /// the rest most recent first, then the repo's people and teams, as github.com offers them.
+    /// Never the viewer. The repo's are there once fetched.
+    public var mentionCandidates: [Reviewer] {
+        let repoPeople = candidates.candidates(in: pullRequest.repository, suggested: []) ?? []
+        let named = Dictionary(repoPeople.map { ($0.login.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
+        let author = pullRequest.author.map { Participant(login: $0, avatarURL: nil) }
+        let participants = [author].compactMap(\.self) + participants(in: conversation).reversed()
+        var seen = Set([viewerLogin?.lowercased()].compactMap(\.self))
+        return (participants.map { named[$0.login.lowercased()] ?? Reviewer(kind: .user, nodeId: nil, login: $0.login, avatarURL: $0.avatarURL) } + repoPeople)
+            .filter { seen.insert($0.login.lowercased()).inserted }
+    }
+
+    /// Fetches who's in the PR's repo to mention, unless they have been this run; a failure is
+    /// logged, leaving those taking part in the PR to offer.
+    public func fetchMentionCandidates() async {
+        do {
+            try await candidates.fetch(pullRequest.repository, store: store)
+        } catch {
+            log("Couldn't fetch who to mention in \(pullRequest.repository): \(error.localizedDescription)")
+        }
+    }
+
     /// Fetches who could be asked to review in the PR's repo, unless they have been this run,
     /// and who GitHub suggests for this PR, unless it has said. Suggestions that can't be
     /// fetched are logged and left out rather than holding back the rest.
@@ -1801,4 +1824,13 @@ private func isPending(_ state: DiffState<FileGraph>?) -> Bool {
     case nil, .diffing?: true
     case .ready?, .failed?: false
     }
+}
+
+/// Who has taken part in a PR's conversation: those asked to review, then the timeline's
+/// commenters, reviewers, pushers and commit authors, oldest first, then those in its threads.
+private func participants(in conversation: Conversation?) -> [Participant] {
+    guard let conversation else { return [] }
+    let threads = conversation.threads.flatMap(\.comments).compactMap(\.author)
+    let asked = conversation.reviewRequests.filter { $0.kind == .user }.map { Participant(login: $0.login, avatarURL: $0.avatarURL) }
+    return asked + conversation.items.compactMap(\.actor) + threads
 }

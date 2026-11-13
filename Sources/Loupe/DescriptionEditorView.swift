@@ -127,6 +127,10 @@ struct MarkdownTextView: NSViewRepresentable {
     var suggestion: SuggestionRequests?
     /// The emoji a `:` and part of a name completes to.
     var emojis: () -> [Emoji] = { [] }
+    /// Who an `@` and part of a login or name completes to, in the order to offer them.
+    var mentions: () -> [Reviewer] = { [] }
+    /// Counts the fetches of who to mention, each offering again a mention being typed.
+    var mentionsFetched = 0
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -174,6 +178,11 @@ struct MarkdownTextView: NSViewRepresentable {
         }
         textView.onSuggest = suggestion?.request
         textView.emojis = emojis
+        textView.mentions = mentions
+        if mentionsFetched != context.coordinator.mentionsFetched {
+            context.coordinator.mentionsFetched = mentionsFetched
+            textView.offerMentionsAgain()
+        }
         // A request made over the preview waits for Write, as the text takes no typing there.
         if let suggestion, suggestion.count != context.coordinator.suggestionRequests, !isPreviewing {
             context.coordinator.suggestionRequests = suggestion.count
@@ -190,6 +199,8 @@ struct MarkdownTextView: NSViewRepresentable {
         var focusRequests = 0
         /// The suggestion requests acted on.
         var suggestionRequests = 0
+        /// The fetches of who to mention acted on.
+        var mentionsFetched = 0
 
         init(text: Binding<String>) {
             self.text = text
@@ -218,10 +229,12 @@ final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
     var onSuggest: (() -> Void)?
     /// The emoji a `:` and part of a name completes to; none offered while it's empty.
     var emojis: () -> [Emoji] = { [] }
-    /// The emoji in the completion list, by the line shown for each.
-    private var offeredEmoji: [String: Emoji] = [:]
+    /// Who an `@` and part of a login or name completes to; none offered while it's empty.
+    var mentions: () -> [Reviewer] = { [] }
+    /// What's in the completion list, by the line shown for each.
+    private var offered: [String: Completion] = [:]
     /// Set while completing changes the text, so that change doesn't complete again.
-    private var isCompletingEmoji = false
+    private var isCompleting = false
     var isPreviewing = false
     private var reportedHeight: CGFloat?
     /// The fixed end of a selection made by code words, so the other end moves on the next one.
@@ -256,67 +269,90 @@ final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
         super.didChangeText()
         reportContentHeight()
         // Offered as the name's typed, as on github.com; inserting one changes the text too.
-        if !isCompletingEmoji, emojiNameRange() != nil {
-            isCompletingEmoji = true
+        if !isCompleting, completionRange() != nil {
+            isCompleting = true
             complete(nil)
-            isCompletingEmoji = false
+            isCompleting = false
         }
+    }
+
+    /// Offers who to mention again for an `@` being typed, as when more people have come.
+    func offerMentionsAgain() {
+        guard !isCompleting, completionRange()?.trigger == .mention else { return }
+        isCompleting = true
+        complete(nil)
+        isCompleting = false
     }
 
     override var rangeForUserCompletion: NSRange {
-        emojiNameRange() ?? super.rangeForUserCompletion
+        completionRange()?.range ?? super.rangeForUserCompletion
     }
 
-    /// For a `:` and part of a name, the emoji named so, each shown with its character.
+    /// For a `:` and part of a name, the emoji named so, each shown with its character; for an
+    /// `@` and part of a login or name, who it could mention, each shown with their name.
     override func completions(forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String]? {
-        guard charRange == emojiNameRange() else { return super.completions(forPartialWordRange: charRange, indexOfSelectedItem: index) }
-        let typed = (string as NSString).substring(with: charRange).dropFirst()
-        let matches = Emoji.matches(emojis(), for: String(typed))
-        offeredEmoji = Dictionary(matches.map { (Self.offer($0), $0) }, uniquingKeysWith: { first, _ in first })
+        guard let (range, trigger) = completionRange(), range == charRange else {
+            return super.completions(forPartialWordRange: charRange, indexOfSelectedItem: index)
+        }
+        let typed = String((string as NSString).substring(with: charRange).dropFirst())
+        let matches: [Completion] = switch trigger {
+        case .emoji: Emoji.matches(emojis(), for: typed).map(Completion.emoji)
+        case .mention: Mentions.matches(mentions(), for: typed).map(Completion.mention)
+        }
+        offered = Dictionary(matches.map { ($0.offer, $0) }, uniquingKeysWith: { first, _ in first })
         index.pointee = 0
-        return matches.isEmpty ? nil : matches.map(Self.offer)
+        return matches.isEmpty ? nil : matches.map(\.offer)
     }
 
-    /// Puts the chosen emoji's character in place of the `:` and name on ↩ or Tab, and nothing
-    /// while moving through the list, so what's typed stays as it was until one is chosen.
+    /// Puts the chosen emoji's character, or the `@login` and a space, in place of what was typed
+    /// on ↩ or Tab, and nothing while moving through the list, so what's typed stays as it was
+    /// until one is chosen.
     override func insertCompletion(_ word: String, forPartialWordRange charRange: NSRange, movement: Int, isFinal flag: Bool) {
-        guard let emoji = offeredEmoji[word] else {
+        guard let completion = offered[word] else {
             return super.insertCompletion(word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
         }
         guard flag, [NSTextMovement.return.rawValue, NSTextMovement.tab.rawValue].contains(movement) else { return }
-        offeredEmoji = [:]
-        guard shouldChangeText(in: charRange, replacementString: emoji.insertion) else { return }
-        isCompletingEmoji = true
-        replaceCharacters(in: charRange, with: emoji.insertion)
+        offered = [:]
+        let insertion = completion.insertion
+        guard shouldChangeText(in: charRange, replacementString: insertion) else { return }
+        isCompleting = true
+        replaceCharacters(in: charRange, with: insertion)
         didChangeText()
-        isCompletingEmoji = false
-        setSelectedRange(NSRange(location: charRange.location + (emoji.insertion as NSString).length, length: 0))
+        isCompleting = false
+        setSelectedRange(NSRange(location: charRange.location + (insertion as NSString).length, length: 0))
     }
 
-    /// The `:` and the two or more name characters before the cursor, when that's how the
-    /// word being typed starts: after a space, a bracket or the start of a line, as GitHub
-    /// takes `:name:`, so a URL's `:` or a time's isn't one.
-    private func emojiNameRange() -> NSRange? {
+    /// The `:` or `@` and what's typed after it up to the cursor, when that's how the word being
+    /// typed starts: after a space, a bracket or the start of a line, as GitHub takes `:name:`
+    /// and mentions, so a URL's `:`, a time's or an email address's `@` isn't one. An emoji
+    /// waits for two characters of its name, as there are so many; a mention is offered at once.
+    private func completionRange() -> (range: NSRange, trigger: CompletionTrigger)? {
         let cursor = selectedRange()
         guard cursor.length == 0, cursor.location > 0 else { return nil }
         let text = string as NSString
         var start = cursor.location
-        while start > 0, let scalar = Unicode.Scalar(text.character(at: start - 1)), Self.emojiNameCharacters.contains(scalar) {
+        while start > 0, let scalar = Unicode.Scalar(text.character(at: start - 1)), Self.completedCharacters.contains(scalar) {
             start -= 1
         }
-        guard start > 0, text.character(at: start - 1) == UInt16(UInt8(ascii: ":")), cursor.location - start >= 2 else { return nil }
-        let colon = start - 1
-        if colon > 0, let before = Unicode.Scalar(text.character(at: colon - 1)), !CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "([{")).contains(before) {
+        guard start > 0 else { return nil }
+        let trigger: CompletionTrigger
+        switch text.character(at: start - 1) {
+        case UInt16(UInt8(ascii: ":")) where cursor.location - start >= 2 && !text.substring(with: NSRange(location: start, length: cursor.location - start)).contains("/"):
+            trigger = .emoji
+        case UInt16(UInt8(ascii: "@")):
+            trigger = .mention
+        default:
             return nil
         }
-        return NSRange(location: colon, length: cursor.location - colon)
+        let mark = start - 1
+        if mark > 0, let before = Unicode.Scalar(text.character(at: mark - 1)), !CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "([{")).contains(before) {
+            return nil
+        }
+        return (NSRange(location: mark, length: cursor.location - mark), trigger)
     }
 
-    private static let emojiNameCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+-")
-
-    private static func offer(_ emoji: Emoji) -> String {
-        "\(emoji.character ?? "·") :\(emoji.name):"
-    }
+    /// Those of emoji names, logins, and teams' `org/slug`.
+    private static let completedCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+-/")
 
     override func setFrameSize(_ newSize: NSSize) {
         let rewraps = newSize.width != frame.width
@@ -429,6 +465,32 @@ final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
             setSelectedRange(NSRange(location: target, length: 0))
         }
         scrollRangeToVisible(NSRange(location: target, length: 0))
+    }
+}
+
+private enum CompletionTrigger {
+    case emoji, mention
+}
+
+/// What the completion list offers: an emoji, or someone to mention.
+private enum Completion {
+    case emoji(Emoji)
+    case mention(Reviewer)
+
+    /// Its line in the list.
+    var offer: String {
+        switch self {
+        case let .emoji(emoji): "\(emoji.character ?? "·") :\(emoji.name):"
+        case let .mention(person): person.name.map { "@\(person.login)  \($0)" } ?? "@\(person.login)"
+        }
+    }
+
+    /// What choosing it puts in the text.
+    var insertion: String {
+        switch self {
+        case let .emoji(emoji): emoji.insertion
+        case let .mention(person): "@\(person.login) "
+        }
     }
 }
 

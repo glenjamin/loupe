@@ -35,6 +35,8 @@ struct MarkdownEditor: View {
     /// How tall the text and the preview's page are laid out, which a framed box grows to fit.
     @State private var writtenHeight: CGFloat = 0
     @State private var previewedHeight: CGFloat = 0
+    /// Counts fetches of who to mention, so a mention typed before they came is offered again.
+    @State private var mentionsFetched = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: minHeight == nil ? 0 : 6) {
@@ -49,7 +51,7 @@ struct MarkdownEditor: View {
                 toggle
             }
             ZStack {
-                MarkdownTextView(text: $text, isEditable: isEditable, save: save, alternateSave: alternateSave, cancel: cancel, font: font, isPreviewing: isPreviewing, togglePreview: { isPreviewing.toggle() }, focusRequests: focusRequests, contentHeightChanged: minHeight == nil ? nil : { writtenHeight = $0 }, suggestion: suggestion, emojis: { tab.emojis })
+                MarkdownTextView(text: $text, isEditable: isEditable, save: save, alternateSave: alternateSave, cancel: cancel, font: font, isPreviewing: isPreviewing, togglePreview: { isPreviewing.toggle() }, focusRequests: focusRequests, contentHeightChanged: minHeight == nil ? nil : { writtenHeight = $0 }, suggestion: suggestion, emojis: { tab.emojis }, mentions: { tab.mentionCandidates }, mentionsFetched: mentionsFetched)
                 if isPreviewing {
                     DraftPreview(text: text, tab: tab, page: { page.page(for: tab) }, contentHeightChanged: { previewedHeight = $0 })
                         // Inside the field's border.
@@ -67,6 +69,10 @@ struct MarkdownEditor: View {
         .onChange(of: focusRequests, initial: true) { if focusRequests > 0 { isPreviewing = false } }
         .onChange(of: suggestion?.count) { isPreviewing = false }
         .task { await tab.fetchEmojis() }
+        .task {
+            await tab.fetchMentionCandidates()
+            mentionsFetched += 1
+        }
     }
 
     /// A framed box's height: the mode's content within its least height and `maxHeight`, a
