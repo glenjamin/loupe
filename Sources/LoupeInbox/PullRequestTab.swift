@@ -260,6 +260,18 @@ public final class PullRequestTab: Identifiable {
         await linkOpener(link)
     }
 
+    /// Where an attachment uploaded to GitHub, such as a video in a comment, can be fetched for
+    /// the next few minutes, as a page without the viewer's GitHub sign-in can't fetch it from
+    /// its own address. Nil for anything but such an attachment, or if GitHub won't say.
+    public func signedAttachmentURL(_ url: URL) async -> URL? {
+        do {
+            return try await client.signedAttachmentURL(url)
+        } catch {
+            log("Couldn't find where the attachment \(url.lastPathComponent) is: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     /// The tooltips of links to PRs, keyed by the links as given: the PR's title, marked
     /// "[merged]" once it's merged.
     public func tooltips(of links: [PullRequestLink]) async -> [PullRequestLink: String] {

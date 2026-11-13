@@ -70,6 +70,7 @@ final class MarkdownPage: GitHubWebPage {
         if let page = pages.object(forKey: tab) { return page }
         let page = MarkdownPage()
         page.openPullRequestLink = { [weak tab] in await tab?.open($0) }
+        page.playAttachedVideos { [weak tab] in await tab?.signedAttachmentURL($0) }
         pages.setObject(page, forKey: tab)
         return page
     }

@@ -1166,6 +1166,10 @@ As on github.com, an `@` at the start of a word in any comment box offers who to
 
 An addendum to "Protos use what they import, and Go uses the protos its imported packages are generated from": ordered as a dependency, a proto came last top down, though it's the public interface the rest implements and calls, and the place to start reading. Go's link to a proto is now an `interface` link, and the files such links point to lead their group in both orders, keeping their own order among themselves; the rest of the group is ordered as before. Making the proto "use" its Go instead would have put it first top down but last bottom up.
 
+### Videos uploaded to GitHub play from addresses signed for the viewer
+
+A video uploaded to a PR's description or comments comes in GitHub's HTML as `github.com/user-attachments/assets/<id>`, which answers only a signed-in browser; the app's pages share no cookies, so it never played. Images don't have the problem, as GitHub's HTML gives them short-lived signed addresses itself. Now each page asks the app, through a message handler in its own script world, for each such video's address: the app sends a `HEAD` with the viewer's token to that address, and to no other host or path, and gives the page the signed S3 address GitHub redirects to, which the page's content security policy now allows as media. That address expires within minutes, so a video that fails to load is signed again, keeping where it had played to; one failing soon after signing isn't retried, so a video GitHub won't sign doesn't ask for ever. Proxying the video through a URL scheme handler would avoid the expiry, but would have to serve the byte ranges WebKit's player asks for.
+
 ## Not yet decided
 
 Nothing is pending.

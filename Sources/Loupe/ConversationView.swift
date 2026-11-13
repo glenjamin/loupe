@@ -215,6 +215,7 @@ final class ConversationPage: GitHubWebPage {
         page.openCommentLink = { [weak tab] link in Task { await tab?.follow(link) } }
         page.openChangesLink = { [weak tab] link in Task { await tab?.showForcePush(from: link.before, to: link.after) } }
         page.lookUpPullRequestTitles = { [weak tab] in await tab?.tooltips(of: $0) ?? [:] }
+        page.playAttachedVideos { [weak tab] in await tab?.signedAttachmentURL($0) }
         pages.setObject(page, forKey: tab)
         return page
     }

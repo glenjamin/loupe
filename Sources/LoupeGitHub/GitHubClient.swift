@@ -437,6 +437,24 @@ extension GitHubClient {
         try await rest("POST", path: path, json: JSONEncoder().encode(content), accept: accept)
     }
 
+    /// Where an attachment uploaded to GitHub, `https://github.com/user-attachments/assets/<id>`,
+    /// can be fetched for the next few minutes without signing in, as GitHub sends the signed-in
+    /// viewer: a short-lived signed URL. The token goes to that address alone, and nothing is
+    /// downloaded. Nil for any other URL, or an attachment the viewer can't see.
+    public func signedAttachmentURL(_ url: URL) async throws -> URL? {
+        guard url.scheme == "https", url.host() == "github.com", url.path().hasPrefix("/user-attachments/assets/") else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.setValue("bearer \(try await token())", forHTTPHeaderField: "Authorization")
+        let (_, response) = try await transport.send(request)
+        // URLSession follows the redirect itself, ending at the signed URL.
+        if (300..<400).contains(response.statusCode) {
+            return response.value(forHTTPHeaderField: "Location").flatMap(URL.init(string:))
+        }
+        guard let reached = response.url, reached.host() != "github.com" else { return nil }
+        return reached
+    }
+
     /// Sends a REST request with `json` as its body, if any, and returns the response's body,
     /// throwing GitHub's message for anything but success or `alsoAccepting`'s statuses.
     func rest(_ method: String, path: String, json: Data? = nil, accept: String = "application/vnd.github+json", alsoAccepting: Set<Int> = []) async throws -> Data {

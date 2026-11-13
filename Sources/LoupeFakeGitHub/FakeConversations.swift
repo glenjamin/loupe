@@ -1522,7 +1522,7 @@ actor FakeConversations {
 
 /// The GitHub a PR's tab talks to: viewed files from `FakeViewedFiles`, conversations and
 /// reviewers from `FakeConversations`, rendered markdown from `FakeMarkdown`, emoji from
-/// `FakeEmojis`, signed in as
+/// `FakeEmojis`, uploaded attachments from `FakeAttachments`, signed in as
 /// `FakeGitHub.viewer`.
 struct FakePullRequestDetails: HTTPTransport {
     var viewed = FakeViewedFiles()
@@ -1534,6 +1534,7 @@ struct FakePullRequestDetails: HTTPTransport {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if request.url?.host() == "github.com" { return try FakeAttachments().send(request) }
         if request.url?.path() == "/markdown" { return try await markdown.send(request) }
         if request.url?.path() == "/emojis" { return try FakeEmojis().send(request) }
         if request.url?.path().hasPrefix("/repos/") == true { return try await conversations.sendREST(request) }

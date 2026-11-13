@@ -50,6 +50,15 @@ class GitHubWebPage: NSObject {
         Self.livePages.add(self)
     }
 
+    /// Plays the videos uploaded to GitHub in the page, whose own addresses need the viewer's
+    /// GitHub sign-in, which the page hasn't: each is pointed at the short-lived address `sign`
+    /// finds for it, and again at a fresh one should that have expired by the time it plays.
+    func playAttachedVideos(signingWith sign: @escaping @MainActor (URL) async -> URL?) {
+        let controller = webView.configuration.userContentController
+        controller.addScriptMessageHandler(AttachmentSigner(sign: sign), contentWorld: .defaultClient, name: AttachmentSigner.name)
+        controller.addUserScript(WKUserScript(source: AttachmentSigner.pageScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+    }
+
     func load(_ html: String, baseURL: URL) {
         isLoaded = false
         hasDiagrams = MermaidDiagrams.appear(in: html)
@@ -142,3 +151,54 @@ func followLink(_ url: URL?, inBrowserTab: Bool, openPullRequest: @escaping @Mai
 
 /// AppKit's number for the middle mouse button, as `WKNavigationAction.buttonNumber` reports it.
 private let middleMouseButton = 2
+
+/// Answers the page's asks for where an uploaded video can be fetched. Only GitHub's attachment
+/// addresses are asked about, whatever the page sends.
+private final class AttachmentSigner: NSObject, WKScriptMessageHandlerWithReply {
+    static let name = "signAttachment"
+    private let sign: @MainActor (URL) async -> URL?
+
+    init(sign: @escaping @MainActor (URL) async -> URL?) {
+        self.sign = sign
+    }
+
+    @MainActor
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?) {
+        guard let text = message.body as? String, let url = URL(string: text), url.isGitHubAttachment else { return (nil, nil) }
+        return (await sign(url)?.absoluteString, nil)
+    }
+
+    /// Points each video at a GitHub attachment at a signed address, at once and again whenever
+    /// it fails to load, as the signed address expires within minutes; a failure soon after
+    /// signing isn't retried, so a video GitHub won't sign doesn't ask for ever. Where it had
+    /// played to is kept.
+    static let pageScript = """
+        (() => {
+          const attachment = /^https:\\/\\/github\\.com\\/user-attachments\\/assets\\//;
+          const signedAt = new WeakMap();
+          async function sign(video) {
+            const original = video.dataset.attachment ?? video.getAttribute('src');
+            if (!original || !attachment.test(original)) return;
+            if (Date.now() - (signedAt.get(video) ?? 0) < 30000) return;
+            signedAt.set(video, Date.now());
+            video.dataset.attachment = original;
+            const signed = await window.webkit.messageHandlers.\(name).postMessage(original);
+            if (!signed) return;
+            const time = video.currentTime;
+            video.src = signed;
+            if (time > 0) video.addEventListener('loadedmetadata', () => { video.currentTime = time; }, { once: true });
+          }
+          document.querySelectorAll('video').forEach(sign);
+          document.addEventListener('error', event => {
+            if (event.target instanceof HTMLVideoElement) sign(event.target);
+          }, true);
+        })();
+        """
+}
+
+extension URL {
+    /// Whether it's a file uploaded to GitHub, as into a comment.
+    var isGitHubAttachment: Bool {
+        scheme == "https" && host() == "github.com" && path().hasPrefix("/user-attachments/assets/")
+    }
+}

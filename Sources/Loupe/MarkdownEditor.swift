@@ -202,6 +202,7 @@ private final class LazyDraftPreviewPage {
         if let made { return made }
         let page = DraftPreviewPage()
         page.openPullRequestLink = { [weak tab] in await tab?.open($0) }
+        page.playAttachedVideos { [weak tab] in await tab?.signedAttachmentURL($0) }
         made = page
         return page
     }
