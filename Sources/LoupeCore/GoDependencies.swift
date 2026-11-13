@@ -7,16 +7,18 @@ import LoupeModel
 /// with no imports between its files, a file uses those defining the top-level names it
 /// refers to. Its tests use their own directory's other files, whichever package they're in,
 /// and the helpers its other tests define. A string naming a changed file, such as a test's
-/// fixture, uses it.
+/// fixture, uses it. A package's `.proto` files are among its files, as its generated code is
+/// hidden: those beside it, and those whose `go_package` names it.
 struct GoDependencies: DependencyRule {
     func filesToRead(among paths: [String]) -> [String] {
         let sources = paths.filter(isGo)
+        guard !sources.isEmpty else { return [] }
         var modules: [String] = []
         var seen = Set<String>()
-        for path in sources {
+        for path in sources + paths.filter(isProto) {
             for directory in ancestors(of: path) where seen.insert(directory).inserted { modules.append(joined(directory, "go.mod")) }
         }
-        return sources + modules
+        return sources + paths.filter(isProto) + modules
     }
 
     func links(among paths: [String], contents: [String: String]) -> [DependencyLink] {
@@ -32,6 +34,12 @@ struct GoDependencies: DependencyRule {
         for path in sources where !isTest(path) {
             byDirectory[directory(of: path), default: []].append(path)
             if let importPath = importPath(of: directory(of: path), modules: modules) { packages[importPath, default: []].append(path) }
+        }
+        for path in paths where isProto(path) {
+            let named = contents[path].flatMap(ProtoFile.goPackage(in:))
+            for importPath in Set([named, importPath(of: directory(of: path), modules: modules)].compactMap(\.self)) {
+                packages[importPath, default: []].append(path)
+            }
         }
         let parsed = Dictionary(uniqueKeysWithValues: zip(sources, concurrentMap(sources) { path in
             Self.names?.captures(in: contents[path] ?? "") ?? []

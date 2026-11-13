@@ -1154,6 +1154,10 @@ A Terraform directory is one module, and a small one reads as one change, but it
 
 A test named for no file beside it was taken for the test of the one file named alike anywhere, so `registry/x/x_test.go` followed `server/x.go`, another package it doesn't even import. A Go test is always of the package in its directory, so Go's tests no longer look elsewhere; one named for no changed file follows what its code uses most, as other unnamed tests do. When the files it uses most tie, it followed the first by path, which could be a file the other uses: the test's own links, moved to that file, then made a cycle of the two, putting the used file first top down. The tie now goes to a tied file using the others, as the test reaches them through it, then to the first by path.
 
+### Protos use what they import, and Go uses the protos its imported packages are generated from
+
+A `.proto` file stood alone in the file list, as its generated `.pb.go` files, which Go code imports, are hidden. A proto now uses the changed protos it imports, matched by the end of their path as the compiler's include paths are unknown, the one beside it first. A Go package's protos count among its files for Go's imports: those in the package's directory, and those whose `go_package` names its full import path, as when the code is generated elsewhere. So a PR changing a proto and the Go using it reads as one group, the proto first bottom up.
+
 ## Not yet decided
 
 Nothing is pending.

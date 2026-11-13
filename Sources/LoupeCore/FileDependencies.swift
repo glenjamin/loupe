@@ -36,7 +36,7 @@ public enum FileDependencies {
     }
 
     private static let rules: [any DependencyRule] = [
-        GoDependencies(), ScriptDependencies(), TerraformDependencies(), SwiftDependencies(), StylesheetDependencies(), RubyDependencies(),
+        GoDependencies(), ProtoDependencies(), ScriptDependencies(), TerraformDependencies(), SwiftDependencies(), StylesheetDependencies(), RubyDependencies(),
         RailsConventions(), CompanionNames(), Readmes(),
     ]
 
