@@ -17,8 +17,8 @@ public enum FileOrder: Sendable, Hashable, CaseIterable {
 /// up, ordered with it as one: its type declarations, then its stories, then its tests, so each
 /// is read with what it's for; a README follows the last of the files it describes. Files of one
 /// small module are grouped but not ordered by it. A group's interfaces, such as the `.proto`
-/// files its code is generated from, lead it either way up, as what the rest is built on and
-/// offers. Ties, and
+/// files its code is generated from, and what they use, lead it either way up, as what the rest
+/// is built on and offers. Ties, and
 /// files that use each other in a cycle, keep the order the directory tree lists them in, so
 /// files with no links between them list as the tree does.
 public struct FileGraph: Sendable, Equatable {
@@ -93,7 +93,11 @@ public struct FileGraph: Sendable, Equatable {
             }
         }
         let graph = IndexedGraph(files: subjects, dependencies: contracted, joins: joins)
-        let interfaces = Set(links.filter { $0.reason == .interface }.map { subject(of: $0.to) })
+        var interfaces = Set(links.filter { $0.reason == .interface }.map { subject(of: $0.to) })
+        var unexplored = Array(interfaces)
+        while let next = unexplored.popLast() {
+            for used in contracted[next] ?? [] where interfaces.insert(used).inserted { unexplored.append(used) }
+        }
         func expanded(_ indices: [Int]) -> [String] {
             indices.flatMap { [subjects[$0]] + (following[subjects[$0]] ?? []) }
         }

@@ -8,7 +8,8 @@ import LoupeModel
 /// with or without its extension, or a directory's `index`, as bundlers and TypeScript resolve.
 /// Packages from npm aren't changed files, so they're passed over. A type declaration file
 /// (`x.d.ts`) names the script it declares (`x.js`) too, when that's changed. Any other
-/// string naming a changed file, such as a fixture's path, uses it.
+/// string naming a changed file, such as a fixture's path, uses it. Importing a `.proto` or
+/// GraphQL file, or code generated from a proto, uses that as its interface.
 struct ScriptDependencies: DependencyRule {
     func filesToRead(among paths: [String]) -> [String] {
         let sources = paths.filter { Self.grammar(of: $0) != nil }
@@ -19,7 +20,7 @@ struct ScriptDependencies: DependencyRule {
                 configs += Self.configNames.map { joined(directory, $0) }
             }
         }
-        return sources + configs
+        return sources + configs + (sources.isEmpty ? [] : paths.filter(isProto))
     }
 
     func links(among paths: [String], contents: [String: String]) -> [DependencyLink] {
@@ -30,6 +31,7 @@ struct ScriptDependencies: DependencyRule {
             if let config = Config(text, at: directory(of: path)) { configs[directory(of: path)] = config }
         }
         let scripts = paths.filter { Self.grammar(of: $0) != nil && contents[$0] != nil }
+        let generated = GeneratedProtos(among: paths, contents: contents)
         let parsed = Dictionary(uniqueKeysWithValues: zip(scripts, concurrentMap(scripts) { path in
             Self.grammar(of: path)?.captures(in: contents[path] ?? "") ?? []
         }))
@@ -42,12 +44,11 @@ struct ScriptDependencies: DependencyRule {
                     continue
                 }
                 let specifier = capture.text.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
-                for base in bases(of: specifier, from: path, config: config) {
-                    let files = resolve(base, among: changed)
-                    if !files.isEmpty {
-                        links.add(from: path, to: files, .imports)
-                        break
-                    }
+                let bases = bases(of: specifier, from: path, config: config)
+                if let files = bases.lazy.map({ resolve($0, among: changed) }).first(where: { !$0.isEmpty }) {
+                    links.add(from: path, to: files, files.allSatisfy(isSchema) ? .interface : .imports)
+                } else {
+                    for base in bases.isEmpty ? [specifier] : bases { links.add(from: path, to: generated.protos(generating: base), .interface) }
                 }
             }
         }

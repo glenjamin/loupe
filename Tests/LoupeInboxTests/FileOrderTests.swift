@@ -183,6 +183,58 @@ struct FileOrderTests {
         ])
     }
 
+    @Test func protosLeadTheScriptsImportingTheirHiddenGeneratedCodeAsItsInterface() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(startingWith: [".gitattributes": "src/generated/** linguist-generated\n"], changing: [
+            "proto/shop/orders.proto": "syntax = \"proto3\";\n\npackage shop.orders;\n\nmessage Order { string id = 1; }\n\nservice OrderService {}\n",
+            "proto/shop/payments.proto": "syntax = \"proto3\";\n\npackage shop;\n\nmessage Payment { string id = 1; }\n",
+            "proto/billing/invoices.proto": "syntax = \"proto3\";\n\npackage billing;\n\nmessage Invoice { string id = 1; }\n",
+            "src/generated/types/shop/orders/Order.ts": "// Original file: proto/shop/orders.proto\n\nexport interface Order { id?: string }\n",
+            "src/generated/shop/payments.ts": "// Generated\n\nexport interface Payment { id: string }\n",
+            "src/generated/invoices_pb.js": "// Generated\n\nexports.Invoice = class {}\n",
+            "src/orders.ts": "import { Order } from './generated/types/shop/orders/Order'\n\nexport const order: Order = {}\n",
+            "src/payments.ts": "import { Payment } from './generated/shop/payments'\n\nexport let payment: Payment\n",
+            "src/invoices.js": "const { Invoice } = require('./generated/invoices_pb')\n\nmodule.exports = new Invoice()\n",
+            "src/checkout.ts": "import { order } from './orders'\nimport { payment } from './payments'\n\nexport const checkout = [order, payment]\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.topDown)
+        #expect(outline(tab) == [
+            "group",
+            "  proto/shop/orders.proto",
+            "  proto/shop/payments.proto",
+            "  src/checkout.ts",
+            "  src/orders.ts",
+            "  src/payments.ts",
+            "group",
+            "  proto/billing/invoices.proto",
+            "  src/invoices.js",
+        ])
+    }
+
+    @Test func graphQLSchemasLeadTheResolversNamedForThemAndTheCodeImportingThem() async throws {
+        let app = try await ThreadsApp()
+        let pullRequest = try await app.pushPullRequest(changing: [
+            "schema/users.graphql": "type User {\n  id: ID!\n  team: Team\n}\n\nextend type Query {\n  me: User\n}\n",
+            "schema/teams.graphql": "type Team {\n  name: String!\n}\n",
+            "schema/root.graphql": "type Query {\n  ping: Boolean\n}\n",
+            "schema/users.resolvers.ts": "export const resolvers = { Query: { me: () => null } }\n",
+            "schema/users.resolvers.test.ts": "import { resolvers } from './users.resolvers'\n\ntest('me', () => resolvers.Query.me())\n",
+            "web/Profile.tsx": "import query from '../schema/teams.graphql'\n\nexport const Profile = () => query\n",
+        ])
+        let tab = try await app.open(pullRequest)
+        await tab.setFileOrder(.topDown)
+        #expect(outline(tab) == [
+            "group",
+            "  schema/users.graphql",
+            "  schema/root.graphql",
+            "  schema/teams.graphql",
+            "  schema/users.resolvers.ts",
+            "  schema/users.resolvers.test.ts",
+            "  web/Profile.tsx",
+        ])
+    }
+
     @Test func scriptsUseTheFilesTheyImportRequireOrReExportByRelativePath() async throws {
         let app = try await ThreadsApp()
         let pullRequest = try await app.pushPullRequest(changing: [
