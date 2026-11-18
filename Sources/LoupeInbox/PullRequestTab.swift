@@ -117,6 +117,9 @@ public final class PullRequestTab: Identifiable {
     /// The viewer's changes to the conversation that a fetch landing may not have yet.
     @ObservationIgnored var ownChanges: [OwnChange] = []
     @ObservationIgnored var nextOwnChange = 0
+    /// The latest change to each reviewer's request on its way to GitHub, by reviewer, for the
+    /// next to wait on.
+    @ObservationIgnored private var reviewerChanges: [String: Task<Bool, Never>] = [:]
     /// How many fetches of the conversation or its threads have started, and which of them
     /// haven't landed or failed yet.
     @ObservationIgnored var fetchesStarted = 0
@@ -1046,54 +1049,73 @@ public final class PullRequestTab: Identifiable {
         suggestedReviewers?.contains { $0.id == reviewer.id } == true
     }
 
-    /// Asks `reviewer` to review, or to review again. They show as asked at once; the
-    /// conversation is fetched again once GitHub agrees, and they're taken off if it refuses.
-    /// An accepted request is kept in the history that orders the candidates, and the PR's row
-    /// in the lists names them at once.
+    /// Asks `reviewer` to review, or to review again. They show as asked at once, and stay so
+    /// over fetches that land meanwhile; the conversation is fetched again once GitHub agrees,
+    /// and they're taken off if it refuses. Changes to one reviewer reach GitHub in the order
+    /// they were made. An accepted request is kept in the history that orders the candidates,
+    /// and the PR's row in the lists names them at once.
     public func requestReview(from reviewer: Reviewer) async {
         if conversation?.reviewRequests.contains(where: { $0.id == reviewer.id }) == true { return }
-        conversation?.reviewRequests.append(reviewer)
+        let change = make(.reviewRequest(reviewer, asked: true))
         reviewRequestError = nil
-        do {
-            try await client.requestReviews(from: [reviewer], onPullRequest: id)
-        } catch {
-            conversation?.reviewRequests.removeAll { $0.id == reviewer.id }
-            reviewRequestError = "Couldn't ask \(reviewer.displayName) to review: \(error.localizedDescription)"
-            return
+        let accepted = await inTurn(for: reviewer) { [self] in
+            do {
+                try await client.requestReviews(from: [reviewer], onPullRequest: id)
+            } catch {
+                undo(change)
+                reviewRequestError = "Couldn't ask \(reviewer.displayName) to review: \(error.localizedDescription)"
+                return false
+            }
+            confirm(change)
+            await candidates.recordRequest(of: reviewer, in: pullRequest.repository, on: id, store: store)
+            do {
+                try await lists.reviewRequested(of: RequestedReviewer(reviewer), on: id)
+            } catch {
+                log("Couldn't store the request of \(reviewer.login) on \(title): \(error)")
+            }
+            return true
         }
-        await candidates.recordRequest(of: reviewer, in: pullRequest.repository, on: id, store: store)
-        do {
-            try await lists.reviewRequested(of: RequestedReviewer(reviewer), on: id)
-        } catch {
-            log("Couldn't store the request of \(reviewer.login) on \(title): \(error)")
-        }
-        await refreshConversation()
+        if accepted { await refreshConversation() }
     }
 
     /// Withdraws the request for `reviewer` to review, as unticking them on github.com does: any
-    /// review they've submitted stays, and they show with it. They're taken off at once and put
-    /// back if GitHub refuses; once it agrees the conversation is fetched again and the PR's row
-    /// stops naming them.
+    /// review they've submitted stays, and they show with it. They're taken off at once, as
+    /// asking does, and put back if GitHub refuses; once it agrees the conversation is fetched
+    /// again and the PR's row stops naming them.
     public func removeReviewRequest(from reviewer: Reviewer) async {
-        guard let index = conversation?.reviewRequests.firstIndex(where: { $0.id == reviewer.id }) else { return }
-        conversation?.reviewRequests.remove(at: index)
+        guard conversation?.reviewRequests.contains(where: { $0.id == reviewer.id }) == true else { return }
+        let change = make(.reviewRequest(reviewer, asked: false))
         reviewRequestError = nil
-        do {
-            try await client.removeReviewRequests(from: [reviewer], repository: pullRequest.repository, number: pullRequest.number)
-        } catch {
-            if var requests = conversation?.reviewRequests, !requests.contains(where: { $0.id == reviewer.id }) {
-                requests.insert(reviewer, at: min(index, requests.count))
-                conversation?.reviewRequests = requests
+        let accepted = await inTurn(for: reviewer) { [self] in
+            do {
+                try await client.removeReviewRequests(from: [reviewer], repository: pullRequest.repository, number: pullRequest.number)
+            } catch {
+                undo(change)
+                reviewRequestError = "Couldn't remove \(reviewer.displayName) from the reviewers: \(error.localizedDescription)"
+                return false
             }
-            reviewRequestError = "Couldn't remove \(reviewer.displayName) from the reviewers: \(error.localizedDescription)"
-            return
+            confirm(change)
+            do {
+                try await lists.reviewRequestRemoved(of: RequestedReviewer(reviewer), on: id)
+            } catch {
+                log("Couldn't store the removal of \(reviewer.login) from \(title): \(error)")
+            }
+            return true
         }
-        do {
-            try await lists.reviewRequestRemoved(of: RequestedReviewer(reviewer), on: id)
-        } catch {
-            log("Couldn't store the removal of \(reviewer.login) from \(title): \(error)")
+        if accepted { await refreshConversation() }
+    }
+
+    /// Runs `work` once the changes to `reviewer` made before it have had GitHub's answer.
+    private func inTurn(for reviewer: Reviewer, _ work: @escaping @MainActor () async -> Bool) async -> Bool {
+        let earlier = reviewerChanges[reviewer.id]
+        let task = Task { @MainActor in
+            _ = await earlier?.value
+            return await work()
         }
-        await refreshConversation()
+        reviewerChanges[reviewer.id] = task
+        let result = await task.value
+        if reviewerChanges[reviewer.id] == task { reviewerChanges[reviewer.id] = nil }
+        return result
     }
 
     /// Whether the PR can be merged from the merge box, on the viewer's own PRs: nil on anyone

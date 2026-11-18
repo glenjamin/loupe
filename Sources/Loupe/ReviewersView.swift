@@ -114,21 +114,25 @@ private struct ReviewerRow: View {
 }
 
 /// Filters the people and teams who could review as the viewer types, the search field focused
-/// on opening and those already asked first and ticked, as on github.com. Choosing someone asks them, or withdraws the request of someone
-/// ticked, saying here if GitHub refuses.
+/// on opening and those already asked first and ticked, as on github.com. Choosing someone asks
+/// them, or withdraws the request of someone ticked, ticking or unticking them where they are,
+/// and says here if GitHub refuses.
 private struct RequestReviewPopover: View {
     let tab: PullRequestTab
     @State private var text = ""
     @State private var fetchError: String?
     /// The row ↓ and ↑ have moved to, which Return picks; the focus stays in the search field.
     @State private var highlighted: Int?
+    /// The rows' order, by reviewer, once someone's been chosen, so ticking or unticking one
+    /// leaves every row where it was until the search changes or the picker opens again.
+    @State private var placed: [String]?
     @FocusState private var isSearching: Bool
 
     var body: some View {
         let requested = tab.requestedReviewers(matching: text)
         let candidates = tab.reviewerCandidates(matching: text)
-        let choices = requested.map { Choice(reviewer: $0, isRequested: true) }
-            + (candidates ?? []).map { Choice(reviewer: $0, isRequested: false) }
+        let choices = inPlace(requested.map { Choice(reviewer: $0, isRequested: true) }
+            + (candidates ?? []).map { Choice(reviewer: $0, isRequested: false) })
         VStack(alignment: .leading, spacing: 8) {
             TextField("Search people and teams", text: $text)
                 .textFieldStyle(.roundedBorder)
@@ -137,7 +141,10 @@ private struct RequestReviewPopover: View {
                 .focused($isSearching)
                 .defaultFocus($isSearching, true)
                 .onAppear { DispatchQueue.main.async { isSearching = true } }
-                .onChange(of: text) { highlighted = nil }
+                .onChange(of: text) {
+                    highlighted = nil
+                    placed = nil
+                }
                 .onKeyPress(.downArrow) {
                     guard !choices.isEmpty else { return .ignored }
                     highlighted = min((highlighted ?? -1) + 1, choices.count - 1)
@@ -207,6 +214,10 @@ private struct RequestReviewPopover: View {
 
     /// Asks a reviewer, or withdraws the request of one already asked.
     private func choose(_ choice: Choice) {
+        if placed == nil {
+            let requested = tab.requestedReviewers(matching: text).map(\.id)
+            placed = requested + (tab.reviewerCandidates(matching: text) ?? []).map(\.id)
+        }
         Task {
             if choice.isRequested {
                 await tab.removeReviewRequest(from: choice.reviewer)
@@ -216,11 +227,21 @@ private struct RequestReviewPopover: View {
         }
     }
 
-    /// A row of the list: someone already asked, ticked, or someone who could be.
+    /// `choices` in the order they were placed in, if they have been, anyone new after them.
+    private func inPlace(_ choices: [Choice]) -> [Choice] {
+        guard let placed else { return choices }
+        let position = Dictionary(placed.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        return choices.enumerated()
+            .sorted { (position[$0.element.id] ?? placed.count + $0.offset, $0.offset) < (position[$1.element.id] ?? placed.count + $1.offset, $1.offset) }
+            .map(\.element)
+    }
+
+    /// A row of the list: someone already asked, ticked, or someone who could be. It's the same
+    /// row either way, so ticking changes it in place.
     private struct Choice: Identifiable {
         let reviewer: Reviewer
         let isRequested: Bool
-        var id: String { "\(isRequested ? "asked" : "candidate"):\(reviewer.id)" }
+        var id: String { reviewer.id }
     }
 }
 

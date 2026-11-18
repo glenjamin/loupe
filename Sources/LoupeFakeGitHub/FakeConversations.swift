@@ -73,7 +73,7 @@ actor FakeConversations {
     /// they were asked for.
     enum Gate: Hashable {
         case comment, reply, resolve, addToReview, submit, discard, deleteComment, conversationComment, edit, deleteConversationComment
-        case removeReviewRequest
+        case requestReviews, removeReviewRequest
         case conversation, threads
     }
 
@@ -487,7 +487,10 @@ actor FakeConversations {
         let variables = try require(body["variables"] as? [String: Any])
         if query.contains("assignableUsers(") || query.contains("teams(") { candidatePagesAskedFor += 1 }
         if failing { return (Data(), fakeResponse(url, status: 502)) }
-        if query.contains("requestReviews(") { return try requestReviews(variables, url) }
+        if query.contains("requestReviews(") {
+            await pass(.requestReviews)
+            return try requestReviews(variables, url)
+        }
         if query.contains("assignableUsers(") { return try usersPage(variables, url) }
         if query.contains("teams(") { return try teamsPage(variables, url) }
         if query.contains("updatePullRequest(") { return try updatePullRequest(variables, url) }

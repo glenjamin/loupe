@@ -167,6 +167,54 @@ struct ReviewersTests {
         #expect(try app.relaunch().lists.pullRequest(id: pullRequest.id)?.requestedReviewers == [.user(login: "kit-vance")])
     }
 
+    @Test func aFetchLandingWhileAnotherReviewerChangeIsOnItsWayLeavesThatChangeShown() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = app.mine[0]
+        try await app.conversations.add(pullRequest.id, number: pullRequest.number)
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        await tab.load()
+        let pat = try #require(tab.requestedReviewers(matching: "barrow").first)
+        let kit = try #require(try await candidates(of: tab, matching: "vance").first)
+
+        await app.conversations.hold(.removeReviewRequest)
+        let removing = Task { await tab.removeReviewRequest(from: pat) }
+        await app.conversations.arrival(of: .removeReviewRequest)
+        // Asking kit fetches the conversation again, while GitHub still has pat asked.
+        await tab.requestReview(from: kit)
+        #expect(tab.requestedReviewers(matching: "").map(\.login) == ["kit-vance"], "pat stays unticked")
+
+        await app.conversations.release(.removeReviewRequest)
+        await removing.value
+        #expect(tab.requestedReviewers(matching: "").map(\.login) == ["kit-vance"])
+        #expect(tab.reviewRequestError == nil)
+    }
+
+    @Test func askingAndWithdrawingAtOnceReachGitHubInTheOrderMade() async throws {
+        let app = try await ConversationApp()
+        let pullRequest = app.mine[0]
+        try await app.conversations.add(pullRequest.id, number: pullRequest.number)
+        app.tabs.open(pullRequest)
+        let tab = try #require(app.tabs.tab(id: pullRequest.id))
+        await tab.load()
+        let kit = try #require(try await candidates(of: tab, matching: "vance").first)
+
+        await app.conversations.hold(.requestReviews)
+        let asking = Task { await tab.requestReview(from: kit) }
+        await app.conversations.arrival(of: .requestReviews)
+        let withdrawing = Task { await tab.removeReviewRequest(from: kit) }
+        await Task.yield()
+        #expect(tab.requestedReviewers(matching: "vance").isEmpty, "unticked at once")
+        #expect(await app.conversations.reviewRequestRemovalsReceived.isEmpty, "the withdrawal waits for the request")
+
+        await app.conversations.release(.requestReviews)
+        await asking.value
+        await withdrawing.value
+        #expect(await app.conversations.reviewRequestRemovalsReceived.map(\.reviewers) == [["kit-vance"]])
+        #expect(tab.requestedReviewers(matching: "").map(\.login) == ["pat-barrow"], "as GitHub has it after both")
+        #expect(app.tabs.lists.pullRequest(id: pullRequest.id)?.requestedReviewers?.contains(.user(login: "kit-vance")) != true)
+    }
+
     @Test func withdrawingTheRequestOfSomeoneWhoHasReviewedLeavesTheirReview() async throws {
         let app = try await ConversationApp()
         let pullRequest = app.mine[0]

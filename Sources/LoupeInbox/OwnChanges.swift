@@ -35,12 +35,16 @@ struct OwnChange {
         /// The body of the viewer's comment, thread comment or review with `id` edited: as
         /// plain paragraphs while saving, then GitHub's rendering.
         case edited(id: String, bodyHTML: String, isSaving: Bool)
+        /// `reviewer` asked to review, or their request withdrawn.
+        case reviewRequest(Reviewer, asked: Bool)
     }
 
     /// What a change replaced in the conversation, and on the diff where its threads were held.
     struct Undo {
         let conversation: ConversationUndo?
         let placedThreads: ThreadsUndo?
+        /// Where a withdrawn reviewer was among those asked, to put them back there.
+        var reviewRequestIndex: Int?
     }
 
     /// The id given to a comment, thread or review until GitHub gives its own.
@@ -99,6 +103,10 @@ extension PullRequestTab {
     /// once GitHub answers. Storing it is the caller's, after this, so nothing waits first.
     func make(_ kind: OwnChange.Kind) -> Int {
         let before = conversation
+        var reviewRequestIndex: Int?
+        if case let .reviewRequest(reviewer, asked: false) = kind {
+            reviewRequestIndex = conversation?.reviewRequests.firstIndex { $0.id == reviewer.id }
+        }
         conversation?.make(kind)
         var placedUndo: ThreadsUndo?
         if holdsPlacedThreads {
@@ -111,7 +119,7 @@ extension PullRequestTab {
         let conversationUndo = before.flatMap { before in conversation.map { ConversationUndo(from: before, to: $0) } }
         let id = nextOwnChange
         nextOwnChange += 1
-        ownChanges.append(OwnChange(id: id, kind: kind, undo: OwnChange.Undo(conversation: conversationUndo, placedThreads: placedUndo)))
+        ownChanges.append(OwnChange(id: id, kind: kind, undo: OwnChange.Undo(conversation: conversationUndo, placedThreads: placedUndo, reviewRequestIndex: reviewRequestIndex)))
         return id
     }
 
@@ -184,8 +192,19 @@ extension PullRequestTab {
     /// GitHub refused the change: what it replaced is put back, and it's forgotten.
     func undo(_ change: Int) {
         guard let index = ownChanges.firstIndex(where: { $0.id == change }) else { return }
-        let undo = ownChanges.remove(at: index).undo
+        let removed = ownChanges.remove(at: index)
+        let undo = removed.undo
         if let conversationUndo = undo.conversation { conversation?.undo(conversationUndo) }
+        // Turned back by hand, as other requests may have changed meanwhile; a later change to
+        // the same reviewer, still on its way, decides how they show.
+        if case let .reviewRequest(reviewer, asked) = removed.kind, !ownChanges.contains(where: { $0.kind.changesRequest(of: reviewer) }) {
+            if !asked, let at = undo.reviewRequestIndex, var requests = conversation?.reviewRequests, !requests.contains(where: { $0.id == reviewer.id }) {
+                requests.insert(reviewer, at: min(at, requests.count))
+                conversation?.reviewRequests = requests
+            } else {
+                conversation?.make(.reviewRequest(reviewer, asked: !asked))
+            }
+        }
         if let placed = undo.placedThreads, holdsPlacedThreads {
             threadsOfShownDiff.undo(placed)
         } else {
@@ -347,6 +366,10 @@ extension Conversation {
                     break
                 }
             }
+        case let .reviewRequest(reviewer, asked):
+            let isAsked = reviewRequests.contains { $0.id == reviewer.id }
+            if asked, !isAsked { reviewRequests.append(reviewer) }
+            if !asked, isAsked { reviewRequests.removeAll { $0.id == reviewer.id } }
         }
     }
 
@@ -442,7 +465,7 @@ extension [ReviewThread] {
             for index in indices where self[index].comments.contains(where: \.isPending) {
                 for at in self[index].comments.indices { self[index].comments[at].isPending = false }
             }
-        case .conversationComment:
+        case .conversationComment, .reviewRequest:
             break
         case let .edited(id, bodyHTML, isSaving):
             for index in indices {
@@ -537,4 +560,11 @@ func plainParagraphs(_ text: String) -> String {
         .components(separatedBy: "\n\n")
         .map { "<p>\($0.replacingOccurrences(of: "\n", with: "<br>\n"))</p>" }
         .joined(separator: "\n")
+}
+
+extension OwnChange.Kind {
+    /// Whether this asks `reviewer` to review or withdraws their request.
+    func changesRequest(of reviewer: Reviewer) -> Bool {
+        if case let .reviewRequest(changed, _) = self { changed.id == reviewer.id } else { false }
+    }
 }
