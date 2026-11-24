@@ -8,7 +8,7 @@ click image #doc
 wait settled
 # Half a row above the diff's middle, where the pointer goes, is then the middle of line 22
 # of filter.go, clear of the rows' edges.
-scroll scroll 2 down 300
+scroll scroll 3 down 300
 hover textarea up 11
 snap before
 drag button "Add a comment" down 60

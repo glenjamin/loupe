@@ -5,7 +5,7 @@ open tamarinworks/gazette#272
 wait settled
 expect window has no title "Pull Requests"
 
-click text "Pull Requests"
+click text "PRs"
 expect window has title "Pull Requests"
 expect search missing
 snap strip-lists
@@ -26,3 +26,25 @@ expect window has title "Pull Requests"
 press cmd+shift+t
 expect window has no title "Pull Requests"
 expect button "Conversation" exists
+
+# With more tabs than fit, they scroll behind the PRs button, which stays put, and the shown
+# tab is scrolled into sight.
+open tamarinworks/app#1195
+open tamarinworks/app#1204
+open tamarinworks/app#1209
+open tamarinworks/atrium#2202
+open tamarinworks/atrium#2279
+open tamarinworks/atrium#2642
+open tamarinworks/bedrock#1599
+open tamarinworks/bedrock#2200
+open tamarinworks/bedrock#2335
+open tamarinworks/gotools#339
+open tamarinworks/gotools#400
+open tamarinworks/lily#1325
+wait settled
+snap strip-overflow
+scroll text "lily #1325" up 3000
+snap strip-overflow-start
+expect-different strip-overflow strip-overflow-start
+click text "PRs"
+expect window has title "Pull Requests"

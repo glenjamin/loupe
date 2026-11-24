@@ -115,9 +115,10 @@ enum TabStatus: Equatable {
     }
 }
 
-/// The strip under the title bar: a "Pull Requests" button that is always first and shows the
-/// lists, then a two-row tab per open PR. It's AppKit rather than SwiftUI so clicks land
-/// reliably, and nothing in it drags the window.
+/// The strip under the title bar: a "PRs" button that is always first and shows the lists, then
+/// a two-row tab per open PR. When the tabs don't fit they scroll sideways behind the button,
+/// which stays put. It's AppKit rather than SwiftUI so clicks land reliably, and nothing in it
+/// drags the window.
 @MainActor
 final class TabStripView: NSView {
     static let height: CGFloat = 46
@@ -125,14 +126,28 @@ final class TabStripView: NSView {
     var onClose: @MainActor (String) -> Void = { _ in }
 
     private let listsButton = TabStripItemView(isLists: true)
+    private let scrollView = TabScrollView()
+    private let tabsView = FlippedView()
     private var tabViews: [TabStripItemView] = []
-    private static let listsWidth: CGFloat = 150
-    private static let tabWidths: ClosedRange<CGFloat> = 120...260
+    private var selected: String?
+    /// Whether the selected tab is to be scrolled into sight at the next layout.
+    private var revealsSelected = false
+    private static let listsWidth: CGFloat = 78
+    private static let tabWidths: ClosedRange<CGFloat> = 160...260
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        listsButton.item = TabStripItem(id: nil, title: "Pull Requests", status: nil, subtitle: "")
+        listsButton.item = TabStripItem(id: nil, title: "PRs", status: nil, subtitle: "")
+        listsButton.toolTip = "Pull Requests"
         listsButton.onSelect = { [weak self] in self?.onSelect(nil) }
+        scrollView.documentView = tabsView
+        scrollView.drawsBackground = false
+        scrollView.hasHorizontalScroller = true
+        scrollView.hasVerticalScroller = false
+        scrollView.scrollerStyle = .overlay
+        scrollView.autohidesScrollers = true
+        scrollView.verticalScrollElasticity = .none
+        addSubview(scrollView)
         addSubview(listsButton)
     }
 
@@ -143,11 +158,13 @@ final class TabStripView: NSView {
 
     /// Shows `tabs` after the lists button, marking `selected` (nil for the lists).
     func update(tabs: [TabStripItem], selected: String?) {
+        if selected != self.selected || tabs.count > tabViews.count { revealsSelected = true }
+        self.selected = selected
         while tabViews.count > tabs.count { tabViews.removeLast().removeFromSuperview() }
         while tabViews.count < tabs.count {
             let view = TabStripItemView(isLists: false)
             tabViews.append(view)
-            addSubview(view)
+            tabsView.addSubview(view)
         }
         for (view, item) in zip(tabViews, tabs) {
             view.item = item
@@ -166,17 +183,24 @@ final class TabStripView: NSView {
         guard items.indices.contains(position) else { return nil }
         layoutSubtreeIfNeeded()
         let view = items[position]
+        view.scrollToVisible(view.bounds)
         return view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
     }
 
     override func layout() {
         super.layout()
         listsButton.frame = NSRect(x: 0, y: 0, width: Self.listsWidth, height: bounds.height)
-        guard !tabViews.isEmpty else { return }
-        let share = (bounds.width - Self.listsWidth) / CGFloat(tabViews.count)
+        scrollView.frame = NSRect(x: Self.listsWidth, y: 0, width: max(bounds.width - Self.listsWidth, 0), height: bounds.height)
+        let available = scrollView.contentSize.width
+        let share = tabViews.isEmpty ? 0 : available / CGFloat(tabViews.count)
         let width = min(max(share, Self.tabWidths.lowerBound), Self.tabWidths.upperBound).rounded(.down)
+        tabsView.frame = NSRect(x: 0, y: 0, width: width * CGFloat(tabViews.count), height: bounds.height)
         for (index, view) in tabViews.enumerated() {
-            view.frame = NSRect(x: Self.listsWidth + CGFloat(index) * width, y: 0, width: width, height: bounds.height)
+            view.frame = NSRect(x: CGFloat(index) * width, y: 0, width: width, height: bounds.height)
+        }
+        if revealsSelected {
+            revealsSelected = false
+            if let view = tabViews.first(where: { $0.isSelected }) { view.scrollToVisible(view.bounds) }
         }
     }
 
@@ -395,6 +419,27 @@ private func label(font: NSFont, colour: NSColor) -> NSTextField {
 @MainActor
 private func naturalWidth(of label: NSTextField) -> CGFloat {
     ceil(label.sizeThatFits(NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width)
+}
+
+/// Scrolls the tabs sideways, turning a mouse wheel's up and down into left and right as there's
+/// nothing to scroll vertically.
+@MainActor
+private final class TabScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        guard abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) else { return super.scrollWheel(with: event) }
+        let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * lineScroll
+        let clip = contentView
+        let furthest = max((documentView?.frame.width ?? 0) - clip.bounds.width, 0)
+        let x = min(max(clip.bounds.origin.x - delta, 0), furthest)
+        clip.scroll(to: NSPoint(x: x, y: clip.bounds.origin.y))
+        reflectScrolledClipView(clip)
+    }
+}
+
+@MainActor
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
 }
 
 private struct WeakResponder {

@@ -9,7 +9,7 @@ snap description
 
 click image #doc
 wait settled
-scroll scroll 2 down 300
+scroll scroll 3 down 300
 hover textarea up 11
 click button "Add a comment"
 wait until text ~"Comment on line"
