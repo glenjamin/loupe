@@ -218,7 +218,9 @@ private final class TabStripItemView: NSView {
         didSet {
             guard item != oldValue else { return }
             titleLabel.stringValue = item.title
+            titleLabel.setAccessibilityLabel(item.title)
             statusLabel.stringValue = item.status?.word ?? ""
+            statusLabel.setAccessibilityLabel(item.status?.word)
             statusLabel.textColor = item.status?.colour ?? .secondaryLabelColor
             subtitleLabel.stringValue = item.subtitle
             spinner.isHidden = !item.isLookingUp
@@ -335,10 +337,21 @@ private final class TabStripItemView: NSView {
         let titleHeight = titleLabel.intrinsicContentSize.height
         let subtitleHeight = subtitleLabel.intrinsicContentSize.height
         let top = (bounds.height - titleHeight - subtitleHeight - 1) / 2
-        // The status stays whole and the name gives way, as the status is what a glance is for.
+        // As the tab narrows the status shrinks to a dot of its colour, then the repo is cut short,
+        // keeping the PR's number, which tells tabs of one repo apart.
         let statusGap: CGFloat = 4
+        let measure = { [titleLabel] (text: String) -> CGFloat in
+            titleLabel.stringValue = text
+            return naturalWidth(of: titleLabel)
+        }
+        statusLabel.stringValue = item.status?.word ?? ""
+        if item.status != nil, naturalWidth(of: statusLabel) + statusGap + measure(item.title) > textWidth {
+            statusLabel.stringValue = "●"
+        }
         let statusWidth = min(naturalWidth(of: statusLabel), textWidth)
-        let titleWidth = min(naturalWidth(of: titleLabel), max(textWidth - statusWidth - statusGap, 0))
+        let titleSpace = max(textWidth - statusWidth - statusGap, 0)
+        titleLabel.stringValue = shortened(item.title, toFit: titleSpace, measure: measure)
+        let titleWidth = min(naturalWidth(of: titleLabel), titleSpace)
         titleLabel.frame = NSRect(x: padding, y: top, width: titleWidth, height: titleHeight)
         statusLabel.frame = NSRect(x: titleLabel.frame.maxX + statusGap, y: top, width: statusWidth, height: titleHeight)
         subtitleLabel.frame = NSRect(x: padding, y: top + titleHeight + 1, width: textWidth, height: subtitleHeight)
@@ -413,6 +426,18 @@ private func label(font: NSFont, colour: NSColor) -> NSTextField {
     label.maximumNumberOfLines = 1
     label.cell?.truncatesLastVisibleLine = true
     return label
+}
+
+/// A `repo #number` title cut to fit `width`, the repo giving way so the number stays whole.
+private func shortened(_ title: String, toFit width: CGFloat, measure: (String) -> CGFloat) -> String {
+    guard measure(title) > width, let hash = title.range(of: " #", options: .backwards) else { return title }
+    let repo = title[..<hash.lowerBound]
+    let number = title[hash.lowerBound...]
+    for kept in stride(from: repo.count - 1, through: 1, by: -1) {
+        let candidate = "\(repo.prefix(kept))…\(number)"
+        if measure(candidate) <= width { return candidate }
+    }
+    return String(number.dropFirst())
 }
 
 /// The width the label's whole text needs on one line.

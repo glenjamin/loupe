@@ -79,6 +79,10 @@ The strip is in the window's content rather than the title bar, where two earlie
 
 The lists button is labelled "PRs" and only as wide as that needs, leaving more room for tabs; the window's title still says "Pull Requests". When the tabs at their narrowest don't all fit, they scroll sideways behind the button, which stays put, rather than squeezing further or spilling off the edge. A mouse wheel's up and down scroll them too, as there's nothing to scroll vertically, and the shown tab is scrolled into sight whenever it changes or a tab opens. With scrolling to fall back on, the narrowest a tab gets went up so its `repo #number` stays readable.
 
+### A narrow tab keeps its PR's number over its status word and repo name
+
+As a tab narrows, its status word becomes a dot in the status's colour first, then the repo name is cut short, so `repo #number` keeps the number that tells one repo's tabs apart. The whole title and status stay in the tooltip and the accessibility labels.
+
 ### The window's title and toolbar follow the shown tab, declared at the window level
 
 The window has the tall unified title bar and toolbar. It's titled after the shown tab: "Pull Requests" for the lists, `repo #number` for a PR, with the PR's title as the subtitle. One toolbar is declared at the window level, with items that change per tab, as a toolbar or title declared by a tab's own view would come and go with the tab, resizing the title bar on every switch.
