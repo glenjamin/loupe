@@ -171,7 +171,7 @@ final class WindowManager {
     private func stripItem(_ item: TabItem) -> TabStripItem {
         switch item {
         case let .pullRequest(tab):
-            TabStripItem(id: tab.id, title: tab.title, status: TabStatus(tab.pullRequest), subtitle: tab.pullRequest.title)
+            TabStripItem(id: tab.id, title: tab.title, status: PullRequestStatus(tab.pullRequest), subtitle: tab.pullRequest.title)
         case let .pending(pending):
             TabStripItem(id: pending.id, title: pending.title, status: nil, subtitle: pending.error == nil ? "" : "Couldn't open", isLookingUp: pending.error == nil)
         }

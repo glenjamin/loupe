@@ -443,6 +443,15 @@ struct PullRequestRow: View {
                 if reason != .approvedConflicts, !problems.contains(.conflicts) {
                     ConflictsBadge(pullRequest: pullRequest)
                 }
+                // GitHub's verdict repeats the viewer's when they're the same.
+                if showsReviewRequired || ([.approved, .changesRequested].contains(pullRequest.reviewDecision) && pullRequest.reviewDecision?.rawValue != verdict?.rawValue) {
+                    ReviewDecisionLabel(decision: pullRequest.reviewDecision, requestedReviewers: pullRequest.requestedReviewers)
+                }
+                if let reviewMark {
+                    EveryMinute { now in
+                        ViewerReviewBadge(mark: reviewMark, now: now)
+                    }
+                }
                 SelfReviewBadge(selfReview: selfReview)
                 if let stackedOn {
                     StackedOnLabel(parent: stackedOn)
@@ -457,15 +466,6 @@ struct PullRequestRow: View {
             HStack(spacing: 8) {
                 if showsAuthor, let author = pullRequest.author {
                     Text(author)
-                }
-                if let reviewMark {
-                    EveryMinute { now in
-                        ViewerReviewBadge(mark: reviewMark, now: now)
-                    }
-                }
-                // GitHub's verdict repeats the viewer's when they're the same.
-                if showsReviewRequired || ([.approved, .changesRequested].contains(pullRequest.reviewDecision) && pullRequest.reviewDecision?.rawValue != verdict?.rawValue) {
-                    ReviewDecisionLabel(decision: pullRequest.reviewDecision, requestedReviewers: pullRequest.requestedReviewers)
                 }
                 if let checks = pullRequest.checks {
                     ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
@@ -524,13 +524,13 @@ struct StateBadge: View {
 
     var body: some View {
         switch pullRequest.state {
-        case .merged: Badge(text: "Merged", tint: .purple)
-        case .closed: Badge(text: "Closed", tint: .diffDanger)
+        case .merged: Badge(text: "Merged", tint: PullRequestStatus.merged.tint)
+        case .closed: Badge(text: "Closed", tint: PullRequestStatus.closed.tint)
         case .open, .unknown:
             if pullRequest.isDraft {
-                Badge(text: "Draft", tint: .primary)
+                Badge(text: "Draft", tint: PullRequestStatus.draft.tint)
             } else if showsOpen {
-                Badge(text: "Open", tint: .diffSuccess)
+                Badge(text: "Open", tint: PullRequestStatus.open.tint)
             }
         }
     }
@@ -545,11 +545,11 @@ struct ConflictsBadge: View {
     var body: some View {
         if pullRequest.mergeable == .conflicting {
             if let tab {
-                Badge(text: "Conflicts", tint: .diffDanger)
+                Badge(text: "Conflicts", tint: PullRequestStatus.conflicts.tint)
                     .background(HoverPopoverAnchor(content: ConflictsPopoverContent(tab: tab)))
                     .accessibilityIdentifier("conflicts-badge")
             } else {
-                Badge(text: "Conflicts", tint: .diffDanger)
+                Badge(text: "Conflicts", tint: PullRequestStatus.conflicts.tint)
                     .help("This branch has conflicts that must be resolved before it can be merged")
             }
         }
@@ -612,8 +612,8 @@ struct ViewerReviewBadge: View {
 
     private var tint: Color {
         switch mark.kind {
-        case .approved: .diffSuccess
-        case .changesRequested: .diffDanger
+        case .approved: PullRequestStatus.approved.tint
+        case .changesRequested: PullRequestStatus.changesRequested.tint
         case .commented, .dismissed: .secondary
         }
     }
@@ -670,8 +670,8 @@ struct ReviewDecisionLabel: View {
 
     var body: some View {
         switch decision {
-        case .approved: Badge(text: "Approved", tint: .diffSuccess)
-        case .changesRequested: Badge(text: "Changes requested", tint: .diffDanger)
+        case .approved: Badge(text: "Approved", tint: PullRequestStatus.approved.tint)
+        case .changesRequested: Badge(text: "Changes requested", tint: PullRequestStatus.changesRequested.tint)
         case .reviewRequired, .unknown, nil:
             let names = (requestedReviewers ?? []).compactMap(\.name)
             if !names.isEmpty {

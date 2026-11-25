@@ -229,9 +229,10 @@ struct TodoReasonBadge: View {
     private var tint: Color {
         switch reason {
         case .readyToMerge, .approvedChecksRunning, .approvedBehind, .approvedChecking, .approvedBlocked: .diffSuccess
-        case .approvedChecksFailing, .approvedConflicts, .changesRequested: .diffDanger
+        case .approvedChecksFailing, .approvedConflicts: .diffDanger
+        case .changesRequested: PullRequestStatus.changesRequested.tint
         case .reviewRequested, .reRequested, .updatedSinceReview, .requestReviewers: .diffAttention
-        case .draft: .primary
+        case .draft: PullRequestStatus.draft.tint
         case .waitingOnReview, .pushedSinceChangesRequested: .secondary
         }
     }

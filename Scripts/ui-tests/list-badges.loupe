@@ -1,0 +1,8 @@
+# A row's badges all sit on its repo line, before the owner, coloured as the tabs' statuses are.
+wait settled
+expect button ~"gazette #272, Approved, tamarinworks,"
+expect button ~"gazette #273, Draft, on #272, tamarinworks,"
+expect button ~"lily #1325, Review required, tamarinworks,"
+snap list-badges-dark
+appearance light
+snap list-badges-light
