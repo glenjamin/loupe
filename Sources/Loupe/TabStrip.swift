@@ -83,16 +83,28 @@ struct TabStripItem: Equatable {
     var isLookingUp = false
 }
 
-/// A PR's state in the list rows' badge words, so the strip shows which tabs are merged or
-/// closed without opening them.
+/// A PR's state in one word, so the strip shows which tabs are merged or closed, conflict,
+/// await changes or are approved without opening them. A conflict outranks the rest of an open
+/// PR's state, as it's what stands in the way whether the PR is a draft or approved.
 enum TabStatus: Equatable {
-    case open, draft, merged, closed
+    case open, draft, conflicts, changesRequested, approved, merged, closed
 
     init(_ pullRequest: PullRequestSummary) {
         switch pullRequest.state {
         case .merged: self = .merged
         case .closed: self = .closed
-        case .open, .unknown: self = pullRequest.isDraft ? .draft : .open
+        case .open, .unknown:
+            if pullRequest.mergeable == .conflicting {
+                self = .conflicts
+            } else if pullRequest.isDraft {
+                self = .draft
+            } else {
+                switch pullRequest.reviewDecision {
+                case .changesRequested: self = .changesRequested
+                case .approved: self = .approved
+                case .reviewRequired, .unknown, nil: self = .open
+                }
+            }
         }
     }
 
@@ -100,17 +112,24 @@ enum TabStatus: Equatable {
         switch self {
         case .open: "Open"
         case .draft: "Draft"
+        case .conflicts: "Conflicts"
+        case .changesRequested: "Changes requested"
+        case .approved: "Approved"
         case .merged: "Merged"
         case .closed: "Closed"
         }
     }
 
+    /// Distinct for each status, as a narrow tab shows only a dot of it.
     var colour: NSColor {
         switch self {
-        case .open: DiffColors.successText
-        case .draft: .secondaryLabelColor
+        case .open: DiffColors.accentText
+        case .draft: DiffColors.subtleText
+        case .conflicts: DiffColors.dangerText
+        case .changesRequested: DiffColors.severeText
+        case .approved: DiffColors.successText
         case .merged: .systemPurple
-        case .closed: DiffColors.dangerText
+        case .closed: DiffColors.mutedText
         }
     }
 }
@@ -283,6 +302,9 @@ private final class TabStripItemView: NSView {
             closeButton.action = #selector(close)
             addSubview(closeButton)
             updateCloseButton()
+            setAccessibilityElement(true)
+            setAccessibilityRole(.group)
+            setAccessibilityIdentifier("pr-tab")
         }
     }
 

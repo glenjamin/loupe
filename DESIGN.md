@@ -1209,3 +1209,9 @@ Now, once someone's chosen, the rows keep their order until the search changes o
 The markdown boxes (comments, replies, the description, the review summary) registered their typing on whichever undo manager their place in the window led to. A box in a popover used the main window's, so after the popover closed, ⌘Z undid into a box no longer shown, and crashed once it had been freed. A comment box inside the diff is hosted in the diff's text view, which has no undo, so ⌘Z did nothing there.
 
 Each box now has an undo manager of its own and takes Edit ▸ Undo and Redo while it has the focus. Typing is undone only in the box being typed in, and its history goes with it; ⌘Z elsewhere doesn't reach into a box.
+
+### Tabs say Conflicts, Changes requested and Approved as well as the PR's state
+
+Glen wanted a tab to say what an open PR most needs, not just that it's open. A tab's word is now, first to last: Merged or Closed, then Conflicts, Draft, Changes requested, Approved, else Open. A conflict outranks draft, as it's what stands in the way either way; draft outranks the review decision, as a draft isn't up for review yet. Conflicts shows only once GitHub has said `CONFLICTING`, so a PR whose merge state is still unknown reads by the rest of its state.
+
+A narrow tab shows only a dot of its status's colour, so each colour is distinct, in GitHub's Primer palette: Open blue, Approved green, Conflicts red, Changes requested a dark orange-red, Merged purple, Closed a darker grey and Draft a lighter one. Open is no longer green, which now means approved, and Closed is no longer red, which now means conflicts. The tab strip no longer uses the list rows' badge words and colours, which describe a PR across several badges rather than in one word.

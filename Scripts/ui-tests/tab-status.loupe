@@ -1,0 +1,18 @@
+# Each tab says its PR's state in one word: a conflict outranks the rest of an open PR's state,
+# then draft, then the review decision, else Open.
+wait settled
+open tamarinworks/bedrock#2193
+open tamarinworks/gazette#272
+open tamarinworks/gazette#273
+open tamarinworks/atrium#2928
+open tamarinworks/porter#1522
+wait settled
+expect text "Open" in #pr-tab 1
+expect text "Approved" in #pr-tab 2
+expect text "Draft" in #pr-tab 3
+expect text "Conflicts" in #pr-tab 4
+expect text "Merged" in #pr-tab 5
+appearance dark
+snap tab-status-dark
+appearance light
+snap tab-status-light

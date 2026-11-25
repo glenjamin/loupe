@@ -9,6 +9,11 @@ public enum DiffColors {
     public static let successText = dynamic(light: (0x1A, 0x7F, 0x37, 1), dark: (0x3F, 0xB9, 0x50, 1))
     public static let dangerText = dynamic(light: (0xCF, 0x22, 0x2E, 1), dark: (0xF8, 0x51, 0x49, 1))
     public static let attentionText = dynamic(light: (0x9A, 0x67, 0x00, 1), dark: (0xD2, 0x99, 0x22, 1))
+    public static let severeText = dynamic(light: (0xBC, 0x4C, 0x00, 1), dark: (0xDB, 0x6D, 0x28, 1))
+    public static let accentText = dynamic(light: (0x09, 0x69, 0xDA, 1), dark: (0x44, 0x93, 0xF8, 1))
+    /// Two greys for quiet text, the muted one stronger than the subtle one in either appearance.
+    public static let mutedText = dynamic(light: (0x59, 0x63, 0x6E, 1), dark: (0x91, 0x98, 0xA1, 1))
+    public static let subtleText = dynamic(light: (0x8C, 0x95, 0x9F, 1), dark: (0x6E, 0x76, 0x81, 1))
 
     // Primer's syntax palette, as GitHub colours code.
     public static let syntaxKeyword = dynamic(light: (0xCF, 0x22, 0x2E, 1), dark: (0xFF, 0x7B, 0x72, 1))
