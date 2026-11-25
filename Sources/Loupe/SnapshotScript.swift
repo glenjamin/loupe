@@ -65,6 +65,17 @@ final class SnapshotScript {
             window.sendEvent(event)
             return true
         }
+        // Likewise a ⌘ key whose menu item goes to the focused view, as Edit ▸ Undo does: with no
+        // key window AppKit finds no view to take it, so the item stays disabled.
+        KeyMonitors.add(.last) { event in
+            guard NSApp.keyWindow == nil, event.modifierFlags.contains(.command), let window = event.window, window.isKeyWindow,
+                  let item = NSApp.mainMenu.flatMap({ menuItem(for: event, in: $0) }), let action = item.action,
+                  let responder = sequence(first: window.firstResponder, next: { $0?.nextResponder }).lazy.compactMap({ $0 }).first(where: { $0.responds(to: action) }),
+                  (responder as? NSUserInterfaceValidations)?.validateUserInterfaceItem(item) ?? true
+            else { return false }
+            _ = responder.tryToPerform(action, with: item)
+            return true
+        }
     }
 
     private init(windows: WindowManager, directory: URL) {
@@ -1407,4 +1418,21 @@ private func refresh(_ menu: NSMenu) {
     menu.delegate?.menuNeedsUpdate?(menu)
     menu.update()
     for item in menu.items { item.submenu.map(refresh) }
+}
+
+/// The menu item AppKit would send the key to the focused view for: enabled or not, as without a
+/// key window it can't tell, and with no target of its own.
+@MainActor
+private func menuItem(for event: NSEvent, in menu: NSMenu) -> NSMenuItem? {
+    let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+    for item in menu.items {
+        if let found = item.submenu.flatMap({ menuItem(for: event, in: $0) }) { return found }
+        // A capital, as Redo's "Z", stands for the key with ⇧.
+        let key = item.keyEquivalent
+        let mask = key == key.lowercased() ? item.keyEquivalentModifierMask : item.keyEquivalentModifierMask.union(.shift)
+        if item.target == nil, !key.isEmpty, key.lowercased() == event.charactersIgnoringModifiers?.lowercased(), mask == modifiers {
+            return item
+        }
+    }
+    return nil
 }

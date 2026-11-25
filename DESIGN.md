@@ -1203,3 +1203,9 @@ An addendum to "A proto leads its group either way up, as the interface": in a T
 An addendum to "Reviewers show in the header on the viewer's own PRs, where they're asked and withdrawn": ticking several people quickly misbehaved three ways. Those asked are listed first, so ticking someone moved them to the top and every row under them down, and the next click at the same place chose someone else. Each toggle fetched the conversation again once GitHub agreed, and that fetch put back GitHub's list of who's asked, unticking someone whose request was still on its way until their own fetch landed. And a tick then untick of one person sent the request and the withdrawal at once, so GitHub could take the withdrawal first and be left with them asked.
 
 Now, once someone's chosen, the rows keep their order until the search changes or the picker opens again, a row ticking or unticking where it is; it opens with those asked first as before. Asking and withdrawing are the viewer's own changes, as comments and resolves are, made again over any fetch that started before GitHub answered for them. And changes to one reviewer go to GitHub one after another, in the order they were made, each shown at once; changes to different reviewers still go together.
+
+### Each markdown box keeps its own undo
+
+The markdown boxes (comments, replies, the description, the review summary) registered their typing on whichever undo manager their place in the window led to. A box in a popover used the main window's, so after the popover closed, ⌘Z undid into a box no longer shown, and crashed once it had been freed. A comment box inside the diff is hosted in the diff's text view, which has no undo, so ⌘Z did nothing there.
+
+Each box now has an undo manager of its own and takes Edit ▸ Undo and Redo while it has the focus. Typing is undone only in the box being typed in, and its history goes with it; ⌘Z elsewhere doesn't reach into a box.

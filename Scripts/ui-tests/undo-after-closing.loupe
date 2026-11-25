@@ -1,0 +1,32 @@
+# ⌘Z undoes typing only in the box that has the focus: once the review summary's popover has
+# gone, ⌘Z leaves what was written in it, as undoing there would reach a box no longer shown,
+# or freed. A comment on the diff undoes in its own box too.
+wait settled
+open tamarinworks/atrium#2928
+wait settled
+click button "Summary…"
+wait until textarea in popover
+type "first"
+wait until textarea in popover has value "first"
+press cmd+z
+wait until textarea in popover has value ""
+press cmd+shift+z
+wait until textarea in popover has value "first"
+press esc
+wait until popover missing
+press cmd+z
+click button "Summary…"
+wait until textarea in popover has value "first"
+press esc
+wait until popover missing
+
+click image #doc
+wait settled
+scroll scroll 3 down 300
+hover textarea up 11
+click button "Add a comment"
+wait until text "Comment on line 22"
+type "draft"
+wait until textarea 2 has value "draft"
+press cmd+z
+wait until textarea 2 has value ""

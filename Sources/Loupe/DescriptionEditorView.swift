@@ -241,6 +241,28 @@ final class MarkdownEditingTextView: NSTextView, KeepsTextKeys {
     private var wordSelectionAnchor: Int?
     /// Whether to take the focus once it's in a window.
     private var focusesInWindow = false
+    /// Its own, so its typing is undone only while it has the focus and goes with it: on the
+    /// window's, a closed popover's or comment's editor would leave undo there for a freed view.
+    private let ownUndoManager = UndoManager()
+
+    override var undoManager: UndoManager? { ownUndoManager }
+
+    // Edit ▸ Undo and Redo, which the window would otherwise take to its own.
+    @objc func undo(_ sender: Any?) { ownUndoManager.undo() }
+    @objc func redo(_ sender: Any?) { ownUndoManager.redo() }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        switch item.action {
+        case #selector(undo(_:)):
+            (item as? NSMenuItem)?.title = ownUndoManager.undoMenuItemTitle
+            return ownUndoManager.canUndo
+        case #selector(redo(_:)):
+            (item as? NSMenuItem)?.title = ownUndoManager.redoMenuItemTitle
+            return ownUndoManager.canRedo
+        default:
+            return super.validateUserInterfaceItem(item)
+        }
+    }
 
     /// Takes the focus with the cursor at the end, now or once it's in a window.
     func focusAtEnd() {
