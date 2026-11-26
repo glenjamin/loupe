@@ -167,6 +167,15 @@ final class SnapshotScript {
             movePointer(to: point, in: node.window)
             await settleInput()
             return "pointer at \(describe(point))"
+        case let .action(query, name):
+            let node = try find(query)
+            let actions = node.customActions
+            guard let action = actions.first(where: { $0.name == name }) else {
+                throw StepFailure(expected: "an action \"\(name)\"", found: actions.isEmpty ? "none offered" : actions.map(\.name).joined(separator: ", "), scope: query)
+            }
+            if let handler = action.handler { _ = handler() } else if let target = action.target as? NSObject, let selector = action.selector { target.perform(selector, with: action) }
+            await settleInput()
+            return "performed \"\(name)\""
         case .unhover:
             guard let pointer else { return "the pointer wasn't over anything" }
             // Off the window's corner, so whatever it was over sees it leave.
@@ -698,6 +707,7 @@ struct AXNode {
     }
 
     var role: String { element.accessibilityRole?()?.rawValue ?? legacy("AXRole") ?? "" }
+    var customActions: [NSAccessibilityCustomAction] { element.accessibilityCustomActions?() ?? [] }
     var subrole: String { element.accessibilitySubrole?()?.rawValue ?? legacy("AXSubrole") ?? "" }
     var label: String { element.accessibilityLabel?() ?? legacy("AXDescription") ?? "" }
     var title: String { element.accessibilityTitle?() ?? legacy("AXTitle") ?? "" }
@@ -837,6 +847,8 @@ enum Step {
     /// Moves the pointer to the element's centre, offset in window coordinates.
     case hover(Query, CGVector)
     case unhover
+    /// Performs one of the element's named accessibility actions, as VoiceOver's actions menu does.
+    case action(Query, String)
     /// Presses the keys in turn; with a condition, again and again until it holds.
     case press([Chord], until: (Query, Predicate)?)
     case type(String)
@@ -885,6 +897,10 @@ enum Step {
             let query = try Query(&tokens)
             self = .hover(query, tokens.isEmpty ? CGVector() : try Self.vector(&tokens, step: "hover"))
         case "unhover": self = .unhover
+        case "action":
+            let name = try tokens.string()
+            guard tokens.take("on") else { throw ScriptError("action takes \"name\" on <query>") }
+            self = .action(try Query(&tokens), name)
         case "press":
             var chords: [Chord] = []
             while !tokens.isEmpty, tokens.peekWord() != "until" { chords.append(try Chord(try tokens.word())) }

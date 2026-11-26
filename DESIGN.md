@@ -1219,3 +1219,9 @@ A narrow tab shows only a dot of its status's colour, so each colour is distinct
 ### The lists' badges take the tabs' colours, all on the repo line
 
 Glen asked for the lists to match the tabs. The state, conflicts and review badges now use the tabs' status colours (Open blue, Draft light grey, Closed dark grey, Changes requested dark orange-red, the rest as before), from one `PullRequestStatus`, so a word reads the same wherever it shows; the TODO reasons for draft and changes requested and "You requested changes" follow. The PR header's badges are the same views, so they follow too. A row's badges, the review decision and the viewer's own review included, now all sit on its repo line before the owner, leaving the line below for the author, checks and times; in a narrow column the badges are cut before the repo and number.
+
+### List rows are two lines, and stacks fold in the lists too
+
+Glen asked for rows to fit on two lines. The line under the title, with the author, the checks glyph and the times, is gone: the checks glyph, any "requested N ago" and the updated time sit at the repo line's right end, kept whole while the badges before them are cut first, and in To review the author leads the title, "rowan-ashby · Share a report's…", in secondary colour. The title may still wrap to a second line, so a long one makes a row three lines rather than being cut. TODO mode's rows are the same view and follow.
+
+Glen also wanted stacks foldable in Mine and To review, as they are in TODO mode. A stack's bottom row there has the same "+N stacked" control, hiding and showing the PRs listed above it, for the session; stacks start shown, as the lists always showed them, where TODO's start folded, and a search holds them open as there. The control is inside the row's button, which VoiceOver sees as one element, so the row also offers "Hide stacked PRs" or "Show stacked PRs" as an accessibility action, in the lists and TODO mode alike.

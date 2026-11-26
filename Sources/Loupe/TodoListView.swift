@@ -138,6 +138,7 @@ struct TodoListView: View {
             )
         }
         .buttonStyle(.plain)
+        .stackAction(stack)
         .padding(.leading, CGFloat(row.depth) * Self.stackIndent)
         .contextMenu { CheckoutMenu(repository: pullRequest.repository, model: model) }
     }
@@ -198,6 +199,18 @@ struct StackDisclosure: View {
         .disabled(isHeldOpen)
         .background(SnapshotClickMarker(name: "stack"))
         .help(isHeldOpen ? "Shown while searching" : isExpanded ? "Hide the PRs stacked on this one" : "Show the PRs stacked on this one")
+    }
+}
+
+extension View {
+    /// Offers the row's stack control as an action, as it's inside the row's own button, which
+    /// assistive apps see as one element.
+    func stackAction(_ stack: StackDisclosure?) -> some View {
+        accessibilityActions {
+            if let stack, !stack.isHeldOpen {
+                Button(stack.isExpanded ? "Hide stacked PRs" : "Show stacked PRs", action: stack.toggle)
+            }
+        }
     }
 }
 

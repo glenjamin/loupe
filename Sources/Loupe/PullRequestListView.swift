@@ -238,10 +238,13 @@ struct PullRequestColumn: View {
     @State private var selection: PullRequestSummary.ID?
     /// Lists the PRs held back as stale, for this session only.
     @State private var showsStale = false
+    /// The stacks whose PRs above the bottom one are hidden, by the bottom PR's id.
+    @State private var foldedStacks: Set<String> = []
 
     var body: some View {
         let listing = model.listing(in: list, includingClosed: showsClosed, includingStale: showsStale)
         let pullRequests = listing.map(\.pullRequest)
+        let rows = stackRows(listing, folded: model.isSearching ? [] : foldedStacks)
         VStack(alignment: .leading, spacing: 0) {
             Text("\(title) (\(pullRequests.count))")
                 .font(.headline)
@@ -252,8 +255,8 @@ struct PullRequestColumn: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(listing, selection: $selection) { listed in
-                    ListedRow(listed: listed, list: list, showsAuthor: showsAuthor, model: model)
+                List(rows, selection: $selection) { row in
+                    ListedRow(listed: row.listed, list: list, showsAuthor: showsAuthor, model: model, stack: disclosure(for: row, folded: $foldedStacks, model: model))
                 }
                 .onKeyPress(.return) {
                     guard let pullRequest = pullRequests.first(where: { $0.id == selection }) else { return .ignored }
@@ -281,6 +284,8 @@ struct ReviewColumn: View {
     @State private var selection: PullRequestSummary.ID?
     /// The stages whose PRs held back as stale are listed, for this session only.
     @State private var showingStale: Set<ReviewStage> = []
+    /// The stacks whose PRs above the bottom one are hidden, by the bottom PR's id.
+    @State private var foldedStacks: Set<String> = []
 
     var body: some View {
         let rows = rows
@@ -298,8 +303,8 @@ struct ReviewColumn: View {
                     Text(model.isSearching ? "No matches" : "Nothing here")
                         .foregroundStyle(.secondary)
                         .selectionDisabled()
-                case let .pullRequest(listed):
-                    ListedRow(listed: listed, list: .toReview, showsAuthor: true, model: model)
+                case let .pullRequest(row):
+                    ListedRow(listed: row.listed, list: .toReview, showsAuthor: true, model: model, stack: disclosure(for: row, folded: $foldedStacks, model: model))
                 case let .stale(stage, count):
                     StaleToggle(count: count, isShown: Binding {
                         showingStale.contains(stage)
@@ -311,8 +316,8 @@ struct ReviewColumn: View {
             }
         }
         .onKeyPress(.return) {
-            guard case let .pullRequest(listed)? = rows.first(where: { $0.id == selection }) else { return .ignored }
-            model.open(listed.pullRequest)
+            guard case let .pullRequest(row)? = rows.first(where: { $0.id == selection }) else { return .ignored }
+            model.open(row.listed.pullRequest)
             return .handled
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -325,7 +330,7 @@ struct ReviewColumn: View {
             let listing = model.listing(in: .toReview, stage: stage, includingClosed: showsClosed, includingStale: showingStale.contains(stage))
             let stale = model.staleCount(in: .toReview, stage: stage, includingClosed: showsClosed)
             return [.heading(stage, count: listing.count)]
-                + (listing.isEmpty ? [.empty(stage)] : listing.map(ReviewRow.pullRequest))
+                + (listing.isEmpty ? [.empty(stage)] : stackRows(listing, folded: model.isSearching ? [] : foldedStacks).map(ReviewRow.pullRequest))
                 + (stale > 0 ? [.stale(stage, count: stale)] : [])
         }
     }
@@ -337,14 +342,17 @@ struct ListedRow: View {
     let list: PullRequestList
     let showsAuthor: Bool
     let model: PullRequestListModel
+    /// Set on a stack's bottom row, to show or hide the PRs stacked on it.
+    var stack: StackDisclosure? = nil
 
     var body: some View {
         let pullRequest = listed.pullRequest
         Button { model.open(pullRequest) } label: {
-            PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, selfReview: model.selfReview(of: pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent, reviewMark: model.reviewMark(on: pullRequest, in: list))
+            PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor, showsReviewRequired: list != .toReview, selfReview: model.selfReview(of: pullRequest), staleRequestedAt: staleRequestedAt(of: pullRequest), verdict: model.verdict(on: pullRequest, in: list), stackedOn: listed.parent, reviewMark: model.reviewMark(on: pullRequest, in: list), stack: stack)
                 .padding(.leading, CGFloat(listed.depth) * Self.stackIndent)
         }
         .buttonStyle(.plain)
+        .stackAction(stack)
         .contextMenu { CheckoutMenu(repository: pullRequest.repository, model: model) }
     }
 
@@ -460,35 +468,41 @@ struct PullRequestRow: View {
                 Text(owner)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            .lineLimit(1)
-            Text(pullRequest.title).lineLimit(2)
-            HStack(spacing: 8) {
-                if showsAuthor, let author = pullRequest.author {
-                    Text(author)
-                }
-                if let checks = pullRequest.checks {
-                    ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
-                }
                 Spacer(minLength: 0)
-                // Each "N ago" label ticks itself, as a tick further up leaves unchanged views be.
-                if let staleRequestedAt {
+                // When and how it's doing stay whole; the badges are cut first.
+                HStack(spacing: 8) {
+                    // Each "N ago" label ticks itself, as a tick further up leaves unchanged views be.
+                    if let staleRequestedAt {
+                        EveryMinute { now in
+                            Text("requested \(staleRequestedAt.ago(now: now))")
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    if let checks = pullRequest.checks {
+                        ChecksIcon(state: checks, contexts: pullRequest.checkContexts)
+                    }
                     EveryMinute { now in
-                        Text("requested \(staleRequestedAt.ago(now: now))")
-                            .foregroundStyle(.tertiary)
+                        Text(pullRequest.updatedAt.ago(now: now))
                     }
                 }
-                EveryMinute { now in
-                    Text(pullRequest.updatedAt.ago(now: now))
-                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .layoutPriority(2)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
             .lineLimit(1)
+            titleLine
+                .lineLimit(2)
         }
         .padding(.vertical, 3)
         .opacity(pullRequest.state == .open ? 1 : 0.55)
         .contentShape(Rectangle())
+    }
+
+    /// The title, led by its author where the list shows authors.
+    private var titleLine: Text {
+        guard showsAuthor, let author = pullRequest.author else { return Text(pullRequest.title) }
+        return Text(verbatim: "\(author) · ").foregroundStyle(.secondary) + Text(pullRequest.title)
     }
 
     private var owner: String {
@@ -749,15 +763,48 @@ private extension ReviewStage {
 private enum ReviewRow: Identifiable {
     case heading(ReviewStage, count: Int)
     case empty(ReviewStage)
-    case pullRequest(StackedPullRequest)
+    case pullRequest(StackRow)
     case stale(ReviewStage, count: Int)
 
     var id: String {
         switch self {
         case let .heading(stage, _): "heading-\(stage)"
         case let .empty(stage): "empty-\(stage)"
-        case let .pullRequest(listed): listed.id
+        case let .pullRequest(row): row.id
         case let .stale(stage, _): "stale-\(stage)"
+        }
+    }
+}
+
+/// A listed PR as a list draws it: on a stack's bottom row, how many PRs are stacked above it.
+private struct StackRow: Identifiable {
+    let listed: StackedPullRequest
+    let stackAbove: Int?
+
+    var id: String { listed.id }
+}
+
+/// The listing's rows, leaving out the PRs above each folded stack's bottom one. A stack's
+/// listed PRs follow its bottom one, stepped in.
+private func stackRows(_ listing: [StackedPullRequest], folded: Set<String>) -> [StackRow] {
+    var rows: [StackRow] = []
+    var index = listing.startIndex
+    while index < listing.endIndex {
+        let bottom = listing[index]
+        let above = listing[(index + 1)...].prefix { $0.depth > 0 }
+        rows.append(StackRow(listed: bottom, stackAbove: above.isEmpty ? nil : above.count))
+        if !folded.contains(bottom.id) { rows += above.map { StackRow(listed: $0, stackAbove: nil) } }
+        index += 1 + above.count
+    }
+    return rows
+}
+
+/// The "+N stacked" control on a stack's bottom row; a search holds it open.
+@MainActor
+private func disclosure(for row: StackRow, folded: Binding<Set<String>>, model: PullRequestListModel) -> StackDisclosure? {
+    row.stackAbove.map { count in
+        StackDisclosure(count: count, isExpanded: model.isSearching || !folded.wrappedValue.contains(row.id), isHeldOpen: model.isSearching) {
+            if folded.wrappedValue.contains(row.id) { folded.wrappedValue.remove(row.id) } else { folded.wrappedValue.insert(row.id) }
         }
     }
 }

@@ -251,6 +251,7 @@ Conditions, wherever a step takes `<condition>`: `exists` (the default), `missin
 | `click` / `double-click` / `shift-click` `<query>` | At the element's centre, after moving the pointer there; `shift-click` holds Shift |
 | `right-click <query>` | Asks for the context menu without showing it and prints its items; `choose "Item"` then picks one |
 | `hover <query> [left\|right\|up\|down <points>]` / `unhover` | Moves the pointer onto the element, or that far from its centre (to reach one row of the diff's text) / off the window; a hover popover, such as the checks' or conflicts', opens after its dwell, so `wait until` it |
+| `action "name" on <query>` | Performs one of the element's named accessibility actions, as VoiceOver's actions menu does; for a control inside a row's button, which assistive apps see as one element, such as a stack's "Hide stacked PRs" |
 | `press <key> [<key>…] [until <query> <condition>]` | Keys in turn, as `down`, `return`, `esc`, `tab`, `space`, `delete`, `up`/`left`/`right`, `home`, `end`, `pageup`, `pagedown`, `f1`…, or a character, with `cmd+`, `shift+`, `opt+`, `ctrl+`, `fn+` (`cmd+shift+p`, `ctrl+tab`); `until` repeats them (up to 30 times) until the condition holds |
 | `type "text"` | Types each character into whatever has the focus |
 | `scroll <query> up\|down <points>` | Scrolls whatever scrolls under the element; over a page of GitHub's HTML (`#github-page`), the page itself |
