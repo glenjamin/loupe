@@ -826,7 +826,7 @@ struct CommitPicker: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Show the changes of the whole PR, of one commit, or since you last saw it")
+        .help(help)
         .background(CommitPickerMarker())
         .popover(isPresented: $tab.isPickingCommit, arrowEdge: .bottom) {
             CommitList(tab: tab, commits: commits)
@@ -842,6 +842,14 @@ struct CommitPicker: View {
         .onHover { isHovered = $0 }
         // Sits right under the Conversation row, whose own padding spaces them.
         .padding([.horizontal, .bottom], 8)
+    }
+
+    /// A commit's whole message while it's shown, as the label has room for only its headline.
+    private var help: String {
+        if case let .commit(oid) = tab.pendingChoice ?? tab.shownChoice, let commit = commits.first(where: { $0.oid == oid }) {
+            return commit.message
+        }
+        return "Show the changes of the whole PR, of one commit, or since you last saw it"
     }
 
     /// Names the changes picked at once, even while they're still being diffed.

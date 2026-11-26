@@ -1225,3 +1225,7 @@ Glen asked for the lists to match the tabs. The state, conflicts and review badg
 Glen asked for rows to fit on two lines. The line under the title, with the author, the checks glyph and the times, is gone: the checks glyph, any "requested N ago" and the updated time sit at the repo line's right end, kept whole while the badges before them are cut first, and in To review the author leads the title, "rowan-ashby · Share a report's…", in secondary colour. The title may still wrap to a second line, so a long one makes a row three lines rather than being cut. TODO mode's rows are the same view and follow.
 
 Glen also wanted stacks foldable in Mine and To review, as they are in TODO mode. A stack's bottom row there has the same "+N stacked" control, hiding and showing the PRs listed above it, for the session; stacks start shown, as the lists always showed them, where TODO's start folded, and a search holds them open as there. The control is inside the row's button, which VoiceOver sees as one element, so the row also offers "Hide stacked PRs" or "Show stacked PRs" as an accessibility action, in the lists and TODO mode alike.
+
+### The commit picker's tooltip gives a shown commit's whole message
+
+The picker's button has room for only a commit's short oid and headline, so while one commit is shown its tooltip is the commit's whole message, headline and body, read with the headline in the same `git log`. Otherwise it still says what the picker does.

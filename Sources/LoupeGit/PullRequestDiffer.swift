@@ -219,12 +219,12 @@ public struct PullRequestDiffer: Sendable {
 
     /// The commits after `base` up to `head`, oldest first.
     private func commits(from base: String, to head: String, in checkout: URL) async throws -> [PullRequestCommit] {
-        let log = try await git(["log", "--reverse", "-z", "--format=%H%x1f%P%x1f%s", "\(base)..\(head)"], in: checkout)
+        let log = try await git(["log", "--reverse", "-z", "--format=%H%x1f%P%x1f%s%x1f%b", "\(base)..\(head)"], in: checkout)
         var emptyTree: String?
         var commits: [PullRequestCommit] = []
         for record in log.split(separator: "\0") {
             let fields = record.trimmingCharacters(in: .newlines).split(separator: "\u{1F}", omittingEmptySubsequences: false).map(String.init)
-            guard fields.count == 3 else { continue }
+            guard fields.count == 4 else { continue }
             // A root commit's changes are taken from the empty tree.
             let parent: String
             if let first = fields[1].split(separator: " ").first {
@@ -235,7 +235,7 @@ public struct PullRequestDiffer: Sendable {
                 parent = try await git(["hash-object", "-t", "tree", "--stdin"], in: checkout, input: Data()).trimmingCharacters(in: .whitespacesAndNewlines)
                 emptyTree = parent
             }
-            commits.append(PullRequestCommit(oid: fields[0], headline: fields[2], range: DiffRange(base: parent, head: fields[0])))
+            commits.append(PullRequestCommit(oid: fields[0], headline: fields[2], body: fields[3].trimmingCharacters(in: .whitespacesAndNewlines), range: DiffRange(base: parent, head: fields[0])))
         }
         return commits
     }
@@ -577,10 +577,15 @@ public struct PullRequestCommit: Sendable, Equatable, Identifiable {
     public let oid: String
     /// The first line of its message.
     public let headline: String
+    /// The rest of its message, without the blank line after the headline; empty if there's none.
+    public let body: String
     /// Its own changes: from its first parent, or from nothing for a root commit.
     public let range: DiffRange
 
     public var id: String { oid }
+
+    /// The whole message.
+    public var message: String { body.isEmpty ? headline : "\(headline)\n\n\(body)" }
 }
 
 private struct LineCount: Sendable {

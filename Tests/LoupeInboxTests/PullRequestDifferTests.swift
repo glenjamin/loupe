@@ -71,7 +71,7 @@ struct PullRequestDifferTests {
         try await repo.switchTo("feature", creatingFrom: "main")
         let first = try await repo.commit(["app.go": "package app // first\n", "go.sum": "example.com/lib v1.1.0 h1:def\n"], message: "First change")
         let second = try await repo.commit(["main.go": "package main\n"], message: "Second change, with a comma, and more")
-        let third = try await repo.commit(["app.go": "package app // third\n"], message: "Third change")
+        let third = try await repo.commit(["app.go": "package app // third\n"], message: "Third change\n\nWhy it changed,\nover two lines.\n")
         try await repo.push(asPullRequest: 5)
 
         let differ = PullRequestDiffer()
@@ -80,6 +80,7 @@ struct PullRequestDifferTests {
 
         #expect(diff.commits.map(\.oid) == [first, second, third])
         #expect(diff.commits.map(\.headline) == ["First change", "Second change, with a comma, and more", "Third change"])
+        #expect(diff.commits.map(\.message) == ["First change", "Second change, with a comma, and more", "Third change\n\nWhy it changed,\nover two lines."])
 
         let one = try await differ.diff(diff.commits[0].range, in: repo.checkout)
         #expect(one.text.contains("+package app // first"))
