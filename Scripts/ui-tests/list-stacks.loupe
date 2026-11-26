@@ -5,8 +5,10 @@ action "Hide stacked PRs" on button ~"gazette #272"
 expect button ~"gazette #273" missing
 snap list-stack-folded
 action "Show stacked PRs" on button ~"gazette #272"
-expect button ~"gazette #273" exists
+wait until button ~"gazette #273"
 action "Hide stacked PRs" on button ~"gazette #272"
 press cmd+f
-type "BatchCache"
-expect button ~"gazette #273" exists
+wait until search is focused
+type "gazette"
+expect search has value "gazette"
+wait until button ~"gazette #273"

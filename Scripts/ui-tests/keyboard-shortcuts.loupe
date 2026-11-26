@@ -31,7 +31,9 @@ press , , , ,
 wait until button ~"All 3 commits"
 
 # ⌥⌘A asks before approving; backing out says nothing to GitHub. The alert's own buttons are
-# clicked, as an inactive app's alert never takes the keyboard.
+# clicked, as an inactive app's alert never takes the keyboard. The verdicts are offered once
+# the review controls show.
+wait until button "Approve"
 press opt+cmd+a
 wait until button "Cancel" in AXSheet
 expect text "Approve this pull request?"
@@ -44,7 +46,7 @@ expect-no-request submitPullRequestReview
 
 # Confirming sends the approval. A snapshot run refuses it at once, so the approval it shows
 # while sending is gone again too soon to check, and the refusal shows instead.
-expect button "Approve"
+wait until button "Approve"
 press opt+cmd+a
 wait until button "Approve" in AXSheet
 click button "Approve" in AXSheet

@@ -25,8 +25,9 @@ wait until search missing
 
 # Something no PR has: both lists empty out and say so, and Esc brings them back.
 press cmd+f
+wait until search is focused
 type "zz-no-such-pull-request"
-expect text ~"No pull requests match" exists
+wait until text ~"No pull requests match"
 expect button in list missing
 snap search-nothing
 press esc

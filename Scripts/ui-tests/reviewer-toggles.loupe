@@ -12,11 +12,11 @@ expect #reviewer-choice 3 in #reviewer-picker has label "jules-hollis, Jules Hol
 expect #reviewer-choice 4 in #reviewer-picker has label "tam-fairweather, Tam Fairweather"
 
 click #reviewer-choice 3 in #reviewer-picker
-expect text ~"ask jules-hollis" in #reviewer-picker
+wait until text ~"ask jules-hollis" in #reviewer-picker
 click #reviewer-choice 4 in #reviewer-picker
-expect text ~"ask tam-fairweather" in #reviewer-picker
+wait until text ~"ask tam-fairweather" in #reviewer-picker
 click #reviewer-choice 1 in #reviewer-picker
-expect text ~"remove pat-barrow" in #reviewer-picker
+wait until text ~"remove pat-barrow" in #reviewer-picker
 expect-request requestReviews
 expect-request requested_reviewers
 
