@@ -1229,3 +1229,7 @@ Glen also wanted stacks foldable in Mine and To review, as they are in TODO mode
 ### The commit picker's tooltip gives a shown commit's whole message
 
 The picker's button has room for only a commit's short oid and headline, so while one commit is shown its tooltip is the commit's whole message, headline and body, read with the headline in the same `git log`. Otherwise it still says what the picker does.
+
+### An open tab looks for conflicting files once GitHub flags the PR
+
+An addendum to "A conflicting PR's files are found by merging locally": a tab looked only as its diff loaded, but GitHub works `mergeable` out lazily, saying `UNKNOWN` for a while after a push or a move of the base. A tab that loaded then showed the Conflicts badge once a refresh stored GitHub's verdict, with no file marked "conflict" until the popover was opened. A tab now also looks whenever its stored PR changes to conflicting and its diff hasn't been looked at yet.

@@ -1430,8 +1430,17 @@ public final class PullRequestTab: Identifiable {
             Task { @MainActor in
                 self?.watchStoredPullRequest()
                 self?.followStoredChanges()
+                self?.findFlaggedConflicts()
             }
         }
+    }
+
+    /// Looks for the conflicting files once GitHub says the PR conflicts, which it works out
+    /// lazily, often only after the diff is produced, unless this diff's have been looked for.
+    private func findFlaggedConflicts() {
+        guard loading == nil, findingConflicts == nil, pullRequest.mergeable == .conflicting,
+              case let .ready(review) = phase, conflicts[conflictRange(of: review)] == nil else { return }
+        Task { await findConflicts() }
     }
 
     /// Fetches the conversation, its review threads with it, and the viewed states again once

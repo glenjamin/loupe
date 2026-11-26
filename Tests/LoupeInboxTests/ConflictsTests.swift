@@ -82,6 +82,21 @@ struct ConflictsTests {
         #expect(tab.conflictedFiles == .found(["app.go"]))
     }
 
+    @Test func theFilesAreFoundOnceGitHubWorksOutThatAnOpenPullRequestConflicts() async throws {
+        let app = try await SinceApp()
+        let (pullRequest, _) = try await app.pushPullRequest()
+        try await app.moveBase(["app.go": "package app\n\nfunc Hello() string { return \"hiya\" }\n"])
+        // Just pushed, so GitHub has yet to say whether it merges as the tab opens.
+        _ = try await app.forcePush(pullRequest)
+        let tab = try await app.open(pullRequest)
+        #expect(tab.conflictedFiles == nil)
+
+        try await app.github.setMergeState(of: pullRequest.id, "DIRTY", mergeable: "CONFLICTING")
+        await app.tabs.lists.refresh()
+
+        try await until { tab.conflictedFiles == .found(["app.go"]) }
+    }
+
     @Test func theConflictingFilesFollowANewHeadOnReload() async throws {
         let app = try await SinceApp()
         let (pullRequest, first) = try await app.pushPullRequest()
