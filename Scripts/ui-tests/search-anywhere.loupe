@@ -1,0 +1,23 @@
+# ⌘K from a PR's tab shows the lists with the focus in their search, so a PR can be found
+# without going back to the lists first.
+wait settled
+open tamarinworks/gazette#272
+wait settled
+expect window has no title "Pull Requests"
+expect search missing
+
+press cmd+k
+expect window has title "Pull Requests"
+wait until search is focused
+type "gazette"
+expect search has value "gazette"
+expect button in list 1 count 6
+snap search-anywhere
+
+# Again from the tab, ⌘K keeps what was typed and selects it, so typing replaces it.
+press ctrl+tab
+expect window has no title "Pull Requests"
+press cmd+k
+expect window has title "Pull Requests"
+wait until search is focused
+expect search has value "gazette"

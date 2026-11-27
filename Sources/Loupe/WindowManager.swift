@@ -76,6 +76,12 @@ final class WindowManager {
         select(nil)
     }
 
+    /// ⌘K: the lists' search, from whichever tab is shown.
+    func searchLists() {
+        showLists()
+        listSearch.find()
+    }
+
     /// ⌘F: on the lists, their search; in a PR's tab, whatever has the focus finds in itself,
     /// as the diff and markdown boxes do with their find bars. ⌘G and ⇧⌘G step through its
     /// matches. The focus is the key window's, such as a comment's popover, or else this
@@ -487,6 +493,8 @@ struct TabCommands: Commands {
         CommandGroup(before: .windowArrangement) {
             Button("Show Pull Requests") { windows.showLists() }
                 .keyboardShortcut(.showLists)
+            Button("Search Pull Requests") { windows.searchLists() }
+                .keyboardShortcut(.searchLists)
             Button("Select Previous Tab") { windows.selectAdjacent(-1) }
                 .keyboardShortcut(.previousTab)
             Button("Select Next Tab") { windows.selectAdjacent(1) }

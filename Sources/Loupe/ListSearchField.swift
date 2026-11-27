@@ -48,7 +48,7 @@ struct ListSearchToolbarItem: View {
                 .frame(width: 240)
         } else {
             Button("Search", systemImage: "magnifyingglass") { search.find() }
-                .help("Search the pull requests (⌘F)")
+                .help("Search the pull requests (⌘F, or ⌘K from any tab)")
         }
     }
 }
