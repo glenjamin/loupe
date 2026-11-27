@@ -1245,3 +1245,7 @@ Glen wanted SQL in strings highlighted, which is mostly how Go and Ruby code hol
 ### A search also finds what the viewer merged or closed this month
 
 Glen wanted a way to find PRs merged semi-recently without them being in the way. "Show closed and merged" lists every one stored, mixed in with the open ones, so it's switched on to look and off again. A search, which ⌘K starts from any tab, now also lists the viewer's PRs merged or closed within the month that open PRs go stale after, under "Merged and closed this month" after the open matches, most recently ended first, in the lists and TODO mode alike. Without a search nothing changes; with the toggle on they're listed with the rest already, so the section doesn't repeat them. A folded "Recently merged" section at the foot of Mine was offered too, and passed over for now. The UI suite can't show it, as the fixtures hold no merged PRs and snapshot runs can't merge one; the model's test covers it, and it was looked at against a copy of the real database.
+
+### Links other than to PRs show their URL as a tooltip
+
+A link's text often hides where it goes ("this doc", "here"), and the pages have no status bar to show it. So on GitHub's HTML, in the conversation, rendered markdown and previews, a web link with no tooltip of its own shows its URL; a link to a PR still shows the PR's title, or its URL if the title can't be found. The URLs are set as the page loads, without waiting for the PRs' titles to be looked up.

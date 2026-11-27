@@ -4,10 +4,10 @@ import LoupeModel
 import Testing
 import WebKit
 
-/// A page of GitHub's HTML gives each link to a PR its title as a tooltip.
+/// A page of GitHub's HTML gives each link to a PR its title as a tooltip, and other links their URLs.
 @MainActor
 struct PullRequestTitlesTests {
-    @Test func linksToPullRequestsShowTheirTitlesAndOtherLinksAreLeftAlone() async throws {
+    @Test func linksToPullRequestsShowTheirTitlesAndOtherLinksTheirURLs() async throws {
         let html = #"""
             <p dir="auto">Follows <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="1" data-permission-text="Title is private" data-url="https://github.com/tamarinworks/atrium/issues/2926" data-hovercard-type="pull_request" data-hovercard-url="/tamarinworks/atrium/pull/2926/hovercard" href="https://github.com/tamarinworks/atrium/pull/2926">#2926</a>, \#
             see <a href="https://github.com/tamarinworks/atrium/pull/2926#issuecomment-5">this comment</a> and \#
@@ -26,6 +26,9 @@ struct PullRequestTitlesTests {
         #expect(Set(asked.map { "\($0.repository)#\($0.number)" }) == ["tamarinworks/atrium#2926", "tamarinworks/atrium#404"])
         let script = "return [...document.querySelectorAll('a')].map(a => a.textContent + ': ' + a.title)"
         let titles = try await view.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .defaultClient) as? [String]
-        #expect(titles == ["#2926: Bump gazette", "this comment: Bump gazette", "its own tooltip: Its own", "#12: ", "#404: ", "elsewhere: "])
+        #expect(titles == [
+            "#2926: Bump gazette", "this comment: Bump gazette", "its own tooltip: Its own", "#12: https://github.com/tamarinworks/atrium/issues/12",
+            "#404: https://github.com/tamarinworks/atrium/pull/404", "elsewhere: https://example.com/",
+        ])
     }
 }
