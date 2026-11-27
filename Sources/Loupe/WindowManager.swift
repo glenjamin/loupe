@@ -33,6 +33,10 @@ final class WindowManager {
         }
         content.strip.onSelect = { [weak self] in self?.select($0) }
         content.strip.onClose = { [weak self] in self?.close($0) }
+        content.strip.onMove = { [weak self] id, position in
+            self?.tabs.move(id, to: position)
+            self?.render()
+        }
         KeyMonitors.add { [weak self] in self?.handleControlTab($0) == true }
     }
 

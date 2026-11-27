@@ -11,8 +11,8 @@ import Observation
 @MainActor
 public final class TabsModel {
     public let lists: PullRequestListModel
-    /// The strip's tabs after the lists, in the order they were opened: PRs, and links to PRs
-    /// still being looked up.
+    /// The strip's tabs after the lists, in the order they were opened or dragged into: PRs, and
+    /// links to PRs still being looked up.
     public private(set) var items: [TabItem] = []
     /// Nil when the PR lists are shown.
     public private(set) var selected: String?
@@ -184,6 +184,14 @@ public final class TabsModel {
         selected = nil
         save()
         checkShownForChanges()
+    }
+
+    /// Puts the tab with `id` at `position` among the tabs, as a drag along the strip does.
+    public func move(_ id: String, to position: Int) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        let item = items.remove(at: index)
+        items.insert(item, at: min(max(position, 0), items.count))
+        save()
     }
 
     /// One round of watching the open PRs for changes on GitHub: polls notifications and checks

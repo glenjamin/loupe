@@ -85,13 +85,16 @@ struct TabStripItem: Equatable {
 
 /// The strip under the title bar: a "PRs" button that is always first and shows the lists, then
 /// a two-row tab per open PR. When the tabs don't fit they scroll sideways behind the button,
-/// which stays put. It's AppKit rather than SwiftUI so clicks land reliably, and nothing in it
-/// drags the window.
+/// which stays put. A tab can be dragged along the strip to reorder it, the others making way as
+/// it passes. It's AppKit rather than SwiftUI so clicks land reliably, and nothing in it drags the
+/// window.
 @MainActor
 final class TabStripView: NSView {
     static let height: CGFloat = 46
     var onSelect: @MainActor (String?) -> Void = { _ in }
     var onClose: @MainActor (String) -> Void = { _ in }
+    /// A tab dropped at a new position among the tabs.
+    var onMove: @MainActor (String, Int) -> Void = { _, _ in }
 
     private let listsButton = TabStripItemView(isLists: true)
     private let scrollView = TabScrollView()
@@ -100,6 +103,9 @@ final class TabStripView: NSView {
     private var selected: String?
     /// Whether the selected tab is to be scrolled into sight at the next layout.
     private var revealsSelected = false
+    private var drag: TabDrag?
+    /// Tabs given while a drag is under way, shown once it ends so they don't reorder its views.
+    private var deferred: (tabs: [TabStripItem], selected: String?)?
     private static let listsWidth: CGFloat = 78
     private static let tabWidths: ClosedRange<CGFloat> = 160...260
 
@@ -109,6 +115,8 @@ final class TabStripView: NSView {
         listsButton.toolTip = "Pull Requests"
         listsButton.onSelect = { [weak self] in self?.onSelect(nil) }
         scrollView.documentView = tabsView
+        // Layers, so the dragged tab can be drawn over those it passes.
+        tabsView.wantsLayer = true
         scrollView.drawsBackground = false
         scrollView.hasHorizontalScroller = true
         scrollView.hasVerticalScroller = false
@@ -126,6 +134,10 @@ final class TabStripView: NSView {
 
     /// Shows `tabs` after the lists button, marking `selected` (nil for the lists).
     func update(tabs: [TabStripItem], selected: String?) {
+        guard drag == nil else {
+            deferred = (tabs, selected)
+            return
+        }
         if selected != self.selected || tabs.count > tabViews.count { revealsSelected = true }
         self.selected = selected
         while tabViews.count > tabs.count { tabViews.removeLast().removeFromSuperview() }
@@ -139,6 +151,9 @@ final class TabStripView: NSView {
             view.isSelected = item.id == selected
             view.onSelect = { [weak self] in self?.onSelect(item.id) }
             view.onClose = { [weak self] in if let id = item.id { self?.onClose(id) } }
+            view.onPress = { [weak self, weak view] event in if let view { self?.press(view, with: event) } }
+            view.onDrag = { [weak self, weak view] event in if let view { self?.drag(view, with: event) } }
+            view.onDragEnd = { [weak self] in self?.endDrag() }
         }
         listsButton.isSelected = selected == nil
         needsLayout = true
@@ -163,7 +178,7 @@ final class TabStripView: NSView {
         let share = tabViews.isEmpty ? 0 : available / CGFloat(tabViews.count)
         let width = min(max(share, Self.tabWidths.lowerBound), Self.tabWidths.upperBound).rounded(.down)
         tabsView.frame = NSRect(x: 0, y: 0, width: width * CGFloat(tabViews.count), height: bounds.height)
-        for (index, view) in tabViews.enumerated() {
+        for (index, view) in tabViews.enumerated() where view !== drag?.view {
             view.frame = NSRect(x: CGFloat(index) * width, y: 0, width: width, height: bounds.height)
         }
         if revealsSelected {
@@ -177,6 +192,72 @@ final class TabStripView: NSView {
         bounds.fill()
         drawBottomEdge(of: bounds)
     }
+
+    /// Notes where the mouse went down on `view`, in case it's dragged.
+    private func press(_ view: TabStripItemView, with event: NSEvent) {
+        let x = tabsView.convert(event.locationInWindow, from: nil).x
+        drag = TabDrag(view: view, startX: x, grab: x - view.frame.minX)
+    }
+
+    /// Moves `view` with the mouse once it's gone a few points, sliding the tabs it passes into
+    /// the gap it left, and scrolls the strip when it reaches either end.
+    private func drag(_ view: TabStripItemView, with event: NSEvent) {
+        let x = tabsView.convert(event.locationInWindow, from: nil).x
+        guard var drag, drag.view === view else { return }
+        if !drag.isMoving {
+            guard abs(x - drag.startX) > 3 else { return }
+            drag.isMoving = true
+            view.layer?.zPosition = 1
+        }
+        self.drag = drag
+        tabsView.autoscroll(with: event)
+        let width = view.frame.width
+        view.frame.origin.x = min(max(x - drag.grab, 0), tabsView.bounds.width - width)
+        guard let from = tabViews.firstIndex(where: { $0 === view }) else { return }
+        let to = min(max(Int(view.frame.midX / width), 0), tabViews.count - 1)
+        guard to != from else { return }
+        tabViews.insert(tabViews.remove(at: from), at: to)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            for (index, other) in tabViews.enumerated() where other !== view {
+                other.animator().frame.origin.x = CGFloat(index) * width
+            }
+        }
+    }
+
+    /// Settles a dragged tab into its slot and reports where it landed.
+    private func endDrag() {
+        guard let drag else { return }
+        self.drag = nil
+        let view = drag.view
+        guard drag.isMoving, let index = tabViews.firstIndex(where: { $0 === view }) else { return applyDeferred() }
+        // In the strip's order, so accessibility lists the tabs as they're drawn.
+        tabsView.subviews = tabViews
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            view.animator().frame.origin.x = CGFloat(index) * view.frame.width
+        } completionHandler: {
+            MainActor.assumeIsolated { view.layer?.zPosition = 0 }
+        }
+        // Moving brings the tabs afresh, which outdates any given during the drag.
+        deferred = nil
+        if let id = view.item.id { onMove(id, index) }
+    }
+
+    private func applyDeferred() {
+        guard let deferred else { return }
+        self.deferred = nil
+        update(tabs: deferred.tabs, selected: deferred.selected)
+    }
+}
+
+/// A tab being dragged: where the mouse went down, and how far into the tab, so the tab keeps
+/// its place under the pointer.
+private struct TabDrag {
+    let view: TabStripItemView
+    let startX: CGFloat
+    let grab: CGFloat
+    var isMoving = false
 }
 
 /// The lists button or one PR's tab, drawing its own background so the selected one stands out.
@@ -207,6 +288,9 @@ private final class TabStripItemView: NSView {
     }
     var onSelect: @MainActor () -> Void = {}
     var onClose: @MainActor () -> Void = {}
+    var onPress: @MainActor (NSEvent) -> Void = { _ in }
+    var onDrag: @MainActor (NSEvent) -> Void = { _ in }
+    var onDragEnd: @MainActor () -> Void = {}
 
     private let isLists: Bool
     private let titleLabel = label(font: .boldSystemFont(ofSize: 12), colour: .labelColor)
@@ -273,6 +357,15 @@ private final class TabStripItemView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         onSelect()
+        if !isLists { onPress(event) }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if !isLists { onDrag(event) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        onDragEnd()
     }
 
     /// A middle click closes a tab, as browsers do; the lists have nothing to close.

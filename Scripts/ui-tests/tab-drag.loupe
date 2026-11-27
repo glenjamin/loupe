@@ -1,0 +1,18 @@
+# Dragging a tab along the strip reorders the tabs, the dragged one keeping its place under the
+# pointer, and the order stays as dropped.
+wait settled
+open tamarinworks/bedrock#2193
+open tamarinworks/gazette#272
+open tamarinworks/gazette#273
+wait settled
+expect text "bedrock #2193" in #pr-tab 1
+drag #pr-tab 1 right 420
+wait settled
+expect text "gazette #272" in #pr-tab 1
+expect text "gazette #273" in #pr-tab 2
+expect text "bedrock #2193" in #pr-tab 3
+snap tab-dragged
+drag #pr-tab 3 left 1000
+wait settled
+expect text "bedrock #2193" in #pr-tab 1
+expect text "gazette #272" in #pr-tab 2

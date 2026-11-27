@@ -1249,3 +1249,7 @@ Glen wanted a way to find PRs merged semi-recently without them being in the way
 ### Links other than to PRs show their URL as a tooltip
 
 A link's text often hides where it goes ("this doc", "here"), and the pages have no status bar to show it. So on GitHub's HTML, in the conversation, rendered markdown and previews, a web link with no tooltip of its own shows its URL; a link to a PR still shows the PR's title, or its URL if the title can't be found. The URLs are set as the page loads, without waiting for the PRs' titles to be looked up.
+
+### Tabs can be dragged along the strip to reorder them
+
+Tabs open in the order the PRs were met, which rarely matches how they're worked through. Dragging a tab moves it with the pointer, the tabs it passes sliding into the gap as in a browser, and the order is stored, so it lasts to the next launch. The mouse-down still selects the tab, so a drag shows the tab being moved. A tab can't be dragged out into a window of its own, as the app keeps one window; the lists button stays first.

@@ -341,6 +341,24 @@ struct TabsTests {
         #expect(app.tabs.selected == nil, "the lists, with no tabs left")
     }
 
+    @Test func draggingATabAlongTheStripKeepsItThereNextLaunchAndKeepsItShown() async throws {
+        let app = try await App()
+        let (first, middle, last) = (app.toReview[0], app.toReview[1], app.toReview[2])
+        for pullRequest in [first, middle, last] { app.tabs.open(pullRequest) }
+        app.tabs.select(first.id)
+
+        app.tabs.move(first.id, to: 2)
+        #expect(app.tabs.tabs.map(\.id) == [middle.id, last.id, first.id])
+        #expect(app.tabs.selected == first.id)
+
+        app.tabs.move(last.id, to: 0)
+        #expect(app.tabs.tabs.map(\.id) == [last.id, middle.id, first.id])
+
+        let nextRun = try app.relaunch()
+        #expect(nextRun.tabs.map(\.id) == [last.id, middle.id, first.id])
+        #expect(nextRun.selected == first.id)
+    }
+
     @Test func closingAnotherTabKeepsTheShownOneAndClosingAllShowsTheLists() async throws {
         let app = try await App()
         let (shown, other) = (app.toReview[0], app.toReview[1])
