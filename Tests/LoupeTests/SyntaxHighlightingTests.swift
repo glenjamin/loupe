@@ -535,6 +535,78 @@ struct SyntaxHighlightingTests {
         #expect(colors(of: "keyringClient), nil", in: rendered, length: 13) == [NSColor.textColor])
     }
 
+    @Test func colorsSQLInAGoStringAsSQL() throws {
+        let rendered = showing(try added("store.go", """
+        package store
+
+        const byEmail = `
+        \tSELECT id, name FROM accounts WHERE email = $1`
+
+        var count = "SELECT COUNT(*) FROM \\"orders\\"\\n"
+
+        """))
+
+        #expect(colors(of: "SELECT id", in: rendered, length: 6) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "FROM accounts", in: rendered, length: 4) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "WHERE", in: rendered) == [DiffColors.syntaxKeyword])
+        // The query's names take SQL's colours, and the quotes around it the string colour.
+        #expect(colors(of: "name FROM", in: rendered, length: 4) == [DiffColors.syntaxConstant])
+        #expect(colors(of: "accounts", in: rendered) == [DiffColors.syntaxEntity])
+        #expect(colors(of: "`", in: rendered) == [DiffColors.syntaxString])
+        #expect(colors(of: "$1`", in: rendered, length: 2) != [DiffColors.syntaxString])
+        // A quoted string's escapes keep the string colour amid the SQL.
+        #expect(colors(of: "SELECT COUNT", in: rendered, length: 6) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "\\\"orders", in: rendered, length: 2) == [DiffColors.syntaxString])
+        #expect(colors(of: "\\n\"", in: rendered) == [DiffColors.syntaxString])
+    }
+
+    @Test(arguments: ["DELETE", "Select a file from the list", "select id from accounts", "UPDATE"])
+    func aStringThatIsNotAQueryStaysAString(text: String) throws {
+        let rendered = showing(try added("labels.go", """
+        package labels
+
+        var label = "\(text)"
+
+        """))
+
+        #expect(colors(of: "\"\(text)\"", in: rendered) == [DiffColors.syntaxString])
+    }
+
+    @Test func colorsARubyHeredocInTheLanguageItsTagNames() throws {
+        let rendered = showing(try added("report.rb", """
+        def report(table)
+          execute <<~SQL
+            SELECT total FROM #{table} ORDER BY total
+          SQL
+          config = <<~YAML
+            retries: 3
+          YAML
+        end
+
+        """))
+
+        #expect(colors(of: "SELECT total", in: rendered, length: 6) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "ORDER", in: rendered) == [DiffColors.syntaxKeyword])
+        // The interpolation keeps the string colour rather than being read as SQL.
+        #expect(colors(of: "#{table}", in: rendered, length: 2) == [DiffColors.syntaxString])
+        #expect(colors(of: "retries", in: rendered) != [DiffColors.syntaxString])
+        #expect(colors(of: "3\n", in: rendered, length: 1) == [DiffColors.syntaxConstant])
+    }
+
+    @Test func colorsSQLInAPythonString() throws {
+        let rendered = showing(try added("queries.py", """
+        QUERY = \"\"\"
+            INSERT INTO events (name) VALUES (%s)
+        \"\"\"
+
+        """))
+
+        #expect(colors(of: "INSERT", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "INTO", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "VALUES", in: rendered) == [DiffColors.syntaxKeyword])
+        #expect(colors(of: "\"\"\"", in: rendered) == [DiffColors.syntaxString])
+    }
+
     @Test func leavesAFileInAnUnknownLanguageUncoloured() throws {
         let plain = try showing(greet(path: "greet.unknown"))
 
@@ -557,6 +629,19 @@ private func greet(path: String) throws -> FileDiff {
      func Greet() string {
     -\treturn "hi"
     +\treturn "hello"
+
+    """).files.first)
+}
+
+/// A diff adding `code` as a new file.
+private func added(_ path: String, _ code: String) throws -> FileDiff {
+    let lines = code.split(separator: "\n", omittingEmptySubsequences: false).dropLast()
+    return try #require(Diff(parsing: """
+    diff --git a/\(path) b/\(path)
+    --- a/\(path)
+    +++ b/\(path)
+    @@ -0,0 +1,\(lines.count) @@
+    \(lines.map { "+\($0)" }.joined(separator: "\n"))
 
     """).files.first)
 }

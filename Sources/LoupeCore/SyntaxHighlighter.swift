@@ -353,23 +353,135 @@ enum VendoredGrammar: String {
 
 private let logger = Logger(subsystem: "com.glenmailer.Loupe", category: "syntax")
 
+private typealias Capture = (range: NSRange, style: SyntaxStyle)
+
 /// Captures to colour, outermost first so nested ones paint over them, with one pattern's
-/// capture chosen per node.
-private func highlightCaptures(_ query: Query, in tree: MutableTree, text: String, laterPatternsWin: Bool) -> [(range: NSRange, style: SyntaxStyle)] {
+/// capture chosen per node; and the nodes captured as strings, which may hold code of their own.
+private func highlightCaptures(_ query: Query, in tree: MutableTree, text: String, laterPatternsWin: Bool) -> (captures: [Capture], strings: [Node]) {
     var best: [NSRange: (pattern: Int, style: SyntaxStyle?)] = [:]
+    var strings: [NSRange: Node] = [:]
     let matches = query.execute(in: tree).resolve(with: Predicate.Context(string: text))
     for match in matches {
         for capture in match.captures {
             let range = capture.range
             guard range.length > 0, let name = capture.name else { continue }
+            if name == "string" { strings[range] = capture.node }
             if let existing = best[range], (existing.pattern < capture.patternIndex) != laterPatternsWin { continue }
             best[range] = (capture.patternIndex, syntaxStyle(forCapture: name))
         }
     }
-    return best
-        .compactMap { range, value in value.style.map { (range, $0) } }
+    let captures: [Capture] = best
+        .compactMap { range, value -> Capture? in value.style.map { (range, $0) } }
         .sorted { $0.range.location != $1.range.location ? $0.range.location < $1.range.location : $0.range.length > $1.range.length }
+    return (captures, strings.values.sorted { $0.range.location < $1.range.location })
 }
+
+/// A grammar's captures, with code embedded in its strings coloured as its own language. Only
+/// the code takes the embedded colours, over the default text colour as GitHub shows a SQL
+/// heredoc; the string's quotes, escapes and interpolations keep the string colour.
+private func capturesEmbeddingCode(_ grammar: Grammar, in tree: MutableTree, text: String) -> [Capture] {
+    let host = highlightCaptures(grammar.query, in: tree, text: text, laterPatternsWin: grammar.laterPatternsWin)
+    let embedded = host.strings.compactMap { EmbeddedCode($0, in: text) }
+    guard !embedded.isEmpty else { return host.captures }
+    let byString = Dictionary(embedded.map { ($0.string, $0) }, uniquingKeysWith: { first, _ in first })
+    var captures: [Capture] = []
+    for capture in host.captures {
+        if capture.style == .string, let code = byString[capture.range] {
+            captures += code.stringParts.map { ($0, .string) }
+        } else {
+            captures.append(capture)
+        }
+    }
+    for code in embedded { captures += code.captures() }
+    return captures
+}
+
+/// Code in a string literal: a heredoc whose tag names a language (`<<~SQL`), or a string
+/// that opens with a SQL statement, as Go and Ruby code commonly holds its queries. A SQL
+/// keyword in lower case is passed over, as it's as likely to start an English message.
+private struct EmbeddedCode {
+    let string: NSRange
+    let content: NSRange
+    /// Escapes and interpolations, which aren't the embedded language's.
+    let masks: [NSRange]
+    let language: SyntaxLanguage
+    /// The content with its masks blanked, the same length, so the embedded parser reads an
+    /// escape as space and an interpolation as a name.
+    let source: String
+
+    init?(_ node: Node, in text: String) {
+        let text = text as NSString
+        let children = (0..<node.childCount).compactMap { node.child(at: $0) }
+        var start = node.range.location
+        var end = NSMaxRange(node.range)
+        if let open = children.first(where: { $0.nodeType == "string_start" }) {
+            start = NSMaxRange(open.range)
+        } else if node.nodeType != "heredoc_body" {
+            // Past the opening quote, and any prefix before it (Python's `r"`), to before its closer.
+            let head = text.substring(with: NSRange(location: start, length: min(3, node.range.length)))
+            guard let quote = head.utf16.firstIndex(where: { [0x22, 0x27, 0x60].contains($0) }) else { return nil }
+            start += head.utf16.distance(from: head.utf16.startIndex, to: quote) + 1
+            if end > start, text.character(at: end - 1) == head.utf16[quote] { end -= 1 }
+        }
+        if let close = children.last(where: { $0.nodeType == "string_end" || $0.nodeType == "heredoc_end" }) {
+            end = min(end, close.range.location)
+        }
+        guard end > start else { return nil }
+        string = node.range
+        content = NSRange(location: start, length: end - start)
+
+        let source = NSMutableString(string: text.substring(with: content))
+        var masks: [NSRange] = []
+        for child in children where child.isNamed {
+            guard let type = child.nodeType, !type.hasSuffix("content"), type != "string_fragment",
+                  let range = child.range.intersection(content), range.length > 0 else { continue }
+            masks.append(range)
+            let blank = type.contains("escape") ? " " : "x"
+            source.replaceCharacters(in: NSRange(location: range.location - start, length: range.length),
+                                     with: String(repeating: blank, count: range.length))
+        }
+        self.masks = masks
+        self.source = source as String
+
+        let tag = children.first { $0.nodeType == "heredoc_end" }
+            .map { text.substring(with: $0.range).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        if let tag, !tag.isEmpty, let named = SyntaxLanguage(path: "heredoc.\(tag)") {
+            language = named
+        } else if let sql = SyntaxLanguage(path: "query.sql"),
+                  sqlStatement?.firstMatch(in: self.source, range: NSRange(location: 0, length: source.length)) != nil {
+            language = sql
+        } else {
+            return nil
+        }
+    }
+
+    /// What of the string keeps the string colour: its quotes, escapes and interpolations.
+    var stringParts: [NSRange] {
+        [NSRange(location: string.location, length: content.location - string.location)]
+            + masks
+            + [NSRange(location: NSMaxRange(content), length: NSMaxRange(string) - NSMaxRange(content))]
+    }
+
+    /// The embedded language's colours, in the host text's offsets, leaving the masks alone.
+    func captures() -> [Capture] {
+        guard let grammar = Grammar.load(language) else { return [] }
+        let parser = Parser()
+        guard (try? parser.setLanguage(grammar.language)) != nil, let tree = parser.parse(source) else { return [] }
+        return highlightCaptures(grammar.query, in: tree, text: source, laterPatternsWin: grammar.laterPatternsWin).captures
+            .map { (NSRange(location: $0.range.location + content.location, length: $0.range.length), $0.style) }
+            .filter { capture in !masks.contains { $0.intersection(capture.range).map { $0.length > 0 } ?? false } }
+    }
+}
+
+/// A string that opens with a SQL statement, in capitals: enough of one to tell it from a
+/// constant such as an HTTP method's name.
+private let sqlStatement = try? NSRegularExpression(pattern: """
+    ^\\s*(?:SELECT\\s+\\S|INSERT\\s+INTO\\s|UPDATE\\s+\\S+\\s+SET\\s|DELETE\\s+FROM\\s\
+    |WITH\\s+(?:RECURSIVE\\s+)?\\w+[\\s\\S]*?\\bAS\\s*\\(\
+    |(?:CREATE|ALTER|DROP)\\s+(?:(?:OR\\s+REPLACE|UNIQUE|MATERIALIZED|TEMP|TEMPORARY)\\s+)*\
+    (?:TABLE|INDEX|VIEW|SCHEMA|TYPE|FUNCTION|TRIGGER|EXTENSION|SEQUENCE|DATABASE)\\b\
+    |TRUNCATE\\s+\\S)
+    """)
 
 /// Splits a span of a side's text into the pieces that fall on mapped lines, in rendered offsets.
 private func map(_ range: NSRange, through lines: [SyntaxPlan.Line], _ emit: (NSRange) -> Void) {
@@ -404,7 +516,7 @@ private extension SyntaxPlan.Side {
         let text = text + trailer
         guard let tree = parser.parse(text) else { return [] }
         var runs: [SyntaxRun] = []
-        for capture in highlightCaptures(grammar.query, in: tree, text: text, laterPatternsWin: grammar.laterPatternsWin) {
+        for capture in capturesEmbeddingCode(grammar, in: tree, text: text) {
             let range = NSRange(location: capture.range.location - codeStart, length: capture.range.length)
             map(range, through: lines) { runs.append(SyntaxRun(range: $0, style: capture.style)) }
         }
