@@ -15,7 +15,9 @@ struct PullRequestListView: View {
             if model.hasStoredLists {
                 Group {
                     switch mode {
-                    case .lists where model.isSearching && PullRequestList.allCases.allSatisfy({ model.pullRequests(in: $0, includingClosed: showsClosed).isEmpty }):
+                    case .lists where model.isSearching && PullRequestList.allCases.allSatisfy({
+                        model.pullRequests(in: $0, includingClosed: showsClosed).isEmpty && model.recentlyClosedMatches(in: $0, includingClosed: showsClosed).isEmpty
+                    }):
                         NoSearchMatches(text: model.searchText)
                     case .lists:
                         ListsSplit {
@@ -245,21 +247,35 @@ struct PullRequestColumn: View {
         let listing = model.listing(in: list, includingClosed: showsClosed, includingStale: showsStale)
         let pullRequests = listing.map(\.pullRequest)
         let rows = stackRows(listing, folded: model.isSearching ? [] : foldedStacks)
+        let closed = model.recentlyClosedMatches(in: list, includingClosed: showsClosed)
         VStack(alignment: .leading, spacing: 0) {
             Text("\(title) (\(pullRequests.count))")
                 .font(.headline)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-            if pullRequests.isEmpty {
+            if pullRequests.isEmpty && closed.isEmpty {
                 Text(model.isSearching ? "No matches" : "Nothing here")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(rows, selection: $selection) { row in
-                    ListedRow(listed: row.listed, list: list, showsAuthor: showsAuthor, model: model, stack: disclosure(for: row, folded: $foldedStacks, model: model))
+                List(selection: $selection) {
+                    if pullRequests.isEmpty {
+                        Text("No open matches")
+                            .foregroundStyle(.secondary)
+                            .selectionDisabled()
+                    }
+                    ForEach(rows) { row in
+                        ListedRow(listed: row.listed, list: list, showsAuthor: showsAuthor, model: model, stack: disclosure(for: row, folded: $foldedStacks, model: model))
+                    }
+                    if !closed.isEmpty {
+                        RecentlyClosedHeading(count: closed.count)
+                        ForEach(closed) { pullRequest in
+                            ListedRow(listed: StackedPullRequest(pullRequest: pullRequest, depth: 0, parent: nil), list: list, showsAuthor: showsAuthor, model: model)
+                        }
+                    }
                 }
                 .onKeyPress(.return) {
-                    guard let pullRequest = pullRequests.first(where: { $0.id == selection }) else { return .ignored }
+                    guard let pullRequest = (pullRequests + closed).first(where: { $0.id == selection }) else { return .ignored }
                     model.open(pullRequest)
                     return .handled
                 }
@@ -773,6 +789,20 @@ private enum ReviewRow: Identifiable {
         case let .pullRequest(row): row.id
         case let .stale(stage, _): "stale-\(stage)"
         }
+    }
+}
+
+/// Over the merged and closed PRs a search finds, set apart from the open ones.
+struct RecentlyClosedHeading: View {
+    let count: Int
+
+    var body: some View {
+        Text("Merged and closed this month (\(count))")
+            .font(.headline)
+            .padding(.top, 12)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("recently-closed")
+            .selectionDisabled()
     }
 }
 

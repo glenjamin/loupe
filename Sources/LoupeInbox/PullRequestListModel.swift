@@ -169,6 +169,17 @@ public final class PullRequestListModel {
         return pullRequest.viewerReviewMark(viewer: viewer)
     }
 
+    /// While searching, the merged and closed PRs in `list` that match and ended within
+    /// `staleAge`, most recently ended first, so a search finds what the viewer merged lately
+    /// without the lists showing it otherwise. None while the lists show closed PRs anyway.
+    public func recentlyClosedMatches(in list: PullRequestList, includingClosed: Bool = false) -> [PullRequestSummary] {
+        guard isSearching, !includingClosed else { return [] }
+        let ended = { (pullRequest: PullRequestSummary) in pullRequest.mergedAt ?? pullRequest.closedAt ?? pullRequest.updatedAt }
+        return snapshot[list]
+            .filter { $0.state != .open && now().timeIntervalSince(ended($0)) <= Self.staleAge && matchesSearch($0) }
+            .sorted { ended($0) > ended($1) }
+    }
+
     /// How many PRs `pullRequests(in:includingClosed:)` leaves out as stale; none while
     /// searching, which lists them.
     public func staleCount(in list: PullRequestList, stage: ReviewStage? = nil, includingClosed: Bool = false) -> Int {

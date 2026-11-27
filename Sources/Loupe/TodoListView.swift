@@ -39,9 +39,12 @@ struct TodoListView: View {
         let waiting = showsWaiting || searching ? rows(todo.waiting) : []
         let overAMonth = showsOverAMonth || searching ? rows(todo.overAMonth) : []
         let overSixMonths = showsOverSixMonths || searching ? rows(todo.overSixMonths) : []
-        if todo.isEmpty && searching {
+        let closed = model.recentlyClosedMatches(in: .mine).map {
+            TodoRow(pullRequest: $0, list: .mine, reason: nil, problems: [], parent: nil, depth: 0, stackAbove: nil)
+        }
+        if todo.isEmpty && closed.isEmpty && searching {
             NoSearchMatches(text: model.searchText)
-        } else if todo.isEmpty {
+        } else if todo.isEmpty && closed.isEmpty {
             Text("Nothing to do")
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -82,9 +85,17 @@ struct TodoListView: View {
                         foldingTitle("Over 6 months", count: todo.overSixMonths.count, shows: $showsOverSixMonths, marker: "over-6-months", what: "your PRs quiet for over six months")
                     }
                 }
+                if !closed.isEmpty {
+                    Section {
+                        ForEach(closed) { row($0) }
+                    } header: {
+                        sectionTitle("Merged and closed this month", count: closed.count)
+                            .accessibilityIdentifier("recently-closed")
+                    }
+                }
             }
             .onKeyPress(.return) {
-                guard let pullRequest = (review + yours + waiting + overAMonth + overSixMonths).first(where: { $0.id == selection })?.pullRequest else { return .ignored }
+                guard let pullRequest = (review + yours + waiting + overAMonth + overSixMonths + closed).first(where: { $0.id == selection })?.pullRequest else { return .ignored }
                 model.open(pullRequest)
                 return .handled
             }

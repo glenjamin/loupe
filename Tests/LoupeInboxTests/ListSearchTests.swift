@@ -60,6 +60,33 @@ struct ListSearchTests {
         #expect(model.pullRequests(in: .toReview).map(\.id) == [reviewing], "by rowan-ashby")
     }
 
+    @Test func aSearchAlsoFindsWhatTheViewerMergedOrClosedThisMonth() async throws {
+        let github = try FakeGitHub(fixture: "pr-list.json")
+        let clock = SearchClock(at: .now)
+        let model = try searchModel(github, now: { clock.now })
+        let open = try await ownPullRequest(9301, in: github, titled: "Tidy the login redirect")
+        let closed = try await ownPullRequest(9302, in: github, titled: "Tidy the login page")
+        let merged = try await ownPullRequest(9303, in: github, titled: "Tidy the login form")
+        await model.refresh()
+        try await github.edit(closed) {
+            $0.state = "CLOSED"
+            $0.closedAt = (Date.now - 3600).formatted(.iso8601)
+        }
+        await github.passTime(60)
+        try await github.merge(merged)
+        await model.refresh()
+        #expect(model.recentlyClosedMatches(in: .mine).isEmpty, "nothing while not searching")
+
+        model.searchText = "tidy login"
+
+        #expect(model.pullRequests(in: .mine).map(\.id) == [open], "the open matches stay as they were")
+        #expect(model.recentlyClosedMatches(in: .mine).map(\.id) == [merged, closed], "most recently ended first")
+        #expect(model.recentlyClosedMatches(in: .mine, includingClosed: true).isEmpty, "listed with the rest when closed PRs are shown")
+
+        clock.now += 31 * day
+        #expect(model.recentlyClosedMatches(in: .mine).isEmpty, "a month after they ended")
+    }
+
     @Test func aSearchFindsWhatTheListsHideAsStale() async throws {
         let github = try FakeGitHub(fixture: "pr-list.json")
         let model = try searchModel(github)

@@ -1241,3 +1241,7 @@ Glen wanted SQL in strings highlighted, which is mostly how Go and Ruby code hol
 ### ⌘K searches the lists from any tab
 
 ⌘F searches the lists only while they're shown; in a PR's tab it finds in the diff or comment that has the focus, so finding another PR meant ⌘1 then ⌘F. ⌘K, the usual key for jumping to something by name, shows the lists with the focus in their search from wherever the window is, keeping what was last typed, selected so typing replaces it. ⌘F is unchanged.
+
+### A search also finds what the viewer merged or closed this month
+
+Glen wanted a way to find PRs merged semi-recently without them being in the way. "Show closed and merged" lists every one stored, mixed in with the open ones, so it's switched on to look and off again. A search, which ⌘K starts from any tab, now also lists the viewer's PRs merged or closed within the month that open PRs go stale after, under "Merged and closed this month" after the open matches, most recently ended first, in the lists and TODO mode alike. Without a search nothing changes; with the toggle on they're listed with the rest already, so the section doesn't repeat them. A folded "Recently merged" section at the foot of Mine was offered too, and passed over for now. The UI suite can't show it, as the fixtures hold no merged PRs and snapshot runs can't merge one; the model's test covers it, and it was looked at against a copy of the real database.
